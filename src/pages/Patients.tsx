@@ -7,9 +7,11 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { supabase } from '@/integrations/supabase/client';
-import { Search, Users, ChevronLeft, ChevronRight, Filter } from 'lucide-react';
+import { Search, Users, ChevronLeft, ChevronRight, BookUser, Brain } from 'lucide-react';
 import CrossDataAnalyzer from '@/components/patient/CrossDataAnalyzer';
+import PatientDirectory from '@/components/patient/PatientDirectory';
 
 interface Patient {
   id: string;
@@ -40,6 +42,8 @@ const nationalityFlags: Record<string, string> = {
   ES: '🇪🇸',
   IT: '🇮🇹',
   MX: '🇲🇽',
+  CH: '🇨🇭',
+  Suisse: '🇨🇭',
 };
 
 const Patients = () => {
@@ -142,158 +146,185 @@ const Patients = () => {
         <div>
           <h1 className="text-3xl font-bold flex items-center gap-2">
             <Users className="h-8 w-8" />
-            Répertoire Patients
+            Gestion Patients
           </h1>
           <p className="text-muted-foreground mt-1">
-            Accédez aux dossiers patients anonymisés
+            Gérez votre patientèle et accédez aux données anonymisées
           </p>
         </div>
 
-        {/* Cross-Data AI Analyzer */}
-        <CrossDataAnalyzer />
+        <Tabs defaultValue="directory" className="space-y-4">
+          <TabsList>
+            <TabsTrigger value="directory" className="flex items-center gap-2">
+              <BookUser className="h-4 w-4" />
+              Ma Patientèle
+            </TabsTrigger>
+            <TabsTrigger value="research" className="flex items-center gap-2">
+              <Brain className="h-4 w-4" />
+              Analyse Cross-Data
+            </TabsTrigger>
+            <TabsTrigger value="anonymous" className="flex items-center gap-2">
+              <Users className="h-4 w-4" />
+              Données Anonymisées
+            </TabsTrigger>
+          </TabsList>
 
-        {/* Filters */}
-        <Card>
-          <CardContent className="pt-6">
-            <div className="flex flex-col lg:flex-row gap-4">
-              <div className="relative flex-1">
-                <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                <Input
-                  placeholder="Rechercher par ID, traitement, pathologie..."
-                  value={searchTerm}
-                  onChange={(e) => {
-                    setSearchTerm(e.target.value);
-                    setCurrentPage(1);
-                  }}
-                  className="pl-10"
-                />
+          {/* Répertoire patients */}
+          <TabsContent value="directory">
+            <PatientDirectory />
+          </TabsContent>
+
+          {/* Cross-Data AI Analyzer */}
+          <TabsContent value="research">
+            <CrossDataAnalyzer />
+          </TabsContent>
+
+          {/* Données anonymisées */}
+          <TabsContent value="anonymous" className="space-y-4">
+            {/* Filters */}
+            <Card>
+              <CardContent className="pt-6">
+                <div className="flex flex-col lg:flex-row gap-4">
+                  <div className="relative flex-1">
+                    <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                    <Input
+                      placeholder="Rechercher par ID, traitement, pathologie..."
+                      value={searchTerm}
+                      onChange={(e) => {
+                        setSearchTerm(e.target.value);
+                        setCurrentPage(1);
+                      }}
+                      className="pl-10"
+                    />
+                  </div>
+                  <Select value={selectedNationality} onValueChange={(v) => { setSelectedNationality(v); setCurrentPage(1); }}>
+                    <SelectTrigger className="w-full lg:w-[160px]">
+                      <SelectValue placeholder="Nationalité" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">Tous pays</SelectItem>
+                      {nationalities.map((nat) => (
+                        <SelectItem key={nat} value={nat}>
+                          {nationalityFlags[nat] || '🌍'} {nat}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <Select value={selectedAgeGroup} onValueChange={(v) => { setSelectedAgeGroup(v); setCurrentPage(1); }}>
+                    <SelectTrigger className="w-full lg:w-[140px]">
+                      <SelectValue placeholder="Âge" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">Tous âges</SelectItem>
+                      <SelectItem value="0-30">0-30 ans</SelectItem>
+                      <SelectItem value="31-50">31-50 ans</SelectItem>
+                      <SelectItem value="51-70">51-70 ans</SelectItem>
+                      <SelectItem value="70+">70+ ans</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <Select value={selectedGender} onValueChange={(v) => { setSelectedGender(v); setCurrentPage(1); }}>
+                    <SelectTrigger className="w-full lg:w-[120px]">
+                      <SelectValue placeholder="Genre" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">Tous</SelectItem>
+                      <SelectItem value="M">Homme</SelectItem>
+                      <SelectItem value="F">Femme</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <Select value={selectedOutcome} onValueChange={(v) => { setSelectedOutcome(v); setCurrentPage(1); }}>
+                    <SelectTrigger className="w-full lg:w-[160px]">
+                      <SelectValue placeholder="Statut" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">Tous statuts</SelectItem>
+                      <SelectItem value="RESOLVED">Résolu</SelectItem>
+                      <SelectItem value="ONGOING">En cours</SelectItem>
+                      <SelectItem value="SIDE_EFFECT">Effet secondaire</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* Table */}
+            <Card>
+              <CardContent className="p-0">
+                {loading ? (
+                  <div className="p-8 text-center text-muted-foreground">
+                    Chargement des patients...
+                  </div>
+                ) : (
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead className="font-mono">ID Patient</TableHead>
+                        <TableHead>Âge/Genre</TableHead>
+                        <TableHead>Pays</TableHead>
+                        <TableHead>Pathologie</TableHead>
+                        <TableHead>Traitement</TableHead>
+                        <TableHead>Statut</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {paginatedPatients.map((patient) => (
+                        <TableRow key={patient.id} className="cursor-pointer hover:bg-accent">
+                          <TableCell>
+                            <Link to={`/patients/${patient.id}`} className="font-mono text-primary hover:underline">
+                              {truncateId(patient.patient_id)}
+                            </Link>
+                          </TableCell>
+                          <TableCell>
+                            {patient.age} ans / {patient.gender === 'M' ? '♂' : '♀'}
+                          </TableCell>
+                          <TableCell>
+                            <span className="text-xl mr-2">{nationalityFlags[patient.nationality] || '🌍'}</span>
+                            {patient.nationality}
+                          </TableCell>
+                          <TableCell className="max-w-[200px] truncate">
+                            {patient.pathologies?.name || '-'}
+                          </TableCell>
+                          <TableCell className="max-w-[200px] truncate">
+                            {patient.treatment || '-'}
+                          </TableCell>
+                          <TableCell>{getOutcomeBadge(patient.outcome)}</TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                )}
+              </CardContent>
+            </Card>
+
+            {/* Pagination */}
+            <div className="flex items-center justify-between">
+              <p className="text-sm text-muted-foreground">
+                {filteredPatients.length} patient(s) trouvé(s)
+              </p>
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                  disabled={currentPage === 1}
+                >
+                  <ChevronLeft className="h-4 w-4" />
+                </Button>
+                <span className="text-sm">
+                  Page {currentPage} sur {totalPages || 1}
+                </span>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                  disabled={currentPage >= totalPages}
+                >
+                  <ChevronRight className="h-4 w-4" />
+                </Button>
               </div>
-              <Select value={selectedNationality} onValueChange={(v) => { setSelectedNationality(v); setCurrentPage(1); }}>
-                <SelectTrigger className="w-full lg:w-[160px]">
-                  <SelectValue placeholder="Nationalité" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">Tous pays</SelectItem>
-                  {nationalities.map((nat) => (
-                    <SelectItem key={nat} value={nat}>
-                      {nationalityFlags[nat] || '🌍'} {nat}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <Select value={selectedAgeGroup} onValueChange={(v) => { setSelectedAgeGroup(v); setCurrentPage(1); }}>
-                <SelectTrigger className="w-full lg:w-[140px]">
-                  <SelectValue placeholder="Âge" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">Tous âges</SelectItem>
-                  <SelectItem value="0-30">0-30 ans</SelectItem>
-                  <SelectItem value="31-50">31-50 ans</SelectItem>
-                  <SelectItem value="51-70">51-70 ans</SelectItem>
-                  <SelectItem value="70+">70+ ans</SelectItem>
-                </SelectContent>
-              </Select>
-              <Select value={selectedGender} onValueChange={(v) => { setSelectedGender(v); setCurrentPage(1); }}>
-                <SelectTrigger className="w-full lg:w-[120px]">
-                  <SelectValue placeholder="Genre" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">Tous</SelectItem>
-                  <SelectItem value="M">Homme</SelectItem>
-                  <SelectItem value="F">Femme</SelectItem>
-                </SelectContent>
-              </Select>
-              <Select value={selectedOutcome} onValueChange={(v) => { setSelectedOutcome(v); setCurrentPage(1); }}>
-                <SelectTrigger className="w-full lg:w-[160px]">
-                  <SelectValue placeholder="Statut" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">Tous statuts</SelectItem>
-                  <SelectItem value="RESOLVED">Résolu</SelectItem>
-                  <SelectItem value="ONGOING">En cours</SelectItem>
-                  <SelectItem value="SIDE_EFFECT">Effet secondaire</SelectItem>
-                </SelectContent>
-              </Select>
             </div>
-          </CardContent>
-        </Card>
-
-        {/* Table */}
-        <Card>
-          <CardContent className="p-0">
-            {loading ? (
-              <div className="p-8 text-center text-muted-foreground">
-                Chargement des patients...
-              </div>
-            ) : (
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead className="font-mono">ID Patient</TableHead>
-                    <TableHead>Âge/Genre</TableHead>
-                    <TableHead>Pays</TableHead>
-                    <TableHead>Pathologie</TableHead>
-                    <TableHead>Traitement</TableHead>
-                    <TableHead>Statut</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {paginatedPatients.map((patient) => (
-                    <TableRow key={patient.id} className="cursor-pointer hover:bg-accent">
-                      <TableCell>
-                        <Link to={`/patients/${patient.id}`} className="font-mono text-primary hover:underline">
-                          {truncateId(patient.patient_id)}
-                        </Link>
-                      </TableCell>
-                      <TableCell>
-                        {patient.age} ans / {patient.gender === 'M' ? '♂' : '♀'}
-                      </TableCell>
-                      <TableCell>
-                        <span className="text-xl mr-2">{nationalityFlags[patient.nationality] || '🌍'}</span>
-                        {patient.nationality}
-                      </TableCell>
-                      <TableCell className="max-w-[200px] truncate">
-                        {patient.pathologies?.name || '-'}
-                      </TableCell>
-                      <TableCell className="max-w-[200px] truncate">
-                        {patient.treatment || '-'}
-                      </TableCell>
-                      <TableCell>{getOutcomeBadge(patient.outcome)}</TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            )}
-          </CardContent>
-        </Card>
-
-        {/* Pagination */}
-        <div className="flex items-center justify-between">
-          <p className="text-sm text-muted-foreground">
-            {filteredPatients.length} patient(s) trouvé(s)
-          </p>
-          <div className="flex items-center gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
-              disabled={currentPage === 1}
-            >
-              <ChevronLeft className="h-4 w-4" />
-            </Button>
-            <span className="text-sm">
-              Page {currentPage} sur {totalPages || 1}
-            </span>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
-              disabled={currentPage >= totalPages}
-            >
-              <ChevronRight className="h-4 w-4" />
-            </Button>
-          </div>
-        </div>
+          </TabsContent>
+        </Tabs>
       </div>
     </AppLayout>
   );
