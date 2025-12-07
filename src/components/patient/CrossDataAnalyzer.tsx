@@ -6,6 +6,7 @@ import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Input } from '@/components/ui/input';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { supabase } from '@/integrations/supabase/client';
 import { 
   Brain, 
@@ -23,23 +24,32 @@ import {
   ExternalLink,
   BookOpen,
   Search,
-  X
+  X,
+  CheckSquare,
+  Square,
+  Filter
 } from 'lucide-react';
 import { toast } from 'sonner';
+
 interface Pathology {
   id: string;
   name: string;
+  category: string | null;
+  specialty: string | null;
+  severity: string | null;
 }
 
 interface Symptom {
   id: string;
   name: string;
+  body_system: string | null;
 }
 
 interface Treatment {
   id: string;
   name: string;
   pathology_id: string;
+  type: string | null;
 }
 
 interface WebSource {
@@ -86,34 +96,90 @@ const CrossDataAnalyzer = () => {
   const [selectedSymptoms, setSelectedSymptoms] = useState<string[]>([]);
   const [selectedTreatments, setSelectedTreatments] = useState<string[]>([]);
 
+  // Filtres de recherche texte
   const [searchPathologies, setSearchPathologies] = useState('');
   const [searchSymptoms, setSearchSymptoms] = useState('');
   const [searchTreatments, setSearchTreatments] = useState('');
 
+  // Filtres avancés
+  const [filterPathologyCategory, setFilterPathologyCategory] = useState<string>('all');
+  const [filterPathologySpecialty, setFilterPathologySpecialty] = useState<string>('all');
+  const [filterPathologySeverity, setFilterPathologySeverity] = useState<string>('all');
+  const [filterSymptomBodySystem, setFilterSymptomBodySystem] = useState<string>('all');
+  const [filterTreatmentType, setFilterTreatmentType] = useState<string>('all');
+
+  // Options de filtres extraites des données
+  const pathologyCategories = useMemo(() => {
+    const cats = new Set<string>();
+    pathologies.forEach(p => p.category && cats.add(p.category));
+    return Array.from(cats).sort();
+  }, [pathologies]);
+
+  const pathologySpecialties = useMemo(() => {
+    const specs = new Set<string>();
+    pathologies.forEach(p => p.specialty && specs.add(p.specialty));
+    return Array.from(specs).sort();
+  }, [pathologies]);
+
+  const pathologySeverities = useMemo(() => {
+    const sevs = new Set<string>();
+    pathologies.forEach(p => p.severity && sevs.add(p.severity));
+    return Array.from(sevs).sort();
+  }, [pathologies]);
+
+  const symptomBodySystems = useMemo(() => {
+    const systems = new Set<string>();
+    symptoms.forEach(s => s.body_system && systems.add(s.body_system));
+    return Array.from(systems).sort();
+  }, [symptoms]);
+
+  const treatmentTypes = useMemo(() => {
+    const types = new Set<string>();
+    treatments.forEach(t => t.type && types.add(t.type));
+    return Array.from(types).sort();
+  }, [treatments]);
+
+  // Filtrage des données
   const filteredPathologies = useMemo(() => {
-    if (!searchPathologies.trim()) return pathologies;
-    const search = searchPathologies.toLowerCase();
-    return pathologies.filter(p => p.name.toLowerCase().includes(search));
-  }, [pathologies, searchPathologies]);
+    return pathologies.filter(p => {
+      const matchesSearch = !searchPathologies.trim() || 
+        p.name.toLowerCase().includes(searchPathologies.toLowerCase());
+      const matchesCategory = filterPathologyCategory === 'all' || 
+        p.category === filterPathologyCategory;
+      const matchesSpecialty = filterPathologySpecialty === 'all' || 
+        p.specialty === filterPathologySpecialty;
+      const matchesSeverity = filterPathologySeverity === 'all' || 
+        p.severity === filterPathologySeverity;
+      return matchesSearch && matchesCategory && matchesSpecialty && matchesSeverity;
+    });
+  }, [pathologies, searchPathologies, filterPathologyCategory, filterPathologySpecialty, filterPathologySeverity]);
 
   const filteredSymptoms = useMemo(() => {
-    if (!searchSymptoms.trim()) return symptoms;
-    const search = searchSymptoms.toLowerCase();
-    return symptoms.filter(s => s.name.toLowerCase().includes(search));
-  }, [symptoms, searchSymptoms]);
+    return symptoms.filter(s => {
+      const matchesSearch = !searchSymptoms.trim() || 
+        s.name.toLowerCase().includes(searchSymptoms.toLowerCase());
+      const matchesBodySystem = filterSymptomBodySystem === 'all' || 
+        s.body_system === filterSymptomBodySystem;
+      return matchesSearch && matchesBodySystem;
+    });
+  }, [symptoms, searchSymptoms, filterSymptomBodySystem]);
 
   const filteredTreatments = useMemo(() => {
-    if (!searchTreatments.trim()) return treatments;
-    const search = searchTreatments.toLowerCase();
-    return treatments.filter(t => t.name.toLowerCase().includes(search));
-  }, [treatments, searchTreatments]);
+    return treatments.filter(t => {
+      const matchesSearch = !searchTreatments.trim() || 
+        t.name.toLowerCase().includes(searchTreatments.toLowerCase());
+      const matchesType = filterTreatmentType === 'all' || 
+        t.type === filterTreatmentType;
+      return matchesSearch && matchesType;
+    });
+  }, [treatments, searchTreatments, filterTreatmentType]);
 
   useEffect(() => {
     const fetchData = async () => {
       const [pathologiesRes, symptomsRes, treatmentsRes] = await Promise.all([
-        supabase.from('pathologies').select('id, name').order('name'),
-        supabase.from('symptoms').select('id, name').order('name'),
-        supabase.from('treatments').select('id, name, pathology_id').order('name')
+        supabase.from('pathologies').select('id, name, category, specialty, severity').order('name'),
+        supabase.from('symptoms').select('id, name, body_system').order('name'),
+        supabase.from('treatments').select('id, name, pathology_id, type').order('name')
       ]);
 
       if (pathologiesRes.data) setPathologies(pathologiesRes.data);
@@ -135,6 +201,33 @@ const CrossDataAnalyzer = () => {
     } else {
       setSelected([...selected, id]);
     }
+  };
+
+  // Sélectionner/Désélectionner tous les éléments filtrés
+  const selectAllFiltered = (
+    filteredItems: { id: string }[],
+    selected: string[],
+    setSelected: React.Dispatch<React.SetStateAction<string[]>>
+  ) => {
+    const filteredIds = filteredItems.map(item => item.id);
+    const allSelected = filteredIds.every(id => selected.includes(id));
+    
+    if (allSelected) {
+      // Désélectionner tous les filtrés
+      setSelected(selected.filter(id => !filteredIds.includes(id)));
+    } else {
+      // Sélectionner tous les filtrés
+      const newSelected = [...new Set([...selected, ...filteredIds])];
+      setSelected(newSelected);
+    }
+  };
+
+  const areAllFilteredSelected = (
+    filteredItems: { id: string }[],
+    selected: string[]
+  ) => {
+    if (filteredItems.length === 0) return false;
+    return filteredItems.every(item => selected.includes(item.id));
   };
 
   const getTotalSelected = () => 
@@ -217,6 +310,49 @@ const CrossDataAnalyzer = () => {
     }
   };
 
+  const getSeverityLabel = (severity: string) => {
+    switch (severity) {
+      case 'mild': return 'Légère';
+      case 'moderate': return 'Modérée';
+      case 'severe': return 'Sévère';
+      case 'critical': return 'Critique';
+      default: return severity;
+    }
+  };
+
+  const getTreatmentTypeLabel = (type: string) => {
+    switch (type) {
+      case 'medication': return 'Médicament';
+      case 'surgery': return 'Chirurgie';
+      case 'therapy': return 'Thérapie';
+      case 'lifestyle': return 'Mode de vie';
+      case 'other': return 'Autre';
+      default: return type;
+    }
+  };
+
+  const resetPathologyFilters = () => {
+    setSearchPathologies('');
+    setFilterPathologyCategory('all');
+    setFilterPathologySpecialty('all');
+    setFilterPathologySeverity('all');
+  };
+
+  const resetSymptomFilters = () => {
+    setSearchSymptoms('');
+    setFilterSymptomBodySystem('all');
+  };
+
+  const resetTreatmentFilters = () => {
+    setSearchTreatments('');
+    setFilterTreatmentType('all');
+  };
+
+  const hasPathologyFilters = searchPathologies || filterPathologyCategory !== 'all' || 
+    filterPathologySpecialty !== 'all' || filterPathologySeverity !== 'all';
+  const hasSymptomFilters = searchSymptoms || filterSymptomBodySystem !== 'all';
+  const hasTreatmentFilters = searchTreatments || filterTreatmentType !== 'all';
+
   if (loading) {
     return (
       <Card>
@@ -245,12 +381,17 @@ const CrossDataAnalyzer = () => {
           <Globe className="h-4 w-4" />
           Analyse les liens de causalité en croisant vos données patients et la littérature médicale (PubMed)
         </CardDescription>
+        <div className="flex gap-2 text-xs text-muted-foreground mt-2">
+          <Badge variant="outline">{pathologies.length} pathologies</Badge>
+          <Badge variant="outline">{symptoms.length} symptômes</Badge>
+          <Badge variant="outline">{treatments.length} traitements</Badge>
+        </div>
       </CardHeader>
       <CardContent className="space-y-6">
         {/* Panneaux de sélection */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           {/* Pathologies */}
-          <div className="space-y-2">
+          <div className="space-y-2 border rounded-lg p-3">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2 font-medium">
                 <Stethoscope className="h-4 w-4 text-purple-500" />
@@ -260,6 +401,8 @@ const CrossDataAnalyzer = () => {
                 {filteredPathologies.length}/{pathologies.length}
               </span>
             </div>
+            
+            {/* Recherche textuelle */}
             <div className="relative">
               <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
               <Input
@@ -277,8 +420,69 @@ const CrossDataAnalyzer = () => {
                 </button>
               )}
             </div>
-            <ScrollArea className="h-48 border rounded-md p-2">
-              <div className="space-y-2">
+
+            {/* Filtres avancés */}
+            <div className="space-y-1.5">
+              <Select value={filterPathologyCategory} onValueChange={setFilterPathologyCategory}>
+                <SelectTrigger className="h-7 text-xs">
+                  <SelectValue placeholder="Catégorie" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Toutes catégories</SelectItem>
+                  {pathologyCategories.map(cat => (
+                    <SelectItem key={cat} value={cat}>{cat}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+
+              <Select value={filterPathologySpecialty} onValueChange={setFilterPathologySpecialty}>
+                <SelectTrigger className="h-7 text-xs">
+                  <SelectValue placeholder="Spécialité" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Toutes spécialités</SelectItem>
+                  {pathologySpecialties.map(spec => (
+                    <SelectItem key={spec} value={spec}>{spec}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+
+              <Select value={filterPathologySeverity} onValueChange={setFilterPathologySeverity}>
+                <SelectTrigger className="h-7 text-xs">
+                  <SelectValue placeholder="Sévérité" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Toutes sévérités</SelectItem>
+                  {pathologySeverities.map(sev => (
+                    <SelectItem key={sev} value={sev}>{getSeverityLabel(sev)}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            {/* Actions groupées */}
+            <div className="flex items-center justify-between gap-2">
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-7 text-xs"
+                onClick={() => selectAllFiltered(filteredPathologies, selectedPathologies, setSelectedPathologies)}
+              >
+                {areAllFilteredSelected(filteredPathologies, selectedPathologies) ? (
+                  <><Square className="h-3 w-3 mr-1" /> Tout désélect.</>
+                ) : (
+                  <><CheckSquare className="h-3 w-3 mr-1" /> Tout sélect.</>
+                )}
+              </Button>
+              {hasPathologyFilters && (
+                <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={resetPathologyFilters}>
+                  <X className="h-3 w-3 mr-1" /> Réinit. filtres
+                </Button>
+              )}
+            </div>
+
+            <ScrollArea className="h-40 border rounded-md p-2">
+              <div className="space-y-1">
                 {filteredPathologies.length === 0 ? (
                   <p className="text-sm text-muted-foreground text-center py-4">Aucun résultat</p>
                 ) : (
@@ -291,7 +495,8 @@ const CrossDataAnalyzer = () => {
                       />
                       <label 
                         htmlFor={`pathology-${p.id}`} 
-                        className="text-sm cursor-pointer truncate"
+                        className="text-sm cursor-pointer truncate flex-1"
+                        title={p.name}
                       >
                         {p.name}
                       </label>
@@ -303,7 +508,7 @@ const CrossDataAnalyzer = () => {
           </div>
 
           {/* Symptômes */}
-          <div className="space-y-2">
+          <div className="space-y-2 border rounded-lg p-3">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2 font-medium">
                 <Activity className="h-4 w-4 text-blue-500" />
@@ -313,6 +518,8 @@ const CrossDataAnalyzer = () => {
                 {filteredSymptoms.length}/{symptoms.length}
               </span>
             </div>
+            
+            {/* Recherche textuelle */}
             <div className="relative">
               <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
               <Input
@@ -330,8 +537,43 @@ const CrossDataAnalyzer = () => {
                 </button>
               )}
             </div>
-            <ScrollArea className="h-48 border rounded-md p-2">
-              <div className="space-y-2">
+
+            {/* Filtre par système corporel */}
+            <Select value={filterSymptomBodySystem} onValueChange={setFilterSymptomBodySystem}>
+              <SelectTrigger className="h-7 text-xs">
+                <SelectValue placeholder="Système corporel" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">Tous systèmes</SelectItem>
+                {symptomBodySystems.map(sys => (
+                  <SelectItem key={sys} value={sys}>{sys}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+
+            {/* Actions groupées */}
+            <div className="flex items-center justify-between gap-2">
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-7 text-xs"
+                onClick={() => selectAllFiltered(filteredSymptoms, selectedSymptoms, setSelectedSymptoms)}
+              >
+                {areAllFilteredSelected(filteredSymptoms, selectedSymptoms) ? (
+                  <><Square className="h-3 w-3 mr-1" /> Tout désélect.</>
+                ) : (
+                  <><CheckSquare className="h-3 w-3 mr-1" /> Tout sélect.</>
+                )}
+              </Button>
+              {hasSymptomFilters && (
+                <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={resetSymptomFilters}>
+                  <X className="h-3 w-3 mr-1" /> Réinit. filtres
+                </Button>
+              )}
+            </div>
+
+            <ScrollArea className="h-40 border rounded-md p-2">
+              <div className="space-y-1">
                 {filteredSymptoms.length === 0 ? (
                   <p className="text-sm text-muted-foreground text-center py-4">Aucun résultat</p>
                 ) : (
@@ -344,7 +586,8 @@ const CrossDataAnalyzer = () => {
                       />
                       <label 
                         htmlFor={`symptom-${s.id}`} 
-                        className="text-sm cursor-pointer truncate"
+                        className="text-sm cursor-pointer truncate flex-1"
+                        title={s.name}
                       >
                         {s.name}
                       </label>
@@ -356,7 +599,7 @@ const CrossDataAnalyzer = () => {
           </div>
 
           {/* Traitements */}
-          <div className="space-y-2">
+          <div className="space-y-2 border rounded-lg p-3">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2 font-medium">
                 <Pill className="h-4 w-4 text-green-500" />
@@ -366,6 +609,8 @@ const CrossDataAnalyzer = () => {
                 {filteredTreatments.length}/{treatments.length}
               </span>
             </div>
+            
+            {/* Recherche textuelle */}
             <div className="relative">
               <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
               <Input
@@ -383,8 +628,43 @@ const CrossDataAnalyzer = () => {
                 </button>
               )}
             </div>
-            <ScrollArea className="h-48 border rounded-md p-2">
-              <div className="space-y-2">
+
+            {/* Filtre par type de traitement */}
+            <Select value={filterTreatmentType} onValueChange={setFilterTreatmentType}>
+              <SelectTrigger className="h-7 text-xs">
+                <SelectValue placeholder="Type de traitement" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">Tous types</SelectItem>
+                {treatmentTypes.map(type => (
+                  <SelectItem key={type} value={type}>{getTreatmentTypeLabel(type)}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+
+            {/* Actions groupées */}
+            <div className="flex items-center justify-between gap-2">
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-7 text-xs"
+                onClick={() => selectAllFiltered(filteredTreatments, selectedTreatments, setSelectedTreatments)}
+              >
+                {areAllFilteredSelected(filteredTreatments, selectedTreatments) ? (
+                  <><Square className="h-3 w-3 mr-1" /> Tout désélect.</>
+                ) : (
+                  <><CheckSquare className="h-3 w-3 mr-1" /> Tout sélect.</>
+                )}
+              </Button>
+              {hasTreatmentFilters && (
+                <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={resetTreatmentFilters}>
+                  <X className="h-3 w-3 mr-1" /> Réinit. filtres
+                </Button>
+              )}
+            </div>
+
+            <ScrollArea className="h-40 border rounded-md p-2">
+              <div className="space-y-1">
                 {filteredTreatments.length === 0 ? (
                   <p className="text-sm text-muted-foreground text-center py-4">Aucun résultat</p>
                 ) : (
@@ -397,7 +677,8 @@ const CrossDataAnalyzer = () => {
                       />
                       <label 
                         htmlFor={`treatment-${t.id}`} 
-                        className="text-sm cursor-pointer truncate"
+                        className="text-sm cursor-pointer truncate flex-1"
+                        title={t.name}
                       >
                         {t.name}
                       </label>
