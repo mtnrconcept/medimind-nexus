@@ -1,12 +1,14 @@
 import { useState, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Progress } from '@/components/ui/progress';
 import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Slider } from '@/components/ui/slider';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useToast } from '@/hooks/use-toast';
 import { supabase } from '@/integrations/supabase/client';
 import { 
@@ -24,17 +26,26 @@ import {
   Stethoscope,
   Pill,
   Clock,
-  AlertTriangle
+  AlertTriangle,
+  Tablets,
+  TestTube,
+  Plus
 } from 'lucide-react';
+
+type ScraperMode = 'pathologies' | 'medications';
 
 interface ScrapeResult {
   url: string;
   success: boolean;
   stats?: {
-    pathologiesAdded: number;
-    symptomsAdded: number;
-    treatmentsAdded: number;
-    linksCreated: number;
+    pathologiesAdded?: number;
+    symptomsAdded?: number;
+    treatmentsAdded?: number;
+    linksCreated?: number;
+    medicationsAdded?: number;
+    sideEffectsAdded?: number;
+    interactionsAdded?: number;
+    contraindicationsAdded?: number;
   };
   error?: string;
   rateLimited?: boolean;
@@ -45,14 +56,18 @@ interface ScrapingStats {
   symptomsAdded: number;
   treatmentsAdded: number;
   linksCreated: number;
+  medicationsAdded: number;
+  sideEffectsAdded: number;
+  interactionsAdded: number;
+  contraindicationsAdded: number;
 }
 
 type RateLimitMode = 'slow' | 'normal' | 'fast';
 
 const RATE_LIMIT_DELAYS: Record<RateLimitMode, number> = {
-  slow: 45000,    // 45 secondes - très prudent (Firecrawl free tier)
-  normal: 25000,  // 25 secondes - équilibré
-  fast: 12000     // 12 secondes - risqué
+  slow: 45000,
+  normal: 25000,
+  fast: 12000
 };
 
 const RATE_LIMIT_LABELS: Record<RateLimitMode, string> = {
@@ -63,9 +78,29 @@ const RATE_LIMIT_LABELS: Record<RateLimitMode, string> = {
 
 const SCRAPED_URLS_KEY = 'medical_scraper_scraped_urls';
 
+// URLs de test Compendium prédéfinies
+const TEST_MEDICATION_URLS = [
+  'https://compendium.ch/product/1225565-similasan-insektenstiche-glob/mpro',
+  'https://compendium.ch/product/1122930-ultratechnekow-fm-generateur-25-8-gbq/mpro',
+  'https://compendium.ch/product/1553866-ultravist-sol-inj-150-mg-ml-50ml/mpro'
+];
+
+const initialStats: ScrapingStats = {
+  pathologiesAdded: 0,
+  symptomsAdded: 0,
+  treatmentsAdded: 0,
+  linksCreated: 0,
+  medicationsAdded: 0,
+  sideEffectsAdded: 0,
+  interactionsAdded: 0,
+  contraindicationsAdded: 0
+};
+
 export const MedicalScraperPanel = () => {
   const { toast } = useToast();
+  const [mode, setMode] = useState<ScraperMode>('pathologies');
   const [url, setUrl] = useState('');
+  const [manualUrls, setManualUrls] = useState('');
   const [pageLimit, setPageLimit] = useState([50]);
   const [isMapping, setIsMapping] = useState(false);
   const [isScraping, setIsScraping] = useState(false);
@@ -74,12 +109,7 @@ export const MedicalScraperPanel = () => {
   const [progress, setProgress] = useState(0);
   const [currentUrl, setCurrentUrl] = useState('');
   const [logs, setLogs] = useState<ScrapeResult[]>([]);
-  const [stats, setStats] = useState<ScrapingStats>({
-    pathologiesAdded: 0,
-    symptomsAdded: 0,
-    treatmentsAdded: 0,
-    linksCreated: 0
-  });
+  const [stats, setStats] = useState<ScrapingStats>(initialStats);
   const [rateLimitMode, setRateLimitMode] = useState<RateLimitMode>('normal');
   const [estimatedTime, setEstimatedTime] = useState<string>('');
   const [scrapedUrls, setScrapedUrls] = useState<Set<string>>(new Set());
@@ -98,10 +128,10 @@ export const MedicalScraperPanel = () => {
   }, []);
 
   // Sauvegarder les URLs scrapées
-  const saveScrapedUrl = (url: string) => {
+  const saveScrapedUrl = (scrapedUrl: string) => {
     setScrapedUrls(prev => {
       const newSet = new Set(prev);
-      newSet.add(url);
+      newSet.add(scrapedUrl);
       localStorage.setItem(SCRAPED_URLS_KEY, JSON.stringify([...newSet]));
       return newSet;
     });
@@ -136,13 +166,15 @@ export const MedicalScraperPanel = () => {
     setIsMapping(true);
     setMappedUrls([]);
     setLogs([]);
-    setStats({ pathologiesAdded: 0, symptomsAdded: 0, treatmentsAdded: 0, linksCreated: 0 });
+    setStats(initialStats);
     setRateLimitHits(0);
 
     try {
+      const action = mode === 'medications' ? 'map-compendium' : 'map';
+      
       const { data, error } = await supabase.functions.invoke('medical-scraper', {
         body: {
-          action: 'map',
+          action,
           url,
           options: { limit: pageLimit[0] * 2 }
         }
@@ -160,7 +192,6 @@ export const MedicalScraperPanel = () => {
       }
 
       if (data.success) {
-        // Filtrer les URLs déjà scrapées
         const newUrls = (data.urls || []).filter((u: string) => !scrapedUrls.has(u));
         const skippedCount = (data.urls?.length || 0) - newUrls.length;
         
@@ -186,29 +217,25 @@ export const MedicalScraperPanel = () => {
 
   const scrapeWithRetry = async (scrapeUrl: string, maxRetries = 3): Promise<{ data: any; error: any; rateLimited?: boolean }> => {
     let lastError = null;
+    const action = mode === 'medications' ? 'scrape-medication' : 'scrape';
     
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
       try {
         const { data, error } = await supabase.functions.invoke('medical-scraper', {
-          body: {
-            action: 'scrape',
-            url: scrapeUrl
-          }
+          body: { action, url: scrapeUrl }
         });
         
         if (error) {
           const errorMessage = error.message || '';
           
-          // Erreur 429 - rate limit
           if (errorMessage.includes('429') || errorMessage.includes('rate limit') || data?.rateLimited) {
-            const waitTime = 60000 * attempt; // 60s, 120s, 180s - attente longue
+            const waitTime = 60000 * attempt;
             console.log(`Rate limit détecté, attente ${waitTime/1000}s...`);
             setRateLimitHits(prev => prev + 1);
             await new Promise(resolve => setTimeout(resolve, waitTime));
             continue;
           }
           
-          // Erreur réseau
           if (errorMessage.includes('Network') || errorMessage.includes('500')) {
             lastError = error;
             console.log(`Tentative ${attempt}/${maxRetries} échouée pour ${scrapeUrl}`);
@@ -219,7 +246,6 @@ export const MedicalScraperPanel = () => {
           return { data: null, error };
         }
         
-        // Vérifier si la réponse contient rateLimited
         if (data?.rateLimited) {
           const waitTime = 30000 * attempt;
           console.log(`Rate limit dans la réponse, attente ${waitTime/1000}s...`);
@@ -239,11 +265,13 @@ export const MedicalScraperPanel = () => {
     return { data: null, error: lastError, rateLimited: true };
   };
 
-  const handleStartScraping = async () => {
-    if (mappedUrls.length === 0) {
+  const handleStartScraping = async (urlsToScrape?: string[]) => {
+    const urls = urlsToScrape || mappedUrls.filter(u => !scrapedUrls.has(u)).slice(0, pageLimit[0]);
+    
+    if (urls.length === 0) {
       toast({
         title: "Aucune URL",
-        description: "Veuillez d'abord mapper le site",
+        description: "Veuillez d'abord mapper le site ou ajouter des URLs",
         variant: "destructive"
       });
       return;
@@ -253,28 +281,22 @@ export const MedicalScraperPanel = () => {
     setIsPaused(false);
     setProgress(0);
     setRateLimitHits(0);
-
-    // Filtrer les URLs déjà scrapées
-    const urlsToScrape = mappedUrls
-      .filter(u => !scrapedUrls.has(u))
-      .slice(0, pageLimit[0]);
     
     let successCount = 0;
     let failCount = 0;
     let localStats = { ...stats };
     
-    for (let i = 0; i < urlsToScrape.length; i++) {
+    for (let i = 0; i < urls.length; i++) {
       if (isPaused) break;
 
-      const currentScrapeUrl = urlsToScrape[i];
+      const currentScrapeUrl = urls[i];
       setCurrentUrl(currentScrapeUrl);
-      setProgress(Math.round(((i + 1) / urlsToScrape.length) * 100));
+      setProgress(Math.round(((i + 1) / urls.length) * 100));
 
       try {
         const { data, error, rateLimited } = await scrapeWithRetry(currentScrapeUrl);
 
         if (rateLimited) {
-          // Trop de rate limits, basculer en mode prudent
           if (rateLimitMode !== 'slow') {
             setRateLimitMode('slow');
             toast({
@@ -309,7 +331,11 @@ export const MedicalScraperPanel = () => {
             pathologiesAdded: localStats.pathologiesAdded + (data.stats.pathologiesAdded || 0),
             symptomsAdded: localStats.symptomsAdded + (data.stats.symptomsAdded || 0),
             treatmentsAdded: localStats.treatmentsAdded + (data.stats.treatmentsAdded || 0),
-            linksCreated: localStats.linksCreated + (data.stats.linksCreated || 0)
+            linksCreated: localStats.linksCreated + (data.stats.linksCreated || 0),
+            medicationsAdded: localStats.medicationsAdded + (data.stats.medicationsAdded || 0),
+            sideEffectsAdded: localStats.sideEffectsAdded + (data.stats.sideEffectsAdded || 0),
+            interactionsAdded: localStats.interactionsAdded + (data.stats.interactionsAdded || 0),
+            contraindicationsAdded: localStats.contraindicationsAdded + (data.stats.contraindicationsAdded || 0)
           };
           setStats(localStats);
         }
@@ -323,16 +349,61 @@ export const MedicalScraperPanel = () => {
         });
       }
 
-      // Pause entre les requêtes selon le mode
       const delay = RATE_LIMIT_DELAYS[rateLimitMode];
       await new Promise(resolve => setTimeout(resolve, delay));
     }
 
     setIsScraping(false);
     setCurrentUrl('');
+    
+    const summary = mode === 'medications' 
+      ? `${localStats.medicationsAdded} médicaments, ${localStats.sideEffectsAdded} effets secondaires`
+      : `${localStats.pathologiesAdded} pathologies, ${localStats.symptomsAdded} symptômes`;
+    
     toast({
       title: "Scraping terminé",
-      description: `${successCount} réussis, ${failCount} échecs. ${localStats.pathologiesAdded} pathologies ajoutées.`
+      description: `${successCount} réussis, ${failCount} échecs. ${summary}`
+    });
+  };
+
+  const handleTestUrls = async () => {
+    const urls = manualUrls
+      .split('\n')
+      .map(u => u.trim())
+      .filter(u => u.startsWith('http'));
+    
+    if (urls.length === 0) {
+      toast({
+        title: "Erreur",
+        description: "Aucune URL valide trouvée",
+        variant: "destructive"
+      });
+      return;
+    }
+
+    await handleStartScraping(urls);
+  };
+
+  const handleAddManualUrls = () => {
+    const urls = manualUrls
+      .split('\n')
+      .map(u => u.trim())
+      .filter(u => u.startsWith('http'));
+    
+    if (urls.length === 0) {
+      toast({
+        title: "Erreur",
+        description: "Aucune URL valide trouvée",
+        variant: "destructive"
+      });
+      return;
+    }
+
+    setMappedUrls(prev => [...new Set([...prev, ...urls])]);
+    setManualUrls('');
+    toast({
+      title: "URLs ajoutées",
+      description: `${urls.length} URLs ajoutées à la liste`
     });
   };
 
@@ -345,9 +416,10 @@ export const MedicalScraperPanel = () => {
     setMappedUrls([]);
     setLogs([]);
     setProgress(0);
-    setStats({ pathologiesAdded: 0, symptomsAdded: 0, treatmentsAdded: 0, linksCreated: 0 });
+    setStats(initialStats);
     setCurrentUrl('');
     setRateLimitHits(0);
+    setManualUrls('');
   };
 
   const handleClearCache = () => {
@@ -363,28 +435,124 @@ export const MedicalScraperPanel = () => {
 
   return (
     <div className="space-y-6">
-      {/* Configuration */}
+      {/* Sélection du mode */}
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <Globe className="h-5 w-5" />
-            Configuration du scraping
+            Scraper Médical Unifié
           </CardTitle>
           <CardDescription>
-            Configurez l'URL du site médical à scraper et les options
+            Scrapez des pathologies/symptômes ou des médicaments depuis n'importe quelle source
           </CardDescription>
         </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="space-y-2">
-            <label className="text-sm font-medium">URL de départ</label>
-            <Input
-              value={url}
-              onChange={(e) => setUrl(e.target.value)}
-              placeholder="Collez n'importe quelle URL de site médical (ex: https://example.com)"
-              disabled={isScraping}
-            />
-          </div>
+        <CardContent>
+          <Tabs value={mode} onValueChange={(v) => { setMode(v as ScraperMode); handleReset(); }}>
+            <TabsList className="grid w-full grid-cols-2">
+              <TabsTrigger value="pathologies" className="flex items-center gap-2">
+                <Stethoscope className="h-4 w-4" />
+                Pathologies & Symptômes
+              </TabsTrigger>
+              <TabsTrigger value="medications" className="flex items-center gap-2">
+                <Tablets className="h-4 w-4" />
+                Médicaments (Compendium)
+              </TabsTrigger>
+            </TabsList>
 
+            <TabsContent value="pathologies" className="space-y-4 mt-4">
+              <div className="space-y-2">
+                <label className="text-sm font-medium">URL du site médical</label>
+                <Input
+                  value={url}
+                  onChange={(e) => setUrl(e.target.value)}
+                  placeholder="https://exemple.com/maladies"
+                  disabled={isScraping}
+                />
+                <p className="text-xs text-muted-foreground">
+                  Entrez l'URL d'un site médical pour extraire pathologies, symptômes et traitements
+                </p>
+              </div>
+            </TabsContent>
+
+            <TabsContent value="medications" className="space-y-4 mt-4">
+              <div className="space-y-2">
+                <label className="text-sm font-medium">URL Compendium.ch</label>
+                <Input
+                  value={url}
+                  onChange={(e) => setUrl(e.target.value)}
+                  placeholder="https://compendium.ch/fr/product"
+                  disabled={isScraping}
+                />
+              </div>
+
+              {/* Test rapide */}
+              <div className="p-3 border rounded-lg bg-muted/30 space-y-3">
+                <div className="flex items-center justify-between">
+                  <p className="text-sm font-medium flex items-center gap-2">
+                    <TestTube className="h-4 w-4 text-blue-500" />
+                    Test rapide ({TEST_MEDICATION_URLS.length} URLs)
+                  </p>
+                  <Button 
+                    size="sm"
+                    onClick={() => handleStartScraping(TEST_MEDICATION_URLS)}
+                    disabled={isScraping || isMapping}
+                  >
+                    {isScraping ? (
+                      <><Loader2 className="h-4 w-4 mr-2 animate-spin" />Test...</>
+                    ) : (
+                      <><TestTube className="h-4 w-4 mr-2" />Lancer le test</>
+                    )}
+                  </Button>
+                </div>
+                <div className="text-xs text-muted-foreground space-y-0.5">
+                  {TEST_MEDICATION_URLS.map((testUrl, i) => (
+                    <div key={i} className="truncate">{testUrl.split('/product/')[1]?.replace('/mpro', '')}</div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Saisie manuelle */}
+              <div className="space-y-2">
+                <label className="text-sm font-medium">URLs manuelles</label>
+                <Textarea
+                  placeholder="Collez des URLs (une par ligne)&#10;https://compendium.ch/product/..."
+                  value={manualUrls}
+                  onChange={(e) => setManualUrls(e.target.value)}
+                  rows={3}
+                  className="text-xs"
+                  disabled={isScraping}
+                />
+                <div className="flex gap-2">
+                  <Button 
+                    size="sm" 
+                    variant="outline"
+                    onClick={handleAddManualUrls}
+                    disabled={!manualUrls.trim() || isScraping}
+                  >
+                    <Plus className="h-4 w-4 mr-1" />
+                    Ajouter aux URLs
+                  </Button>
+                  <Button 
+                    size="sm"
+                    onClick={handleTestUrls}
+                    disabled={!manualUrls.trim() || isScraping}
+                  >
+                    <TestTube className="h-4 w-4 mr-1" />
+                    Tester ces URLs
+                  </Button>
+                </div>
+              </div>
+            </TabsContent>
+          </Tabs>
+        </CardContent>
+      </Card>
+
+      {/* Configuration */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Configuration</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div className="space-y-2">
               <label className="text-sm font-medium">
@@ -416,9 +584,6 @@ export const MedicalScraperPanel = () => {
                   <SelectItem value="fast">{RATE_LIMIT_LABELS.fast}</SelectItem>
                 </SelectContent>
               </Select>
-              <p className="text-xs text-muted-foreground">
-                Plus lent = moins de risque d'erreurs 429
-              </p>
             </div>
           </div>
 
@@ -430,7 +595,7 @@ export const MedicalScraperPanel = () => {
           )}
 
           {rateLimitHits > 0 && (
-            <div className="flex items-center gap-2 text-sm text-warning bg-warning/10 p-2 rounded">
+            <div className="flex items-center gap-2 text-sm text-yellow-600 bg-yellow-500/10 p-2 rounded">
               <AlertTriangle className="h-4 w-4" />
               {rateLimitHits} rate limit(s) détecté(s) - considérez le mode prudent
             </div>
@@ -439,26 +604,20 @@ export const MedicalScraperPanel = () => {
           <div className="flex gap-2 flex-wrap">
             <Button 
               onClick={handleMapSite} 
-              disabled={isMapping || isScraping}
+              disabled={isMapping || isScraping || !url}
               variant="outline"
             >
               {isMapping ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  Mapping...
-                </>
+                <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Mapping...</>
               ) : (
-                <>
-                  <MapPin className="mr-2 h-4 w-4" />
-                  Mapper le site
-                </>
+                <><MapPin className="mr-2 h-4 w-4" />Mapper le site</>
               )}
             </Button>
 
             {mappedUrls.length > 0 && !isScraping && (
-              <Button onClick={handleStartScraping} disabled={newUrlsCount === 0}>
+              <Button onClick={() => handleStartScraping()} disabled={newUrlsCount === 0}>
                 <Play className="mr-2 h-4 w-4" />
-                Scraper ({Math.min(pageLimit[0], newUrlsCount)} nouvelles pages)
+                Scraper ({Math.min(pageLimit[0], newUrlsCount)} pages)
               </Button>
             )}
 
@@ -475,7 +634,7 @@ export const MedicalScraperPanel = () => {
 
             {scrapedUrls.size > 0 && (
               <Button onClick={handleClearCache} variant="ghost" size="sm" disabled={isScraping}>
-                Vider cache ({scrapedUrls.size} URLs)
+                Vider cache ({scrapedUrls.size})
               </Button>
             )}
           </div>
@@ -496,7 +655,7 @@ export const MedicalScraperPanel = () => {
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <ScrollArea className="h-[200px]">
+            <ScrollArea className="h-[150px]">
               <div className="space-y-1">
                 {mappedUrls.slice(0, 50).map((mappedUrl, index) => (
                   <div 
@@ -548,26 +707,53 @@ export const MedicalScraperPanel = () => {
 
             {/* Statistiques */}
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4 pt-4">
-              <div className="text-center p-3 bg-muted rounded-lg">
-                <FileText className="h-5 w-5 mx-auto mb-1 text-primary" />
-                <div className="text-2xl font-bold">{stats.pathologiesAdded}</div>
-                <div className="text-xs text-muted-foreground">Pathologies</div>
-              </div>
-              <div className="text-center p-3 bg-muted rounded-lg">
-                <Stethoscope className="h-5 w-5 mx-auto mb-1 text-primary" />
-                <div className="text-2xl font-bold">{stats.symptomsAdded}</div>
-                <div className="text-xs text-muted-foreground">Symptômes</div>
-              </div>
-              <div className="text-center p-3 bg-muted rounded-lg">
-                <Pill className="h-5 w-5 mx-auto mb-1 text-primary" />
-                <div className="text-2xl font-bold">{stats.treatmentsAdded}</div>
-                <div className="text-xs text-muted-foreground">Traitements</div>
-              </div>
-              <div className="text-center p-3 bg-muted rounded-lg">
-                <Database className="h-5 w-5 mx-auto mb-1 text-primary" />
-                <div className="text-2xl font-bold">{stats.linksCreated}</div>
-                <div className="text-xs text-muted-foreground">Liens créés</div>
-              </div>
+              {mode === 'pathologies' ? (
+                <>
+                  <div className="text-center p-3 bg-muted rounded-lg">
+                    <FileText className="h-5 w-5 mx-auto mb-1 text-purple-500" />
+                    <div className="text-2xl font-bold">{stats.pathologiesAdded}</div>
+                    <div className="text-xs text-muted-foreground">Pathologies</div>
+                  </div>
+                  <div className="text-center p-3 bg-muted rounded-lg">
+                    <Stethoscope className="h-5 w-5 mx-auto mb-1 text-blue-500" />
+                    <div className="text-2xl font-bold">{stats.symptomsAdded}</div>
+                    <div className="text-xs text-muted-foreground">Symptômes</div>
+                  </div>
+                  <div className="text-center p-3 bg-muted rounded-lg">
+                    <Pill className="h-5 w-5 mx-auto mb-1 text-green-500" />
+                    <div className="text-2xl font-bold">{stats.treatmentsAdded}</div>
+                    <div className="text-xs text-muted-foreground">Traitements</div>
+                  </div>
+                  <div className="text-center p-3 bg-muted rounded-lg">
+                    <Database className="h-5 w-5 mx-auto mb-1 text-primary" />
+                    <div className="text-2xl font-bold">{stats.linksCreated}</div>
+                    <div className="text-xs text-muted-foreground">Liens créés</div>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="text-center p-3 bg-muted rounded-lg">
+                    <Tablets className="h-5 w-5 mx-auto mb-1 text-orange-500" />
+                    <div className="text-2xl font-bold">{stats.medicationsAdded}</div>
+                    <div className="text-xs text-muted-foreground">Médicaments</div>
+                  </div>
+                  <div className="text-center p-3 bg-muted rounded-lg">
+                    <AlertTriangle className="h-5 w-5 mx-auto mb-1 text-red-500" />
+                    <div className="text-2xl font-bold">{stats.sideEffectsAdded}</div>
+                    <div className="text-xs text-muted-foreground">Effets sec.</div>
+                  </div>
+                  <div className="text-center p-3 bg-muted rounded-lg">
+                    <Pill className="h-5 w-5 mx-auto mb-1 text-yellow-500" />
+                    <div className="text-2xl font-bold">{stats.interactionsAdded}</div>
+                    <div className="text-xs text-muted-foreground">Interactions</div>
+                  </div>
+                  <div className="text-center p-3 bg-muted rounded-lg">
+                    <XCircle className="h-5 w-5 mx-auto mb-1 text-purple-500" />
+                    <div className="text-2xl font-bold">{stats.contraindicationsAdded}</div>
+                    <div className="text-xs text-muted-foreground">Contre-ind.</div>
+                  </div>
+                </>
+              )}
             </div>
           </CardContent>
         </Card>
@@ -580,7 +766,7 @@ export const MedicalScraperPanel = () => {
             <CardTitle>Journal des opérations</CardTitle>
           </CardHeader>
           <CardContent>
-            <ScrollArea className="h-[300px]">
+            <ScrollArea className="h-[250px]">
               <div className="space-y-2">
                 {logs.map((log, index) => (
                   <div 
@@ -602,21 +788,24 @@ export const MedicalScraperPanel = () => {
                       </div>
                       {log.success && log.stats && (
                         <div className="flex gap-2 mt-1 flex-wrap">
-                          {log.stats.pathologiesAdded > 0 && (
-                            <Badge variant="outline" className="text-xs">
-                              +{log.stats.pathologiesAdded} pathologie
-                            </Badge>
-                          )}
-                          {log.stats.symptomsAdded > 0 && (
-                            <Badge variant="outline" className="text-xs">
-                              +{log.stats.symptomsAdded} symptômes
-                            </Badge>
-                          )}
-                          {log.stats.treatmentsAdded > 0 && (
-                            <Badge variant="outline" className="text-xs">
-                              +{log.stats.treatmentsAdded} traitements
-                            </Badge>
-                          )}
+                          {log.stats.pathologiesAdded ? (
+                            <Badge variant="outline" className="text-xs">+{log.stats.pathologiesAdded} patho</Badge>
+                          ) : null}
+                          {log.stats.symptomsAdded ? (
+                            <Badge variant="outline" className="text-xs">+{log.stats.symptomsAdded} sympt</Badge>
+                          ) : null}
+                          {log.stats.treatmentsAdded ? (
+                            <Badge variant="outline" className="text-xs">+{log.stats.treatmentsAdded} trait</Badge>
+                          ) : null}
+                          {log.stats.medicationsAdded ? (
+                            <Badge variant="outline" className="text-xs">+{log.stats.medicationsAdded} méd</Badge>
+                          ) : null}
+                          {log.stats.sideEffectsAdded ? (
+                            <Badge variant="outline" className="text-xs">+{log.stats.sideEffectsAdded} eff.sec</Badge>
+                          ) : null}
+                          {log.stats.interactionsAdded ? (
+                            <Badge variant="outline" className="text-xs">+{log.stats.interactionsAdded} inter</Badge>
+                          ) : null}
                         </div>
                       )}
                       {log.error && (
@@ -632,6 +821,15 @@ export const MedicalScraperPanel = () => {
           </CardContent>
         </Card>
       )}
+
+      {/* Avertissement */}
+      <div className="flex items-start gap-2 p-3 bg-yellow-500/10 border border-yellow-500/30 rounded-lg">
+        <AlertTriangle className="h-4 w-4 text-yellow-500 mt-0.5 flex-shrink-0" />
+        <div className="text-xs text-muted-foreground">
+          <p className="font-medium text-yellow-700 dark:text-yellow-400">Attention aux crédits Firecrawl</p>
+          <p>Le scraping consomme des crédits Firecrawl. Utilisez le mode prudent pour éviter les erreurs 429.</p>
+        </div>
+      </div>
     </div>
   );
 };
