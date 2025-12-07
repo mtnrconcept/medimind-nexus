@@ -1,1 +1,7 @@
 project_id = "fgksnveweiwmovouflgj"
+
+[functions.pubmed-search]
+verify_jwt = false
+
+[functions.import-icd]
+verify_jwt = true

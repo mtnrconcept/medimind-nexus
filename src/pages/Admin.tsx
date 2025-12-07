@@ -7,7 +7,9 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
+import { Progress } from '@/components/ui/progress';
 import { supabase } from '@/integrations/supabase/client';
+import { toast } from 'sonner';
 import {
   Users,
   Activity,
@@ -17,6 +19,9 @@ import {
   Settings,
   BookOpen,
   TrendingUp,
+  Download,
+  Loader2,
+  RefreshCw,
 } from 'lucide-react';
 
 interface UserWithRole {
@@ -54,6 +59,8 @@ const Admin = () => {
     symptoms: 0,
   });
   const [loading, setLoading] = useState(true);
+  const [importing, setImporting] = useState(false);
+  const [importProgress, setImportProgress] = useState({ current: 0, total: 0 });
 
   useEffect(() => {
     if (role !== 'admin') {
@@ -99,6 +106,58 @@ const Admin = () => {
 
     fetchData();
   }, [role, navigate]);
+
+  const refreshStats = async () => {
+    const pathologiesRes = await supabase.from('pathologies').select('id', { count: 'exact', head: true });
+    const symptomsRes = await supabase.from('symptoms').select('id', { count: 'exact', head: true });
+    setStats(prev => ({
+      ...prev,
+      pathologies: pathologiesRes.count || 0,
+      symptoms: symptomsRes.count || 0,
+    }));
+  };
+
+  const importIcdData = async (clearExisting = false) => {
+    setImporting(true);
+    setImportProgress({ current: 0, total: 0 });
+    
+    try {
+      let offset = 0;
+      const limit = 500;
+      let hasMore = true;
+      let totalImported = 0;
+      let totalInDataset = 0;
+      
+      while (hasMore) {
+        const { data, error } = await supabase.functions.invoke('import-icd', {
+          body: { limit, offset, clearExisting: clearExisting && offset === 0 }
+        });
+        
+        if (error) {
+          throw new Error(error.message);
+        }
+        
+        if (!data.success) {
+          throw new Error(data.error || 'Import failed');
+        }
+        
+        totalImported += data.imported;
+        totalInDataset = data.totalInDataset;
+        hasMore = data.hasMore;
+        offset = data.nextOffset || 0;
+        
+        setImportProgress({ current: totalImported, total: totalInDataset });
+      }
+      
+      toast.success(`Import terminé: ${totalImported} pathologies ICD-10 importées`);
+      await refreshStats();
+    } catch (error) {
+      console.error('Import error:', error);
+      toast.error(`Erreur d'import: ${error instanceof Error ? error.message : 'Erreur inconnue'}`);
+    } finally {
+      setImporting(false);
+    }
+  };
 
   const getRoleIcon = (userRole: string) => {
     switch (userRole) {
@@ -258,6 +317,57 @@ const Admin = () => {
           <TabsContent value="data" className="space-y-4">
             <Card>
               <CardHeader>
+                <CardTitle>Import des données ICD-10</CardTitle>
+                <CardDescription>
+                  Importez les codes ICD-10 depuis la base de données WHO (~14,000 pathologies)
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="flex gap-4">
+                  <Button
+                    onClick={() => importIcdData(false)}
+                    disabled={importing}
+                  >
+                    {importing ? (
+                      <>
+                        <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                        Import en cours...
+                      </>
+                    ) : (
+                      <>
+                        <Download className="h-4 w-4 mr-2" />
+                        Importer ICD-10
+                      </>
+                    )}
+                  </Button>
+                  <Button
+                    variant="destructive"
+                    onClick={() => importIcdData(true)}
+                    disabled={importing}
+                  >
+                    <RefreshCw className="h-4 w-4 mr-2" />
+                    Réinitialiser et importer
+                  </Button>
+                </div>
+                
+                {importing && importProgress.total > 0 && (
+                  <div className="space-y-2">
+                    <Progress value={(importProgress.current / importProgress.total) * 100} />
+                    <p className="text-sm text-muted-foreground">
+                      {importProgress.current.toLocaleString()} / {importProgress.total.toLocaleString()} pathologies importées
+                    </p>
+                  </div>
+                )}
+                
+                <p className="text-sm text-muted-foreground">
+                  Les données sont importées depuis le référentiel ICD-10 de l'OMS via GitHub.
+                  L'import peut prendre quelques minutes.
+                </p>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
                 <CardTitle>Vue d'ensemble des données</CardTitle>
                 <CardDescription>
                   Statistiques sur le contenu de la base de données
@@ -270,7 +380,7 @@ const Admin = () => {
                       <BookOpen className="h-4 w-4" />
                       <span className="text-sm">Pathologies</span>
                     </div>
-                    <p className="text-2xl font-bold mt-1">{stats.pathologies}</p>
+                    <p className="text-2xl font-bold mt-1">{stats.pathologies.toLocaleString()}</p>
                   </div>
                   <div className="p-4 rounded-lg border">
                     <div className="flex items-center gap-2 text-muted-foreground">
@@ -282,15 +392,11 @@ const Admin = () => {
                   <div className="p-4 rounded-lg border">
                     <div className="flex items-center gap-2 text-muted-foreground">
                       <TrendingUp className="h-4 w-4" />
-                      <span className="text-sm">Complétude</span>
+                      <span className="text-sm">Source</span>
                     </div>
-                    <p className="text-2xl font-bold mt-1">Prototype</p>
+                    <p className="text-2xl font-bold mt-1">ICD-10 WHO</p>
                   </div>
                 </div>
-                <p className="text-sm text-muted-foreground mt-4">
-                  La gestion avancée des données (ajout, modification, suppression de pathologies)
-                  sera disponible dans une version ultérieure.
-                </p>
               </CardContent>
             </Card>
           </TabsContent>
