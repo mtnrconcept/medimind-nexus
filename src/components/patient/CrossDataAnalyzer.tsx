@@ -80,6 +80,7 @@ interface CausalLink {
   evidence: string;
   patientCount: number;
   webSources?: string[];
+  isAppropriate?: boolean; // Pour les traitements: indique si adapté à la pathologie
 }
 
 interface AnalysisResult {
@@ -938,7 +939,10 @@ const CrossDataAnalyzer = () => {
                   {result.causalLinks.map((link, index) => (
                     <div 
                       key={index} 
-                      className="p-4 border rounded-lg bg-card space-y-2"
+                      className={`p-4 border rounded-lg bg-card space-y-2 ${
+                        link.isAppropriate === true ? 'border-green-500/50 bg-green-500/5' :
+                        link.isAppropriate === false ? 'border-destructive/50 bg-destructive/5' : ''
+                      }`}
                     >
                       <div className="flex items-center gap-2 flex-wrap">
                         <div className="flex items-center gap-1.5 px-2 py-1 bg-muted rounded">
@@ -953,6 +957,20 @@ const CrossDataAnalyzer = () => {
                           <span className="text-xs text-muted-foreground">({getTypeLabel(link.toType)})</span>
                         </div>
                         {getProbabilityBadge(link.probability)}
+                        {/* Indicateur d'adéquation thérapeutique */}
+                        {link.isAppropriate !== undefined && (
+                          link.isAppropriate ? (
+                            <Badge className="bg-green-500/20 text-green-700 dark:text-green-400 border-green-500/30 flex items-center gap-1">
+                              <CheckCircle2 className="h-3 w-3" />
+                              Adapté
+                            </Badge>
+                          ) : (
+                            <Badge className="bg-destructive/20 text-destructive border-destructive/30 flex items-center gap-1">
+                              <XCircle className="h-3 w-3" />
+                              Non adapté
+                            </Badge>
+                          )
+                        )}
                       </div>
                       <p className="text-sm font-medium text-primary">{link.relationship}</p>
                       <p className="text-sm text-muted-foreground">{link.evidence}</p>

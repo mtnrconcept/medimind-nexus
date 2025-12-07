@@ -8,14 +8,15 @@ const corsHeaders = {
 
 interface CausalLink {
   from: string;
-  fromType: 'symptom' | 'pathology' | 'treatment';
+  fromType: 'symptom' | 'pathology' | 'treatment' | 'medication';
   to: string;
-  toType: 'symptom' | 'pathology' | 'treatment';
+  toType: 'symptom' | 'pathology' | 'treatment' | 'medication';
   relationship: string;
   probability: 'high' | 'medium' | 'low';
   evidence: string;
   patientCount: number;
   webSources: string[];
+  isAppropriate?: boolean; // Pour les traitements: indique si adapté à la pathologie
 }
 
 interface AnalysisResult {
@@ -68,14 +69,14 @@ serve(async (req) => {
   }
 
   try {
-    const { pathologyIds, symptomIds, treatmentIds } = await req.json();
+    const { pathologyIds, symptomIds, treatmentIds, medicationIds } = await req.json();
 
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
     const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
     const supabase = createClient(supabaseUrl, supabaseKey);
 
-    // Récupérer les données sélectionnées
-    const [pathologiesRes, symptomsRes, treatmentsRes, patientsRes] = await Promise.all([
+    // Récupérer les données sélectionnées (incluant les médicaments)
+    const [pathologiesRes, symptomsRes, treatmentsRes, medicationsRes, patientsRes] = await Promise.all([
       pathologyIds?.length > 0 
         ? supabase.from('pathologies').select('*').in('id', pathologyIds)
         : Promise.resolve({ data: [] }),
@@ -85,12 +86,16 @@ serve(async (req) => {
       treatmentIds?.length > 0
         ? supabase.from('treatments').select('*, pathologies(name)').in('id', treatmentIds)
         : Promise.resolve({ data: [] }),
+      medicationIds?.length > 0
+        ? supabase.from('medications').select('*, side_effects(*), contraindications(*), drug_interactions(*)').in('id', medicationIds)
+        : Promise.resolve({ data: [] }),
       supabase.from('patients').select('*, pathologies(name)')
     ]);
 
     const pathologies = pathologiesRes.data || [];
     const symptoms = symptomsRes.data || [];
     const treatments = treatmentsRes.data || [];
+    const medications = medicationsRes.data || [];
     const patients = patientsRes.data || [];
 
     // Récupérer les liens symptômes pour les pathologies sélectionnées
@@ -109,10 +114,23 @@ serve(async (req) => {
     // Rechercher les interactions entre éléments sélectionnés
     for (const pathology of pathologies) {
       for (const treatment of treatments) {
-        webSearchQueries.push(`${pathology.name} ${treatment.name} interaction effets secondaires`);
+        webSearchQueries.push(`${pathology.name} ${treatment.name} traitement adapté efficacité`);
+      }
+      for (const medication of medications) {
+        webSearchQueries.push(`${pathology.name} ${medication.name} indication traitement`);
       }
       for (const symptom of symptoms) {
         webSearchQueries.push(`${pathology.name} ${symptom.name} corrélation causalité`);
+      }
+    }
+    
+    // Interactions médicaments-traitements
+    for (const medication of medications) {
+      for (const treatment of treatments) {
+        webSearchQueries.push(`${medication.name} ${treatment.name} interaction combinaison`);
+      }
+      for (const symptom of symptoms) {
+        webSearchQueries.push(`${medication.name} ${symptom.name} effet secondaire indésirable`);
       }
     }
     
@@ -126,7 +144,8 @@ serve(async (req) => {
     if (webSearchQueries.length === 0) {
       for (const p of pathologies) webSearchQueries.push(`${p.name} causes symptômes traitements`);
       for (const s of symptoms) webSearchQueries.push(`${s.name} causes pathologies associées`);
-      for (const t of treatments) webSearchQueries.push(`${t.name} effets secondaires interactions`);
+      for (const t of treatments) webSearchQueries.push(`${t.name} effets secondaires interactions indications`);
+      for (const m of medications) webSearchQueries.push(`${m.name} indications contre-indications effets secondaires`);
     }
 
     // Limiter à 5 recherches maximum
@@ -155,8 +174,21 @@ serve(async (req) => {
     ).join('\n');
 
     const selectedTreatmentsContext = treatments.map((t: any) => 
-      `- ${t.name} (type: ${t.type || 'N/A'}, pour: ${t.pathologies?.name || 'N/A'}): ${t.description || ''}\n  Contre-indications: ${t.contraindications?.join(', ') || 'Aucune connue'}`
+      `- ${t.name} (type: ${t.type || 'N/A'}, pour pathologie: ${t.pathologies?.name || 'N/A'}): ${t.description || ''}\n  Contre-indications: ${t.contraindications?.join(', ') || 'Aucune connue'}`
     ).join('\n');
+
+    // Contexte des médicaments avec effets secondaires et interactions
+    const selectedMedicationsContext = medications.map((m: any) => {
+      const sideEffects = m.side_effects?.map((se: any) => `${se.name} (${se.severity || 'N/A'})`).join(', ') || 'Aucun connu';
+      const contraindications = m.contraindications?.map((c: any) => c.condition).join(', ') || 'Aucune connue';
+      const interactions = m.drug_interactions?.map((di: any) => `${di.interacting_drug} (${di.severity || 'N/A'})`).join(', ') || 'Aucune connue';
+      return `- ${m.name} (ATC: ${m.atc_code || 'N/A'}, substance: ${m.substance || 'N/A'})
+  Indications: ${m.indications || 'N/A'}
+  Posologie: ${m.posology || 'N/A'}
+  Effets secondaires: ${sideEffects}
+  Contre-indications: ${contraindications}
+  Interactions: ${interactions}`;
+    }).join('\n\n');
 
     // Patients avec pathologies sélectionnées
     const relevantPatients = patients.filter((p: any) => 
@@ -177,55 +209,59 @@ serve(async (req) => {
       return `Recherche: "${wr.query}"\nArticles trouvés:\n${articlesInfo || '  Aucun article trouvé'}`;
     }).join('\n\n');
 
-    const systemPrompt = `Tu es un expert médical francophone spécialisé dans l'analyse cross-data. Tu analyses les corrélations et liens de causalité entre symptômes, pathologies et traitements.
+    const systemPrompt = `Tu es un expert médical francophone spécialisé dans l'analyse cross-data et l'évaluation thérapeutique. Tu analyses les corrélations entre symptômes, pathologies, traitements ET médicaments.
 
 IMPORTANT: Tu dois TOUJOURS répondre en FRANÇAIS.
 
-Ton objectif est d'identifier:
-1. Les liens de causalité potentiels entre les éléments sélectionnés
-2. Si un symptôme pourrait être causé par un traitement (effet secondaire)
-3. Si une pathologie peut causer une autre pathologie
-4. Si un traitement peut aggraver ou masquer des symptômes
-5. Les patterns observés dans les données patients
-6. Les preuves scientifiques issues de la littérature médicale (PubMed)
+Ton objectif PRINCIPAL est d'évaluer:
+1. **L'ADÉQUATION TRAITEMENT/PATHOLOGIE**: Pour chaque combinaison traitement-pathologie ou médicament-pathologie, indique clairement si c'est ADAPTÉ, PARTIELLEMENT ADAPTÉ, ou NON ADAPTÉ avec une explication médicale
+2. Les effets secondaires potentiels des médicaments sur les symptômes
+3. Les interactions entre médicaments et traitements
+4. Les contre-indications par rapport aux pathologies sélectionnées
+5. Si un symptôme pourrait être un effet indésirable d'un traitement/médicament
+6. Les preuves scientifiques issues de PubMed
 
 Tu DOIS répondre UNIQUEMENT en JSON valide avec cette structure exacte:
 {
   "causalLinks": [
     {
       "from": "nom de l'élément source",
-      "fromType": "symptom" | "pathology" | "treatment",
+      "fromType": "symptom" | "pathology" | "treatment" | "medication",
       "to": "nom de l'élément cible",
-      "toType": "symptom" | "pathology" | "treatment",
+      "toType": "symptom" | "pathology" | "treatment" | "medication",
       "relationship": "description courte du lien en français",
       "probability": "high" | "medium" | "low",
-      "evidence": "explication détaillée basée sur les données et la recherche web, en français",
-      "patientCount": nombre de patients où ce lien est observé,
-      "webSources": ["URL des sources pertinentes"]
+      "evidence": "explication détaillée basée sur les données médicales, en français",
+      "patientCount": nombre de patients où ce lien est observé (0 si non applicable),
+      "webSources": ["URL des sources pertinentes"],
+      "isAppropriate": true ou false (uniquement pour les liens traitement/médicament vers pathologie)
     }
   ],
-  "summary": "résumé global de l'analyse en 2-3 phrases, en français",
-  "warnings": ["avertissement 1 en français", "avertissement 2 en français"],
-  "recommendations": ["recommandation 1 en français", "recommandation 2 en français"],
+  "summary": "résumé global de l'analyse en 2-3 phrases, avec une conclusion claire sur l'adéquation des traitements aux pathologies, en français",
+  "warnings": ["avertissement critique 1 en français", "avertissement 2 en français"],
+  "recommendations": ["recommandation thérapeutique 1 en français", "recommandation 2 en français"],
   "webResearch": [
     {
       "query": "requête de recherche",
-      "findings": ["découverte 1 en français", "découverte 2 en français"],
+      "findings": ["découverte médicale 1 en français", "découverte 2 en français"],
       "sources": [{"title": "titre de l'article", "url": "URL"}]
     }
   ]
 }`;
 
-    const userPrompt = `Analyse les liens de causalité entre ces éléments médicaux en utilisant à la fois les données patients et la recherche scientifique:
+    const userPrompt = `Analyse les liens de causalité et L'ADÉQUATION THÉRAPEUTIQUE entre ces éléments médicaux:
 
 ## PATHOLOGIES SÉLECTIONNÉES
 ${selectedPathologiesContext || 'Aucune'}
 
-## SYMPTÔMES SÉLECTIONNÉS
+## SYMPTÔMES SÉLECTIONNÉS (peuvent être des effets indésirables)
 ${selectedSymptomsContext || 'Aucun'}
 
 ## TRAITEMENTS SÉLECTIONNÉS
 ${selectedTreatmentsContext || 'Aucun'}
+
+## MÉDICAMENTS SÉLECTIONNÉS (avec leurs effets secondaires et interactions)
+${selectedMedicationsContext || 'Aucun'}
 
 ## ASSOCIATIONS SYMPTÔMES-PATHOLOGIES CONNUES (BASE DE DONNÉES)
 ${symptomLinksContext || 'Aucune association trouvée'}
@@ -236,14 +272,15 @@ ${patientContext || 'Aucun patient trouvé'}
 ## RECHERCHE SCIENTIFIQUE PUBMED
 ${webResearchContext || 'Aucune recherche effectuée'}
 
-Identifie tous les liens de causalité possibles entre ces éléments. Base tes analyses sur:
-- Les contre-indications des traitements
-- Les fréquences des symptômes
-- Les résultats observés chez les patients (Résolu, En cours, Effet secondaire)
-- Les associations connues dans la littérature médicale (articles PubMed fournis)
-- Tes connaissances médicales générales
+ANALYSE REQUISE:
+1. **PRIORITÉ 1 - ADÉQUATION TRAITEMENT/PATHOLOGIE**: Pour chaque traitement ou médicament sélectionné, évalue s'il est ADAPTÉ, PARTIELLEMENT ADAPTÉ ou NON ADAPTÉ pour chaque pathologie sélectionnée. Explique pourquoi.
+2. **PRIORITÉ 2 - EFFETS INDÉSIRABLES**: Les symptômes sélectionnés pourraient-ils être des effets secondaires des traitements/médicaments ?
+3. **PRIORITÉ 3 - INTERACTIONS**: Y a-t-il des interactions dangereuses entre les médicaments sélectionnés ?
+4. **PRIORITÉ 4 - CONTRE-INDICATIONS**: Y a-t-il des contre-indications par rapport aux pathologies ?
 
-Réponds UNIQUEMENT en français.`;
+Base tes analyses sur les indications officielles, les contre-indications, la littérature médicale (PubMed) et tes connaissances médicales.
+
+Réponds UNIQUEMENT en français avec le JSON demandé.`;
 
     console.log('Appel de Lovable AI pour l\'analyse cross-data...');
 
@@ -334,6 +371,7 @@ Réponds UNIQUEMENT en français.`;
           pathologiesCount: pathologies.length,
           symptomsCount: symptoms.length,
           treatmentsCount: treatments.length,
+          medicationsCount: medications.length,
           patientsAnalyzed: relevantPatients.length,
           pubmedSearches: webResearchResults.length
         }
