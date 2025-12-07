@@ -175,17 +175,54 @@ const CrossDataAnalyzer = () => {
   }, [treatments, searchTreatments, filterTreatmentType]);
 
   useEffect(() => {
+    const fetchAllRows = async <T,>(
+      table: 'pathologies' | 'symptoms' | 'treatments',
+      selectQuery: string
+    ): Promise<T[]> => {
+      const pageSize = 1000;
+      let allData: T[] = [];
+      let from = 0;
+      let hasMore = true;
+
+      while (hasMore) {
+        const { data, error } = await supabase
+          .from(table)
+          .select(selectQuery)
+          .order('name')
+          .range(from, from + pageSize - 1);
+
+        if (error) {
+          console.error(`Erreur chargement ${table}:`, error);
+          break;
+        }
+
+        if (data) {
+          allData = [...allData, ...data as unknown as T[]];
+          hasMore = data.length === pageSize;
+          from += pageSize;
+        } else {
+          hasMore = false;
+        }
+      }
+
+      return allData;
+    };
+
     const fetchData = async () => {
-      const [pathologiesRes, symptomsRes, treatmentsRes] = await Promise.all([
-        supabase.from('pathologies').select('id, name, category, specialty, severity').order('name'),
-        supabase.from('symptoms').select('id, name, body_system').order('name'),
-        supabase.from('treatments').select('id, name, pathology_id, type').order('name')
+      setLoading(true);
+      
+      const [pathologiesData, symptomsData, treatmentsData] = await Promise.all([
+        fetchAllRows<Pathology>('pathologies', 'id, name, category, specialty, severity'),
+        fetchAllRows<Symptom>('symptoms', 'id, name, body_system'),
+        fetchAllRows<Treatment>('treatments', 'id, name, pathology_id, type')
       ]);
 
-      if (pathologiesRes.data) setPathologies(pathologiesRes.data);
-      if (symptomsRes.data) setSymptoms(symptomsRes.data);
-      if (treatmentsRes.data) setTreatments(treatmentsRes.data);
+      setPathologies(pathologiesData);
+      setSymptoms(symptomsData);
+      setTreatments(treatmentsData);
       setLoading(false);
+      
+      console.log(`Chargé: ${pathologiesData.length} pathologies, ${symptomsData.length} symptômes, ${treatmentsData.length} traitements`);
     };
 
     fetchData();
