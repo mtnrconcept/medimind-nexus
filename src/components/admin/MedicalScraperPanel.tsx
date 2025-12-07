@@ -569,7 +569,7 @@ export const MedicalScraperPanel = () => {
                   </div>
                   <Input
                     type="file"
-                    accept=".csv,.txt,.xls "
+                    accept=".csv,.txt,.xlsx "
                     className="max-w-xs"
                     onChange={handleFileAnalyze}
                     disabled={isImporting}
