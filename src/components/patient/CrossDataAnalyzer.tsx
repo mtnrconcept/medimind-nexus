@@ -1,10 +1,11 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import { Input } from '@/components/ui/input';
 import { supabase } from '@/integrations/supabase/client';
 import { 
   Brain, 
@@ -20,10 +21,11 @@ import {
   HelpCircle,
   Globe,
   ExternalLink,
-  BookOpen
+  BookOpen,
+  Search,
+  X
 } from 'lucide-react';
 import { toast } from 'sonner';
-
 interface Pathology {
   id: string;
   name: string;
@@ -83,6 +85,28 @@ const CrossDataAnalyzer = () => {
   const [selectedPathologies, setSelectedPathologies] = useState<string[]>([]);
   const [selectedSymptoms, setSelectedSymptoms] = useState<string[]>([]);
   const [selectedTreatments, setSelectedTreatments] = useState<string[]>([]);
+
+  const [searchPathologies, setSearchPathologies] = useState('');
+  const [searchSymptoms, setSearchSymptoms] = useState('');
+  const [searchTreatments, setSearchTreatments] = useState('');
+
+  const filteredPathologies = useMemo(() => {
+    if (!searchPathologies.trim()) return pathologies;
+    const search = searchPathologies.toLowerCase();
+    return pathologies.filter(p => p.name.toLowerCase().includes(search));
+  }, [pathologies, searchPathologies]);
+
+  const filteredSymptoms = useMemo(() => {
+    if (!searchSymptoms.trim()) return symptoms;
+    const search = searchSymptoms.toLowerCase();
+    return symptoms.filter(s => s.name.toLowerCase().includes(search));
+  }, [symptoms, searchSymptoms]);
+
+  const filteredTreatments = useMemo(() => {
+    if (!searchTreatments.trim()) return treatments;
+    const search = searchTreatments.toLowerCase();
+    return treatments.filter(t => t.name.toLowerCase().includes(search));
+  }, [treatments, searchTreatments]);
 
   useEffect(() => {
     const fetchData = async () => {
@@ -227,81 +251,159 @@ const CrossDataAnalyzer = () => {
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           {/* Pathologies */}
           <div className="space-y-2">
-            <div className="flex items-center gap-2 font-medium">
-              <Stethoscope className="h-4 w-4 text-purple-500" />
-              Pathologies ({selectedPathologies.length})
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2 font-medium">
+                <Stethoscope className="h-4 w-4 text-purple-500" />
+                Pathologies ({selectedPathologies.length})
+              </div>
+              <span className="text-xs text-muted-foreground">
+                {filteredPathologies.length}/{pathologies.length}
+              </span>
+            </div>
+            <div className="relative">
+              <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+              <Input
+                placeholder="Rechercher..."
+                value={searchPathologies}
+                onChange={(e) => setSearchPathologies(e.target.value)}
+                className="pl-8 pr-8 h-8 text-sm"
+              />
+              {searchPathologies && (
+                <button
+                  onClick={() => setSearchPathologies('')}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              )}
             </div>
             <ScrollArea className="h-48 border rounded-md p-2">
               <div className="space-y-2">
-                {pathologies.map((p) => (
-                  <div key={p.id} className="flex items-center gap-2">
-                    <Checkbox
-                      id={`pathology-${p.id}`}
-                      checked={selectedPathologies.includes(p.id)}
-                      onCheckedChange={() => toggleSelection(p.id, selectedPathologies, setSelectedPathologies)}
-                    />
-                    <label 
-                      htmlFor={`pathology-${p.id}`} 
-                      className="text-sm cursor-pointer truncate"
-                    >
-                      {p.name}
-                    </label>
-                  </div>
-                ))}
+                {filteredPathologies.length === 0 ? (
+                  <p className="text-sm text-muted-foreground text-center py-4">Aucun résultat</p>
+                ) : (
+                  filteredPathologies.map((p) => (
+                    <div key={p.id} className="flex items-center gap-2">
+                      <Checkbox
+                        id={`pathology-${p.id}`}
+                        checked={selectedPathologies.includes(p.id)}
+                        onCheckedChange={() => toggleSelection(p.id, selectedPathologies, setSelectedPathologies)}
+                      />
+                      <label 
+                        htmlFor={`pathology-${p.id}`} 
+                        className="text-sm cursor-pointer truncate"
+                      >
+                        {p.name}
+                      </label>
+                    </div>
+                  ))
+                )}
               </div>
             </ScrollArea>
           </div>
 
           {/* Symptômes */}
           <div className="space-y-2">
-            <div className="flex items-center gap-2 font-medium">
-              <Activity className="h-4 w-4 text-blue-500" />
-              Symptômes ({selectedSymptoms.length})
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2 font-medium">
+                <Activity className="h-4 w-4 text-blue-500" />
+                Symptômes ({selectedSymptoms.length})
+              </div>
+              <span className="text-xs text-muted-foreground">
+                {filteredSymptoms.length}/{symptoms.length}
+              </span>
+            </div>
+            <div className="relative">
+              <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+              <Input
+                placeholder="Rechercher..."
+                value={searchSymptoms}
+                onChange={(e) => setSearchSymptoms(e.target.value)}
+                className="pl-8 pr-8 h-8 text-sm"
+              />
+              {searchSymptoms && (
+                <button
+                  onClick={() => setSearchSymptoms('')}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              )}
             </div>
             <ScrollArea className="h-48 border rounded-md p-2">
               <div className="space-y-2">
-                {symptoms.map((s) => (
-                  <div key={s.id} className="flex items-center gap-2">
-                    <Checkbox
-                      id={`symptom-${s.id}`}
-                      checked={selectedSymptoms.includes(s.id)}
-                      onCheckedChange={() => toggleSelection(s.id, selectedSymptoms, setSelectedSymptoms)}
-                    />
-                    <label 
-                      htmlFor={`symptom-${s.id}`} 
-                      className="text-sm cursor-pointer truncate"
-                    >
-                      {s.name}
-                    </label>
-                  </div>
-                ))}
+                {filteredSymptoms.length === 0 ? (
+                  <p className="text-sm text-muted-foreground text-center py-4">Aucun résultat</p>
+                ) : (
+                  filteredSymptoms.map((s) => (
+                    <div key={s.id} className="flex items-center gap-2">
+                      <Checkbox
+                        id={`symptom-${s.id}`}
+                        checked={selectedSymptoms.includes(s.id)}
+                        onCheckedChange={() => toggleSelection(s.id, selectedSymptoms, setSelectedSymptoms)}
+                      />
+                      <label 
+                        htmlFor={`symptom-${s.id}`} 
+                        className="text-sm cursor-pointer truncate"
+                      >
+                        {s.name}
+                      </label>
+                    </div>
+                  ))
+                )}
               </div>
             </ScrollArea>
           </div>
 
           {/* Traitements */}
           <div className="space-y-2">
-            <div className="flex items-center gap-2 font-medium">
-              <Pill className="h-4 w-4 text-green-500" />
-              Traitements ({selectedTreatments.length})
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2 font-medium">
+                <Pill className="h-4 w-4 text-green-500" />
+                Traitements ({selectedTreatments.length})
+              </div>
+              <span className="text-xs text-muted-foreground">
+                {filteredTreatments.length}/{treatments.length}
+              </span>
+            </div>
+            <div className="relative">
+              <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+              <Input
+                placeholder="Rechercher..."
+                value={searchTreatments}
+                onChange={(e) => setSearchTreatments(e.target.value)}
+                className="pl-8 pr-8 h-8 text-sm"
+              />
+              {searchTreatments && (
+                <button
+                  onClick={() => setSearchTreatments('')}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              )}
             </div>
             <ScrollArea className="h-48 border rounded-md p-2">
               <div className="space-y-2">
-                {treatments.map((t) => (
-                  <div key={t.id} className="flex items-center gap-2">
-                    <Checkbox
-                      id={`treatment-${t.id}`}
-                      checked={selectedTreatments.includes(t.id)}
-                      onCheckedChange={() => toggleSelection(t.id, selectedTreatments, setSelectedTreatments)}
-                    />
-                    <label 
-                      htmlFor={`treatment-${t.id}`} 
-                      className="text-sm cursor-pointer truncate"
-                    >
-                      {t.name}
-                    </label>
-                  </div>
-                ))}
+                {filteredTreatments.length === 0 ? (
+                  <p className="text-sm text-muted-foreground text-center py-4">Aucun résultat</p>
+                ) : (
+                  filteredTreatments.map((t) => (
+                    <div key={t.id} className="flex items-center gap-2">
+                      <Checkbox
+                        id={`treatment-${t.id}`}
+                        checked={selectedTreatments.includes(t.id)}
+                        onCheckedChange={() => toggleSelection(t.id, selectedTreatments, setSelectedTreatments)}
+                      />
+                      <label 
+                        htmlFor={`treatment-${t.id}`} 
+                        className="text-sm cursor-pointer truncate"
+                      >
+                        {t.name}
+                      </label>
+                    </div>
+                  ))
+                )}
               </div>
             </ScrollArea>
           </div>
