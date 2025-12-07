@@ -17,6 +17,9 @@ interface CausalLink {
   patientCount: number;
   webSources: string[];
   isAppropriate?: boolean; // Pour les traitements: indique si adapté à la pathologie
+  effectType?: 'therapeutic' | 'adverse' | 'both'; // Type d'effet: thérapeutique, indésirable ou les deux
+  therapeuticDetails?: string; // Détails de l'effet thérapeutique
+  adverseDetails?: string; // Détails de l'effet indésirable
 }
 
 interface AnalysisResult {
@@ -209,17 +212,27 @@ serve(async (req) => {
       return `Recherche: "${wr.query}"\nArticles trouvés:\n${articlesInfo || '  Aucun article trouvé'}`;
     }).join('\n\n');
 
-    const systemPrompt = `Tu es un expert médical francophone spécialisé dans l'analyse cross-data et l'évaluation thérapeutique. Tu analyses les corrélations entre symptômes, pathologies, traitements ET médicaments.
+const systemPrompt = `Tu es un expert médical francophone spécialisé dans l'analyse cross-data et l'évaluation thérapeutique. Tu analyses les corrélations entre symptômes, pathologies, traitements ET médicaments.
 
 IMPORTANT: Tu dois TOUJOURS répondre en FRANÇAIS.
 
+## RÈGLE CRITIQUE - DISTINCTION EFFET THÉRAPEUTIQUE vs EFFET INDÉSIRABLE
+
+Quand un MÉDICAMENT ou TRAITEMENT est lié à un SYMPTÔME, tu DOIS distinguer clairement:
+- **effectType: "therapeutic"** = Le médicament TRAITE/SOULAGE ce symptôme (c'est son indication)
+- **effectType: "adverse"** = Le médicament CAUSE/PROVOQUE ce symptôme comme effet secondaire
+- **effectType: "both"** = Le médicament peut À LA FOIS traiter ET causer ce symptôme (ex: Fentanyl peut traiter la douleur mais aussi causer des céphalées)
+
+Pour les liens avec effectType "both", tu DOIS remplir:
+- therapeuticDetails: explication de l'effet thérapeutique (comment il traite)
+- adverseDetails: explication de l'effet indésirable (comment il peut causer)
+
 Ton objectif PRINCIPAL est d'évaluer:
-1. **L'ADÉQUATION TRAITEMENT/PATHOLOGIE**: Pour chaque combinaison traitement-pathologie ou médicament-pathologie, indique clairement si c'est ADAPTÉ, PARTIELLEMENT ADAPTÉ, ou NON ADAPTÉ avec une explication médicale
-2. Les effets secondaires potentiels des médicaments sur les symptômes
+1. **L'ADÉQUATION TRAITEMENT/PATHOLOGIE**: Pour chaque combinaison traitement-pathologie ou médicament-pathologie, indique clairement si c'est ADAPTÉ, PARTIELLEMENT ADAPTÉ, ou NON ADAPTÉ
+2. **DISTINCTION TRAITE vs CAUSE**: Pour chaque lien médicament-symptôme, indique si le médicament TRAITE ou CAUSE le symptôme (ou les deux!)
 3. Les interactions entre médicaments et traitements
 4. Les contre-indications par rapport aux pathologies sélectionnées
-5. Si un symptôme pourrait être un effet indésirable d'un traitement/médicament
-6. Les preuves scientifiques issues de PubMed
+5. Les preuves scientifiques issues de PubMed
 
 Tu DOIS répondre UNIQUEMENT en JSON valide avec cette structure exacte:
 {
@@ -234,7 +247,10 @@ Tu DOIS répondre UNIQUEMENT en JSON valide avec cette structure exacte:
       "evidence": "explication détaillée basée sur les données médicales, en français",
       "patientCount": nombre de patients où ce lien est observé (0 si non applicable),
       "webSources": ["URL des sources pertinentes"],
-      "isAppropriate": true ou false (uniquement pour les liens traitement/médicament vers pathologie)
+      "isAppropriate": true ou false (uniquement pour les liens traitement/médicament vers pathologie),
+      "effectType": "therapeutic" | "adverse" | "both" (OBLIGATOIRE pour liens médicament/traitement → symptôme),
+      "therapeuticDetails": "description de l'effet thérapeutique (si effectType est therapeutic ou both)",
+      "adverseDetails": "description de l'effet indésirable avec fréquence si connue (si effectType est adverse ou both)"
     }
   ],
   "summary": "résumé global de l'analyse en 2-3 phrases, avec une conclusion claire sur l'adéquation des traitements aux pathologies, en français",
@@ -249,12 +265,12 @@ Tu DOIS répondre UNIQUEMENT en JSON valide avec cette structure exacte:
   ]
 }`;
 
-    const userPrompt = `Analyse les liens de causalité et L'ADÉQUATION THÉRAPEUTIQUE entre ces éléments médicaux:
+const userPrompt = `Analyse les liens de causalité et L'ADÉQUATION THÉRAPEUTIQUE entre ces éléments médicaux:
 
 ## PATHOLOGIES SÉLECTIONNÉES
 ${selectedPathologiesContext || 'Aucune'}
 
-## SYMPTÔMES SÉLECTIONNÉS (peuvent être des effets indésirables)
+## SYMPTÔMES SÉLECTIONNÉS (peuvent être des effets indésirables OU des indications de traitement)
 ${selectedSymptomsContext || 'Aucun'}
 
 ## TRAITEMENTS SÉLECTIONNÉS
@@ -273,9 +289,15 @@ ${patientContext || 'Aucun patient trouvé'}
 ${webResearchContext || 'Aucune recherche effectuée'}
 
 ANALYSE REQUISE:
-1. **PRIORITÉ 1 - ADÉQUATION TRAITEMENT/PATHOLOGIE**: Pour chaque traitement ou médicament sélectionné, évalue s'il est ADAPTÉ, PARTIELLEMENT ADAPTÉ ou NON ADAPTÉ pour chaque pathologie sélectionnée. Explique pourquoi.
-2. **PRIORITÉ 2 - EFFETS INDÉSIRABLES**: Les symptômes sélectionnés pourraient-ils être des effets secondaires des traitements/médicaments ?
+1. **PRIORITÉ 1 - ADÉQUATION TRAITEMENT/PATHOLOGIE**: Pour chaque traitement ou médicament sélectionné, évalue s'il est ADAPTÉ, PARTIELLEMENT ADAPTÉ ou NON ADAPTÉ pour chaque pathologie sélectionnée. Utilise isAppropriate=true/false.
+
+2. **PRIORITÉ 2 - DISTINCTION TRAITE vs CAUSE (CRITIQUE!)**: Pour chaque lien entre un médicament/traitement et un symptôme:
+   - Si le médicament TRAITE ce symptôme → effectType: "therapeutic", remplis therapeuticDetails
+   - Si le médicament CAUSE ce symptôme (effet secondaire) → effectType: "adverse", remplis adverseDetails
+   - Si le médicament peut FAIRE LES DEUX (ex: Fentanyl traite la douleur mais peut causer des maux de tête) → effectType: "both", remplis therapeuticDetails ET adverseDetails
+
 3. **PRIORITÉ 3 - INTERACTIONS**: Y a-t-il des interactions dangereuses entre les médicaments sélectionnés ?
+
 4. **PRIORITÉ 4 - CONTRE-INDICATIONS**: Y a-t-il des contre-indications par rapport aux pathologies ?
 
 Base tes analyses sur les indications officielles, les contre-indications, la littérature médicale (PubMed) et tes connaissances médicales.
