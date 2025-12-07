@@ -88,32 +88,63 @@ function parseDate(dateStr: string | undefined): string | null {
   return null;
 }
 
+// Helper to get value from multiple possible column names
+function getColumnValue(row: SwissmedicRow, ...keys: string[]): string | undefined {
+  for (const key of keys) {
+    const value = row[key];
+    if (value !== undefined && value !== null && value !== '') {
+      return value.toString().trim();
+    }
+  }
+  return undefined;
+}
+
 function mapRowToMedication(row: SwissmedicRow): MedicationInsert | null {
-  const swissmedicNumber = row['Zulassungsnummer']?.toString().trim();
-  const name = row['Bezeichnung des Arzneimittels']?.toString().trim();
+  // Try multiple column name variations (German/French/English)
+  const swissmedicNumber = getColumnValue(row, 
+    'Zulassungsnummer', 
+    "N° d'autorisation",
+    'Authorization number'
+  );
+  
+  const name = getColumnValue(row,
+    'Bezeichnung des Arzneimittels',
+    'Nom du médicament', 
+    'Medicinal product name',
+    'Präparatename'
+  );
   
   if (!swissmedicNumber || !name) {
     return null;
   }
   
-  const dosageForm = row['Kurzbezeichnung Darreichungsform']?.toString().trim();
+  const dosageForm = getColumnValue(row, 
+    'Kurzbezeichnung Darreichungsform',
+    'Forme pharmaceutique',
+    'Pharmaceutical form'
+  );
+  
+  const geneticallyProduced = getColumnValue(row, 
+    'Wirkstoffe gentechnisch hergestellt',
+    'Principes actifs produits par génie génétique'
+  );
   
   return {
     swissmedic_number: swissmedicNumber,
     name: name,
-    manufacturer: row['Zulassungsinhaberin']?.toString().trim() || null,
-    medication_category: row['Heilmittelcode']?.toString().trim() || null,
-    atc_code: row['ATC-Code']?.toString().trim() || null,
-    substance: row['Wirkstoff(e)']?.toString().trim() || null,
-    composition: row['Zusammensetzung']?.toString().trim() || null,
-    indications: row['Anwendungsgebiet Arzneimittel']?.toString().trim() || null,
-    dispensing_category: row['Abgabekategorie Arzneimittel']?.toString().trim() || null,
-    first_authorization_date: parseDate(row['Erstzulassungsdatum']),
-    validity_duration: row['Gültigkeitsdauer der Zulassung']?.toString().trim() || null,
-    genetically_produced: row['Wirkstoffe gentechnisch hergestellt']?.toString().toLowerCase() === 'ja',
-    narcotic_category: row['Kategorie bei Betäubungsmitteln']?.toString().trim() || null,
-    authorization_status: row['Zulassungsstatus']?.toString().trim() || null,
-    authorization_type: row['Zulassungsart']?.toString().trim() || null,
+    manufacturer: getColumnValue(row, 'Zulassungsinhaberin', 'Titulaire', 'Marketing authorisation holder') || null,
+    medication_category: getColumnValue(row, 'Heilmittelcode', 'Code du médicament', 'ATC code category') || null,
+    atc_code: getColumnValue(row, 'ATC-Code', 'Code ATC', 'ATC Code') || null,
+    substance: getColumnValue(row, 'Wirkstoff(e)', 'Principe(s) actif(s)', 'Active substance(s)') || null,
+    composition: getColumnValue(row, 'Zusammensetzung', 'Composition') || null,
+    indications: getColumnValue(row, 'Anwendungsgebiet Arzneimittel', 'Indication', 'Therapeutic indication') || null,
+    dispensing_category: getColumnValue(row, 'Abgabekategorie Arzneimittel', 'Catégorie de remise', 'Dispensing category') || null,
+    first_authorization_date: parseDate(getColumnValue(row, 'Erstzulassungsdatum', 'Date de première autorisation', 'First authorisation date')),
+    validity_duration: getColumnValue(row, 'Gültigkeitsdauer der Zulassung', 'Durée de validité') || null,
+    genetically_produced: geneticallyProduced?.toLowerCase() === 'ja' || geneticallyProduced?.toLowerCase() === 'oui',
+    narcotic_category: getColumnValue(row, 'Kategorie bei Betäubungsmitteln', 'Catégorie stupéfiants') || null,
+    authorization_status: getColumnValue(row, 'Zulassungsstatus', 'Statut', 'Authorisation status') || null,
+    authorization_type: getColumnValue(row, 'Zulassungsart', "Type d'autorisation", 'Authorisation type') || null,
     dosage_forms: dosageForm ? [dosageForm] : null,
   };
 }
