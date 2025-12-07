@@ -134,41 +134,62 @@ export type Database = {
       medications: {
         Row: {
           atc_code: string | null
+          characteristics: string | null
+          composition: string | null
           created_at: string | null
           description: string | null
+          dispensing_category: string | null
           dosage_forms: string[] | null
+          gtin: string | null
           id: string
           indications: string | null
+          manufacturer: string | null
           name: string
+          pharmacode: string | null
           posology: string | null
           source_url: string | null
           substance: string | null
+          swissmedic_name: string | null
           updated_at: string | null
         }
         Insert: {
           atc_code?: string | null
+          characteristics?: string | null
+          composition?: string | null
           created_at?: string | null
           description?: string | null
+          dispensing_category?: string | null
           dosage_forms?: string[] | null
+          gtin?: string | null
           id?: string
           indications?: string | null
+          manufacturer?: string | null
           name: string
+          pharmacode?: string | null
           posology?: string | null
           source_url?: string | null
           substance?: string | null
+          swissmedic_name?: string | null
           updated_at?: string | null
         }
         Update: {
           atc_code?: string | null
+          characteristics?: string | null
+          composition?: string | null
           created_at?: string | null
           description?: string | null
+          dispensing_category?: string | null
           dosage_forms?: string[] | null
+          gtin?: string | null
           id?: string
           indications?: string | null
+          manufacturer?: string | null
           name?: string
+          pharmacode?: string | null
           posology?: string | null
           source_url?: string | null
           substance?: string | null
+          swissmedic_name?: string | null
           updated_at?: string | null
         }
         Relationships: []
