@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
 import { supabase } from '@/integrations/supabase/client';
 import PubMedArticles from '@/components/pathology/PubMedArticles';
+import PathologyAIAnalyzer from '@/components/pathology/PathologyAIAnalyzer';
 import {
   ArrowLeft,
   Activity,
@@ -279,6 +280,9 @@ const PathologyDetail = () => {
             </CardContent>
           </Card>
         </div>
+
+        {/* AI Cross-Data Analyzer */}
+        <PathologyAIAnalyzer pathologyId={pathology.id} pathologyName={pathology.name} />
 
         {/* PubMed Articles - Real-time */}
         <PubMedArticles pathologyName={pathology.name} />
