@@ -1,13 +1,13 @@
 import React, { Suspense, useState, useRef, useEffect } from 'react';
-import { Canvas, useFrame } from '@react-three/fiber';
-import { OrbitControls, Html } from '@react-three/drei';
+import { Canvas, useFrame, useThree } from '@react-three/fiber';
+import { OrbitControls, Html, useGLTF } from '@react-three/drei';
 import * as THREE from 'three';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Slider } from '@/components/ui/slider';
 import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
-import { Eye, EyeOff, RotateCcw, User, Bone, Heart, Layers } from 'lucide-react';
+import { Eye, EyeOff, RotateCcw, User, Bone, Heart, Layers, AlertTriangle } from 'lucide-react';
 import { PatientAlert } from '@/hooks/usePatientAlerts';
 
 interface LayerConfig {
@@ -19,10 +19,140 @@ interface LayerConfig {
   icon: React.ReactNode;
 }
 
+interface OrganMarker {
+  name: string;
+  position: [number, number, number];
+  alert?: PatientAlert;
+}
+
 interface DigitalTwin3DViewerProps {
   alerts?: PatientAlert[];
   pathologyName?: string;
 }
+
+// Pulsing Alert Marker Component
+const AlertMarker = ({ 
+  position, 
+  alert, 
+  organName 
+}: { 
+  position: [number, number, number]; 
+  alert: PatientAlert;
+  organName: string;
+}) => {
+  const meshRef = useRef<THREE.Mesh>(null);
+  const ringRef = useRef<THREE.Mesh>(null);
+  const [hovered, setHovered] = useState(false);
+  const [scale, setScale] = useState(1);
+  
+  const isCritical = alert.level === 'CRITICAL';
+  const color = isCritical ? '#ef4444' : '#f59e0b';
+
+  useFrame((state) => {
+    // Pulsing animation
+    const pulse = Math.sin(state.clock.elapsedTime * (isCritical ? 4 : 2)) * 0.3 + 1;
+    setScale(pulse);
+    
+    if (meshRef.current) {
+      meshRef.current.scale.setScalar(pulse * (hovered ? 1.3 : 1));
+    }
+    
+    if (ringRef.current) {
+      ringRef.current.scale.setScalar(pulse * 1.5);
+      (ringRef.current.material as THREE.MeshBasicMaterial).opacity = 0.5 - (pulse - 0.7) * 0.3;
+    }
+  });
+
+  return (
+    <group position={position}>
+      {/* Main marker sphere */}
+      <mesh
+        ref={meshRef}
+        onPointerOver={() => setHovered(true)}
+        onPointerOut={() => setHovered(false)}
+      >
+        <sphereGeometry args={[0.03, 16, 16]} />
+        <meshBasicMaterial color={color} />
+      </mesh>
+      
+      {/* Pulsing ring */}
+      <mesh ref={ringRef} rotation={[Math.PI / 2, 0, 0]}>
+        <ringGeometry args={[0.04, 0.05, 32]} />
+        <meshBasicMaterial color={color} transparent opacity={0.5} side={THREE.DoubleSide} />
+      </mesh>
+      
+      {/* Glow effect */}
+      <pointLight color={color} intensity={hovered ? 2 : 1} distance={0.3} />
+      
+      {/* Tooltip on hover */}
+      {hovered && (
+        <Html
+          position={[0.1, 0.1, 0]}
+          style={{
+            transform: 'translate3d(0, -50%, 0)',
+            pointerEvents: 'none',
+          }}
+        >
+          <div className="bg-popover/95 backdrop-blur-sm border border-border rounded-lg shadow-lg p-3 min-w-[200px] animate-scale-in">
+            <div className="flex items-center gap-2 mb-2">
+              <AlertTriangle className={`h-4 w-4 ${isCritical ? 'text-destructive' : 'text-yellow-500'}`} />
+              <span className={`text-sm font-semibold ${isCritical ? 'text-destructive' : 'text-yellow-500'}`}>
+                {isCritical ? 'CRITIQUE' : 'ALERTE'}
+              </span>
+            </div>
+            <div className="text-sm font-medium text-foreground mb-1">{organName}</div>
+            <div className="text-xs text-muted-foreground">{alert.title}</div>
+            {alert.description && (
+              <div className="text-xs text-muted-foreground mt-1 border-t border-border pt-1">
+                {alert.description}
+              </div>
+            )}
+          </div>
+        </Html>
+      )}
+    </group>
+  );
+};
+
+// Connection line between related organs
+const ConnectionLine = ({ 
+  start, 
+  end, 
+  color = '#ef4444' 
+}: { 
+  start: [number, number, number]; 
+  end: [number, number, number];
+  color?: string;
+}) => {
+  const lineRef = useRef<THREE.Line<THREE.BufferGeometry, THREE.LineBasicMaterial>>(null);
+  
+  useFrame((state) => {
+    if (lineRef.current) {
+      lineRef.current.material.opacity = 0.3 + Math.sin(state.clock.elapsedTime * 2) * 0.2;
+    }
+  });
+
+  const points = [new THREE.Vector3(...start), new THREE.Vector3(...end)];
+  const lineGeometry = new THREE.BufferGeometry().setFromPoints(points);
+
+  return (
+    <primitive object={new THREE.Line(lineGeometry, new THREE.LineBasicMaterial({ color, transparent: true, opacity: 0.5 }))} ref={lineRef} />
+  );
+};
+
+// Organ positions mapping
+const ORGAN_POSITIONS: Record<string, [number, number, number]> = {
+  brain: [0, 1.05, 0.05],
+  heart: [0.05, 0.45, 0.12],
+  lungs: [0, 0.45, 0.1],
+  liver: [0.08, 0.15, 0.12],
+  stomach: [-0.05, 0.1, 0.1],
+  kidneys: [0, 0, 0.05],
+  intestines: [0, -0.2, 0.1],
+  pancreas: [0, 0.05, 0.08],
+  spleen: [-0.12, 0.1, 0.05],
+  bladder: [0, -0.4, 0.08],
+};
 
 // Skeleton Model - Procedural bones
 const SkeletonModel = ({ opacity }: { opacity: number }) => {
@@ -94,23 +224,72 @@ const SkeletonModel = ({ opacity }: { opacity: number }) => {
   );
 };
 
-// Organs Model - Procedural organs
+// Interactive Organ Component
+const InteractiveOrgan = ({ 
+  position, 
+  geometry, 
+  material, 
+  name,
+  hasAlert
+}: { 
+  position: [number, number, number];
+  geometry: React.ReactNode;
+  material: THREE.MeshStandardMaterial;
+  name: string;
+  hasAlert: boolean;
+}) => {
+  const meshRef = useRef<THREE.Mesh>(null);
+  const [hovered, setHovered] = useState(false);
+  
+  useFrame((state) => {
+    if (meshRef.current && hasAlert) {
+      const pulse = Math.sin(state.clock.elapsedTime * 3) * 0.05 + 1;
+      meshRef.current.scale.setScalar(pulse);
+    }
+  });
+
+  return (
+    <mesh
+      ref={meshRef}
+      position={position}
+      material={material}
+      onPointerOver={() => setHovered(true)}
+      onPointerOut={() => setHovered(false)}
+    >
+      {geometry}
+      {hovered && !hasAlert && (
+        <Html position={[0, 0.1, 0]} style={{ pointerEvents: 'none' }}>
+          <div className="bg-popover/90 backdrop-blur-sm border border-border rounded px-2 py-1 text-xs font-medium text-foreground whitespace-nowrap">
+            {name}
+          </div>
+        </Html>
+      )}
+    </mesh>
+  );
+};
+
+// Organs Model - Procedural organs with interactivity
 const OrgansModel = ({ opacity, alerts = [] }: { opacity: number; alerts: PatientAlert[] }) => {
   const groupRef = useRef<THREE.Group>(null);
   
-  const getOrganColor = (organName: string) => {
-    const alertedOrgan = alerts.find(a => 
+  const getOrganAlert = (organName: string): PatientAlert | undefined => {
+    return alerts.find(a => 
       a.organ?.toLowerCase() === organName.toLowerCase() ||
       a.title.toLowerCase().includes(organName.toLowerCase())
     );
-    if (alertedOrgan) {
-      return alertedOrgan.level === 'CRITICAL' ? 0xff4444 : 0xffaa00;
+  };
+
+  const getOrganColor = (organName: string) => {
+    const alert = getOrganAlert(organName);
+    if (alert) {
+      return alert.level === 'CRITICAL' ? 0xff4444 : 0xffaa00;
     }
     return organName === 'heart' ? 0xcc4444 : 
            organName === 'lungs' ? 0xffcccc :
            organName === 'liver' ? 0x8b4513 :
            organName === 'kidneys' ? 0xcd5c5c :
            organName === 'stomach' ? 0xffa07a :
+           organName === 'brain' ? 0xffb6c1 :
            organName === 'intestines' ? 0xf4a460 : 0xcc6666;
   };
 
@@ -119,50 +298,69 @@ const OrgansModel = ({ opacity, alerts = [] }: { opacity: number; alerts: Patien
     transparent: true,
     opacity: opacity,
     roughness: 0.4,
+    emissive: getOrganAlert(organName) ? new THREE.Color(getOrganColor(organName)) : new THREE.Color(0x000000),
+    emissiveIntensity: getOrganAlert(organName) ? 0.3 : 0,
   });
+
+  const organs = [
+    { name: 'Cerveau', key: 'brain', position: [0, 1.05, 0] as [number, number, number], geometry: <sphereGeometry args={[0.12, 16, 16]} /> },
+    { name: 'Cœur', key: 'heart', position: [0.05, 0.45, 0.08] as [number, number, number], geometry: <sphereGeometry args={[0.08, 16, 16]} /> },
+    { name: 'Poumon gauche', key: 'lungs', position: [-0.1, 0.45, 0.05] as [number, number, number], geometry: <sphereGeometry args={[0.1, 16, 16]} /> },
+    { name: 'Poumon droit', key: 'lungs', position: [0.15, 0.45, 0.05] as [number, number, number], geometry: <sphereGeometry args={[0.09, 16, 16]} /> },
+    { name: 'Foie', key: 'liver', position: [0.08, 0.15, 0.08] as [number, number, number], geometry: <boxGeometry args={[0.15, 0.08, 0.1]} /> },
+    { name: 'Estomac', key: 'stomach', position: [-0.05, 0.1, 0.06] as [number, number, number], geometry: <sphereGeometry args={[0.07, 16, 16]} /> },
+    { name: 'Rein gauche', key: 'kidneys', position: [-0.12, 0, 0] as [number, number, number], geometry: <sphereGeometry args={[0.04, 16, 16]} /> },
+    { name: 'Rein droit', key: 'kidneys', position: [0.12, 0, 0] as [number, number, number], geometry: <sphereGeometry args={[0.04, 16, 16]} /> },
+    { name: 'Intestins', key: 'intestines', position: [0, -0.2, 0.05] as [number, number, number], geometry: <torusGeometry args={[0.1, 0.03, 8, 24]} /> },
+  ];
+
+  // Get markers for alerted organs
+  const alertMarkers = alerts.map(alert => {
+    const organKey = alert.organ?.toLowerCase() || 
+                     Object.keys(ORGAN_POSITIONS).find(key => 
+                       alert.title.toLowerCase().includes(key)
+                     );
+    if (organKey && ORGAN_POSITIONS[organKey]) {
+      return {
+        position: ORGAN_POSITIONS[organKey],
+        alert,
+        organName: organKey.charAt(0).toUpperCase() + organKey.slice(1)
+      };
+    }
+    return null;
+  }).filter(Boolean) as { position: [number, number, number]; alert: PatientAlert; organName: string }[];
 
   return (
     <group ref={groupRef}>
-      {/* Brain */}
-      <mesh position={[0, 1.05, 0]} material={createOrganMaterial('brain')}>
-        <sphereGeometry args={[0.12, 16, 16]} />
-      </mesh>
+      {organs.map((organ, idx) => (
+        <InteractiveOrgan
+          key={`${organ.key}-${idx}`}
+          position={organ.position}
+          geometry={organ.geometry}
+          material={createOrganMaterial(organ.key)}
+          name={organ.name}
+          hasAlert={!!getOrganAlert(organ.key)}
+        />
+      ))}
       
-      {/* Heart */}
-      <mesh position={[0.05, 0.45, 0.08]} material={createOrganMaterial('heart')}>
-        <sphereGeometry args={[0.08, 16, 16]} />
-      </mesh>
+      {/* Alert markers */}
+      {alertMarkers.map((marker, idx) => (
+        <AlertMarker
+          key={`marker-${idx}`}
+          position={marker.position}
+          alert={marker.alert}
+          organName={marker.organName}
+        />
+      ))}
       
-      {/* Lungs */}
-      <mesh position={[-0.1, 0.45, 0.05]} material={createOrganMaterial('lungs')}>
-        <sphereGeometry args={[0.1, 16, 16]} />
-      </mesh>
-      <mesh position={[0.15, 0.45, 0.05]} material={createOrganMaterial('lungs')}>
-        <sphereGeometry args={[0.09, 16, 16]} />
-      </mesh>
-      
-      {/* Liver */}
-      <mesh position={[0.08, 0.15, 0.08]} material={createOrganMaterial('liver')}>
-        <boxGeometry args={[0.15, 0.08, 0.1]} />
-      </mesh>
-      
-      {/* Stomach */}
-      <mesh position={[-0.05, 0.1, 0.06]} material={createOrganMaterial('stomach')}>
-        <sphereGeometry args={[0.07, 16, 16]} />
-      </mesh>
-      
-      {/* Kidneys */}
-      <mesh position={[-0.12, 0, 0]} material={createOrganMaterial('kidneys')}>
-        <sphereGeometry args={[0.04, 16, 16]} />
-      </mesh>
-      <mesh position={[0.12, 0, 0]} material={createOrganMaterial('kidneys')}>
-        <sphereGeometry args={[0.04, 16, 16]} />
-      </mesh>
-      
-      {/* Intestines */}
-      <mesh position={[0, -0.2, 0.05]} material={createOrganMaterial('intestines')}>
-        <torusGeometry args={[0.1, 0.03, 8, 24]} />
-      </mesh>
+      {/* Connection lines between related alerted organs */}
+      {alertMarkers.length >= 2 && (
+        <ConnectionLine
+          start={alertMarkers[0].position}
+          end={alertMarkers[1].position}
+          color={alertMarkers[0].alert.level === 'CRITICAL' ? '#ef4444' : '#f59e0b'}
+        />
+      )}
     </group>
   );
 };
@@ -315,18 +513,35 @@ const ScanEffect = ({ progress }: { progress: number }) => {
   );
 };
 
+// Camera Controller for preset views
+const CameraController = ({ targetPosition, controlsRef }: { targetPosition: [number, number, number] | null; controlsRef: React.RefObject<any> }) => {
+  const { camera } = useThree();
+  
+  useEffect(() => {
+    if (targetPosition && controlsRef.current) {
+      const [x, y, z] = targetPosition;
+      camera.position.set(x, y, z);
+      controlsRef.current.update();
+    }
+  }, [targetPosition, camera, controlsRef]);
+  
+  return null;
+};
+
 // Main Scene Component
 const Scene = ({ 
   layers, 
   alerts,
-  scanProgress 
+  scanProgress,
+  cameraPosition,
+  controlsRef
 }: { 
   layers: LayerConfig[];
   alerts: PatientAlert[];
   scanProgress: number;
+  cameraPosition: [number, number, number] | null;
+  controlsRef: React.RefObject<any>;
 }) => {
-  const controlsRef = useRef<any>(null);
-
   const getLayer = (id: string) => layers.find(l => l.id === id);
 
   return (
@@ -344,6 +559,8 @@ const Scene = ({
         maxDistance={5}
         autoRotate={false}
       />
+      
+      <CameraController targetPosition={cameraPosition} controlsRef={controlsRef} />
       
       <group position={[0, 0, 0]}>
         {getLayer('bones')?.visible && (
@@ -372,6 +589,7 @@ const DigitalTwin3DViewer: React.FC<DigitalTwin3DViewerProps> = ({
   const controlsRef = useRef<any>(null);
   const [scanProgress, setScanProgress] = useState(0);
   const [isScanning, setIsScanning] = useState(true);
+  const [cameraPosition, setCameraPosition] = useState<[number, number, number] | null>(null);
   
   const [layers, setLayers] = useState<LayerConfig[]>([
     { id: 'skin', name: 'Peau', visible: true, opacity: 0.4, color: '#ffdbac', icon: <User className="h-4 w-4" /> },
@@ -408,15 +626,22 @@ const DigitalTwin3DViewer: React.FC<DigitalTwin3DViewerProps> = ({
   };
 
   const resetView = () => {
-    if (controlsRef.current) {
-      controlsRef.current.reset();
-    }
+    setCameraPosition([0, 0, 2.5]);
+    setTimeout(() => setCameraPosition(null), 100);
   };
 
   const setPresetView = (view: 'front' | 'left' | 'right' | 'back') => {
-    // Views will be controlled by OrbitControls camera position
-    // This is a simplified implementation
+    const positions: Record<string, [number, number, number]> = {
+      front: [0, 0, 2.5],
+      left: [-2.5, 0, 0],
+      right: [2.5, 0, 0],
+      back: [0, 0, -2.5],
+    };
+    setCameraPosition(positions[view]);
+    setTimeout(() => setCameraPosition(null), 100);
   };
+
+  const alertCount = alerts.length;
 
   return (
     <Card className="col-span-2">
@@ -428,6 +653,11 @@ const DigitalTwin3DViewer: React.FC<DigitalTwin3DViewerProps> = ({
             {pathologyName && (
               <span className="text-sm font-normal text-muted-foreground ml-2">
                 ({pathologyName})
+              </span>
+            )}
+            {alertCount > 0 && (
+              <span className="ml-2 px-2 py-0.5 text-xs font-medium bg-destructive/10 text-destructive rounded-full">
+                {alertCount} alerte{alertCount > 1 ? 's' : ''}
               </span>
             )}
           </CardTitle>
@@ -457,6 +687,8 @@ const DigitalTwin3DViewer: React.FC<DigitalTwin3DViewerProps> = ({
                   layers={layers} 
                   alerts={alerts}
                   scanProgress={scanProgress}
+                  cameraPosition={cameraPosition}
+                  controlsRef={controlsRef}
                 />
               </Suspense>
             </Canvas>
@@ -489,7 +721,7 @@ const DigitalTwin3DViewer: React.FC<DigitalTwin3DViewerProps> = ({
             
             {/* Instructions */}
             <div className="absolute top-4 left-4 text-xs text-muted-foreground bg-background/80 px-2 py-1 rounded">
-              🖱️ Clic + glisser pour pivoter | Molette pour zoomer
+              🖱️ Clic + glisser pour pivoter | Molette pour zoomer | Survol organes pour détails
             </div>
           </div>
           
@@ -532,17 +764,28 @@ const DigitalTwin3DViewer: React.FC<DigitalTwin3DViewerProps> = ({
             
             {/* Alerts Legend */}
             {alerts.length > 0 && (
-              <div className="mt-4 p-3 border rounded-lg">
-                <div className="text-sm font-medium mb-2">Alertes détectées</div>
-                <div className="space-y-1">
-                  {alerts.slice(0, 3).map((alert, idx) => (
-                    <div key={idx} className="flex items-center gap-2 text-xs">
-                      <div className={`w-2 h-2 rounded-full ${
+              <div className="mt-4 p-3 border rounded-lg bg-destructive/5">
+                <div className="text-sm font-medium mb-2 flex items-center gap-2">
+                  <AlertTriangle className="h-4 w-4 text-destructive" />
+                  Alertes détectées
+                </div>
+                <div className="space-y-2">
+                  {alerts.slice(0, 5).map((alert, idx) => (
+                    <div key={idx} className="flex items-start gap-2 text-xs">
+                      <div className={`w-2 h-2 rounded-full mt-1 animate-pulse ${
                         alert.level === 'CRITICAL' ? 'bg-destructive' : 'bg-yellow-500'
                       }`} />
-                      <span className="truncate">{alert.title}</span>
+                      <div>
+                        <span className="font-medium">{alert.title}</span>
+                        {alert.organ && (
+                          <span className="text-muted-foreground ml-1">({alert.organ})</span>
+                        )}
+                      </div>
                     </div>
                   ))}
+                </div>
+                <div className="mt-2 text-xs text-muted-foreground">
+                  💡 Survolez les marqueurs sur le modèle 3D pour plus de détails
                 </div>
               </div>
             )}
