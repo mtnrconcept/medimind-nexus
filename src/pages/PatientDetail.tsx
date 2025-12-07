@@ -10,6 +10,14 @@ import { ArrowLeft, User, Activity, FileText, AlertTriangle, CheckCircle, Clock,
 import LabResultsChart from '@/components/patient/LabResultsChart';
 import AIInsightCard from '@/components/patient/AIInsightCard';
 import AIAssistant from '@/components/patient/AIAssistant';
+import type { Json } from '@/integrations/supabase/types';
+
+interface LabResults {
+  glucose_mg_dl: number;
+  blood_pressure_sys: number;
+  blood_pressure_dia: number;
+  temperature_c: number;
+}
 
 interface Patient {
   id: string;
@@ -19,12 +27,7 @@ interface Patient {
   nationality: string;
   treatment: string;
   medical_notes_nlp: string;
-  lab_results_json: {
-    glucose_mg_dl: number;
-    blood_pressure_sys: number;
-    blood_pressure_dia: number;
-    temperature_c: number;
-  };
+  lab_results_json: LabResults;
   outcome: string;
   height_cm: number;
   weight_kg: number;
@@ -34,8 +37,29 @@ interface Patient {
     name: string;
     icd_code: string;
     category: string;
-  };
+  } | null;
 }
+
+const parseLabResults = (json: Json | null): LabResults => {
+  const defaultResults: LabResults = {
+    glucose_mg_dl: 0,
+    blood_pressure_sys: 0,
+    blood_pressure_dia: 0,
+    temperature_c: 0,
+  };
+  
+  if (!json || typeof json !== 'object' || Array.isArray(json)) {
+    return defaultResults;
+  }
+  
+  const obj = json as Record<string, Json>;
+  return {
+    glucose_mg_dl: typeof obj.glucose_mg_dl === 'number' ? obj.glucose_mg_dl : 0,
+    blood_pressure_sys: typeof obj.blood_pressure_sys === 'number' ? obj.blood_pressure_sys : 0,
+    blood_pressure_dia: typeof obj.blood_pressure_dia === 'number' ? obj.blood_pressure_dia : 0,
+    temperature_c: typeof obj.temperature_c === 'number' ? obj.temperature_c : 0,
+  };
+};
 
 const nationalityFlags: Record<string, string> = {
   FR: '🇫🇷', JP: '🇯🇵', US: '🇺🇸', BR: '🇧🇷', DE: '🇩🇪',
@@ -66,10 +90,25 @@ const PatientDetail = () => {
           pathologies (id, name, icd_code, category)
         `)
         .eq('id', id)
-        .single();
+        .maybeSingle();
 
       if (data) {
-        setPatient(data as Patient);
+        const patient: Patient = {
+          id: data.id,
+          patient_id: data.patient_id,
+          age: data.age,
+          gender: data.gender,
+          nationality: data.nationality,
+          treatment: data.treatment || '',
+          medical_notes_nlp: data.medical_notes_nlp || '',
+          lab_results_json: parseLabResults(data.lab_results_json),
+          outcome: data.outcome || '',
+          height_cm: data.height_cm || 0,
+          weight_kg: Number(data.weight_kg) || 0,
+          created_at: data.created_at,
+          pathologies: data.pathologies,
+        };
+        setPatient(patient);
       }
       setLoading(false);
     };
