@@ -10,6 +10,7 @@ import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Progress } from '@/components/ui/progress';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
+import { MedicalScraperPanel } from '@/components/admin/MedicalScraperPanel';
 import {
   Users,
   Activity,
@@ -22,6 +23,7 @@ import {
   Download,
   Loader2,
   RefreshCw,
+  Globe,
 } from 'lucide-react';
 
 interface UserWithRole {
@@ -251,6 +253,10 @@ const Admin = () => {
           <TabsList>
             <TabsTrigger value="users">Utilisateurs</TabsTrigger>
             <TabsTrigger value="data">Données</TabsTrigger>
+            <TabsTrigger value="scraping">
+              <Globe className="h-4 w-4 mr-1" />
+              Scraping
+            </TabsTrigger>
           </TabsList>
 
           <TabsContent value="users" className="space-y-4">
@@ -399,6 +405,10 @@ const Admin = () => {
                 </div>
               </CardContent>
             </Card>
+          </TabsContent>
+
+          <TabsContent value="scraping" className="space-y-4">
+            <MedicalScraperPanel />
           </TabsContent>
         </Tabs>
       </div>
