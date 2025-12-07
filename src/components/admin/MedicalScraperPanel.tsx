@@ -45,7 +45,7 @@ interface ScrapingStats {
 
 export const MedicalScraperPanel = () => {
   const { toast } = useToast();
-  const [url, setUrl] = useState('https://www.msdmanuals.com/fr/professional/health-topics');
+  const [url, setUrl] = useState('');
   const [pageLimit, setPageLimit] = useState([50]);
   const [isMapping, setIsMapping] = useState(false);
   const [isScraping, setIsScraping] = useState(false);
@@ -214,7 +214,7 @@ export const MedicalScraperPanel = () => {
             <Input
               value={url}
               onChange={(e) => setUrl(e.target.value)}
-              placeholder="https://www.msdmanuals.com/fr/professional/health-topics"
+              placeholder="Collez n'importe quelle URL de site médical (ex: https://example.com)"
               disabled={isScraping}
             />
           </div>
