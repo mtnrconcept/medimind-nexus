@@ -50,15 +50,15 @@ interface ScrapingStats {
 type RateLimitMode = 'slow' | 'normal' | 'fast';
 
 const RATE_LIMIT_DELAYS: Record<RateLimitMode, number> = {
-  slow: 15000,    // 15 secondes - très prudent
-  normal: 8000,   // 8 secondes - équilibré
-  fast: 4000      // 4 secondes - risqué
+  slow: 45000,    // 45 secondes - très prudent (Firecrawl free tier)
+  normal: 25000,  // 25 secondes - équilibré
+  fast: 12000     // 12 secondes - risqué
 };
 
 const RATE_LIMIT_LABELS: Record<RateLimitMode, string> = {
-  slow: 'Prudent (15s)',
-  normal: 'Normal (8s)',
-  fast: 'Rapide (4s)'
+  slow: 'Prudent (45s)',
+  normal: 'Normal (25s)',
+  fast: 'Rapide (12s)'
 };
 
 const SCRAPED_URLS_KEY = 'medical_scraper_scraped_urls';
@@ -201,7 +201,7 @@ export const MedicalScraperPanel = () => {
           
           // Erreur 429 - rate limit
           if (errorMessage.includes('429') || errorMessage.includes('rate limit') || data?.rateLimited) {
-            const waitTime = 30000 * attempt; // 30s, 60s, 90s
+            const waitTime = 60000 * attempt; // 60s, 120s, 180s - attente longue
             console.log(`Rate limit détecté, attente ${waitTime/1000}s...`);
             setRateLimitHits(prev => prev + 1);
             await new Promise(resolve => setTimeout(resolve, waitTime));
@@ -212,7 +212,7 @@ export const MedicalScraperPanel = () => {
           if (errorMessage.includes('Network') || errorMessage.includes('500')) {
             lastError = error;
             console.log(`Tentative ${attempt}/${maxRetries} échouée pour ${scrapeUrl}`);
-            await new Promise(resolve => setTimeout(resolve, 5000 * attempt));
+            await new Promise(resolve => setTimeout(resolve, 10000 * attempt));
             continue;
           }
           
