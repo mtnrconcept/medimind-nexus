@@ -84,9 +84,16 @@ serve(async (req) => {
           throw new Error('Échec du mapping du site');
         }
 
-        // Filtrer les URLs pertinentes (pages de pathologies)
+        // Filtrer les URLs pertinentes (pages de pathologies ET traitements)
         const relevantUrls = (mapResult.links || []).filter((link: string) => {
           const lowerLink = link.toLowerCase();
+          // Exclure les pages non pertinentes
+          if (lowerLink.includes('/videos/') || 
+              lowerLink.includes('/news/') || 
+              lowerLink.includes('/recipes/') ||
+              lowerLink.includes('/lifestyle/')) {
+            return false;
+          }
           return (
             lowerLink.includes('patholog') ||
             lowerLink.includes('disease') ||
@@ -96,6 +103,12 @@ serve(async (req) => {
             lowerLink.includes('trouble') ||
             lowerLink.includes('infection') ||
             lowerLink.includes('symptom') ||
+            lowerLink.includes('treatment') ||
+            lowerLink.includes('traitement') ||
+            lowerLink.includes('diagnosis') ||
+            lowerLink.includes('diagnostic') ||
+            lowerLink.includes('medication') ||
+            lowerLink.includes('therapy') ||
             lowerLink.includes('/topics/') ||
             lowerLink.includes('/conditions/') ||
             lowerLink.includes('/health-topics/')
@@ -159,46 +172,50 @@ serve(async (req) => {
       console.log('Contenu extrait, longueur:', markdown.length);
 
       // Extraction des données via Lovable AI
-      const extractionPrompt = `Tu es un expert en extraction de données médicales. Analyse ce contenu markdown d'une page médicale et extrais les informations suivantes au format JSON strict.
+      const extractionPrompt = `Tu es un expert en extraction de données médicales. Analyse ce contenu markdown d'une page médicale et extrais TOUTES les informations disponibles au format JSON strict.
 
-IMPORTANT: 
+INSTRUCTIONS CRITIQUES:
 - Réponds UNIQUEMENT avec le JSON, sans texte avant ou après
-- Si une information n'est pas disponible, utilise null
+- Si une information n'est pas disponible, utilise null ou un tableau vide []
 - Assure-toi que le JSON est valide
-- Pour severity, utilise UNIQUEMENT une de ces valeurs: "mild", "moderate", "severe", "critical"
+- Pour severity, utilise UNIQUEMENT: "mild", "moderate", "severe" ou "critical"
+- IMPORTANT: Extrais TOUS les traitements mentionnés, même partiellement (médicaments, thérapies, chirurgies, conseils de style de vie, etc.)
+- Les traitements incluent: médicaments, antibiotiques, analgésiques, chimiothérapie, radiothérapie, chirurgie, physiothérapie, psychothérapie, changements alimentaires, exercice, etc.
 
 Format attendu:
 {
   "pathology": {
-    "name": "Nom de la pathologie en français",
+    "name": "Nom de la pathologie en français (traduis si nécessaire)",
     "icd_code": "Code ICD-10 si mentionné ou null",
-    "description": "Description complète de la pathologie",
-    "category": "Catégorie médicale (infectiologie, cardiologie, etc.)",
+    "description": "Description complète de la pathologie (2-3 phrases)",
+    "category": "Catégorie médicale (infectiologie, cardiologie, neurologie, etc.)",
     "specialty": "Spécialité médicale concernée",
     "severity": "mild ou moderate ou severe ou critical",
     "synonyms": ["autres noms de la pathologie"]
   },
   "symptoms": [
     {
-      "name": "Nom du symptôme",
+      "name": "Nom du symptôme en français",
       "description": "Description du symptôme",
-      "body_system": "Système corporel (respiratoire, cardiovasculaire, etc.)",
+      "body_system": "Système corporel (respiratoire, cardiovasculaire, digestif, nerveux, etc.)",
       "is_primary": true,
       "frequency_percent": 80
     }
   ],
   "treatments": [
     {
-      "name": "Nom du traitement",
-      "type": "medicament ou chirurgie ou therapie ou autre",
-      "description": "Description du traitement",
-      "contraindications": ["liste des contre-indications"]
+      "name": "Nom du traitement/médicament en français",
+      "type": "medicament ou chirurgie ou therapie ou lifestyle ou autre",
+      "description": "Description du traitement et son utilisation",
+      "contraindications": ["liste des contre-indications si mentionnées"]
     }
   ]
 }
 
+RAPPEL: Même si la page parle principalement de symptômes, extrais TOUS les traitements mentionnés!
+
 Contenu à analyser:
-${markdown.substring(0, 15000)}`;
+${markdown.substring(0, 18000)}`;
 
       const aiResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
         method: 'POST',
