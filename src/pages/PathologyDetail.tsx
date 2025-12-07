@@ -5,8 +5,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
-import { Separator } from '@/components/ui/separator';
 import { supabase } from '@/integrations/supabase/client';
+import PubMedArticles from '@/components/pathology/PubMedArticles';
 import {
   ArrowLeft,
   Activity,
@@ -14,7 +14,6 @@ import {
   BookOpen,
   ExternalLink,
   AlertTriangle,
-  CheckCircle,
 } from 'lucide-react';
 
 interface Pathology {
@@ -280,6 +279,9 @@ const PathologyDetail = () => {
             </CardContent>
           </Card>
         </div>
+
+        {/* PubMed Articles - Real-time */}
+        <PubMedArticles pathologyName={pathology.name} />
 
         {/* Sources */}
         <Card>
