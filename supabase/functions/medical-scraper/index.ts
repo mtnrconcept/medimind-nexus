@@ -372,9 +372,19 @@ ${markdown.substring(0, 18000)}`;
         }
 
         // Insérer les traitements
+        console.log('Traitements extraits:', JSON.stringify(extractedData.treatments || []));
+        console.log('PathologyId pour traitements:', pathologyId);
+        
         if (extractedData.treatments && Array.isArray(extractedData.treatments) && pathologyId) {
+          console.log(`Nombre de traitements à insérer: ${extractedData.treatments.length}`);
+          
           for (const treatment of extractedData.treatments) {
-            if (!treatment.name) continue;
+            if (!treatment.name) {
+              console.log('Traitement ignoré: pas de nom');
+              continue;
+            }
+
+            console.log(`Traitement à insérer: ${treatment.name}`);
 
             const { data: existingTreatment } = await supabase
               .from('treatments')
@@ -384,21 +394,30 @@ ${markdown.substring(0, 18000)}`;
               .maybeSingle();
 
             if (!existingTreatment) {
-              const { error: treatError } = await supabase
+              const { data: insertedTreatment, error: treatError } = await supabase
                 .from('treatments')
                 .insert({
                   pathology_id: pathologyId,
                   name: treatment.name,
-                  type: treatment.type,
+                  type: treatment.type || 'autre',
                   description: treatment.description,
                   contraindications: treatment.contraindications || []
-                });
+                })
+                .select('id')
+                .single();
 
-              if (!treatError) {
+              if (treatError) {
+                console.error('Erreur insertion traitement:', treatError);
+              } else {
+                console.log(`Traitement inséré: ${treatment.name}, ID: ${insertedTreatment?.id}`);
                 stats.treatmentsAdded++;
               }
+            } else {
+              console.log(`Traitement existe déjà: ${treatment.name}`);
             }
           }
+        } else {
+          console.log('Aucun traitement à insérer - treatments:', !!extractedData.treatments, 'isArray:', Array.isArray(extractedData.treatments), 'pathologyId:', !!pathologyId);
         }
       }
 
