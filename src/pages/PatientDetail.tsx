@@ -1,23 +1,20 @@
 import { useEffect, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import AppLayout from '@/components/layout/AppLayout';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Separator } from '@/components/ui/separator';
 import { supabase } from '@/integrations/supabase/client';
-import { ArrowLeft, User, Activity, FileText, AlertTriangle, CheckCircle, Clock, Lock } from 'lucide-react';
-import LabResultsChart from '@/components/patient/LabResultsChart';
-import AIInsightCard from '@/components/patient/AIInsightCard';
+import { ArrowLeft, User, FileText, CheckCircle, Clock, Lock, AlertTriangle, Shield } from 'lucide-react';
 import AIAssistant from '@/components/patient/AIAssistant';
+import SafetyAlertBanner from '@/components/patient/SafetyAlertBanner';
+import DigitalTwinBody from '@/components/patient/DigitalTwinBody';
+import PharmacologyMatrix from '@/components/patient/PharmacologyMatrix';
+import VitalSignsPanel from '@/components/patient/VitalSignsPanel';
+import AIPredictionsCard from '@/components/patient/AIPredictionsCard';
+import ExtendedLabResults from '@/components/patient/ExtendedLabResults';
+import { usePatientAlerts, parseExtendedLabResults, type ExtendedLabResults as ExtendedLabResultsType } from '@/hooks/usePatientAlerts';
 import type { Json } from '@/integrations/supabase/types';
-
-interface LabResults {
-  glucose_mg_dl: number;
-  blood_pressure_sys: number;
-  blood_pressure_dia: number;
-  temperature_c: number;
-}
 
 interface Patient {
   id: string;
@@ -27,7 +24,7 @@ interface Patient {
   nationality: string;
   treatment: string;
   medical_notes_nlp: string;
-  lab_results_json: LabResults;
+  lab_results_json: ExtendedLabResultsType;
   outcome: string;
   height_cm: number;
   weight_kg: number;
@@ -39,27 +36,6 @@ interface Patient {
     category: string;
   } | null;
 }
-
-const parseLabResults = (json: Json | null): LabResults => {
-  const defaultResults: LabResults = {
-    glucose_mg_dl: 0,
-    blood_pressure_sys: 0,
-    blood_pressure_dia: 0,
-    temperature_c: 0,
-  };
-  
-  if (!json || typeof json !== 'object' || Array.isArray(json)) {
-    return defaultResults;
-  }
-  
-  const obj = json as Record<string, Json>;
-  return {
-    glucose_mg_dl: typeof obj.glucose_mg_dl === 'number' ? obj.glucose_mg_dl : 0,
-    blood_pressure_sys: typeof obj.blood_pressure_sys === 'number' ? obj.blood_pressure_sys : 0,
-    blood_pressure_dia: typeof obj.blood_pressure_dia === 'number' ? obj.blood_pressure_dia : 0,
-    temperature_c: typeof obj.temperature_c === 'number' ? obj.temperature_c : 0,
-  };
-};
 
 const nationalityFlags: Record<string, string> = {
   FR: '🇫🇷', JP: '🇯🇵', US: '🇺🇸', BR: '🇧🇷', DE: '🇩🇪',
@@ -74,7 +50,6 @@ const PatientDetail = () => {
   const [decrypting, setDecrypting] = useState(true);
 
   useEffect(() => {
-    // Simulate decryption animation
     const timer = setTimeout(() => setDecrypting(false), 2000);
     return () => clearTimeout(timer);
   }, []);
@@ -83,17 +58,14 @@ const PatientDetail = () => {
     const fetchPatient = async () => {
       if (!id) return;
 
-      const { data, error } = await supabase
+      const { data } = await supabase
         .from('patients')
-        .select(`
-          *,
-          pathologies (id, name, icd_code, category)
-        `)
+        .select(`*, pathologies (id, name, icd_code, category)`)
         .eq('id', id)
         .maybeSingle();
 
       if (data) {
-        const patient: Patient = {
+        setPatient({
           id: data.id,
           patient_id: data.patient_id,
           age: data.age,
@@ -101,37 +73,32 @@ const PatientDetail = () => {
           nationality: data.nationality,
           treatment: data.treatment || '',
           medical_notes_nlp: data.medical_notes_nlp || '',
-          lab_results_json: parseLabResults(data.lab_results_json),
+          lab_results_json: parseExtendedLabResults(data.lab_results_json),
           outcome: data.outcome || '',
           height_cm: data.height_cm || 0,
           weight_kg: Number(data.weight_kg) || 0,
           created_at: data.created_at,
           pathologies: data.pathologies,
-        };
-        setPatient(patient);
+        });
       }
       setLoading(false);
     };
-
     fetchPatient();
   }, [id]);
 
-  const calculateBMI = (height: number, weight: number) => {
-    if (!height || !weight) return null;
-    const heightM = height / 100;
-    return (weight / (heightM * heightM)).toFixed(1);
-  };
+  const alerts = usePatientAlerts(
+    patient?.lab_results_json || { glucose_mg_dl: 0, blood_pressure_sys: 0, blood_pressure_dia: 0, temperature_c: 0 },
+    patient?.treatment || '',
+    patient?.medical_notes_nlp || '',
+    patient?.pathologies?.name
+  );
 
   const getOutcomeIcon = (outcome: string) => {
     switch (outcome) {
-      case 'RESOLVED':
-        return <CheckCircle className="h-5 w-5 text-green-500" />;
-      case 'ONGOING':
-        return <Clock className="h-5 w-5 text-yellow-500" />;
-      case 'SIDE_EFFECT':
-        return <AlertTriangle className="h-5 w-5 text-destructive" />;
-      default:
-        return null;
+      case 'RESOLVED': return <CheckCircle className="h-4 w-4 text-green-500" />;
+      case 'ONGOING': return <Clock className="h-4 w-4 text-yellow-500" />;
+      case 'SIDE_EFFECT': return <AlertTriangle className="h-4 w-4 text-destructive" />;
+      default: return null;
     }
   };
 
@@ -144,11 +111,14 @@ const PatientDetail = () => {
     }
   };
 
+  const criticalCount = alerts.filter(a => a.level === 'CRITICAL').length;
+  const warningCount = alerts.filter(a => a.level === 'WARNING').length;
+
   if (decrypting) {
     return (
       <AppLayout>
         <div className="flex items-center justify-center min-h-[60vh]">
-          <Card className="w-full max-w-md">
+          <Card className="w-full max-w-md border-primary/20">
             <CardContent className="pt-6">
               <div className="flex flex-col items-center gap-4 text-center">
                 <div className="p-4 rounded-full bg-primary/10 animate-pulse">
@@ -156,37 +126,22 @@ const PatientDetail = () => {
                 </div>
                 <div>
                   <h2 className="text-xl font-semibold">Décryptage des données...</h2>
-                  <p className="text-muted-foreground mt-1">
-                    Vérification de la clé privée et déchiffrement du dossier patient
-                  </p>
+                  <p className="text-muted-foreground mt-1">Vérification de la clé privée</p>
                 </div>
                 <div className="w-full bg-muted rounded-full h-2 overflow-hidden">
-                  <div className="bg-primary h-full animate-[loading_2s_ease-in-out]" style={{
-                    animation: 'loading 2s ease-in-out forwards',
-                  }} />
+                  <div className="bg-primary h-full animate-[loading_2s_ease-in-out_forwards]" style={{ width: '0%' }} />
                 </div>
               </div>
             </CardContent>
           </Card>
         </div>
-        <style>{`
-          @keyframes loading {
-            0% { width: 0%; }
-            100% { width: 100%; }
-          }
-        `}</style>
+        <style>{`@keyframes loading { 0% { width: 0%; } 100% { width: 100%; } }`}</style>
       </AppLayout>
     );
   }
 
   if (loading) {
-    return (
-      <AppLayout>
-        <div className="text-center py-8 text-muted-foreground">
-          Chargement...
-        </div>
-      </AppLayout>
-    );
+    return <AppLayout><div className="text-center py-8 text-muted-foreground">Chargement...</div></AppLayout>;
   }
 
   if (!patient) {
@@ -194,9 +149,7 @@ const PatientDetail = () => {
       <AppLayout>
         <div className="text-center py-8">
           <p className="text-muted-foreground">Patient non trouvé</p>
-          <Link to="/patients">
-            <Button variant="outline" className="mt-4">Retour à la liste</Button>
-          </Link>
+          <Link to="/patients"><Button variant="outline" className="mt-4">Retour</Button></Link>
         </div>
       </AppLayout>
     );
@@ -204,127 +157,94 @@ const PatientDetail = () => {
 
   return (
     <AppLayout>
-      <div className="space-y-6">
+      <div className="space-y-4">
         {/* Header */}
-        <div className="flex items-center gap-4">
-          <Link to="/patients">
-            <Button variant="ghost" size="icon">
-              <ArrowLeft className="h-5 w-5" />
-            </Button>
-          </Link>
-          <div className="flex-1">
-            <div className="flex items-center gap-3">
-              <h1 className="text-2xl font-bold font-mono">Patient {patient.patient_id}</h1>
-              <Badge variant="outline" className="flex items-center gap-1">
-                {getOutcomeIcon(patient.outcome)}
-                {getOutcomeLabel(patient.outcome)}
-              </Badge>
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <Link to="/patients">
+              <Button variant="ghost" size="icon"><ArrowLeft className="h-5 w-5" /></Button>
+            </Link>
+            <div>
+              <div className="flex items-center gap-2">
+                <h1 className="text-xl font-bold font-mono">Patient {patient.patient_id}</h1>
+                <Badge variant="outline" className="flex items-center gap-1">
+                  {getOutcomeIcon(patient.outcome)}
+                  {getOutcomeLabel(patient.outcome)}
+                </Badge>
+              </div>
+              <p className="text-sm text-muted-foreground">{patient.pathologies?.name || 'Non spécifié'}</p>
             </div>
-            <p className="text-muted-foreground">
-              {patient.pathologies?.name || 'Pathologie non spécifiée'}
-            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            {criticalCount > 0 && (
+              <Badge variant="destructive" className="animate-pulse">🔴 {criticalCount} Critique{criticalCount > 1 ? 's' : ''}</Badge>
+            )}
+            {warningCount > 0 && (
+              <Badge className="bg-orange-500/10 text-orange-500 border-orange-500/30">🟠 {warningCount} Attention</Badge>
+            )}
+            <Badge variant="secondary" className="flex items-center gap-1">
+              <Shield className="h-3 w-3" /> Données chiffrées
+            </Badge>
           </div>
         </div>
 
-        <div className="grid gap-6 lg:grid-cols-3">
-          {/* Left Column - Demographics & Labs */}
-          <div className="space-y-6">
-            {/* Demographics */}
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <User className="h-5 w-5" />
-                  Données Démographiques
+        {/* Safety Alert Banner */}
+        <SafetyAlertBanner alerts={alerts} />
+
+        {/* Main Grid Layout */}
+        <div className="grid gap-4 lg:grid-cols-4">
+          {/* Left Panel - Vitals & Labs */}
+          <div className="space-y-4">
+            <VitalSignsPanel 
+              labResults={patient.lab_results_json} 
+              age={patient.age} 
+              height={patient.height_cm} 
+              weight={patient.weight_kg} 
+            />
+            <Card className="border-border/50">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm flex items-center gap-2">
+                  <User className="h-4 w-4" /> Démographie
                 </CardTitle>
               </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <p className="text-sm text-muted-foreground">Âge</p>
-                    <p className="font-semibold">{patient.age} ans</p>
-                  </div>
-                  <div>
-                    <p className="text-sm text-muted-foreground">Genre</p>
-                    <p className="font-semibold">{patient.gender === 'M' ? 'Homme' : 'Femme'}</p>
-                  </div>
-                  <div>
-                    <p className="text-sm text-muted-foreground">Nationalité</p>
-                    <p className="font-semibold">
-                      {nationalityFlags[patient.nationality]} {patient.nationality}
-                    </p>
-                  </div>
-                  <div>
-                    <p className="text-sm text-muted-foreground">IMC</p>
-                    <p className="font-semibold">
-                      {calculateBMI(patient.height_cm, patient.weight_kg) || '-'}
-                    </p>
-                  </div>
-                  <div>
-                    <p className="text-sm text-muted-foreground">Taille</p>
-                    <p className="font-semibold">{patient.height_cm || '-'} cm</p>
-                  </div>
-                  <div>
-                    <p className="text-sm text-muted-foreground">Poids</p>
-                    <p className="font-semibold">{patient.weight_kg || '-'} kg</p>
-                  </div>
-                </div>
-                <Separator />
-                <div>
-                  <p className="text-sm text-muted-foreground">Traitement actuel</p>
-                  <p className="font-semibold">{patient.treatment}</p>
-                </div>
-                {patient.pathologies && (
-                  <>
-                    <Separator />
-                    <div>
-                      <p className="text-sm text-muted-foreground">Pathologie</p>
-                      <Link to={`/pathologies/${patient.pathologies.id}`}>
-                        <p className="font-semibold text-primary hover:underline">
-                          {patient.pathologies.name}
-                        </p>
-                      </Link>
-                      <p className="text-xs text-muted-foreground font-mono">
-                        {patient.pathologies.icd_code} • {patient.pathologies.category}
-                      </p>
-                    </div>
-                  </>
-                )}
+              <CardContent className="grid grid-cols-2 gap-2 text-sm">
+                <div><span className="text-muted-foreground">Âge:</span> {patient.age} ans</div>
+                <div><span className="text-muted-foreground">Genre:</span> {patient.gender === 'M' ? 'H' : 'F'}</div>
+                <div><span className="text-muted-foreground">Nation:</span> {nationalityFlags[patient.nationality]} {patient.nationality}</div>
+                <div><span className="text-muted-foreground">Taille:</span> {patient.height_cm} cm</div>
               </CardContent>
             </Card>
-
-            {/* Lab Results */}
-            <LabResultsChart labResults={patient.lab_results_json} />
+            <ExtendedLabResults labResults={patient.lab_results_json} />
           </div>
 
-          {/* Center Column - Clinical Timeline & AI Insights */}
-          <div className="space-y-6">
-            {/* Clinical Notes */}
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <FileText className="h-5 w-5" />
-                  Timeline Clinique
+          {/* Center Panel - Digital Twin */}
+          <div className="space-y-4">
+            <DigitalTwinBody alerts={alerts} pathologyName={patient.pathologies?.name} />
+            <PharmacologyMatrix treatment={patient.treatment} alerts={alerts} />
+          </div>
+
+          {/* Right Panel - AI Predictions */}
+          <div className="space-y-4">
+            <AIPredictionsCard 
+              alerts={alerts} 
+              labResults={patient.lab_results_json} 
+              pathologyName={patient.pathologies?.name}
+              age={patient.age}
+            />
+            <Card className="border-border/50">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm flex items-center gap-2">
+                  <FileText className="h-4 w-4" /> Notes Cliniques
                 </CardTitle>
-                <CardDescription>Notes médicales du dossier</CardDescription>
               </CardHeader>
               <CardContent>
-                <div className="prose prose-sm dark:prose-invert max-w-none">
-                  <blockquote className="border-l-4 border-primary pl-4 italic text-muted-foreground">
-                    {patient.medical_notes_nlp}
-                  </blockquote>
-                </div>
-                <p className="text-xs text-muted-foreground mt-4">
-                  Enregistré le {new Date(patient.created_at).toLocaleDateString('fr-FR')}
-                </p>
+                <p className="text-xs text-muted-foreground italic line-clamp-6">{patient.medical_notes_nlp}</p>
               </CardContent>
             </Card>
-
-            {/* AI Insights */}
-            <AIInsightCard notes={patient.medical_notes_nlp} />
           </div>
 
-          {/* Right Column - AI Assistant */}
-          <div className="lg:col-span-1">
+          {/* Far Right - AI Assistant */}
+          <div>
             <AIAssistant patient={patient} />
           </div>
         </div>
