@@ -135,6 +135,13 @@ serve(async (req) => {
     }
 
     console.log(`Début de l'import de ${jsonData.length} lignes`);
+    
+    // Log first row to see actual column names
+    if (jsonData.length > 0) {
+      const firstRow = jsonData[0];
+      console.log('Colonnes disponibles:', Object.keys(firstRow));
+      console.log('Première ligne (échantillon):', JSON.stringify(firstRow).slice(0, 500));
+    }
 
     const BATCH_SIZE = 100;
     let processed = 0;
