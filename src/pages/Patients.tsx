@@ -9,6 +9,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { supabase } from '@/integrations/supabase/client';
 import { Search, Users, ChevronLeft, ChevronRight, Filter } from 'lucide-react';
+import CrossDataAnalyzer from '@/components/patient/CrossDataAnalyzer';
 
 interface Patient {
   id: string;
@@ -147,6 +148,9 @@ const Patients = () => {
             Accédez aux dossiers patients anonymisés
           </p>
         </div>
+
+        {/* Cross-Data AI Analyzer */}
+        <CrossDataAnalyzer />
 
         {/* Filters */}
         <Card>

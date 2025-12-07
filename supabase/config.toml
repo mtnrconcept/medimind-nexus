@@ -11,3 +11,6 @@ verify_jwt = false
 
 [functions.pathology-analyzer]
 verify_jwt = false
+
+[functions.cross-data-analyzer]
+verify_jwt = false
