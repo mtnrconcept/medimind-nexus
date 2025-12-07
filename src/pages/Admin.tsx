@@ -188,8 +188,41 @@ const Admin = () => {
       const workbook = XLSX.read(arrayBuffer, { type: 'array' });
       const sheetName = workbook.SheetNames[0];
       const worksheet = workbook.Sheets[sheetName];
-      const jsonData = XLSX.utils.sheet_to_json(worksheet);
+      
+      // Find the actual header row (skip title rows)
+      // The Swissmedic file has title rows at the beginning
+      // We need to find where "Zulassungsnummer" column starts
+      const range = XLSX.utils.decode_range(worksheet['!ref'] || 'A1');
+      let headerRow = 0;
+      
+      for (let row = range.s.r; row <= Math.min(range.s.r + 10, range.e.r); row++) {
+        const cellAddress = XLSX.utils.encode_cell({ r: row, c: 0 });
+        const cell = worksheet[cellAddress];
+        const cellValue = cell?.v?.toString() || '';
+        
+        // Look for the header row - it should contain "Zulassungsnummer" or similar
+        if (cellValue.includes('Zulassungsnummer') || cellValue.includes('N°') || cellValue === '1') {
+          headerRow = row;
+          break;
+        }
+        // Also check if it looks like a number (authorization number starts with 5 digits)
+        if (/^\d{5}/.test(cellValue)) {
+          // This is data, header is the row before
+          headerRow = Math.max(0, row - 1);
+          break;
+        }
+      }
+      
+      console.log('Header row detected:', headerRow);
+      
+      // Parse with the correct header row
+      const jsonData = XLSX.utils.sheet_to_json(worksheet, { 
+        range: headerRow,
+        defval: ''
+      });
 
+      console.log('First row columns:', jsonData.length > 0 ? Object.keys(jsonData[0] as object) : 'empty');
+      
       setSwissmedicProgress({ processed: 0, total: jsonData.length });
       toast.info(`${jsonData.length} lignes trouvées, envoi en cours...`);
 
