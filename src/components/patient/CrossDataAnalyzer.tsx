@@ -17,7 +17,10 @@ import {
   Stethoscope,
   CheckCircle2,
   XCircle,
-  HelpCircle
+  HelpCircle,
+  Globe,
+  ExternalLink,
+  BookOpen
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -37,6 +40,17 @@ interface Treatment {
   pathology_id: string;
 }
 
+interface WebSource {
+  title: string;
+  url: string;
+}
+
+interface WebResearch {
+  query: string;
+  findings: string[];
+  sources: WebSource[];
+}
+
 interface CausalLink {
   from: string;
   fromType: 'symptom' | 'pathology' | 'treatment';
@@ -46,6 +60,7 @@ interface CausalLink {
   probability: 'high' | 'medium' | 'low';
   evidence: string;
   patientCount: number;
+  webSources?: string[];
 }
 
 interface AnalysisResult {
@@ -53,6 +68,7 @@ interface AnalysisResult {
   summary: string;
   warnings: string[];
   recommendations: string[];
+  webResearch: WebResearch[];
 }
 
 const CrossDataAnalyzer = () => {
@@ -124,7 +140,7 @@ const CrossDataAnalyzer = () => {
       if (data.error) {
         if (data.error.includes('Crédits insuffisants') || data.error.includes('402')) {
           setError('Crédits IA insuffisants. Rechargez votre compte dans Paramètres → Workspace → Usage.');
-        } else if (data.error.includes('Rate limit') || data.error.includes('429')) {
+        } else if (data.error.includes('Limite') || data.error.includes('429')) {
           setError('Limite de requêtes atteinte. Réessayez dans quelques instants.');
         } else {
           setError(data.error);
@@ -133,8 +149,9 @@ const CrossDataAnalyzer = () => {
       }
 
       setResult(data.analysis);
+      toast.success(`Analyse terminée : ${data.context.pubmedSearches || 0} recherches PubMed effectuées`);
     } catch (err) {
-      console.error('Analysis error:', err);
+      console.error('Erreur d\'analyse:', err);
       setError('Erreur lors de l\'analyse. Veuillez réessayer.');
     } finally {
       setAnalyzing(false);
@@ -167,6 +184,15 @@ const CrossDataAnalyzer = () => {
     }
   };
 
+  const getTypeLabel = (type: string) => {
+    switch (type) {
+      case 'symptom': return 'Symptôme';
+      case 'pathology': return 'Pathologie';
+      case 'treatment': return 'Traitement';
+      default: return type;
+    }
+  };
+
   if (loading) {
     return (
       <Card>
@@ -191,12 +217,13 @@ const CrossDataAnalyzer = () => {
           <Brain className="h-5 w-5 text-primary" />
           Analyse IA Cross-Data
         </CardTitle>
-        <CardDescription>
-          Sélectionnez des symptômes, pathologies ou traitements pour analyser les liens de causalité
+        <CardDescription className="flex items-center gap-2">
+          <Globe className="h-4 w-4" />
+          Analyse les liens de causalité en croisant vos données patients et la littérature médicale (PubMed)
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-6">
-        {/* Selection Panels */}
+        {/* Panneaux de sélection */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           {/* Pathologies */}
           <div className="space-y-2">
@@ -225,7 +252,7 @@ const CrossDataAnalyzer = () => {
             </ScrollArea>
           </div>
 
-          {/* Symptoms */}
+          {/* Symptômes */}
           <div className="space-y-2">
             <div className="flex items-center gap-2 font-medium">
               <Activity className="h-4 w-4 text-blue-500" />
@@ -252,7 +279,7 @@ const CrossDataAnalyzer = () => {
             </ScrollArea>
           </div>
 
-          {/* Treatments */}
+          {/* Traitements */}
           <div className="space-y-2">
             <div className="flex items-center gap-2 font-medium">
               <Pill className="h-4 w-4 text-green-500" />
@@ -280,10 +307,10 @@ const CrossDataAnalyzer = () => {
           </div>
         </div>
 
-        {/* Analysis Button */}
+        {/* Bouton d'analyse */}
         <div className="flex items-center justify-between">
           <p className="text-sm text-muted-foreground">
-            {getTotalSelected()} élément(s) sélectionné(s)
+            {getTotalSelected()} élément(s) sélectionné(s) • Recherche web incluse
           </p>
           <Button 
             onClick={runAnalysis} 
@@ -303,7 +330,7 @@ const CrossDataAnalyzer = () => {
           </Button>
         </div>
 
-        {/* Error */}
+        {/* Erreur */}
         {error && (
           <div className="flex items-center gap-2 p-4 bg-destructive/10 border border-destructive/30 rounded-lg">
             <AlertTriangle className="h-5 w-5 text-destructive" />
@@ -311,17 +338,17 @@ const CrossDataAnalyzer = () => {
           </div>
         )}
 
-        {/* Results */}
+        {/* Résultats */}
         {result && (
           <div className="space-y-6 pt-4 border-t">
-            {/* Summary */}
+            {/* Résumé */}
             <div className="p-4 bg-muted/50 rounded-lg">
               <h4 className="font-medium mb-2">Résumé de l'analyse</h4>
               <p className="text-sm text-muted-foreground">{result.summary}</p>
             </div>
 
-            {/* Causal Links */}
-            {result.causalLinks.length > 0 && (
+            {/* Liens de causalité */}
+            {result.causalLinks && result.causalLinks.length > 0 && (
               <div className="space-y-3">
                 <h4 className="font-medium flex items-center gap-2">
                   <Link2 className="h-4 w-4" />
@@ -337,20 +364,71 @@ const CrossDataAnalyzer = () => {
                         <div className="flex items-center gap-1.5 px-2 py-1 bg-muted rounded">
                           {getTypeIcon(link.fromType)}
                           <span className="text-sm font-medium">{link.from}</span>
+                          <span className="text-xs text-muted-foreground">({getTypeLabel(link.fromType)})</span>
                         </div>
                         <ArrowRight className="h-4 w-4 text-muted-foreground" />
                         <div className="flex items-center gap-1.5 px-2 py-1 bg-muted rounded">
                           {getTypeIcon(link.toType)}
                           <span className="text-sm font-medium">{link.to}</span>
+                          <span className="text-xs text-muted-foreground">({getTypeLabel(link.toType)})</span>
                         </div>
                         {getProbabilityBadge(link.probability)}
                       </div>
                       <p className="text-sm font-medium text-primary">{link.relationship}</p>
                       <p className="text-sm text-muted-foreground">{link.evidence}</p>
-                      {link.patientCount > 0 && (
-                        <p className="text-xs text-muted-foreground">
-                          Observé chez {link.patientCount} patient(s) dans la base de données
-                        </p>
+                      <div className="flex items-center gap-4 text-xs text-muted-foreground">
+                        {link.patientCount > 0 && (
+                          <span>Observé chez {link.patientCount} patient(s)</span>
+                        )}
+                        {link.webSources && link.webSources.length > 0 && (
+                          <span className="flex items-center gap-1">
+                            <Globe className="h-3 w-3" />
+                            {link.webSources.length} source(s) web
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Recherche web */}
+            {result.webResearch && result.webResearch.length > 0 && (
+              <div className="space-y-3">
+                <h4 className="font-medium flex items-center gap-2 text-blue-600 dark:text-blue-400">
+                  <BookOpen className="h-4 w-4" />
+                  Recherche scientifique (PubMed)
+                </h4>
+                <div className="space-y-3">
+                  {result.webResearch.map((research, index) => (
+                    <div key={index} className="p-3 border rounded-lg bg-muted/30">
+                      <p className="text-sm font-medium mb-2">Recherche : "{research.query}"</p>
+                      {research.findings && research.findings.length > 0 && (
+                        <ul className="space-y-1 mb-2">
+                          {research.findings.map((finding, fIndex) => (
+                            <li key={fIndex} className="text-sm text-muted-foreground flex items-start gap-2">
+                              <CheckCircle2 className="h-4 w-4 text-green-500 mt-0.5 flex-shrink-0" />
+                              {finding}
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                      {research.sources && research.sources.length > 0 && (
+                        <div className="flex flex-wrap gap-2">
+                          {research.sources.map((source, sIndex) => (
+                            <a 
+                              key={sIndex}
+                              href={source.url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="inline-flex items-center gap-1 text-xs text-primary hover:underline"
+                            >
+                              <ExternalLink className="h-3 w-3" />
+                              {source.title.slice(0, 50)}...
+                            </a>
+                          ))}
+                        </div>
                       )}
                     </div>
                   ))}
@@ -358,8 +436,8 @@ const CrossDataAnalyzer = () => {
               </div>
             )}
 
-            {/* Warnings */}
-            {result.warnings.length > 0 && (
+            {/* Avertissements */}
+            {result.warnings && result.warnings.length > 0 && (
               <div className="space-y-2">
                 <h4 className="font-medium flex items-center gap-2 text-yellow-600 dark:text-yellow-400">
                   <AlertTriangle className="h-4 w-4" />
@@ -376,8 +454,8 @@ const CrossDataAnalyzer = () => {
               </div>
             )}
 
-            {/* Recommendations */}
-            {result.recommendations.length > 0 && (
+            {/* Recommandations */}
+            {result.recommendations && result.recommendations.length > 0 && (
               <div className="space-y-2">
                 <h4 className="font-medium flex items-center gap-2 text-green-600 dark:text-green-400">
                   <CheckCircle2 className="h-4 w-4" />
