@@ -22,10 +22,9 @@ import { toast } from 'sonner';
 
 // URLs de test prédéfinies
 const TEST_URLS = [
+  'https://compendium.ch/product/1225565-similasan-insektenstiche-glob/mpro',
   'https://compendium.ch/product/1122930-ultratechnekow-fm-generateur-25-8-gbq/mpro',
   'https://compendium.ch/product/1122929-ultratechnekow-fm-generateur-30-1-gbq/mpro',
-  'https://compendium.ch/product/1122928-ultratechnekow-fm-generateur-34-4-gbq/mpro',
-  'https://compendium.ch/product/1122927-ultratechnekow-fm-generateur-43-gbq/mpro',
   'https://compendium.ch/product/1553866-ultravist-sol-inj-150-mg-ml-50ml/mpro'
 ];
 
