@@ -4,11 +4,12 @@ import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Badge } from "@/components/ui/badge"; // <--- Import ajouté ici
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
-import * as XLSX from "xlsx"; // On utilise la librairie XLSX
+import * as XLSX from "xlsx";
 import {
   Globe,
   Database,
@@ -203,8 +204,6 @@ export const MedicalScraperPanel = () => {
               }
             } else if (dbCol === "authorization_date" || dbCol === "validity_date") {
               // Gestion dates Excel (nombre de jours depuis 1900)
-              // Si c'est un nombre, XLSX le convertit parfois tout seul, sinon :
-              // Pour l'instant on suppose que c'est du texte ou une date standard
               if (val.includes(".")) {
                 // Format DD.MM.YYYY -> YYYY-MM-DD
                 const parts = val.split(".");
