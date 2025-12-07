@@ -51,6 +51,7 @@ const PubMedArticles = ({ pathologyName }: PubMedArticlesProps) => {
   useEffect(() => {
     if (pathologyName) {
       setSearchQuery(pathologyName);
+      fetchArticles(pathologyName);
     }
   }, [pathologyName]);
 
@@ -119,11 +120,6 @@ const PubMedArticles = ({ pathologyName }: PubMedArticlesProps) => {
           </div>
         )}
 
-        {!loading && !error && !hasSearched && (
-          <div className="text-center py-4 text-muted-foreground">
-            Cliquez sur rechercher pour charger les articles
-          </div>
-        )}
 
         {!loading && articles.length > 0 && (
           <div className="space-y-3">
