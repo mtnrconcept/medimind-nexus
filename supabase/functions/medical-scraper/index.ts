@@ -7,6 +7,45 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
+// Helper pour attendre avec retry sur 429
+async function scrapeWithRateLimitRetry(firecrawl: any, url: string, maxRetries = 3): Promise<any> {
+  let lastError = null;
+  
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      const result = await firecrawl.scrapeUrl(url, {
+        formats: ['markdown'],
+        onlyMainContent: true,
+      });
+      return result;
+    } catch (err: any) {
+      lastError = err;
+      const errorMessage = err?.message || String(err);
+      
+      // Détecter les erreurs 429 (rate limit)
+      if (errorMessage.includes('429') || errorMessage.includes('rate limit') || errorMessage.includes('Too Many')) {
+        const waitTime = 10000 * attempt; // 10s, 20s, 30s
+        console.log(`Rate limit (429) détecté, attente ${waitTime/1000}s avant retry ${attempt}/${maxRetries}`);
+        await new Promise(resolve => setTimeout(resolve, waitTime));
+        continue;
+      }
+      
+      // Autres erreurs réseau - retry avec backoff
+      if (errorMessage.includes('Network') || errorMessage.includes('fetch')) {
+        const waitTime = 5000 * attempt;
+        console.log(`Erreur réseau, attente ${waitTime/1000}s avant retry ${attempt}/${maxRetries}`);
+        await new Promise(resolve => setTimeout(resolve, waitTime));
+        continue;
+      }
+      
+      // Erreur non-recoverable
+      throw err;
+    }
+  }
+  
+  throw lastError || new Error('Max retries exceeded');
+}
+
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
@@ -36,50 +75,81 @@ serve(async (req) => {
     if (action === 'map') {
       console.log('Mapping du site:', url);
       
-      const mapResult = await firecrawl.mapUrl(url, {
-        limit: options?.limit || 100,
-      });
+      try {
+        const mapResult = await firecrawl.mapUrl(url, {
+          limit: options?.limit || 100,
+        });
 
-      if (!mapResult.success) {
-        throw new Error('Échec du mapping du site');
+        if (!mapResult.success) {
+          throw new Error('Échec du mapping du site');
+        }
+
+        // Filtrer les URLs pertinentes (pages de pathologies)
+        const relevantUrls = (mapResult.links || []).filter((link: string) => {
+          const lowerLink = link.toLowerCase();
+          return (
+            lowerLink.includes('patholog') ||
+            lowerLink.includes('disease') ||
+            lowerLink.includes('disorder') ||
+            lowerLink.includes('syndrome') ||
+            lowerLink.includes('maladie') ||
+            lowerLink.includes('trouble') ||
+            lowerLink.includes('infection') ||
+            lowerLink.includes('symptom') ||
+            lowerLink.includes('/topics/') ||
+            lowerLink.includes('/conditions/') ||
+            lowerLink.includes('/health-topics/')
+          );
+        });
+
+        return new Response(JSON.stringify({
+          success: true,
+          totalUrls: mapResult.links?.length || 0,
+          relevantUrls: relevantUrls.length,
+          urls: relevantUrls.slice(0, options?.limit || 100)
+        }), {
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      } catch (err: any) {
+        const errorMessage = err?.message || String(err);
+        // Retourner 429 spécifiquement pour le rate limiting
+        if (errorMessage.includes('429') || errorMessage.includes('rate limit')) {
+          return new Response(JSON.stringify({
+            success: false,
+            error: 'Rate limit atteint - veuillez patienter',
+            rateLimited: true
+          }), {
+            status: 429,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          });
+        }
+        throw err;
       }
-
-      // Filtrer les URLs pertinentes (pages de pathologies)
-      const relevantUrls = (mapResult.links || []).filter((link: string) => {
-        const lowerLink = link.toLowerCase();
-        return (
-          lowerLink.includes('patholog') ||
-          lowerLink.includes('disease') ||
-          lowerLink.includes('disorder') ||
-          lowerLink.includes('syndrome') ||
-          lowerLink.includes('maladie') ||
-          lowerLink.includes('trouble') ||
-          lowerLink.includes('infection') ||
-          lowerLink.includes('symptom') ||
-          lowerLink.includes('/topics/') ||
-          lowerLink.includes('/conditions/') ||
-          lowerLink.includes('/health-topics/')
-        );
-      });
-
-      return new Response(JSON.stringify({
-        success: true,
-        totalUrls: mapResult.links?.length || 0,
-        relevantUrls: relevantUrls.length,
-        urls: relevantUrls.slice(0, options?.limit || 100)
-      }), {
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
     }
 
     // Action: Scrape - Scraper une page et extraire les données
     if (action === 'scrape') {
       console.log('Scraping de la page:', url);
 
-      const scrapeResult = await firecrawl.scrapeUrl(url, {
-        formats: ['markdown'],
-        onlyMainContent: true,
-      });
+      let scrapeResult;
+      try {
+        scrapeResult = await scrapeWithRateLimitRetry(firecrawl, url);
+      } catch (err: any) {
+        const errorMessage = err?.message || String(err);
+        // Retourner 429 spécifiquement pour le rate limiting
+        if (errorMessage.includes('429') || errorMessage.includes('rate limit') || errorMessage.includes('Too Many')) {
+          console.log('Rate limit final après retries pour:', url);
+          return new Response(JSON.stringify({
+            success: false,
+            error: 'Rate limit Firecrawl - augmentez le délai entre requêtes',
+            rateLimited: true
+          }), {
+            status: 429,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          });
+        }
+        throw err;
+      }
 
       if (!scrapeResult.success) {
         throw new Error('Échec du scraping de la page');
@@ -95,6 +165,7 @@ IMPORTANT:
 - Réponds UNIQUEMENT avec le JSON, sans texte avant ou après
 - Si une information n'est pas disponible, utilise null
 - Assure-toi que le JSON est valide
+- Pour severity, utilise UNIQUEMENT une de ces valeurs: "mild", "moderate", "severe", "critical"
 
 Format attendu:
 {
@@ -192,6 +263,13 @@ ${markdown.substring(0, 15000)}`;
         let pathologyId;
         
         if (!existingPathology) {
+          // Valider la severity
+          const validSeverities = ['mild', 'moderate', 'severe', 'critical'];
+          let severity = extractedData.pathology.severity?.toLowerCase();
+          if (!validSeverities.includes(severity)) {
+            severity = 'moderate'; // Valeur par défaut
+          }
+
           const { data: newPathology, error: pathError } = await supabase
             .from('pathologies')
             .insert({
@@ -200,7 +278,7 @@ ${markdown.substring(0, 15000)}`;
               description: extractedData.pathology.description,
               category: extractedData.pathology.category,
               specialty: extractedData.pathology.specialty,
-              severity: extractedData.pathology.severity,
+              severity: severity,
               synonyms: extractedData.pathology.synonyms || []
             })
             .select('id')
@@ -353,7 +431,7 @@ ${markdown.substring(0, 15000)}`;
         }
 
         // Pause pour éviter le rate limiting
-        await new Promise(resolve => setTimeout(resolve, 2000));
+        await new Promise(resolve => setTimeout(resolve, 5000));
       }
 
       const totalStats = results.reduce((acc, r) => {
@@ -380,9 +458,23 @@ ${markdown.substring(0, 15000)}`;
 
   } catch (error: any) {
     console.error('Erreur medical-scraper:', error);
+    const errorMessage = error?.message || 'Erreur inconnue';
+    
+    // Vérifier si c'est une erreur 429
+    if (errorMessage.includes('429') || errorMessage.includes('rate limit')) {
+      return new Response(JSON.stringify({ 
+        success: false, 
+        error: 'Rate limit - veuillez patienter avant de réessayer',
+        rateLimited: true
+      }), {
+        status: 429,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+    
     return new Response(JSON.stringify({ 
       success: false, 
-      error: error?.message || 'Erreur inconnue'
+      error: errorMessage
     }), {
       status: 500,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },

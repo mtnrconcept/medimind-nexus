@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -6,6 +6,7 @@ import { Progress } from '@/components/ui/progress';
 import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Slider } from '@/components/ui/slider';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useToast } from '@/hooks/use-toast';
 import { supabase } from '@/integrations/supabase/client';
 import { 
@@ -21,7 +22,9 @@ import {
   RefreshCw,
   FileText,
   Stethoscope,
-  Pill
+  Pill,
+  Clock,
+  AlertTriangle
 } from 'lucide-react';
 
 interface ScrapeResult {
@@ -34,6 +37,7 @@ interface ScrapeResult {
     linksCreated: number;
   };
   error?: string;
+  rateLimited?: boolean;
 }
 
 interface ScrapingStats {
@@ -42,6 +46,22 @@ interface ScrapingStats {
   treatmentsAdded: number;
   linksCreated: number;
 }
+
+type RateLimitMode = 'slow' | 'normal' | 'fast';
+
+const RATE_LIMIT_DELAYS: Record<RateLimitMode, number> = {
+  slow: 15000,    // 15 secondes - très prudent
+  normal: 8000,   // 8 secondes - équilibré
+  fast: 4000      // 4 secondes - risqué
+};
+
+const RATE_LIMIT_LABELS: Record<RateLimitMode, string> = {
+  slow: 'Prudent (15s)',
+  normal: 'Normal (8s)',
+  fast: 'Rapide (4s)'
+};
+
+const SCRAPED_URLS_KEY = 'medical_scraper_scraped_urls';
 
 export const MedicalScraperPanel = () => {
   const { toast } = useToast();
@@ -60,6 +80,44 @@ export const MedicalScraperPanel = () => {
     treatmentsAdded: 0,
     linksCreated: 0
   });
+  const [rateLimitMode, setRateLimitMode] = useState<RateLimitMode>('normal');
+  const [estimatedTime, setEstimatedTime] = useState<string>('');
+  const [scrapedUrls, setScrapedUrls] = useState<Set<string>>(new Set());
+  const [rateLimitHits, setRateLimitHits] = useState(0);
+
+  // Charger les URLs déjà scrapées
+  useEffect(() => {
+    const saved = localStorage.getItem(SCRAPED_URLS_KEY);
+    if (saved) {
+      try {
+        setScrapedUrls(new Set(JSON.parse(saved)));
+      } catch (e) {
+        console.error('Erreur chargement URLs scrapées:', e);
+      }
+    }
+  }, []);
+
+  // Sauvegarder les URLs scrapées
+  const saveScrapedUrl = (url: string) => {
+    setScrapedUrls(prev => {
+      const newSet = new Set(prev);
+      newSet.add(url);
+      localStorage.setItem(SCRAPED_URLS_KEY, JSON.stringify([...newSet]));
+      return newSet;
+    });
+  };
+
+  // Calculer le temps estimé
+  useEffect(() => {
+    if (mappedUrls.length > 0) {
+      const urlsToProcess = mappedUrls.filter(u => !scrapedUrls.has(u)).slice(0, pageLimit[0]);
+      const delayPerUrl = RATE_LIMIT_DELAYS[rateLimitMode];
+      const totalSeconds = (urlsToProcess.length * delayPerUrl) / 1000;
+      const minutes = Math.floor(totalSeconds / 60);
+      const seconds = Math.round(totalSeconds % 60);
+      setEstimatedTime(minutes > 0 ? `~${minutes}m ${seconds}s` : `~${seconds}s`);
+    }
+  }, [mappedUrls, pageLimit, rateLimitMode, scrapedUrls]);
 
   const addLog = (result: ScrapeResult) => {
     setLogs(prev => [result, ...prev].slice(0, 100));
@@ -79,6 +137,7 @@ export const MedicalScraperPanel = () => {
     setMappedUrls([]);
     setLogs([]);
     setStats({ pathologiesAdded: 0, symptomsAdded: 0, treatmentsAdded: 0, linksCreated: 0 });
+    setRateLimitHits(0);
 
     try {
       const { data, error } = await supabase.functions.invoke('medical-scraper', {
@@ -91,11 +150,24 @@ export const MedicalScraperPanel = () => {
 
       if (error) throw error;
 
+      if (data.rateLimited) {
+        toast({
+          title: "Rate limit atteint",
+          description: "Veuillez patienter quelques minutes avant de réessayer",
+          variant: "destructive"
+        });
+        return;
+      }
+
       if (data.success) {
-        setMappedUrls(data.urls || []);
+        // Filtrer les URLs déjà scrapées
+        const newUrls = (data.urls || []).filter((u: string) => !scrapedUrls.has(u));
+        const skippedCount = (data.urls?.length || 0) - newUrls.length;
+        
+        setMappedUrls(newUrls);
         toast({
           title: "Mapping terminé",
-          description: `${data.urls?.length || 0} pages pertinentes trouvées sur ${data.totalUrls} URLs totales`
+          description: `${newUrls.length} nouvelles pages trouvées${skippedCount > 0 ? ` (${skippedCount} déjà scrapées)` : ''}`
         });
       } else {
         throw new Error(data.error || 'Échec du mapping');
@@ -112,8 +184,9 @@ export const MedicalScraperPanel = () => {
     }
   };
 
-  const scrapeWithRetry = async (scrapeUrl: string, maxRetries = 3): Promise<{ data: any; error: any }> => {
+  const scrapeWithRetry = async (scrapeUrl: string, maxRetries = 3): Promise<{ data: any; error: any; rateLimited?: boolean }> => {
     let lastError = null;
+    
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
       try {
         const { data, error } = await supabase.functions.invoke('medical-scraper', {
@@ -124,25 +197,46 @@ export const MedicalScraperPanel = () => {
         });
         
         if (error) {
-          // Si c'est une erreur réseau, on retry
-          if (error.message?.includes('Network') || error.message?.includes('500')) {
-            lastError = error;
-            console.log(`Tentative ${attempt}/${maxRetries} échouée pour ${scrapeUrl}, nouvelle tentative...`);
-            await new Promise(resolve => setTimeout(resolve, 3000 * attempt)); // Backoff exponentiel
+          const errorMessage = error.message || '';
+          
+          // Erreur 429 - rate limit
+          if (errorMessage.includes('429') || errorMessage.includes('rate limit') || data?.rateLimited) {
+            const waitTime = 30000 * attempt; // 30s, 60s, 90s
+            console.log(`Rate limit détecté, attente ${waitTime/1000}s...`);
+            setRateLimitHits(prev => prev + 1);
+            await new Promise(resolve => setTimeout(resolve, waitTime));
             continue;
           }
+          
+          // Erreur réseau
+          if (errorMessage.includes('Network') || errorMessage.includes('500')) {
+            lastError = error;
+            console.log(`Tentative ${attempt}/${maxRetries} échouée pour ${scrapeUrl}`);
+            await new Promise(resolve => setTimeout(resolve, 5000 * attempt));
+            continue;
+          }
+          
           return { data: null, error };
+        }
+        
+        // Vérifier si la réponse contient rateLimited
+        if (data?.rateLimited) {
+          const waitTime = 30000 * attempt;
+          console.log(`Rate limit dans la réponse, attente ${waitTime/1000}s...`);
+          setRateLimitHits(prev => prev + 1);
+          await new Promise(resolve => setTimeout(resolve, waitTime));
+          continue;
         }
         
         return { data, error: null };
       } catch (err) {
         lastError = err;
         if (attempt < maxRetries) {
-          await new Promise(resolve => setTimeout(resolve, 3000 * attempt));
+          await new Promise(resolve => setTimeout(resolve, 5000 * attempt));
         }
       }
     }
-    return { data: null, error: lastError };
+    return { data: null, error: lastError, rateLimited: true };
   };
 
   const handleStartScraping = async () => {
@@ -158,10 +252,16 @@ export const MedicalScraperPanel = () => {
     setIsScraping(true);
     setIsPaused(false);
     setProgress(0);
+    setRateLimitHits(0);
 
-    const urlsToScrape = mappedUrls.slice(0, pageLimit[0]);
+    // Filtrer les URLs déjà scrapées
+    const urlsToScrape = mappedUrls
+      .filter(u => !scrapedUrls.has(u))
+      .slice(0, pageLimit[0]);
+    
     let successCount = 0;
     let failCount = 0;
+    let localStats = { ...stats };
     
     for (let i = 0; i < urlsToScrape.length; i++) {
       if (isPaused) break;
@@ -171,7 +271,26 @@ export const MedicalScraperPanel = () => {
       setProgress(Math.round(((i + 1) / urlsToScrape.length) * 100));
 
       try {
-        const { data, error } = await scrapeWithRetry(currentScrapeUrl);
+        const { data, error, rateLimited } = await scrapeWithRetry(currentScrapeUrl);
+
+        if (rateLimited) {
+          // Trop de rate limits, basculer en mode prudent
+          if (rateLimitMode !== 'slow') {
+            setRateLimitMode('slow');
+            toast({
+              title: "Mode prudent activé",
+              description: "Rate limit détecté, passage en mode lent automatique",
+            });
+          }
+          failCount++;
+          addLog({
+            url: currentScrapeUrl,
+            success: false,
+            error: 'Rate limit - sera réessayé plus tard',
+            rateLimited: true
+          });
+          continue;
+        }
 
         if (error) throw error;
 
@@ -183,14 +302,16 @@ export const MedicalScraperPanel = () => {
 
         addLog(result);
         successCount++;
+        saveScrapedUrl(currentScrapeUrl);
 
         if (data?.stats) {
-          setStats(prev => ({
-            pathologiesAdded: prev.pathologiesAdded + (data.stats.pathologiesAdded || 0),
-            symptomsAdded: prev.symptomsAdded + (data.stats.symptomsAdded || 0),
-            treatmentsAdded: prev.treatmentsAdded + (data.stats.treatmentsAdded || 0),
-            linksCreated: prev.linksCreated + (data.stats.linksCreated || 0)
-          }));
+          localStats = {
+            pathologiesAdded: localStats.pathologiesAdded + (data.stats.pathologiesAdded || 0),
+            symptomsAdded: localStats.symptomsAdded + (data.stats.symptomsAdded || 0),
+            treatmentsAdded: localStats.treatmentsAdded + (data.stats.treatmentsAdded || 0),
+            linksCreated: localStats.linksCreated + (data.stats.linksCreated || 0)
+          };
+          setStats(localStats);
         }
       } catch (error: any) {
         console.error(`Erreur scraping ${currentScrapeUrl}:`, error);
@@ -198,19 +319,20 @@ export const MedicalScraperPanel = () => {
         addLog({
           url: currentScrapeUrl,
           success: false,
-          error: error.message || 'Erreur réseau - réessayez plus tard'
+          error: error.message || 'Erreur réseau'
         });
       }
 
-      // Pause entre les requêtes pour éviter le rate limiting
-      await new Promise(resolve => setTimeout(resolve, 2500));
+      // Pause entre les requêtes selon le mode
+      const delay = RATE_LIMIT_DELAYS[rateLimitMode];
+      await new Promise(resolve => setTimeout(resolve, delay));
     }
 
     setIsScraping(false);
     setCurrentUrl('');
     toast({
       title: "Scraping terminé",
-      description: `${successCount} réussis, ${failCount} échecs. ${stats.pathologiesAdded} pathologies ajoutées.`
+      description: `${successCount} réussis, ${failCount} échecs. ${localStats.pathologiesAdded} pathologies ajoutées.`
     });
   };
 
@@ -225,7 +347,19 @@ export const MedicalScraperPanel = () => {
     setProgress(0);
     setStats({ pathologiesAdded: 0, symptomsAdded: 0, treatmentsAdded: 0, linksCreated: 0 });
     setCurrentUrl('');
+    setRateLimitHits(0);
   };
+
+  const handleClearCache = () => {
+    localStorage.removeItem(SCRAPED_URLS_KEY);
+    setScrapedUrls(new Set());
+    toast({
+      title: "Cache vidé",
+      description: "L'historique des URLs scrapées a été effacé"
+    });
+  };
+
+  const newUrlsCount = mappedUrls.filter(u => !scrapedUrls.has(u)).length;
 
   return (
     <div className="space-y-6">
@@ -251,24 +385,58 @@ export const MedicalScraperPanel = () => {
             />
           </div>
 
-          <div className="space-y-2">
-            <label className="text-sm font-medium">
-              Limite de pages : {pageLimit[0]}
-            </label>
-            <Slider
-              value={pageLimit}
-              onValueChange={setPageLimit}
-              min={10}
-              max={200}
-              step={10}
-              disabled={isScraping}
-            />
-            <p className="text-xs text-muted-foreground">
-              Nombre maximum de pages à scraper
-            </p>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <label className="text-sm font-medium">
+                Limite de pages : {pageLimit[0]}
+              </label>
+              <Slider
+                value={pageLimit}
+                onValueChange={setPageLimit}
+                min={10}
+                max={200}
+                step={10}
+                disabled={isScraping}
+              />
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Mode rate limit</label>
+              <Select 
+                value={rateLimitMode} 
+                onValueChange={(v) => setRateLimitMode(v as RateLimitMode)}
+                disabled={isScraping}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="slow">{RATE_LIMIT_LABELS.slow}</SelectItem>
+                  <SelectItem value="normal">{RATE_LIMIT_LABELS.normal}</SelectItem>
+                  <SelectItem value="fast">{RATE_LIMIT_LABELS.fast}</SelectItem>
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">
+                Plus lent = moins de risque d'erreurs 429
+              </p>
+            </div>
           </div>
 
-          <div className="flex gap-2">
+          {mappedUrls.length > 0 && (
+            <div className="flex items-center gap-2 text-sm text-muted-foreground bg-muted p-2 rounded">
+              <Clock className="h-4 w-4" />
+              Temps estimé : {estimatedTime} pour {Math.min(pageLimit[0], newUrlsCount)} pages
+            </div>
+          )}
+
+          {rateLimitHits > 0 && (
+            <div className="flex items-center gap-2 text-sm text-warning bg-warning/10 p-2 rounded">
+              <AlertTriangle className="h-4 w-4" />
+              {rateLimitHits} rate limit(s) détecté(s) - considérez le mode prudent
+            </div>
+          )}
+
+          <div className="flex gap-2 flex-wrap">
             <Button 
               onClick={handleMapSite} 
               disabled={isMapping || isScraping}
@@ -288,9 +456,9 @@ export const MedicalScraperPanel = () => {
             </Button>
 
             {mappedUrls.length > 0 && !isScraping && (
-              <Button onClick={handleStartScraping}>
+              <Button onClick={handleStartScraping} disabled={newUrlsCount === 0}>
                 <Play className="mr-2 h-4 w-4" />
-                Lancer le scraping ({Math.min(pageLimit[0], mappedUrls.length)} pages)
+                Scraper ({Math.min(pageLimit[0], newUrlsCount)} nouvelles pages)
               </Button>
             )}
 
@@ -304,6 +472,12 @@ export const MedicalScraperPanel = () => {
             <Button onClick={handleReset} variant="ghost" disabled={isScraping}>
               <RefreshCw className="h-4 w-4" />
             </Button>
+
+            {scrapedUrls.size > 0 && (
+              <Button onClick={handleClearCache} variant="ghost" size="sm" disabled={isScraping}>
+                Vider cache ({scrapedUrls.size} URLs)
+              </Button>
+            )}
           </div>
         </CardContent>
       </Card>
@@ -316,6 +490,9 @@ export const MedicalScraperPanel = () => {
               <Search className="h-5 w-5" />
               URLs découvertes
               <Badge variant="secondary">{mappedUrls.length} pages</Badge>
+              {scrapedUrls.size > 0 && (
+                <Badge variant="outline">{newUrlsCount} nouvelles</Badge>
+              )}
             </CardTitle>
           </CardHeader>
           <CardContent>
@@ -324,9 +501,12 @@ export const MedicalScraperPanel = () => {
                 {mappedUrls.slice(0, 50).map((mappedUrl, index) => (
                   <div 
                     key={index} 
-                    className="text-xs text-muted-foreground truncate hover:text-foreground"
+                    className={`text-xs truncate hover:text-foreground flex items-center gap-1 ${
+                      scrapedUrls.has(mappedUrl) ? 'text-muted-foreground/50 line-through' : 'text-muted-foreground'
+                    }`}
                     title={mappedUrl}
                   >
+                    {scrapedUrls.has(mappedUrl) && <CheckCircle2 className="h-3 w-3 text-green-500" />}
                     {mappedUrl}
                   </div>
                 ))}
@@ -406,11 +586,13 @@ export const MedicalScraperPanel = () => {
                   <div 
                     key={index} 
                     className={`flex items-start gap-2 p-2 rounded text-sm ${
-                      log.success ? 'bg-green-500/10' : 'bg-destructive/10'
+                      log.success ? 'bg-green-500/10' : log.rateLimited ? 'bg-yellow-500/10' : 'bg-destructive/10'
                     }`}
                   >
                     {log.success ? (
                       <CheckCircle2 className="h-4 w-4 text-green-500 mt-0.5 flex-shrink-0" />
+                    ) : log.rateLimited ? (
+                      <AlertTriangle className="h-4 w-4 text-yellow-500 mt-0.5 flex-shrink-0" />
                     ) : (
                       <XCircle className="h-4 w-4 text-destructive mt-0.5 flex-shrink-0" />
                     )}
@@ -438,7 +620,7 @@ export const MedicalScraperPanel = () => {
                         </div>
                       )}
                       {log.error && (
-                        <div className="text-xs text-destructive mt-1">
+                        <div className={`text-xs mt-1 ${log.rateLimited ? 'text-yellow-600' : 'text-destructive'}`}>
                           {log.error}
                         </div>
                       )}
