@@ -4,19 +4,30 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
 import { supabase } from '@/integrations/supabase/client';
 import { 
   Tablets, 
   Loader2, 
-  Play, 
-  Square, 
   CheckCircle2, 
   XCircle, 
   AlertTriangle,
   Download,
-  MapPin
+  MapPin,
+  TestTube,
+  Plus
 } from 'lucide-react';
 import { toast } from 'sonner';
+
+// URLs de test prédéfinies
+const TEST_URLS = [
+  'https://compendium.ch/product/1122930-ultratechnekow-fm-generateur-25-8-gbq/mpro',
+  'https://compendium.ch/product/1122929-ultratechnekow-fm-generateur-30-1-gbq/mpro',
+  'https://compendium.ch/product/1122928-ultratechnekow-fm-generateur-34-4-gbq/mpro',
+  'https://compendium.ch/product/1122927-ultratechnekow-fm-generateur-43-gbq/mpro',
+  'https://compendium.ch/product/1553866-ultravist-sol-inj-150-mg-ml-50ml/mpro'
+];
 
 interface ScrapeResult {
   url: string;
@@ -33,9 +44,11 @@ interface ScrapeResult {
 const CompendiumScraperPanel = () => {
   const [mapping, setMapping] = useState(false);
   const [scraping, setScraping] = useState(false);
+  const [testing, setTesting] = useState(false);
   const [mappedUrls, setMappedUrls] = useState<string[]>([]);
   const [results, setResults] = useState<ScrapeResult[]>([]);
   const [progress, setProgress] = useState(0);
+  const [manualUrls, setManualUrls] = useState('');
   const [totalStats, setTotalStats] = useState({
     medicationsAdded: 0,
     sideEffectsAdded: 0,
@@ -139,6 +152,69 @@ const CompendiumScraperPanel = () => {
     toast.success(`Scraping terminé: ${newStats.medicationsAdded} médicaments ajoutés`);
   };
 
+  // Test avec URLs spécifiques
+  const testWithUrls = async (urls: string[]) => {
+    if (urls.length === 0) {
+      toast.error('Aucune URL à tester');
+      return;
+    }
+
+    setTesting(true);
+    setResults([]);
+    setTotalStats({ medicationsAdded: 0, sideEffectsAdded: 0, interactionsAdded: 0, contraindicationsAdded: 0 });
+
+    const newResults: ScrapeResult[] = [];
+    const newStats = { medicationsAdded: 0, sideEffectsAdded: 0, interactionsAdded: 0, contraindicationsAdded: 0 };
+
+    try {
+      const { data, error } = await supabase.functions.invoke('medical-scraper', {
+        body: {
+          action: 'batch-medications',
+          urls: urls
+        }
+      });
+
+      if (error) throw error;
+
+      if (data.results) {
+        newResults.push(...data.results);
+        
+        if (data.totalStats) {
+          newStats.medicationsAdded = data.totalStats.medicationsAdded || 0;
+          newStats.sideEffectsAdded = data.totalStats.sideEffectsAdded || 0;
+          newStats.interactionsAdded = data.totalStats.interactionsAdded || 0;
+          newStats.contraindicationsAdded = data.totalStats.contraindicationsAdded || 0;
+        }
+      }
+
+      setResults(newResults);
+      setTotalStats(newStats);
+      toast.success(`Test terminé: ${newStats.medicationsAdded} médicaments ajoutés`);
+    } catch (err: any) {
+      console.error('Erreur test:', err);
+      toast.error(err.message || 'Erreur lors du test');
+    } finally {
+      setTesting(false);
+    }
+  };
+
+  // Ajouter URLs manuelles aux URLs mappées
+  const addManualUrls = () => {
+    const urls = manualUrls
+      .split('\n')
+      .map(u => u.trim())
+      .filter(u => u.startsWith('https://compendium.ch'));
+    
+    if (urls.length === 0) {
+      toast.error('Aucune URL Compendium valide trouvée');
+      return;
+    }
+
+    setMappedUrls(prev => [...new Set([...prev, ...urls])]);
+    setManualUrls('');
+    toast.success(`${urls.length} URLs ajoutées`);
+  };
+
   const successCount = results.filter(r => r.success).length;
   const errorCount = results.filter(r => !r.success).length;
 
@@ -154,11 +230,80 @@ const CompendiumScraperPanel = () => {
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
-        {/* Actions */}
+        {/* Test rapide avec URLs prédéfinies */}
+        <div className="p-3 border rounded-lg bg-muted/30 space-y-3">
+          <div className="flex items-center justify-between">
+            <p className="text-sm font-medium flex items-center gap-2">
+              <TestTube className="h-4 w-4 text-blue-500" />
+              Test rapide (5 URLs prédéfinies)
+            </p>
+            <Button 
+              size="sm"
+              onClick={() => testWithUrls(TEST_URLS)}
+              disabled={testing || scraping || mapping}
+            >
+              {testing ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  Test en cours...
+                </>
+              ) : (
+                <>
+                  <TestTube className="h-4 w-4 mr-2" />
+                  Lancer le test
+                </>
+              )}
+            </Button>
+          </div>
+          <div className="text-xs text-muted-foreground">
+            {TEST_URLS.map((url, i) => (
+              <div key={i} className="truncate">{url.split('/').pop()?.replace('/mpro', '')}</div>
+            ))}
+          </div>
+        </div>
+
+        {/* Saisie manuelle d'URLs */}
+        <div className="space-y-2">
+          <p className="text-sm font-medium">URLs manuelles</p>
+          <Textarea
+            placeholder="Collez des URLs Compendium.ch (une par ligne)&#10;Exemple: https://compendium.ch/product/1234567-nom-medicament/mpro"
+            value={manualUrls}
+            onChange={(e) => setManualUrls(e.target.value)}
+            rows={3}
+            className="text-xs"
+          />
+          <div className="flex gap-2">
+            <Button 
+              size="sm" 
+              variant="outline"
+              onClick={addManualUrls}
+              disabled={!manualUrls.trim()}
+            >
+              <Plus className="h-4 w-4 mr-1" />
+              Ajouter aux URLs
+            </Button>
+            <Button 
+              size="sm"
+              onClick={() => {
+                const urls = manualUrls
+                  .split('\n')
+                  .map(u => u.trim())
+                  .filter(u => u.startsWith('https://compendium.ch'));
+                testWithUrls(urls);
+              }}
+              disabled={!manualUrls.trim() || testing || scraping}
+            >
+              <TestTube className="h-4 w-4 mr-1" />
+              Tester ces URLs
+            </Button>
+          </div>
+        </div>
+
+        {/* Actions mapping/scraping */}
         <div className="flex gap-2 flex-wrap">
           <Button 
             onClick={mapCompendium} 
-            disabled={mapping || scraping}
+            disabled={mapping || scraping || testing}
             variant="outline"
           >
             {mapping ? (
@@ -176,7 +321,7 @@ const CompendiumScraperPanel = () => {
 
           <Button 
             onClick={startScraping} 
-            disabled={scraping || mappedUrls.length === 0}
+            disabled={scraping || mapping || testing || mappedUrls.length === 0}
           >
             {scraping ? (
               <>
