@@ -17,3 +17,6 @@ verify_jwt = false
 
 [functions.deep-research]
 verify_jwt = false
+
+[functions.medical-scraper]
+verify_jwt = true
