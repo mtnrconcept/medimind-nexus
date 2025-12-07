@@ -30,8 +30,18 @@ async function scrapeWithRateLimitRetry(firecrawl: any, url: string, maxRetries 
         continue;
       }
       
+      // Erreurs 502/503/504 (timeout serveur, bad gateway) - retry avec backoff
+      if (errorMessage.includes('502') || errorMessage.includes('503') || errorMessage.includes('504') || 
+          errorMessage.includes('Bad Gateway') || errorMessage.includes('Service Unavailable') ||
+          errorMessage.includes('Gateway Timeout')) {
+        const waitTime = 8000 * attempt; // 8s, 16s, 24s
+        console.log(`Erreur serveur (${errorMessage.includes('502') ? '502' : errorMessage.includes('503') ? '503' : '504'}), attente ${waitTime/1000}s avant retry ${attempt}/${maxRetries}`);
+        await new Promise(resolve => setTimeout(resolve, waitTime));
+        continue;
+      }
+      
       // Autres erreurs réseau - retry avec backoff
-      if (errorMessage.includes('Network') || errorMessage.includes('fetch')) {
+      if (errorMessage.includes('Network') || errorMessage.includes('fetch') || errorMessage.includes('timeout')) {
         const waitTime = 5000 * attempt;
         console.log(`Erreur réseau, attente ${waitTime/1000}s avant retry ${attempt}/${maxRetries}`);
         await new Promise(resolve => setTimeout(resolve, waitTime));
