@@ -13,6 +13,7 @@ import PharmacologyMatrix from '@/components/patient/PharmacologyMatrix';
 import VitalSignsPanel from '@/components/patient/VitalSignsPanel';
 import AIPredictionsCard from '@/components/patient/AIPredictionsCard';
 import ExtendedLabResults from '@/components/patient/ExtendedLabResults';
+import MedicalHistory from '@/components/patient/MedicalHistory';
 import { usePatientAlerts, parseExtendedLabResults, type ExtendedLabResults as ExtendedLabResultsType } from '@/hooks/usePatientAlerts';
 import type { Json } from '@/integrations/supabase/types';
 
@@ -217,9 +218,10 @@ const PatientDetail = () => {
             <ExtendedLabResults labResults={patient.lab_results_json} />
           </div>
 
-          {/* Center Panel - Digital Twin */}
+          {/* Center Panel - Digital Twin + History */}
           <div className="space-y-4">
             <DigitalTwin3D alerts={alerts} pathologyName={patient.pathologies?.name} />
+            <MedicalHistory age={patient.age} />
             <PharmacologyMatrix treatment={patient.treatment} alerts={alerts} />
           </div>
 
