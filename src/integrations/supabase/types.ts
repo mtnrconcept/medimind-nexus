@@ -134,63 +134,87 @@ export type Database = {
       medications: {
         Row: {
           atc_code: string | null
+          authorization_status: string | null
+          authorization_type: string | null
           characteristics: string | null
           composition: string | null
           created_at: string | null
           description: string | null
           dispensing_category: string | null
           dosage_forms: string[] | null
+          first_authorization_date: string | null
+          genetically_produced: boolean | null
           gtin: string | null
           id: string
           indications: string | null
           manufacturer: string | null
+          medication_category: string | null
           name: string
+          narcotic_category: string | null
           pharmacode: string | null
           posology: string | null
           source_url: string | null
           substance: string | null
           swissmedic_name: string | null
+          swissmedic_number: string | null
           updated_at: string | null
+          validity_duration: string | null
         }
         Insert: {
           atc_code?: string | null
+          authorization_status?: string | null
+          authorization_type?: string | null
           characteristics?: string | null
           composition?: string | null
           created_at?: string | null
           description?: string | null
           dispensing_category?: string | null
           dosage_forms?: string[] | null
+          first_authorization_date?: string | null
+          genetically_produced?: boolean | null
           gtin?: string | null
           id?: string
           indications?: string | null
           manufacturer?: string | null
+          medication_category?: string | null
           name: string
+          narcotic_category?: string | null
           pharmacode?: string | null
           posology?: string | null
           source_url?: string | null
           substance?: string | null
           swissmedic_name?: string | null
+          swissmedic_number?: string | null
           updated_at?: string | null
+          validity_duration?: string | null
         }
         Update: {
           atc_code?: string | null
+          authorization_status?: string | null
+          authorization_type?: string | null
           characteristics?: string | null
           composition?: string | null
           created_at?: string | null
           description?: string | null
           dispensing_category?: string | null
           dosage_forms?: string[] | null
+          first_authorization_date?: string | null
+          genetically_produced?: boolean | null
           gtin?: string | null
           id?: string
           indications?: string | null
           manufacturer?: string | null
+          medication_category?: string | null
           name?: string
+          narcotic_category?: string | null
           pharmacode?: string | null
           posology?: string | null
           source_url?: string | null
           substance?: string | null
           swissmedic_name?: string | null
+          swissmedic_number?: string | null
           updated_at?: string | null
+          validity_duration?: string | null
         }
         Relationships: []
       }
