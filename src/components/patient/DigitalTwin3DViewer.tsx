@@ -1,6 +1,6 @@
 import React, { Suspense, useState, useRef, useEffect } from 'react';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
-import { OrbitControls, Html, useGLTF } from '@react-three/drei';
+import { OrbitControls, Html } from '@react-three/drei';
 import * as THREE from 'three';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -9,6 +9,9 @@ import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
 import { Eye, EyeOff, RotateCcw, User, Bone, Heart, Layers, AlertTriangle } from 'lucide-react';
 import { PatientAlert } from '@/hooks/usePatientAlerts';
+import AnatomyMarkers from './AnatomyMarkers';
+import AnatomySearch from './AnatomySearch';
+import { ALL_ANATOMY_PARTS, AnatomyPart, AnatomyCategory } from '@/data/anatomyData';
 
 interface LayerConfig {
   id: 'skin' | 'tissues' | 'organs' | 'bones';
