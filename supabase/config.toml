@@ -20,3 +20,6 @@ verify_jwt = false
 
 [functions.medical-scraper]
 verify_jwt = true
+
+[functions.import-swissmedic]
+verify_jwt = false

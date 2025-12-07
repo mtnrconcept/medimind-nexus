@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
 import AppLayout from '@/components/layout/AppLayout';
@@ -11,6 +11,7 @@ import { Progress } from '@/components/ui/progress';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 import { MedicalScraperPanel } from '@/components/admin/MedicalScraperPanel';
+import * as XLSX from 'xlsx';
 import {
   Users,
   Activity,
@@ -24,6 +25,8 @@ import {
   Loader2,
   RefreshCw,
   Globe,
+  Upload,
+  Pill,
 } from 'lucide-react';
 
 interface UserWithRole {
@@ -46,6 +49,7 @@ interface Stats {
   admins: number;
   pathologies: number;
   symptoms: number;
+  medications: number;
 }
 
 const Admin = () => {
@@ -59,10 +63,14 @@ const Admin = () => {
     admins: 0,
     pathologies: 0,
     symptoms: 0,
+    medications: 0,
   });
   const [loading, setLoading] = useState(true);
   const [importing, setImporting] = useState(false);
   const [importProgress, setImportProgress] = useState({ current: 0, total: 0 });
+  const [importingSwissmedic, setImportingSwissmedic] = useState(false);
+  const [swissmedicProgress, setSwissmedicProgress] = useState({ processed: 0, total: 0 });
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (role !== 'admin') {
@@ -72,11 +80,12 @@ const Admin = () => {
 
     const fetchData = async () => {
       try {
-        const [usersRes, profilesRes, pathologiesRes, symptomsRes] = await Promise.all([
+        const [usersRes, profilesRes, pathologiesRes, symptomsRes, medicationsRes] = await Promise.all([
           supabase.from('user_roles').select('*'),
           supabase.from('profiles').select('*'),
           supabase.from('pathologies').select('id', { count: 'exact', head: true }),
           supabase.from('symptoms').select('id', { count: 'exact', head: true }),
+          supabase.from('medications').select('id', { count: 'exact', head: true }),
         ]);
 
         if (usersRes.data) {
@@ -97,6 +106,7 @@ const Admin = () => {
             admins,
             pathologies: pathologiesRes.count || 0,
             symptoms: symptomsRes.count || 0,
+            medications: medicationsRes.count || 0,
           });
         }
       } catch (error) {
@@ -110,12 +120,16 @@ const Admin = () => {
   }, [role, navigate]);
 
   const refreshStats = async () => {
-    const pathologiesRes = await supabase.from('pathologies').select('id', { count: 'exact', head: true });
-    const symptomsRes = await supabase.from('symptoms').select('id', { count: 'exact', head: true });
+    const [pathologiesRes, symptomsRes, medicationsRes] = await Promise.all([
+      supabase.from('pathologies').select('id', { count: 'exact', head: true }),
+      supabase.from('symptoms').select('id', { count: 'exact', head: true }),
+      supabase.from('medications').select('id', { count: 'exact', head: true }),
+    ]);
     setStats(prev => ({
       ...prev,
       pathologies: pathologiesRes.count || 0,
       symptoms: symptomsRes.count || 0,
+      medications: medicationsRes.count || 0,
     }));
   };
 
@@ -158,6 +172,56 @@ const Admin = () => {
       toast.error(`Erreur d'import: ${error instanceof Error ? error.message : 'Erreur inconnue'}`);
     } finally {
       setImporting(false);
+    }
+  };
+
+  const handleSwissmedicFileSelect = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    setImportingSwissmedic(true);
+    setSwissmedicProgress({ processed: 0, total: 0 });
+
+    try {
+      // Read Excel file
+      const arrayBuffer = await file.arrayBuffer();
+      const workbook = XLSX.read(arrayBuffer, { type: 'array' });
+      const sheetName = workbook.SheetNames[0];
+      const worksheet = workbook.Sheets[sheetName];
+      const jsonData = XLSX.utils.sheet_to_json(worksheet);
+
+      setSwissmedicProgress({ processed: 0, total: jsonData.length });
+      toast.info(`${jsonData.length} lignes trouvées, envoi en cours...`);
+
+      // Send to edge function
+      const { data, error } = await supabase.functions.invoke('import-swissmedic', {
+        body: { data: jsonData }
+      });
+
+      if (error) {
+        throw new Error(error.message);
+      }
+
+      if (!data.success) {
+        throw new Error(data.error || 'Import failed');
+      }
+
+      const { stats: importStats } = data;
+      setSwissmedicProgress({ processed: importStats.processed, total: importStats.uniqueMedications });
+      
+      toast.success(
+        `Import Swissmedic terminé: ${importStats.processed} médicaments traités (${importStats.errors} erreurs)`
+      );
+      
+      await refreshStats();
+    } catch (error) {
+      console.error('Swissmedic import error:', error);
+      toast.error(`Erreur d'import: ${error instanceof Error ? error.message : 'Erreur inconnue'}`);
+    } finally {
+      setImportingSwissmedic(false);
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
+      }
     }
   };
 
@@ -374,13 +438,64 @@ const Admin = () => {
 
             <Card>
               <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Pill className="h-5 w-5" />
+                  Import Swissmedic
+                </CardTitle>
+                <CardDescription>
+                  Importez les médicaments autorisés depuis un fichier Excel Swissmedic
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <input
+                  type="file"
+                  ref={fileInputRef}
+                  accept=".xlsx,.xls"
+                  onChange={handleSwissmedicFileSelect}
+                  className="hidden"
+                />
+                <Button
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={importingSwissmedic}
+                  variant="outline"
+                >
+                  {importingSwissmedic ? (
+                    <>
+                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                      Import en cours...
+                    </>
+                  ) : (
+                    <>
+                      <Upload className="h-4 w-4 mr-2" />
+                      Importer fichier Swissmedic (.xlsx)
+                    </>
+                  )}
+                </Button>
+                
+                {importingSwissmedic && swissmedicProgress.total > 0 && (
+                  <div className="space-y-2">
+                    <Progress value={(swissmedicProgress.processed / swissmedicProgress.total) * 100} />
+                    <p className="text-sm text-muted-foreground">
+                      {swissmedicProgress.processed.toLocaleString()} / {swissmedicProgress.total.toLocaleString()} médicaments traités
+                    </p>
+                  </div>
+                )}
+                
+                <p className="text-sm text-muted-foreground">
+                  Téléchargez le fichier depuis <a href="https://www.swissmedic.ch/swissmedic/fr/home/services/listen_neu.html" target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">Swissmedic</a> (liste des médicaments autorisés).
+                </p>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
                 <CardTitle>Vue d'ensemble des données</CardTitle>
                 <CardDescription>
                   Statistiques sur le contenu de la base de données
                 </CardDescription>
               </CardHeader>
               <CardContent>
-                <div className="grid gap-4 md:grid-cols-3">
+                <div className="grid gap-4 md:grid-cols-4">
                   <div className="p-4 rounded-lg border">
                     <div className="flex items-center gap-2 text-muted-foreground">
                       <BookOpen className="h-4 w-4" />
@@ -393,14 +508,21 @@ const Admin = () => {
                       <Activity className="h-4 w-4" />
                       <span className="text-sm">Symptômes</span>
                     </div>
-                    <p className="text-2xl font-bold mt-1">{stats.symptoms}</p>
+                    <p className="text-2xl font-bold mt-1">{stats.symptoms.toLocaleString()}</p>
+                  </div>
+                  <div className="p-4 rounded-lg border">
+                    <div className="flex items-center gap-2 text-muted-foreground">
+                      <Pill className="h-4 w-4" />
+                      <span className="text-sm">Médicaments</span>
+                    </div>
+                    <p className="text-2xl font-bold mt-1">{stats.medications.toLocaleString()}</p>
                   </div>
                   <div className="p-4 rounded-lg border">
                     <div className="flex items-center gap-2 text-muted-foreground">
                       <TrendingUp className="h-4 w-4" />
-                      <span className="text-sm">Source</span>
+                      <span className="text-sm">Sources</span>
                     </div>
-                    <p className="text-2xl font-bold mt-1">ICD-10 WHO</p>
+                    <p className="text-lg font-bold mt-1">ICD-10 / Swissmedic</p>
                   </div>
                 </div>
               </CardContent>
