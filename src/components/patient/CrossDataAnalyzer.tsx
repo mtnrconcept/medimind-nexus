@@ -27,7 +27,7 @@ import {
   X,
   CheckSquare,
   Square,
-  Filter
+  Tablets
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -52,6 +52,13 @@ interface Treatment {
   type: string | null;
 }
 
+interface Medication {
+  id: string;
+  name: string;
+  atc_code: string | null;
+  substance: string | null;
+}
+
 interface WebSource {
   title: string;
   url: string;
@@ -65,9 +72,9 @@ interface WebResearch {
 
 interface CausalLink {
   from: string;
-  fromType: 'symptom' | 'pathology' | 'treatment';
+  fromType: 'symptom' | 'pathology' | 'treatment' | 'medication';
   to: string;
-  toType: 'symptom' | 'pathology' | 'treatment';
+  toType: 'symptom' | 'pathology' | 'treatment' | 'medication';
   relationship: string;
   probability: 'high' | 'medium' | 'low';
   evidence: string;
@@ -87,6 +94,7 @@ const CrossDataAnalyzer = () => {
   const [pathologies, setPathologies] = useState<Pathology[]>([]);
   const [symptoms, setSymptoms] = useState<Symptom[]>([]);
   const [treatments, setTreatments] = useState<Treatment[]>([]);
+  const [medications, setMedications] = useState<Medication[]>([]);
   const [loading, setLoading] = useState(true);
   const [analyzing, setAnalyzing] = useState(false);
   const [result, setResult] = useState<AnalysisResult | null>(null);
@@ -95,11 +103,13 @@ const CrossDataAnalyzer = () => {
   const [selectedPathologies, setSelectedPathologies] = useState<string[]>([]);
   const [selectedSymptoms, setSelectedSymptoms] = useState<string[]>([]);
   const [selectedTreatments, setSelectedTreatments] = useState<string[]>([]);
+  const [selectedMedications, setSelectedMedications] = useState<string[]>([]);
 
   // Filtres de recherche texte
   const [searchPathologies, setSearchPathologies] = useState('');
   const [searchSymptoms, setSearchSymptoms] = useState('');
   const [searchTreatments, setSearchTreatments] = useState('');
+  const [searchMedications, setSearchMedications] = useState('');
 
   // Filtres avancés
   const [filterPathologyCategory, setFilterPathologyCategory] = useState<string>('all');
@@ -107,6 +117,7 @@ const CrossDataAnalyzer = () => {
   const [filterPathologySeverity, setFilterPathologySeverity] = useState<string>('all');
   const [filterSymptomBodySystem, setFilterSymptomBodySystem] = useState<string>('all');
   const [filterTreatmentType, setFilterTreatmentType] = useState<string>('all');
+  const [filterMedicationAtc, setFilterMedicationAtc] = useState<string>('all');
 
   // Options de filtres extraites des données
   const pathologyCategories = useMemo(() => {
@@ -138,6 +149,17 @@ const CrossDataAnalyzer = () => {
     treatments.forEach(t => t.type && types.add(t.type));
     return Array.from(types).sort();
   }, [treatments]);
+
+  const medicationAtcCodes = useMemo(() => {
+    const codes = new Set<string>();
+    medications.forEach(m => {
+      if (m.atc_code) {
+        // Extraire la première lettre du code ATC pour le groupe principal
+        codes.add(m.atc_code.substring(0, 1));
+      }
+    });
+    return Array.from(codes).sort();
+  }, [medications]);
 
   // Filtrage des données
   const filteredPathologies = useMemo(() => {
@@ -174,9 +196,20 @@ const CrossDataAnalyzer = () => {
     });
   }, [treatments, searchTreatments, filterTreatmentType]);
 
+  const filteredMedications = useMemo(() => {
+    return medications.filter(m => {
+      const matchesSearch = !searchMedications.trim() || 
+        m.name.toLowerCase().includes(searchMedications.toLowerCase()) ||
+        (m.substance && m.substance.toLowerCase().includes(searchMedications.toLowerCase()));
+      const matchesAtc = filterMedicationAtc === 'all' || 
+        (m.atc_code && m.atc_code.startsWith(filterMedicationAtc));
+      return matchesSearch && matchesAtc;
+    });
+  }, [medications, searchMedications, filterMedicationAtc]);
+
   useEffect(() => {
     const fetchAllRows = async <T,>(
-      table: 'pathologies' | 'symptoms' | 'treatments',
+      table: 'pathologies' | 'symptoms' | 'treatments' | 'medications',
       selectQuery: string
     ): Promise<T[]> => {
       const pageSize = 1000;
@@ -211,18 +244,20 @@ const CrossDataAnalyzer = () => {
     const fetchData = async () => {
       setLoading(true);
       
-      const [pathologiesData, symptomsData, treatmentsData] = await Promise.all([
+      const [pathologiesData, symptomsData, treatmentsData, medicationsData] = await Promise.all([
         fetchAllRows<Pathology>('pathologies', 'id, name, category, specialty, severity'),
         fetchAllRows<Symptom>('symptoms', 'id, name, body_system'),
-        fetchAllRows<Treatment>('treatments', 'id, name, pathology_id, type')
+        fetchAllRows<Treatment>('treatments', 'id, name, pathology_id, type'),
+        fetchAllRows<Medication>('medications', 'id, name, atc_code, substance')
       ]);
 
       setPathologies(pathologiesData);
       setSymptoms(symptomsData);
       setTreatments(treatmentsData);
+      setMedications(medicationsData);
       setLoading(false);
       
-      console.log(`Chargé: ${pathologiesData.length} pathologies, ${symptomsData.length} symptômes, ${treatmentsData.length} traitements`);
+      console.log(`Chargé: ${pathologiesData.length} pathologies, ${symptomsData.length} symptômes, ${treatmentsData.length} traitements, ${medicationsData.length} médicaments`);
     };
 
     fetchData();
@@ -268,7 +303,7 @@ const CrossDataAnalyzer = () => {
   };
 
   const getTotalSelected = () => 
-    selectedPathologies.length + selectedSymptoms.length + selectedTreatments.length;
+    selectedPathologies.length + selectedSymptoms.length + selectedTreatments.length + selectedMedications.length;
 
   const runAnalysis = async () => {
     if (getTotalSelected() < 2) {
@@ -285,7 +320,8 @@ const CrossDataAnalyzer = () => {
         body: {
           pathologyIds: selectedPathologies,
           symptomIds: selectedSymptoms,
-          treatmentIds: selectedTreatments
+          treatmentIds: selectedTreatments,
+          medicationIds: selectedMedications
         }
       });
 
@@ -333,6 +369,8 @@ const CrossDataAnalyzer = () => {
         return <Stethoscope className="h-4 w-4 text-purple-500" />;
       case 'treatment':
         return <Pill className="h-4 w-4 text-green-500" />;
+      case 'medication':
+        return <Tablets className="h-4 w-4 text-orange-500" />;
       default:
         return null;
     }
@@ -343,6 +381,7 @@ const CrossDataAnalyzer = () => {
       case 'symptom': return 'Symptôme';
       case 'pathology': return 'Pathologie';
       case 'treatment': return 'Traitement';
+      case 'medication': return 'Médicament';
       default: return type;
     }
   };
@@ -368,6 +407,26 @@ const CrossDataAnalyzer = () => {
     }
   };
 
+  const getAtcGroupLabel = (code: string) => {
+    const labels: Record<string, string> = {
+      'A': 'A - Appareil digestif',
+      'B': 'B - Sang et organes hématopoïétiques',
+      'C': 'C - Système cardiovasculaire',
+      'D': 'D - Dermatologie',
+      'G': 'G - Système génito-urinaire',
+      'H': 'H - Hormones systémiques',
+      'J': 'J - Anti-infectieux',
+      'L': 'L - Antinéoplasiques',
+      'M': 'M - Système musculo-squelettique',
+      'N': 'N - Système nerveux',
+      'P': 'P - Antiparasitaires',
+      'R': 'R - Système respiratoire',
+      'S': 'S - Organes sensoriels',
+      'V': 'V - Divers'
+    };
+    return labels[code] || code;
+  };
+
   const resetPathologyFilters = () => {
     setSearchPathologies('');
     setFilterPathologyCategory('all');
@@ -385,10 +444,16 @@ const CrossDataAnalyzer = () => {
     setFilterTreatmentType('all');
   };
 
+  const resetMedicationFilters = () => {
+    setSearchMedications('');
+    setFilterMedicationAtc('all');
+  };
+
   const hasPathologyFilters = searchPathologies || filterPathologyCategory !== 'all' || 
     filterPathologySpecialty !== 'all' || filterPathologySeverity !== 'all';
   const hasSymptomFilters = searchSymptoms || filterSymptomBodySystem !== 'all';
   const hasTreatmentFilters = searchTreatments || filterTreatmentType !== 'all';
+  const hasMedicationFilters = searchMedications || filterMedicationAtc !== 'all';
 
   if (loading) {
     return (
@@ -418,15 +483,16 @@ const CrossDataAnalyzer = () => {
           <Globe className="h-4 w-4" />
           Analyse les liens de causalité en croisant vos données patients et la littérature médicale (PubMed)
         </CardDescription>
-        <div className="flex gap-2 text-xs text-muted-foreground mt-2">
+        <div className="flex gap-2 text-xs text-muted-foreground mt-2 flex-wrap">
           <Badge variant="outline">{pathologies.length} pathologies</Badge>
           <Badge variant="outline">{symptoms.length} symptômes</Badge>
           <Badge variant="outline">{treatments.length} traitements</Badge>
+          <Badge variant="outline" className="bg-orange-500/10 border-orange-500/30">{medications.length} médicaments</Badge>
         </div>
       </CardHeader>
       <CardContent className="space-y-6">
         {/* Panneaux de sélection */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
           {/* Pathologies */}
           <div className="space-y-2 border rounded-lg p-3">
             <div className="flex items-center justify-between">
@@ -718,6 +784,100 @@ const CrossDataAnalyzer = () => {
                         title={t.name}
                       >
                         {t.name}
+                      </label>
+                    </div>
+                  ))
+                )}
+              </div>
+            </ScrollArea>
+          </div>
+
+          {/* Médicaments */}
+          <div className="space-y-2 border rounded-lg p-3 border-orange-500/30">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2 font-medium">
+                <Tablets className="h-4 w-4 text-orange-500" />
+                Médicaments ({selectedMedications.length})
+              </div>
+              <span className="text-xs text-muted-foreground">
+                {filteredMedications.length}/{medications.length}
+              </span>
+            </div>
+            
+            {/* Recherche textuelle */}
+            <div className="relative">
+              <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+              <Input
+                placeholder="Nom ou substance..."
+                value={searchMedications}
+                onChange={(e) => setSearchMedications(e.target.value)}
+                className="pl-8 pr-8 h-8 text-sm"
+              />
+              {searchMedications && (
+                <button
+                  onClick={() => setSearchMedications('')}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              )}
+            </div>
+
+            {/* Filtre par groupe ATC */}
+            <Select value={filterMedicationAtc} onValueChange={setFilterMedicationAtc}>
+              <SelectTrigger className="h-7 text-xs">
+                <SelectValue placeholder="Groupe ATC" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">Tous groupes ATC</SelectItem>
+                {medicationAtcCodes.map(code => (
+                  <SelectItem key={code} value={code}>{getAtcGroupLabel(code)}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+
+            {/* Actions groupées */}
+            <div className="flex items-center justify-between gap-2">
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-7 text-xs"
+                onClick={() => selectAllFiltered(filteredMedications, selectedMedications, setSelectedMedications)}
+              >
+                {areAllFilteredSelected(filteredMedications, selectedMedications) ? (
+                  <><Square className="h-3 w-3 mr-1" /> Tout désélect.</>
+                ) : (
+                  <><CheckSquare className="h-3 w-3 mr-1" /> Tout sélect.</>
+                )}
+              </Button>
+              {hasMedicationFilters && (
+                <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={resetMedicationFilters}>
+                  <X className="h-3 w-3 mr-1" /> Réinit. filtres
+                </Button>
+              )}
+            </div>
+
+            <ScrollArea className="h-40 border rounded-md p-2">
+              <div className="space-y-1">
+                {filteredMedications.length === 0 ? (
+                  <p className="text-sm text-muted-foreground text-center py-4">
+                    {medications.length === 0 ? 'Scrapez Compendium.ch pour ajouter des médicaments' : 'Aucun résultat'}
+                  </p>
+                ) : (
+                  filteredMedications.map((m) => (
+                    <div key={m.id} className="flex items-center gap-2">
+                      <Checkbox
+                        id={`medication-${m.id}`}
+                        checked={selectedMedications.includes(m.id)}
+                        onCheckedChange={() => toggleSelection(m.id, selectedMedications, setSelectedMedications)}
+                      />
+                      <label 
+                        htmlFor={`medication-${m.id}`} 
+                        className="text-sm cursor-pointer truncate flex-1"
+                        title={`${m.name}${m.substance ? ` (${m.substance})` : ''}`}
+                      >
+                        {m.name}
+                        {m.atc_code && <span className="text-xs text-muted-foreground ml-1">[{m.atc_code}]</span>}
                       </label>
                     </div>
                   ))
