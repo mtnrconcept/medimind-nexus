@@ -226,36 +226,60 @@ INSTRUCTIONS CRITIQUES:
 - Réponds UNIQUEMENT avec le JSON, sans texte avant ou après
 - Si une information n'est pas disponible, utilise null ou un tableau vide []
 - Assure-toi que le JSON est valide
-- Pour les fréquences d'effets secondaires, utilise: "very_common" (>10%), "common" (1-10%), "uncommon" (0.1-1%), "rare" (0.01-0.1%), "very_rare" (<0.01%)
-- Pour la sévérité, utilise: "mild", "moderate", "severe"
-- Pour le type d'interaction, utilise: "potentiation", "antagonism", "increased_toxicity", "decreased_efficacy"
-- Pour la sévérité d'interaction, utilise: "minor", "moderate", "major", "contraindicated"
+- Extrais TOUTES les informations disponibles sur la page
 
-Format attendu:
+CHAMPS À EXTRAIRE DU COMPENDIUM.CH:
+- Nom commercial complet
+- Fabricant/Titulaire
+- Dénomination Swissmedic
+- Caractéristiques (description courte)
+- Code ATC complet avec libellé
+- Composition détaillée (substances actives avec dosages)
+- Indications thérapeutiques
+- Posologie complète
+- Contre-indications
+- Pharmacode(s)
+- GTIN
+- Catégorie de remise (A, B, C, D, E)
+- Formes galéniques disponibles
+
+Pour les effets secondaires: fréquences = "very_common" (>10%), "common" (1-10%), "uncommon" (0.1-1%), "rare" (0.01-0.1%), "very_rare" (<0.01%)
+Pour la sévérité: "mild", "moderate", "severe"
+Pour les interactions: type = "potentiation", "antagonism", "increased_toxicity", "decreased_efficacy"
+Pour sévérité interaction: "minor", "moderate", "major", "contraindicated"
+
+Format JSON attendu:
 {
   "medication": {
-    "name": "Nom commercial du médicament",
-    "atc_code": "Code ATC (ex: N02BE01)",
-    "substance": "Substance(s) active(s)",
-    "description": "Description/indications du médicament",
-    "dosage_forms": ["comprimé", "sirop", "injection"],
+    "name": "Nom commercial complet du médicament",
+    "manufacturer": "Nom du fabricant/titulaire",
+    "swissmedic_name": "Dénomination Swissmedic officielle",
+    "characteristics": "Description courte/caractéristiques",
+    "atc_code": "Code ATC (ex: D11AZ)",
+    "atc_description": "Libellé complet du code ATC",
+    "composition": "Composition détaillée avec substances et dosages",
+    "substance": "Substance(s) active(s) principale(s)",
     "indications": "Indications thérapeutiques complètes",
-    "posology": "Posologie recommandée"
+    "posology": "Posologie recommandée complète",
+    "dosage_forms": ["crème", "tube 50g", etc.],
+    "pharmacode": "Pharmacode principal",
+    "gtin": "Code GTIN/EAN",
+    "dispensing_category": "Catégorie de remise (A/B/C/D/E)"
   },
   "side_effects": [
     {
       "name": "Nom de l'effet secondaire",
-      "frequency": "very_common ou common ou uncommon ou rare ou very_rare",
-      "body_system": "Système affecté (digestif, nerveux, cardiovasculaire, etc.)",
-      "description": "Description de l'effet",
-      "severity": "mild ou moderate ou severe"
+      "frequency": "very_common/common/uncommon/rare/very_rare",
+      "body_system": "Système affecté",
+      "description": "Description",
+      "severity": "mild/moderate/severe"
     }
   ],
   "interactions": [
     {
-      "interacting_drug": "Nom du médicament/substance interagissant",
-      "interaction_type": "potentiation ou antagonism ou increased_toxicity ou decreased_efficacy",
-      "severity": "minor ou moderate ou major ou contraindicated",
+      "interacting_drug": "Nom du médicament/substance",
+      "interaction_type": "potentiation/antagonism/increased_toxicity/decreased_efficacy",
+      "severity": "minor/moderate/major/contraindicated",
       "description": "Description de l'interaction",
       "recommendation": "Recommandation clinique"
     }
@@ -263,14 +287,14 @@ Format attendu:
   "contraindications": [
     {
       "condition": "Condition contre-indiquée",
-      "severity": "relative ou absolute",
-      "description": "Description de la contre-indication"
+      "severity": "relative/absolute",
+      "description": "Description complète"
     }
   ]
 }
 
 Contenu à analyser:
-${markdown.substring(0, 20000)}`;
+${markdown.substring(0, 25000)}`;
 
       const aiResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
         method: 'POST',
@@ -333,16 +357,24 @@ ${markdown.substring(0, 20000)}`;
         let medicationId;
         
         if (!existingMed) {
+          const med = extractedData.medication;
           const { data: newMed, error: medError } = await supabase
             .from('medications')
             .insert({
-              name: extractedData.medication.name,
-              atc_code: extractedData.medication.atc_code,
-              substance: extractedData.medication.substance,
-              description: extractedData.medication.description,
-              dosage_forms: extractedData.medication.dosage_forms || [],
-              indications: extractedData.medication.indications,
-              posology: extractedData.medication.posology,
+              name: med.name,
+              manufacturer: med.manufacturer,
+              swissmedic_name: med.swissmedic_name,
+              characteristics: med.characteristics,
+              atc_code: med.atc_code,
+              composition: med.composition,
+              substance: med.substance,
+              description: med.atc_description || med.characteristics,
+              dosage_forms: med.dosage_forms || [],
+              indications: med.indications,
+              posology: med.posology,
+              pharmacode: med.pharmacode,
+              gtin: med.gtin,
+              dispensing_category: med.dispensing_category,
               source_url: url
             })
             .select('id')
@@ -353,7 +385,7 @@ ${markdown.substring(0, 20000)}`;
           } else {
             medicationId = newMed?.id;
             stats.medicationsAdded = 1;
-            console.log(`Médicament inséré: ${extractedData.medication.name}`);
+            console.log(`Médicament inséré: ${med.name} (ATC: ${med.atc_code}, Pharmacode: ${med.pharmacode})`);
           }
         } else {
           medicationId = existingMed.id;
