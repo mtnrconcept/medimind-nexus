@@ -8,7 +8,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { ArrowLeft, User, FileText, CheckCircle, Clock, Lock, AlertTriangle, Shield } from 'lucide-react';
 import AIAssistant from '@/components/patient/AIAssistant';
 import SafetyAlertBanner from '@/components/patient/SafetyAlertBanner';
-import DigitalTwin3D from '@/components/patient/DigitalTwin3D';
+import DigitalTwin3DViewer from '@/components/patient/DigitalTwin3DViewer';
 import PharmacologyMatrix from '@/components/patient/PharmacologyMatrix';
 import VitalSignsPanel from '@/components/patient/VitalSignsPanel';
 import AIPredictionsCard from '@/components/patient/AIPredictionsCard';
@@ -219,8 +219,8 @@ const PatientDetail = () => {
           </div>
 
           {/* Center Panel - Digital Twin + History */}
-          <div className="space-y-4">
-            <DigitalTwin3D alerts={alerts} pathologyName={patient.pathologies?.name} />
+          <div className="lg:col-span-2 space-y-4">
+            <DigitalTwin3DViewer alerts={alerts} pathologyName={patient.pathologies?.name} />
             <MedicalHistory age={patient.age} />
             <PharmacologyMatrix treatment={patient.treatment} alerts={alerts} />
           </div>
