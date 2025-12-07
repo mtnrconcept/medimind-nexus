@@ -12,6 +12,8 @@ import Pathologies from "./pages/Pathologies";
 import PathologyDetail from "./pages/PathologyDetail";
 import Search from "./pages/Search";
 import Admin from "./pages/Admin";
+import Patients from "./pages/Patients";
+import PatientDetail from "./pages/PatientDetail";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -30,6 +32,8 @@ const App = () => (
             <Route path="/pathologies" element={<ProtectedRoute><Pathologies /></ProtectedRoute>} />
             <Route path="/pathologies/:id" element={<ProtectedRoute><PathologyDetail /></ProtectedRoute>} />
             <Route path="/search" element={<ProtectedRoute><Search /></ProtectedRoute>} />
+            <Route path="/patients" element={<ProtectedRoute><Patients /></ProtectedRoute>} />
+            <Route path="/patients/:id" element={<ProtectedRoute><PatientDetail /></ProtectedRoute>} />
             <Route path="/admin" element={<ProtectedRoute><Admin /></ProtectedRoute>} />
             <Route path="*" element={<NotFound />} />
           </Routes>
