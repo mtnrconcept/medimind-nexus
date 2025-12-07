@@ -11,6 +11,7 @@ import { Progress } from '@/components/ui/progress';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 import { MedicalScraperPanel } from '@/components/admin/MedicalScraperPanel';
+import CompendiumScraperPanel from '@/components/admin/CompendiumScraperPanel';
 import {
   Users,
   Activity,
@@ -409,6 +410,7 @@ const Admin = () => {
 
           <TabsContent value="scraping" className="space-y-4">
             <MedicalScraperPanel />
+            <CompendiumScraperPanel />
           </TabsContent>
         </Tabs>
       </div>

@@ -253,49 +253,73 @@ export type Database = {
       }
       patients: {
         Row: {
+          address: string | null
           age: number
+          city: string | null
           created_at: string | null
+          date_of_birth: string | null
+          email: string | null
+          first_name: string | null
           gender: string
           height_cm: number | null
           id: string
           lab_results_json: Json | null
+          last_name: string | null
           medical_notes_nlp: string | null
           nationality: string
           outcome: string | null
           pathology_id: string | null
           patient_id: string
+          phone: string | null
+          postal_code: string | null
           treatment: string | null
           updated_at: string | null
           weight_kg: number | null
         }
         Insert: {
+          address?: string | null
           age: number
+          city?: string | null
           created_at?: string | null
+          date_of_birth?: string | null
+          email?: string | null
+          first_name?: string | null
           gender: string
           height_cm?: number | null
           id?: string
           lab_results_json?: Json | null
+          last_name?: string | null
           medical_notes_nlp?: string | null
           nationality: string
           outcome?: string | null
           pathology_id?: string | null
           patient_id: string
+          phone?: string | null
+          postal_code?: string | null
           treatment?: string | null
           updated_at?: string | null
           weight_kg?: number | null
         }
         Update: {
+          address?: string | null
           age?: number
+          city?: string | null
           created_at?: string | null
+          date_of_birth?: string | null
+          email?: string | null
+          first_name?: string | null
           gender?: string
           height_cm?: number | null
           id?: string
           lab_results_json?: Json | null
+          last_name?: string | null
           medical_notes_nlp?: string | null
           nationality?: string
           outcome?: string | null
           pathology_id?: string | null
           patient_id?: string
+          phone?: string | null
+          postal_code?: string | null
           treatment?: string | null
           updated_at?: string | null
           weight_kg?: number | null
