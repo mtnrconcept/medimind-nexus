@@ -81,6 +81,9 @@ interface CausalLink {
   patientCount: number;
   webSources?: string[];
   isAppropriate?: boolean; // Pour les traitements: indique si adapté à la pathologie
+  effectType?: 'therapeutic' | 'adverse' | 'both'; // Type d'effet: thérapeutique, indésirable ou les deux
+  therapeuticDetails?: string; // Détails de l'effet thérapeutique
+  adverseDetails?: string; // Détails de l'effet indésirable
 }
 
 interface AnalysisResult {
@@ -939,9 +942,12 @@ const CrossDataAnalyzer = () => {
                   {result.causalLinks.map((link, index) => (
                     <div 
                       key={index} 
-                      className={`p-4 border rounded-lg bg-card space-y-2 ${
+                      className={`p-4 border rounded-lg bg-card space-y-3 ${
                         link.isAppropriate === true ? 'border-green-500/50 bg-green-500/5' :
-                        link.isAppropriate === false ? 'border-destructive/50 bg-destructive/5' : ''
+                        link.isAppropriate === false ? 'border-destructive/50 bg-destructive/5' :
+                        link.effectType === 'both' ? 'border-orange-500/50 bg-orange-500/5' :
+                        link.effectType === 'therapeutic' ? 'border-green-500/30' :
+                        link.effectType === 'adverse' ? 'border-destructive/30' : ''
                       }`}
                     >
                       <div className="flex items-center gap-2 flex-wrap">
@@ -971,9 +977,60 @@ const CrossDataAnalyzer = () => {
                             </Badge>
                           )
                         )}
+                        {/* Indicateur d'effet: thérapeutique, indésirable ou les deux */}
+                        {link.effectType === 'therapeutic' && (
+                          <Badge className="bg-green-500/20 text-green-700 dark:text-green-400 border-green-500/30 flex items-center gap-1">
+                            <CheckCircle2 className="h-3 w-3" />
+                            Traite
+                          </Badge>
+                        )}
+                        {link.effectType === 'adverse' && (
+                          <Badge className="bg-destructive/20 text-destructive border-destructive/30 flex items-center gap-1">
+                            <AlertTriangle className="h-3 w-3" />
+                            Peut causer
+                          </Badge>
+                        )}
+                        {link.effectType === 'both' && (
+                          <Badge className="bg-orange-500/20 text-orange-700 dark:text-orange-400 border-orange-500/30 flex items-center gap-1">
+                            <AlertTriangle className="h-3 w-3" />
+                            Double effet
+                          </Badge>
+                        )}
                       </div>
+                      
                       <p className="text-sm font-medium text-primary">{link.relationship}</p>
-                      <p className="text-sm text-muted-foreground">{link.evidence}</p>
+                      
+                      {/* Affichage détaillé pour les effets thérapeutiques et indésirables */}
+                      {(link.effectType === 'therapeutic' || link.effectType === 'both') && link.therapeuticDetails && (
+                        <div className="p-3 bg-green-500/10 border border-green-500/20 rounded-md">
+                          <div className="flex items-center gap-2 text-sm font-medium text-green-700 dark:text-green-400 mb-1">
+                            <CheckCircle2 className="h-4 w-4" />
+                            Effet thérapeutique
+                          </div>
+                          <p className="text-sm text-muted-foreground">{link.therapeuticDetails}</p>
+                        </div>
+                      )}
+                      
+                      {(link.effectType === 'adverse' || link.effectType === 'both') && link.adverseDetails && (
+                        <div className="p-3 bg-destructive/10 border border-destructive/20 rounded-md">
+                          <div className="flex items-center gap-2 text-sm font-medium text-destructive mb-1">
+                            <AlertTriangle className="h-4 w-4" />
+                            Effet indésirable potentiel
+                          </div>
+                          <p className="text-sm text-muted-foreground">{link.adverseDetails}</p>
+                        </div>
+                      )}
+                      
+                      {/* Evidence générale (si pas d'effectType spécifique) */}
+                      {!link.effectType && link.evidence && (
+                        <p className="text-sm text-muted-foreground">{link.evidence}</p>
+                      )}
+                      
+                      {/* Evidence pour les liens avec effectType (contexte additionnel) */}
+                      {link.effectType && link.evidence && !link.therapeuticDetails && !link.adverseDetails && (
+                        <p className="text-sm text-muted-foreground">{link.evidence}</p>
+                      )}
+                      
                       <div className="flex items-center gap-4 text-xs text-muted-foreground">
                         {link.patientCount > 0 && (
                           <span>Observé chez {link.patientCount} patient(s)</span>
