@@ -4,7 +4,7 @@ import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Badge } from "@/components/ui/badge"; // <--- Import ajouté ici
+import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
@@ -37,7 +37,8 @@ const RATE_LIMIT_DELAYS: Record<RateLimitMode, number> = {
   fast: 12000,
 };
 
-// Mots-clés pour identifier les colonnes (insensible à la casse)
+// --- CORRECTION DES NOMS DE COLONNES ICI ---
+// Les clés (à gauche) doivent correspondre EXACTEMENT à vos colonnes Supabase
 const COLUMN_MAPPINGS: Record<string, string[]> = {
   swissmedic_number: ["Zulassungs", "autorisation", "No d'autorisation", "Numéro", "Zul.-Nr."],
   name: ["Bezeichnung", "Dénomination", "Arzneimittel", "Name", "Präparat"],
@@ -45,8 +46,10 @@ const COLUMN_MAPPINGS: Record<string, string[]> = {
   atc_code: ["ATC-Code", "Code ATC", "atc"],
   substance: ["Wirkstoff", "Principe", "active", "Substances"],
   indications: ["Anwendungsgebiet", "Champ d'application", "Indication"],
-  authorization_date: ["Erstzulassungs", "première autorisation", "Date"],
-  validity_date: ["Gültigkeitsdauer", "Durée de validité", "Expiry"],
+  // CORRECTION: authorization_date -> first_authorization_date
+  first_authorization_date: ["Erstzulassungs", "première autorisation", "Date"],
+  // CORRECTION: validity_date -> validity_duration
+  validity_duration: ["Gültigkeitsdauer", "Durée de validité", "Expiry"],
 };
 
 interface ImportLog {
@@ -95,12 +98,10 @@ export const MedicalScraperPanel = () => {
 
     try {
       const arrayBuffer = await file.arrayBuffer();
-      // XLSX.read gère automatiquement le format (xlsx, xls, csv)
       const workbook = XLSX.read(arrayBuffer, { type: "array" });
       const sheetName = workbook.SheetNames[0];
       const worksheet = workbook.Sheets[sheetName];
 
-      // Conversion en tableau de tableaux (header: 1) pour analyser la structure
       const rawData = XLSX.utils.sheet_to_json(worksheet, { header: 1 }) as any[][];
 
       if (!rawData || rawData.length === 0) {
@@ -115,28 +116,24 @@ export const MedicalScraperPanel = () => {
 
       for (let i = 0; i < Math.min(20, rawData.length); i++) {
         const row = rawData[i];
-        // On convertit tout en chaîne pour la recherche
         const rowStr = row.map((cell) => String(cell).toLowerCase()).join(" ");
 
-        // Critères pour identifier l'en-tête Swissmedic
         if (
           (rowStr.includes("zulassung") && rowStr.includes("nummer")) ||
           (rowStr.includes("autorisation") && rowStr.includes("medicament")) ||
           (rowStr.includes("no") && rowStr.includes("dénomination"))
         ) {
           headerRowIndex = i;
-          headers = row.map((cell) => String(cell)); // On garde les en-têtes originaux
+          headers = row.map((cell) => String(cell));
           break;
         }
       }
 
       if (headerRowIndex === -1) {
-        // Fallback si pas trouvé (souvent ligne 0 pour CSV simple, ligne 6/7 pour Swissmedic)
         if (rawData.length > 6 && String(rawData[6][0]).match(/\d/)) {
-          // Si la ligne 6 contient des données, l'en-tête est probablement avant ou inexistant
           headerRowIndex = 0;
         } else {
-          headerRowIndex = 0; // Par défaut
+          headerRowIndex = 0;
         }
         headers = rawData[headerRowIndex].map((cell) => String(cell));
         addImportLog("info", "En-tête non détecté par mots-clés, utilisation de la première ligne.");
@@ -146,8 +143,6 @@ export const MedicalScraperPanel = () => {
 
       // 2. Mapping des colonnes
       const newMapping: Record<string, any> = {};
-
-      // Fonction pour nettoyer un en-tête (enlever \r\n, espaces, etc.)
       const cleanStr = (s: string) =>
         s
           .replace(/[\r\n]+/g, " ")
@@ -161,7 +156,6 @@ export const MedicalScraperPanel = () => {
         });
 
         if (index !== -1) {
-          // On stocke le nom de la colonne Excel (pour info) et son index
           newMapping[dbCol] = {
             index,
             csvName: headers[index].replace(/[\r\n]+/g, " ").substring(0, 30) + "...",
@@ -176,7 +170,6 @@ export const MedicalScraperPanel = () => {
       setMappedHeaders(newMapping);
 
       // 3. Préparation des données propres
-      // On récupère les données à partir de la ligne suivant l'en-tête
       const dataRows = rawData.slice(headerRowIndex + 1);
 
       const preview = [];
@@ -191,19 +184,18 @@ export const MedicalScraperPanel = () => {
         Object.entries(newMapping).forEach(([dbCol, mapInfo]: [string, any]) => {
           let val = row[mapInfo.index];
 
-          // Traitement si la valeur existe
           if (val !== undefined && val !== null) {
             val = String(val).trim();
 
             if (dbCol === "swissmedic_number") {
-              // Nettoyage spécifique pour ID (ex: "68001 (01)" -> "68001")
               const match = val.match(/^(\d{5})/);
               if (match) {
                 val = match[1];
                 hasId = true;
               }
-            } else if (dbCol === "authorization_date" || dbCol === "validity_date") {
-              // Gestion dates Excel (nombre de jours depuis 1900)
+            }
+            // CORRECTION ICI: Utilisation des nouveaux noms de colonnes pour la logique date
+            else if (dbCol === "first_authorization_date" || dbCol === "validity_duration") {
               if (val.includes(".")) {
                 // Format DD.MM.YYYY -> YYYY-MM-DD
                 const parts = val.split(".");
@@ -224,8 +216,6 @@ export const MedicalScraperPanel = () => {
 
       setPreviewData(preview);
       addImportLog("success", `${validDataForImport.length} médicaments valides identifiés.`);
-
-      // Stockage temporaire dans window pour l'exécution
       (window as any).importData = validDataForImport;
     } catch (error: any) {
       console.error(error);
@@ -233,7 +223,6 @@ export const MedicalScraperPanel = () => {
       toast({ title: "Erreur lecture", description: error.message, variant: "destructive" });
     } finally {
       setIsImporting(false);
-      // Reset input value to allow re-uploading same file
       event.target.value = "";
     }
   };
@@ -254,14 +243,12 @@ export const MedicalScraperPanel = () => {
     let errorCount = 0;
 
     try {
-      // Envoi par lots
       for (let i = 0; i < dataToImport.length; i += BATCH_SIZE) {
         const batch = dataToImport.slice(i, i + BATCH_SIZE);
 
-        // Upsert dans Supabase
         const { error } = await supabase.from("medications").upsert(batch, {
           onConflict: "swissmedic_number",
-          ignoreDuplicates: false, // On met à jour si ça existe
+          ignoreDuplicates: false,
         });
 
         if (error) {
@@ -289,10 +276,6 @@ export const MedicalScraperPanel = () => {
     }
   };
 
-  // ------------------------------------------------------------------
-  // RENDER
-  // ------------------------------------------------------------------
-
   return (
     <div className="space-y-6">
       <Card>
@@ -316,15 +299,12 @@ export const MedicalScraperPanel = () => {
               </TabsTrigger>
             </TabsList>
 
-            {/* TAB SCRAPER */}
             <TabsContent value="scraper">
               <div className="text-center py-8 text-muted-foreground border rounded bg-muted/10">
-                <p>Fonctionnalité de scraping conservée (non affichée ici pour clarté).</p>
-                <p className="text-sm">Si vous souhaitez scraper, réintégrez le code précédent ici.</p>
+                <p>Fonctionnalité de scraping (code non affiché pour clarté).</p>
               </div>
             </TabsContent>
 
-            {/* TAB IMPORT EXCEL */}
             <TabsContent value="import" className="space-y-6">
               <div className="flex flex-col items-center justify-center p-8 border-2 border-dashed rounded-lg bg-muted/20 hover:bg-muted/40 transition-colors">
                 <div className="flex flex-col items-center text-center space-y-4">
