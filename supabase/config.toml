@@ -4,4 +4,4 @@ project_id = "fgksnveweiwmovouflgj"
 verify_jwt = false
 
 [functions.import-icd]
-verify_jwt = true
+verify_jwt = false
