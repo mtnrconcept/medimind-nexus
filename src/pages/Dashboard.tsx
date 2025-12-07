@@ -5,6 +5,8 @@ import AppLayout from '@/components/layout/AppLayout';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { supabase } from '@/integrations/supabase/client';
+import KnowledgeHeatmap from '@/components/dashboard/KnowledgeHeatmap';
+import LiveStats from '@/components/dashboard/LiveStats';
 import {
   BookOpen,
   Search,
@@ -15,6 +17,7 @@ import {
   FlaskConical,
   TrendingUp,
   AlertCircle,
+  Users,
 } from 'lucide-react';
 
 interface Stats {
@@ -98,14 +101,14 @@ const Dashboard = () => {
               {getGreeting()}, {user?.user_metadata?.first_name || 'Utilisateur'}
             </h1>
             <p className="text-muted-foreground">
-              Bienvenue sur la plateforme Médicore
+              Bienvenue sur MediCore Global - Centre de Commande
             </p>
           </div>
           <div className="flex gap-2">
-            <Link to="/search">
+            <Link to="/patients">
               <Button className="gap-2">
-                <Search className="h-4 w-4" />
-                Rechercher
+                <Users className="h-4 w-4" />
+                Patients
               </Button>
             </Link>
             <Link to="/pathologies">
@@ -116,6 +119,12 @@ const Dashboard = () => {
             </Link>
           </div>
         </div>
+
+        {/* Live Stats */}
+        <LiveStats />
+
+        {/* Knowledge Heatmap */}
+        <KnowledgeHeatmap />
 
         {/* Stats Grid */}
         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">

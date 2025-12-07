@@ -133,6 +133,65 @@ export type Database = {
           },
         ]
       }
+      patients: {
+        Row: {
+          age: number
+          created_at: string | null
+          gender: string
+          height_cm: number | null
+          id: string
+          lab_results_json: Json | null
+          medical_notes_nlp: string | null
+          nationality: string
+          outcome: string | null
+          pathology_id: string | null
+          patient_id: string
+          treatment: string | null
+          updated_at: string | null
+          weight_kg: number | null
+        }
+        Insert: {
+          age: number
+          created_at?: string | null
+          gender: string
+          height_cm?: number | null
+          id?: string
+          lab_results_json?: Json | null
+          medical_notes_nlp?: string | null
+          nationality: string
+          outcome?: string | null
+          pathology_id?: string | null
+          patient_id: string
+          treatment?: string | null
+          updated_at?: string | null
+          weight_kg?: number | null
+        }
+        Update: {
+          age?: number
+          created_at?: string | null
+          gender?: string
+          height_cm?: number | null
+          id?: string
+          lab_results_json?: Json | null
+          medical_notes_nlp?: string | null
+          nationality?: string
+          outcome?: string | null
+          pathology_id?: string | null
+          patient_id?: string
+          treatment?: string | null
+          updated_at?: string | null
+          weight_kg?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "patients_pathology_id_fkey"
+            columns: ["pathology_id"]
+            isOneToOne: false
+            referencedRelation: "pathologies"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       profiles: {
         Row: {
           created_at: string
