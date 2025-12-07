@@ -1,20 +1,21 @@
-import React, { Suspense, useState, useRef, useEffect } from 'react';
-import { Canvas, useFrame, useThree } from '@react-three/fiber';
+import React, { Suspense, useState, useRef, useEffect, useCallback } from 'react';
+import { Canvas, useFrame, useThree, useLoader } from '@react-three/fiber';
 import { OrbitControls, Html } from '@react-three/drei';
 import * as THREE from 'three';
+import { OBJLoader } from 'three/examples/jsm/loaders/OBJLoader.js';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Slider } from '@/components/ui/slider';
 import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
-import { Eye, EyeOff, RotateCcw, User, Bone, Heart, Layers, AlertTriangle } from 'lucide-react';
+import { Eye, EyeOff, RotateCcw, User, Bone, Heart, Layers, AlertTriangle, Search } from 'lucide-react';
 import { PatientAlert } from '@/hooks/usePatientAlerts';
 import AnatomyMarkers from './AnatomyMarkers';
 import AnatomySearch from './AnatomySearch';
 import { ALL_ANATOMY_PARTS, AnatomyPart, AnatomyCategory } from '@/data/anatomyData';
 
 interface LayerConfig {
-  id: 'skin' | 'tissues' | 'organs' | 'bones';
+  id: 'skin' | 'tissues' | 'organs' | 'bones' | 'markers';
   name: string;
   visible: boolean;
   opacity: number;
@@ -22,16 +23,48 @@ interface LayerConfig {
   icon: React.ReactNode;
 }
 
-interface OrganMarker {
-  name: string;
-  position: [number, number, number];
-  alert?: PatientAlert;
-}
-
 interface DigitalTwin3DViewerProps {
   alerts?: PatientAlert[];
   pathologyName?: string;
 }
+
+// OBJ Model Component - Loads the FinalBaseMesh.obj
+const OBJModel = ({ opacity, color }: { opacity: number; color: string }) => {
+  const obj = useLoader(OBJLoader, '/models/FinalBaseMesh.obj');
+  const meshRef = useRef<THREE.Group>(null);
+
+  useEffect(() => {
+    if (obj) {
+      obj.traverse((child) => {
+        if (child instanceof THREE.Mesh) {
+          child.material = new THREE.MeshStandardMaterial({
+            color: new THREE.Color(color),
+            transparent: true,
+            opacity: opacity,
+            roughness: 0.7,
+            side: THREE.DoubleSide,
+          });
+        }
+      });
+    }
+  }, [obj, opacity, color]);
+
+  // Center and scale the model
+  useEffect(() => {
+    if (obj && meshRef.current) {
+      const box = new THREE.Box3().setFromObject(obj);
+      const center = box.getCenter(new THREE.Vector3());
+      const size = box.getSize(new THREE.Vector3());
+      const maxDim = Math.max(size.x, size.y, size.z);
+      const scale = 2.5 / maxDim;
+      
+      obj.position.set(-center.x * scale, -center.y * scale + 0.2, -center.z * scale);
+      obj.scale.setScalar(scale);
+    }
+  }, [obj]);
+
+  return <primitive ref={meshRef} object={obj} />;
+};
 
 // Pulsing Alert Marker Component
 const AlertMarker = ({ 
@@ -46,15 +79,12 @@ const AlertMarker = ({
   const meshRef = useRef<THREE.Mesh>(null);
   const ringRef = useRef<THREE.Mesh>(null);
   const [hovered, setHovered] = useState(false);
-  const [scale, setScale] = useState(1);
   
   const isCritical = alert.level === 'CRITICAL';
   const color = isCritical ? '#ef4444' : '#f59e0b';
 
   useFrame((state) => {
-    // Pulsing animation
     const pulse = Math.sin(state.clock.elapsedTime * (isCritical ? 4 : 2)) * 0.3 + 1;
-    setScale(pulse);
     
     if (meshRef.current) {
       meshRef.current.scale.setScalar(pulse * (hovered ? 1.3 : 1));
@@ -68,7 +98,6 @@ const AlertMarker = ({
 
   return (
     <group position={position}>
-      {/* Main marker sphere */}
       <mesh
         ref={meshRef}
         onPointerOver={() => setHovered(true)}
@@ -78,16 +107,13 @@ const AlertMarker = ({
         <meshBasicMaterial color={color} />
       </mesh>
       
-      {/* Pulsing ring */}
       <mesh ref={ringRef} rotation={[Math.PI / 2, 0, 0]}>
         <ringGeometry args={[0.04, 0.05, 32]} />
         <meshBasicMaterial color={color} transparent opacity={0.5} side={THREE.DoubleSide} />
       </mesh>
       
-      {/* Glow effect */}
       <pointLight color={color} intensity={hovered ? 2 : 1} distance={0.3} />
       
-      {/* Tooltip on hover */}
       {hovered && (
         <Html
           position={[0.1, 0.1, 0]}
@@ -96,7 +122,7 @@ const AlertMarker = ({
             pointerEvents: 'none',
           }}
         >
-          <div className="bg-popover/95 backdrop-blur-sm border border-border rounded-lg shadow-lg p-3 min-w-[200px] animate-scale-in">
+          <div className="bg-popover/95 backdrop-blur-sm border border-border rounded-lg shadow-lg p-3 min-w-[200px] animate-scale-in z-50">
             <div className="flex items-center gap-2 mb-2">
               <AlertTriangle className={`h-4 w-4 ${isCritical ? 'text-destructive' : 'text-yellow-500'}`} />
               <span className={`text-sm font-semibold ${isCritical ? 'text-destructive' : 'text-yellow-500'}`}>
@@ -114,32 +140,6 @@ const AlertMarker = ({
         </Html>
       )}
     </group>
-  );
-};
-
-// Connection line between related organs
-const ConnectionLine = ({ 
-  start, 
-  end, 
-  color = '#ef4444' 
-}: { 
-  start: [number, number, number]; 
-  end: [number, number, number];
-  color?: string;
-}) => {
-  const lineRef = useRef<THREE.Line<THREE.BufferGeometry, THREE.LineBasicMaterial>>(null);
-  
-  useFrame((state) => {
-    if (lineRef.current) {
-      lineRef.current.material.opacity = 0.3 + Math.sin(state.clock.elapsedTime * 2) * 0.2;
-    }
-  });
-
-  const points = [new THREE.Vector3(...start), new THREE.Vector3(...end)];
-  const lineGeometry = new THREE.BufferGeometry().setFromPoints(points);
-
-  return (
-    <primitive object={new THREE.Line(lineGeometry, new THREE.LineBasicMaterial({ color, transparent: true, opacity: 0.5 }))} ref={lineRef} />
   );
 };
 
@@ -171,19 +171,16 @@ const SkeletonModel = ({ opacity }: { opacity: number }) => {
 
   return (
     <group ref={groupRef}>
-      {/* Spine */}
       {[...Array(24)].map((_, i) => (
         <mesh key={`vertebra-${i}`} position={[0, 0.8 - i * 0.08, 0]} material={material}>
           <boxGeometry args={[0.08, 0.06, 0.1]} />
         </mesh>
       ))}
       
-      {/* Skull */}
       <mesh position={[0, 1.1, 0]} material={material}>
         <sphereGeometry args={[0.18, 16, 16]} />
       </mesh>
       
-      {/* Ribcage */}
       {[...Array(12)].map((_, i) => (
         <group key={`rib-${i}`} position={[0, 0.5 - i * 0.06, 0]}>
           <mesh position={[0.12, 0, 0.05]} rotation={[0, 0, 0.3]} material={material}>
@@ -195,12 +192,10 @@ const SkeletonModel = ({ opacity }: { opacity: number }) => {
         </group>
       ))}
       
-      {/* Pelvis */}
       <mesh position={[0, -0.5, 0]} material={material}>
         <boxGeometry args={[0.3, 0.15, 0.15]} />
       </mesh>
       
-      {/* Arms */}
       {[-1, 1].map((side) => (
         <group key={`arm-${side}`}>
           <mesh position={[side * 0.25, 0.7, 0]} rotation={[0, 0, side * 0.2]} material={material}>
@@ -212,7 +207,6 @@ const SkeletonModel = ({ opacity }: { opacity: number }) => {
         </group>
       ))}
       
-      {/* Legs */}
       {[-1, 1].map((side) => (
         <group key={`leg-${side}`}>
           <mesh position={[side * 0.1, -0.75, 0]} material={material}>
@@ -271,7 +265,7 @@ const InteractiveOrgan = ({
   );
 };
 
-// Organs Model - Procedural organs with interactivity
+// Organs Model
 const OrgansModel = ({ opacity, alerts = [] }: { opacity: number; alerts: PatientAlert[] }) => {
   const groupRef = useRef<THREE.Group>(null);
   
@@ -317,7 +311,6 @@ const OrgansModel = ({ opacity, alerts = [] }: { opacity: number; alerts: Patien
     { name: 'Intestins', key: 'intestines', position: [0, -0.2, 0.05] as [number, number, number], geometry: <torusGeometry args={[0.1, 0.03, 8, 24]} /> },
   ];
 
-  // Get markers for alerted organs
   const alertMarkers = alerts.map(alert => {
     const organKey = alert.organ?.toLowerCase() || 
                      Object.keys(ORGAN_POSITIONS).find(key => 
@@ -346,7 +339,6 @@ const OrgansModel = ({ opacity, alerts = [] }: { opacity: number; alerts: Patien
         />
       ))}
       
-      {/* Alert markers */}
       {alertMarkers.map((marker, idx) => (
         <AlertMarker
           key={`marker-${idx}`}
@@ -355,15 +347,6 @@ const OrgansModel = ({ opacity, alerts = [] }: { opacity: number; alerts: Patien
           organName={marker.organName}
         />
       ))}
-      
-      {/* Connection lines between related alerted organs */}
-      {alertMarkers.length >= 2 && (
-        <ConnectionLine
-          start={alertMarkers[0].position}
-          end={alertMarkers[1].position}
-          color={alertMarkers[0].alert.level === 'CRITICAL' ? '#ef4444' : '#f59e0b'}
-        />
-      )}
     </group>
   );
 };
@@ -379,12 +362,10 @@ const TissuesModel = ({ opacity }: { opacity: number }) => {
 
   return (
     <group>
-      {/* Torso muscles */}
       <mesh position={[0, 0.3, 0.1]} material={material}>
         <boxGeometry args={[0.35, 0.6, 0.18]} />
       </mesh>
       
-      {/* Shoulder muscles */}
       <mesh position={[-0.22, 0.65, 0.05]} material={material}>
         <sphereGeometry args={[0.08, 16, 16]} />
       </mesh>
@@ -392,7 +373,6 @@ const TissuesModel = ({ opacity }: { opacity: number }) => {
         <sphereGeometry args={[0.08, 16, 16]} />
       </mesh>
       
-      {/* Arm muscles */}
       {[-1, 1].map((side) => (
         <group key={`arm-muscle-${side}`}>
           <mesh position={[side * 0.28, 0.5, 0.03]} material={material}>
@@ -404,7 +384,6 @@ const TissuesModel = ({ opacity }: { opacity: number }) => {
         </group>
       ))}
       
-      {/* Leg muscles */}
       {[-1, 1].map((side) => (
         <group key={`leg-muscle-${side}`}>
           <mesh position={[side * 0.1, -0.7, 0.05]} material={material}>
@@ -416,72 +395,9 @@ const TissuesModel = ({ opacity }: { opacity: number }) => {
         </group>
       ))}
       
-      {/* Neck */}
       <mesh position={[0, 0.85, 0.02]} material={material}>
         <cylinderGeometry args={[0.06, 0.08, 0.15, 16]} />
       </mesh>
-    </group>
-  );
-};
-
-// Skin Model
-const SkinModel = ({ opacity }: { opacity: number }) => {
-  const material = new THREE.MeshStandardMaterial({
-    color: new THREE.Color(0xffdbac),
-    transparent: true,
-    opacity: opacity,
-    roughness: 0.7,
-    side: THREE.DoubleSide,
-  });
-
-  return (
-    <group>
-      {/* Head */}
-      <mesh position={[0, 1, 0]} material={material}>
-        <sphereGeometry args={[0.2, 32, 32]} />
-      </mesh>
-      
-      {/* Neck */}
-      <mesh position={[0, 0.75, 0]} material={material}>
-        <cylinderGeometry args={[0.08, 0.1, 0.15, 16]} />
-      </mesh>
-      
-      {/* Torso */}
-      <mesh position={[0, 0.3, 0]} material={material}>
-        <capsuleGeometry args={[0.2, 0.5, 16, 32]} />
-      </mesh>
-      
-      {/* Arms */}
-      {[-1, 1].map((side) => (
-        <group key={`skin-arm-${side}`}>
-          <mesh position={[side * 0.3, 0.55, 0]} rotation={[0, 0, side * 0.15]} material={material}>
-            <capsuleGeometry args={[0.05, 0.3, 8, 16]} />
-          </mesh>
-          <mesh position={[side * 0.35, 0.25, 0]} rotation={[0, 0, side * 0.1]} material={material}>
-            <capsuleGeometry args={[0.04, 0.3, 8, 16]} />
-          </mesh>
-          {/* Hands */}
-          <mesh position={[side * 0.38, 0.02, 0]} material={material}>
-            <sphereGeometry args={[0.04, 16, 16]} />
-          </mesh>
-        </group>
-      ))}
-      
-      {/* Legs */}
-      {[-1, 1].map((side) => (
-        <group key={`skin-leg-${side}`}>
-          <mesh position={[side * 0.1, -0.7, 0]} material={material}>
-            <capsuleGeometry args={[0.08, 0.4, 8, 16]} />
-          </mesh>
-          <mesh position={[side * 0.1, -1.2, 0]} material={material}>
-            <capsuleGeometry args={[0.06, 0.4, 8, 16]} />
-          </mesh>
-          {/* Feet */}
-          <mesh position={[side * 0.1, -1.48, 0.04]} material={material}>
-            <boxGeometry args={[0.08, 0.06, 0.15]} />
-          </mesh>
-        </group>
-      ))}
     </group>
   );
 };
@@ -516,8 +432,16 @@ const ScanEffect = ({ progress }: { progress: number }) => {
   );
 };
 
-// Camera Controller for preset views
-const CameraController = ({ targetPosition, controlsRef }: { targetPosition: [number, number, number] | null; controlsRef: React.RefObject<any> }) => {
+// Camera Controller with zoom to selection
+const CameraController = ({ 
+  targetPosition, 
+  zoomTarget,
+  controlsRef 
+}: { 
+  targetPosition: [number, number, number] | null;
+  zoomTarget: AnatomyPart | null;
+  controlsRef: React.RefObject<any>;
+}) => {
   const { camera } = useThree();
   
   useEffect(() => {
@@ -527,6 +451,37 @@ const CameraController = ({ targetPosition, controlsRef }: { targetPosition: [nu
       controlsRef.current.update();
     }
   }, [targetPosition, camera, controlsRef]);
+
+  // Zoom to selected anatomy part
+  useEffect(() => {
+    if (zoomTarget && controlsRef.current) {
+      const [px, py, pz] = zoomTarget.position;
+      
+      // Calculate camera position based on part position
+      const distance = 0.8; // Close zoom
+      const cameraX = px + distance * 0.5;
+      const cameraY = py + distance * 0.3;
+      const cameraZ = pz + distance;
+      
+      // Animate camera to position
+      const startPos = camera.position.clone();
+      const targetPos = new THREE.Vector3(cameraX, cameraY, cameraZ);
+      const lookAt = new THREE.Vector3(px, py, pz);
+      
+      let progress = 0;
+      const animate = () => {
+        progress += 0.05;
+        if (progress <= 1) {
+          const eased = 1 - Math.pow(1 - progress, 3); // Ease out cubic
+          camera.position.lerpVectors(startPos, targetPos, eased);
+          controlsRef.current.target.lerp(lookAt, eased);
+          controlsRef.current.update();
+          requestAnimationFrame(animate);
+        }
+      };
+      animate();
+    }
+  }, [zoomTarget, camera, controlsRef]);
   
   return null;
 };
@@ -537,13 +492,27 @@ const Scene = ({
   alerts,
   scanProgress,
   cameraPosition,
-  controlsRef
+  zoomTarget,
+  controlsRef,
+  visibleCategories,
+  selectedPart,
+  hoveredPart,
+  onSelectPart,
+  onHoverPart,
+  showMarkers,
 }: { 
   layers: LayerConfig[];
   alerts: PatientAlert[];
   scanProgress: number;
   cameraPosition: [number, number, number] | null;
+  zoomTarget: AnatomyPart | null;
   controlsRef: React.RefObject<any>;
+  visibleCategories: AnatomyCategory[];
+  selectedPart: AnatomyPart | null;
+  hoveredPart: AnatomyPart | null;
+  onSelectPart: (part: AnatomyPart) => void;
+  onHoverPart: (part: AnatomyPart | null) => void;
+  showMarkers: boolean;
 }) => {
   const getLayer = (id: string) => layers.find(l => l.id === id);
 
@@ -558,12 +527,16 @@ const Scene = ({
         enableZoom={true}
         enablePan={true}
         enableRotate={true}
-        minDistance={1}
+        minDistance={0.5}
         maxDistance={5}
         autoRotate={false}
       />
       
-      <CameraController targetPosition={cameraPosition} controlsRef={controlsRef} />
+      <CameraController 
+        targetPosition={cameraPosition} 
+        zoomTarget={zoomTarget}
+        controlsRef={controlsRef} 
+      />
       
       <group position={[0, 0, 0]}>
         {getLayer('bones')?.visible && (
@@ -576,7 +549,24 @@ const Scene = ({
           <TissuesModel opacity={getLayer('tissues')?.opacity || 1} />
         )}
         {getLayer('skin')?.visible && (
-          <SkinModel opacity={getLayer('skin')?.opacity || 1} />
+          <Suspense fallback={null}>
+            <OBJModel 
+              opacity={getLayer('skin')?.opacity || 1} 
+              color={getLayer('skin')?.color || '#ffdbac'} 
+            />
+          </Suspense>
+        )}
+        
+        {/* Anatomy Markers */}
+        {showMarkers && (
+          <AnatomyMarkers
+            parts={ALL_ANATOMY_PARTS}
+            visibleCategories={visibleCategories}
+            selectedPart={selectedPart}
+            hoveredPart={hoveredPart}
+            onSelect={onSelectPart}
+            onHover={onHoverPart}
+          />
         )}
       </group>
       
@@ -593,10 +583,20 @@ const DigitalTwin3DViewer: React.FC<DigitalTwin3DViewerProps> = ({
   const [scanProgress, setScanProgress] = useState(0);
   const [isScanning, setIsScanning] = useState(true);
   const [cameraPosition, setCameraPosition] = useState<[number, number, number] | null>(null);
+  const [showSearchPanel, setShowSearchPanel] = useState(false);
+  const [showMarkers, setShowMarkers] = useState(true);
+  
+  // Anatomy selection state
+  const [selectedPart, setSelectedPart] = useState<AnatomyPart | null>(null);
+  const [hoveredPart, setHoveredPart] = useState<AnatomyPart | null>(null);
+  const [zoomTarget, setZoomTarget] = useState<AnatomyPart | null>(null);
+  const [visibleCategories, setVisibleCategories] = useState<AnatomyCategory[]>([
+    'bone', 'organ', 'muscle', 'tooth', 'nerve', 'vessel'
+  ]);
   
   const [layers, setLayers] = useState<LayerConfig[]>([
-    { id: 'skin', name: 'Peau', visible: true, opacity: 0.4, color: '#ffdbac', icon: <User className="h-4 w-4" /> },
-    { id: 'tissues', name: 'Tissus', visible: true, opacity: 0.6, color: '#cc6666', icon: <Layers className="h-4 w-4" /> },
+    { id: 'skin', name: 'Peau (OBJ)', visible: true, opacity: 0.3, color: '#ffdbac', icon: <User className="h-4 w-4" /> },
+    { id: 'tissues', name: 'Tissus', visible: false, opacity: 0.6, color: '#cc6666', icon: <Layers className="h-4 w-4" /> },
     { id: 'organs', name: 'Organes', visible: true, opacity: 0.8, color: '#cc4444', icon: <Heart className="h-4 w-4" /> },
     { id: 'bones', name: 'Os', visible: true, opacity: 1, color: '#f5f5dc', icon: <Bone className="h-4 w-4" /> },
   ]);
@@ -630,6 +630,8 @@ const DigitalTwin3DViewer: React.FC<DigitalTwin3DViewerProps> = ({
 
   const resetView = () => {
     setCameraPosition([0, 0, 2.5]);
+    setSelectedPart(null);
+    setZoomTarget(null);
     setTimeout(() => setCameraPosition(null), 100);
   };
 
@@ -643,6 +645,25 @@ const DigitalTwin3DViewer: React.FC<DigitalTwin3DViewerProps> = ({
     setCameraPosition(positions[view]);
     setTimeout(() => setCameraPosition(null), 100);
   };
+
+  const handleSelectPart = useCallback((part: AnatomyPart) => {
+    setSelectedPart(part);
+    setZoomTarget(part);
+    // Clear zoom target after animation
+    setTimeout(() => setZoomTarget(null), 1000);
+  }, []);
+
+  const handleHoverPart = useCallback((part: AnatomyPart | null) => {
+    setHoveredPart(part);
+  }, []);
+
+  const handleCategoryToggle = useCallback((category: AnatomyCategory) => {
+    setVisibleCategories(prev => 
+      prev.includes(category) 
+        ? prev.filter(c => c !== category)
+        : [...prev, category]
+    );
+  }, []);
 
   const alertCount = alerts.length;
 
@@ -664,23 +685,33 @@ const DigitalTwin3DViewer: React.FC<DigitalTwin3DViewerProps> = ({
               </span>
             )}
           </CardTitle>
-          {isScanning && (
-            <div className="flex items-center gap-2">
-              <div className="w-24 h-2 bg-muted rounded-full overflow-hidden">
-                <div 
-                  className="h-full bg-primary transition-all"
-                  style={{ width: `${scanProgress * 100}%` }}
-                />
+          <div className="flex items-center gap-2">
+            {isScanning && (
+              <div className="flex items-center gap-2">
+                <div className="w-24 h-2 bg-muted rounded-full overflow-hidden">
+                  <div 
+                    className="h-full bg-primary transition-all"
+                    style={{ width: `${scanProgress * 100}%` }}
+                  />
+                </div>
+                <span className="text-xs text-muted-foreground">Scan...</span>
               </div>
-              <span className="text-xs text-muted-foreground">Scan...</span>
-            </div>
-          )}
+            )}
+            <Button 
+              variant={showSearchPanel ? "secondary" : "outline"} 
+              size="sm"
+              onClick={() => setShowSearchPanel(!showSearchPanel)}
+            >
+              <Search className="h-4 w-4 mr-1" />
+              Anatomie
+            </Button>
+          </div>
         </div>
       </CardHeader>
       <CardContent>
         <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">
           {/* 3D Viewer */}
-          <div className="lg:col-span-3 h-[450px] bg-gradient-to-b from-muted/50 to-muted rounded-lg overflow-hidden relative">
+          <div className={`${showSearchPanel ? 'lg:col-span-2' : 'lg:col-span-3'} h-[500px] bg-gradient-to-b from-muted/50 to-muted rounded-lg overflow-hidden relative`}>
             <Canvas 
               camera={{ position: [0, 0, 2.5], fov: 50 }}
               gl={{ antialias: true }}
@@ -691,7 +722,14 @@ const DigitalTwin3DViewer: React.FC<DigitalTwin3DViewerProps> = ({
                   alerts={alerts}
                   scanProgress={scanProgress}
                   cameraPosition={cameraPosition}
+                  zoomTarget={zoomTarget}
                   controlsRef={controlsRef}
+                  visibleCategories={visibleCategories}
+                  selectedPart={selectedPart}
+                  hoveredPart={hoveredPart}
+                  onSelectPart={handleSelectPart}
+                  onHoverPart={handleHoverPart}
+                  showMarkers={showMarkers}
                 />
               </Suspense>
             </Canvas>
@@ -712,6 +750,18 @@ const DigitalTwin3DViewer: React.FC<DigitalTwin3DViewerProps> = ({
               </Button>
             </div>
             
+            {/* Toggle markers */}
+            <div className="absolute bottom-4 right-4">
+              <Button 
+                variant={showMarkers ? "secondary" : "outline"} 
+                size="sm"
+                onClick={() => setShowMarkers(!showMarkers)}
+              >
+                {showMarkers ? <Eye className="h-4 w-4 mr-1" /> : <EyeOff className="h-4 w-4 mr-1" />}
+                Marqueurs
+              </Button>
+            </div>
+            
             {/* Reset button */}
             <Button 
               variant="outline" 
@@ -724,9 +774,37 @@ const DigitalTwin3DViewer: React.FC<DigitalTwin3DViewerProps> = ({
             
             {/* Instructions */}
             <div className="absolute top-4 left-4 text-xs text-muted-foreground bg-background/80 px-2 py-1 rounded">
-              🖱️ Clic + glisser pour pivoter | Molette pour zoomer | Survol organes pour détails
+              🖱️ Clic + glisser pour pivoter | Molette pour zoomer | Clic sur marqueurs
             </div>
+            
+            {/* Selected part info */}
+            {selectedPart && (
+              <div className="absolute bottom-16 left-4 bg-background/95 border border-border rounded-lg p-3 max-w-[250px] animate-fade-in">
+                <div className="text-sm font-semibold text-foreground">{selectedPart.name}</div>
+                <div className="text-xs text-muted-foreground italic">{selectedPart.nameEn}</div>
+                {selectedPart.description && (
+                  <div className="text-xs text-muted-foreground mt-1">{selectedPart.description}</div>
+                )}
+                {selectedPart.system && (
+                  <div className="text-xs text-primary mt-1">Système: {selectedPart.system}</div>
+                )}
+              </div>
+            )}
           </div>
+          
+          {/* Anatomy Search Panel */}
+          {showSearchPanel && (
+            <div className="lg:col-span-1">
+              <AnatomySearch
+                selectedPart={selectedPart}
+                visibleCategories={visibleCategories}
+                onSelectPart={handleSelectPart}
+                onToggleCategory={handleCategoryToggle}
+                markersVisible={showMarkers}
+                onToggleMarkers={() => setShowMarkers(!showMarkers)}
+              />
+            </div>
+          )}
           
           {/* Control Panel */}
           <div className="space-y-4">
