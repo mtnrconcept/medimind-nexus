@@ -112,6 +112,39 @@ export const MedicalScraperPanel = () => {
     }
   };
 
+  const scrapeWithRetry = async (scrapeUrl: string, maxRetries = 3): Promise<{ data: any; error: any }> => {
+    let lastError = null;
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        const { data, error } = await supabase.functions.invoke('medical-scraper', {
+          body: {
+            action: 'scrape',
+            url: scrapeUrl
+          }
+        });
+        
+        if (error) {
+          // Si c'est une erreur réseau, on retry
+          if (error.message?.includes('Network') || error.message?.includes('500')) {
+            lastError = error;
+            console.log(`Tentative ${attempt}/${maxRetries} échouée pour ${scrapeUrl}, nouvelle tentative...`);
+            await new Promise(resolve => setTimeout(resolve, 3000 * attempt)); // Backoff exponentiel
+            continue;
+          }
+          return { data: null, error };
+        }
+        
+        return { data, error: null };
+      } catch (err) {
+        lastError = err;
+        if (attempt < maxRetries) {
+          await new Promise(resolve => setTimeout(resolve, 3000 * attempt));
+        }
+      }
+    }
+    return { data: null, error: lastError };
+  };
+
   const handleStartScraping = async () => {
     if (mappedUrls.length === 0) {
       toast({
@@ -127,6 +160,8 @@ export const MedicalScraperPanel = () => {
     setProgress(0);
 
     const urlsToScrape = mappedUrls.slice(0, pageLimit[0]);
+    let successCount = 0;
+    let failCount = 0;
     
     for (let i = 0; i < urlsToScrape.length; i++) {
       if (isPaused) break;
@@ -136,24 +171,20 @@ export const MedicalScraperPanel = () => {
       setProgress(Math.round(((i + 1) / urlsToScrape.length) * 100));
 
       try {
-        const { data, error } = await supabase.functions.invoke('medical-scraper', {
-          body: {
-            action: 'scrape',
-            url: currentScrapeUrl
-          }
-        });
+        const { data, error } = await scrapeWithRetry(currentScrapeUrl);
 
         if (error) throw error;
 
         const result: ScrapeResult = {
           url: currentScrapeUrl,
-          success: data.success,
-          stats: data.stats
+          success: data?.success ?? false,
+          stats: data?.stats
         };
 
         addLog(result);
+        successCount++;
 
-        if (data.stats) {
+        if (data?.stats) {
           setStats(prev => ({
             pathologiesAdded: prev.pathologiesAdded + (data.stats.pathologiesAdded || 0),
             symptomsAdded: prev.symptomsAdded + (data.stats.symptomsAdded || 0),
@@ -163,22 +194,23 @@ export const MedicalScraperPanel = () => {
         }
       } catch (error: any) {
         console.error(`Erreur scraping ${currentScrapeUrl}:`, error);
+        failCount++;
         addLog({
           url: currentScrapeUrl,
           success: false,
-          error: error.message
+          error: error.message || 'Erreur réseau - réessayez plus tard'
         });
       }
 
       // Pause entre les requêtes pour éviter le rate limiting
-      await new Promise(resolve => setTimeout(resolve, 2000));
+      await new Promise(resolve => setTimeout(resolve, 2500));
     }
 
     setIsScraping(false);
     setCurrentUrl('');
     toast({
       title: "Scraping terminé",
-      description: `${stats.pathologiesAdded} pathologies, ${stats.symptomsAdded} symptômes, ${stats.treatmentsAdded} traitements ajoutés`
+      description: `${successCount} réussis, ${failCount} échecs. ${stats.pathologiesAdded} pathologies ajoutées.`
     });
   };
 
