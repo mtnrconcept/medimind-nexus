@@ -205,7 +205,7 @@ Format attendu:
   "treatments": [
     {
       "name": "Nom du traitement/médicament en français",
-      "type": "medicament ou chirurgie ou therapie ou lifestyle ou autre",
+      "type": "medication ou surgery ou therapy ou lifestyle ou other",
       "description": "Description du traitement et son utilisation",
       "contraindications": ["liste des contre-indications si mentionnées"]
     }
@@ -394,12 +394,28 @@ ${markdown.substring(0, 18000)}`;
               .maybeSingle();
 
             if (!existingTreatment) {
+              // Mapper les types vers les valeurs valides de la contrainte
+              const typeMapping: Record<string, string> = {
+                'medicament': 'medication',
+                'medication': 'medication',
+                'chirurgie': 'surgery',
+                'surgery': 'surgery',
+                'cirugia': 'surgery',
+                'therapie': 'therapy',
+                'therapy': 'therapy',
+                'lifestyle': 'lifestyle',
+                'alimentacion': 'lifestyle',
+                'autre': 'other',
+                'other': 'other'
+              };
+              const validType = typeMapping[treatment.type?.toLowerCase()] || 'other';
+              
               const { data: insertedTreatment, error: treatError } = await supabase
                 .from('treatments')
                 .insert({
                   pathology_id: pathologyId,
                   name: treatment.name,
-                  type: treatment.type || 'autre',
+                  type: validType,
                   description: treatment.description,
                   contraindications: treatment.contraindications || []
                 })
