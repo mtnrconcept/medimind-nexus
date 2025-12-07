@@ -14,6 +14,82 @@ export type Database = {
   }
   public: {
     Tables: {
+      contraindications: {
+        Row: {
+          condition: string
+          created_at: string | null
+          description: string | null
+          id: string
+          medication_id: string | null
+          severity: string | null
+        }
+        Insert: {
+          condition: string
+          created_at?: string | null
+          description?: string | null
+          id?: string
+          medication_id?: string | null
+          severity?: string | null
+        }
+        Update: {
+          condition?: string
+          created_at?: string | null
+          description?: string | null
+          id?: string
+          medication_id?: string | null
+          severity?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "contraindications_medication_id_fkey"
+            columns: ["medication_id"]
+            isOneToOne: false
+            referencedRelation: "medications"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      drug_interactions: {
+        Row: {
+          created_at: string | null
+          description: string | null
+          id: string
+          interacting_drug: string
+          interaction_type: string | null
+          medication_id: string | null
+          recommendation: string | null
+          severity: string | null
+        }
+        Insert: {
+          created_at?: string | null
+          description?: string | null
+          id?: string
+          interacting_drug: string
+          interaction_type?: string | null
+          medication_id?: string | null
+          recommendation?: string | null
+          severity?: string | null
+        }
+        Update: {
+          created_at?: string | null
+          description?: string | null
+          id?: string
+          interacting_drug?: string
+          interaction_type?: string | null
+          medication_id?: string | null
+          recommendation?: string | null
+          severity?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "drug_interactions_medication_id_fkey"
+            columns: ["medication_id"]
+            isOneToOne: false
+            referencedRelation: "medications"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       medical_sources: {
         Row: {
           created_at: string
@@ -54,6 +130,48 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      medications: {
+        Row: {
+          atc_code: string | null
+          created_at: string | null
+          description: string | null
+          dosage_forms: string[] | null
+          id: string
+          indications: string | null
+          name: string
+          posology: string | null
+          source_url: string | null
+          substance: string | null
+          updated_at: string | null
+        }
+        Insert: {
+          atc_code?: string | null
+          created_at?: string | null
+          description?: string | null
+          dosage_forms?: string[] | null
+          id?: string
+          indications?: string | null
+          name: string
+          posology?: string | null
+          source_url?: string | null
+          substance?: string | null
+          updated_at?: string | null
+        }
+        Update: {
+          atc_code?: string | null
+          created_at?: string | null
+          description?: string | null
+          dosage_forms?: string[] | null
+          id?: string
+          indications?: string | null
+          name?: string
+          posology?: string | null
+          source_url?: string | null
+          substance?: string | null
+          updated_at?: string | null
+        }
+        Relationships: []
       }
       pathologies: {
         Row: {
@@ -224,6 +342,47 @@ export type Database = {
           user_id?: string
         }
         Relationships: []
+      }
+      side_effects: {
+        Row: {
+          body_system: string | null
+          created_at: string | null
+          description: string | null
+          frequency: string | null
+          id: string
+          medication_id: string | null
+          name: string
+          severity: string | null
+        }
+        Insert: {
+          body_system?: string | null
+          created_at?: string | null
+          description?: string | null
+          frequency?: string | null
+          id?: string
+          medication_id?: string | null
+          name: string
+          severity?: string | null
+        }
+        Update: {
+          body_system?: string | null
+          created_at?: string | null
+          description?: string | null
+          frequency?: string | null
+          id?: string
+          medication_id?: string | null
+          name?: string
+          severity?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "side_effects_medication_id_fkey"
+            columns: ["medication_id"]
+            isOneToOne: false
+            referencedRelation: "medications"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       symptoms: {
         Row: {

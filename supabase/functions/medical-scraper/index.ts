@@ -140,7 +140,366 @@ serve(async (req) => {
       }
     }
 
-    // Action: Scrape - Scraper une page et extraire les données
+    // Action: Map Compendium - Découvrir les URLs de médicaments sur Compendium.ch
+    if (action === 'map-compendium') {
+      console.log('Mapping Compendium.ch');
+      
+      try {
+        const mapResult = await firecrawl.mapUrl(url || 'https://compendium.ch/fr/product', {
+          limit: options?.limit || 500,
+        });
+
+        if (!mapResult.success) {
+          throw new Error('Échec du mapping Compendium');
+        }
+
+        // Filtrer les URLs de produits/médicaments
+        const medicationUrls = (mapResult.links || []).filter((link: string) => {
+          const lowerLink = link.toLowerCase();
+          return (
+            lowerLink.includes('/product/') ||
+            lowerLink.includes('/mpro/') ||
+            lowerLink.includes('/monographie/')
+          );
+        });
+
+        console.log(`Compendium: ${medicationUrls.length} URLs de médicaments trouvées`);
+
+        return new Response(JSON.stringify({
+          success: true,
+          totalUrls: mapResult.links?.length || 0,
+          medicationUrls: medicationUrls.length,
+          urls: medicationUrls.slice(0, options?.limit || 500)
+        }), {
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      } catch (err: any) {
+        const errorMessage = err?.message || String(err);
+        if (errorMessage.includes('429') || errorMessage.includes('rate limit') || errorMessage.includes('402')) {
+          return new Response(JSON.stringify({
+            success: false,
+            error: 'Rate limit ou crédits insuffisants - vérifiez votre quota Firecrawl',
+            rateLimited: true
+          }), {
+            status: 429,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          });
+        }
+        throw err;
+      }
+    }
+
+    // Action: Scrape medication - Scraper une page de médicament Compendium
+    if (action === 'scrape-medication') {
+      console.log('Scraping médicament:', url);
+
+      let scrapeResult;
+      try {
+        scrapeResult = await scrapeWithRateLimitRetry(firecrawl, url);
+      } catch (err: any) {
+        const errorMessage = err?.message || String(err);
+        if (errorMessage.includes('429') || errorMessage.includes('rate limit') || errorMessage.includes('402')) {
+          console.log('Rate limit/402 pour:', url);
+          return new Response(JSON.stringify({
+            success: false,
+            error: 'Rate limit ou crédits Firecrawl insuffisants',
+            rateLimited: true
+          }), {
+            status: 429,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          });
+        }
+        throw err;
+      }
+
+      if (!scrapeResult.success) {
+        throw new Error('Échec du scraping du médicament');
+      }
+
+      const markdown = scrapeResult.markdown || '';
+      console.log('Contenu médicament extrait, longueur:', markdown.length);
+
+      // Extraction des données via Lovable AI
+      const extractionPrompt = `Tu es un expert en pharmacologie. Analyse ce contenu markdown d'une page de médicament Compendium.ch et extrais TOUTES les informations au format JSON strict.
+
+INSTRUCTIONS CRITIQUES:
+- Réponds UNIQUEMENT avec le JSON, sans texte avant ou après
+- Si une information n'est pas disponible, utilise null ou un tableau vide []
+- Assure-toi que le JSON est valide
+- Pour les fréquences d'effets secondaires, utilise: "very_common" (>10%), "common" (1-10%), "uncommon" (0.1-1%), "rare" (0.01-0.1%), "very_rare" (<0.01%)
+- Pour la sévérité, utilise: "mild", "moderate", "severe"
+- Pour le type d'interaction, utilise: "potentiation", "antagonism", "increased_toxicity", "decreased_efficacy"
+- Pour la sévérité d'interaction, utilise: "minor", "moderate", "major", "contraindicated"
+
+Format attendu:
+{
+  "medication": {
+    "name": "Nom commercial du médicament",
+    "atc_code": "Code ATC (ex: N02BE01)",
+    "substance": "Substance(s) active(s)",
+    "description": "Description/indications du médicament",
+    "dosage_forms": ["comprimé", "sirop", "injection"],
+    "indications": "Indications thérapeutiques complètes",
+    "posology": "Posologie recommandée"
+  },
+  "side_effects": [
+    {
+      "name": "Nom de l'effet secondaire",
+      "frequency": "very_common ou common ou uncommon ou rare ou very_rare",
+      "body_system": "Système affecté (digestif, nerveux, cardiovasculaire, etc.)",
+      "description": "Description de l'effet",
+      "severity": "mild ou moderate ou severe"
+    }
+  ],
+  "interactions": [
+    {
+      "interacting_drug": "Nom du médicament/substance interagissant",
+      "interaction_type": "potentiation ou antagonism ou increased_toxicity ou decreased_efficacy",
+      "severity": "minor ou moderate ou major ou contraindicated",
+      "description": "Description de l'interaction",
+      "recommendation": "Recommandation clinique"
+    }
+  ],
+  "contraindications": [
+    {
+      "condition": "Condition contre-indiquée",
+      "severity": "relative ou absolute",
+      "description": "Description de la contre-indication"
+    }
+  ]
+}
+
+Contenu à analyser:
+${markdown.substring(0, 20000)}`;
+
+      const aiResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${lovableApiKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          model: 'google/gemini-2.5-flash',
+          messages: [
+            { role: 'system', content: 'Tu es un expert pharmacologue qui extrait des données structurées de notices de médicaments. Tu réponds uniquement en JSON valide.' },
+            { role: 'user', content: extractionPrompt }
+          ],
+        }),
+      });
+
+      if (!aiResponse.ok) {
+        const errorText = await aiResponse.text();
+        console.error('Erreur AI:', errorText);
+        throw new Error(`Erreur de l'API AI: ${aiResponse.status}`);
+      }
+
+      const aiData = await aiResponse.json();
+      const aiContent = aiData.choices?.[0]?.message?.content || '';
+      
+      // Parser le JSON de la réponse
+      let extractedData;
+      try {
+        let cleanedContent = aiContent.trim();
+        if (cleanedContent.startsWith('```json')) {
+          cleanedContent = cleanedContent.slice(7);
+        }
+        if (cleanedContent.startsWith('```')) {
+          cleanedContent = cleanedContent.slice(3);
+        }
+        if (cleanedContent.endsWith('```')) {
+          cleanedContent = cleanedContent.slice(0, -3);
+        }
+        extractedData = JSON.parse(cleanedContent.trim());
+      } catch (parseError) {
+        console.error('Erreur de parsing JSON:', parseError, 'Contenu:', aiContent);
+        throw new Error('Impossible de parser les données du médicament');
+      }
+
+      const stats = {
+        medicationsAdded: 0,
+        sideEffectsAdded: 0,
+        interactionsAdded: 0,
+        contraindicationsAdded: 0
+      };
+
+      // Insérer le médicament
+      if (extractedData.medication?.name) {
+        const { data: existingMed } = await supabase
+          .from('medications')
+          .select('id')
+          .ilike('name', extractedData.medication.name)
+          .maybeSingle();
+
+        let medicationId;
+        
+        if (!existingMed) {
+          const { data: newMed, error: medError } = await supabase
+            .from('medications')
+            .insert({
+              name: extractedData.medication.name,
+              atc_code: extractedData.medication.atc_code,
+              substance: extractedData.medication.substance,
+              description: extractedData.medication.description,
+              dosage_forms: extractedData.medication.dosage_forms || [],
+              indications: extractedData.medication.indications,
+              posology: extractedData.medication.posology,
+              source_url: url
+            })
+            .select('id')
+            .single();
+
+          if (medError) {
+            console.error('Erreur insertion médicament:', medError);
+          } else {
+            medicationId = newMed?.id;
+            stats.medicationsAdded = 1;
+            console.log(`Médicament inséré: ${extractedData.medication.name}`);
+          }
+        } else {
+          medicationId = existingMed.id;
+          console.log(`Médicament existe déjà: ${extractedData.medication.name}`);
+        }
+
+        // Insérer les effets secondaires
+        if (medicationId && extractedData.side_effects && Array.isArray(extractedData.side_effects)) {
+          for (const effect of extractedData.side_effects) {
+            if (!effect.name) continue;
+
+            const { error: effectError } = await supabase
+              .from('side_effects')
+              .insert({
+                medication_id: medicationId,
+                name: effect.name,
+                frequency: effect.frequency,
+                body_system: effect.body_system,
+                description: effect.description,
+                severity: effect.severity
+              });
+
+            if (!effectError) {
+              stats.sideEffectsAdded++;
+            }
+          }
+        }
+
+        // Insérer les interactions
+        if (medicationId && extractedData.interactions && Array.isArray(extractedData.interactions)) {
+          for (const interaction of extractedData.interactions) {
+            if (!interaction.interacting_drug) continue;
+
+            const { error: interactionError } = await supabase
+              .from('drug_interactions')
+              .insert({
+                medication_id: medicationId,
+                interacting_drug: interaction.interacting_drug,
+                interaction_type: interaction.interaction_type,
+                severity: interaction.severity,
+                description: interaction.description,
+                recommendation: interaction.recommendation
+              });
+
+            if (!interactionError) {
+              stats.interactionsAdded++;
+            }
+          }
+        }
+
+        // Insérer les contre-indications
+        if (medicationId && extractedData.contraindications && Array.isArray(extractedData.contraindications)) {
+          for (const contra of extractedData.contraindications) {
+            if (!contra.condition) continue;
+
+            const { error: contraError } = await supabase
+              .from('contraindications')
+              .insert({
+                medication_id: medicationId,
+                condition: contra.condition,
+                severity: contra.severity,
+                description: contra.description
+              });
+
+            if (!contraError) {
+              stats.contraindicationsAdded++;
+            }
+          }
+        }
+      }
+
+      return new Response(JSON.stringify({
+        success: true,
+        url,
+        extractedData,
+        stats
+      }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
+    // Action: Batch medications - Scraper plusieurs médicaments
+    if (action === 'batch-medications') {
+      const results = [];
+      const batchUrls = urls || [];
+      
+      for (let i = 0; i < batchUrls.length; i++) {
+        const currentUrl = batchUrls[i];
+        console.log(`Batch medication ${i + 1}/${batchUrls.length}: ${currentUrl}`);
+        
+        try {
+          const scrapeResult = await fetch(req.url, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': req.headers.get('Authorization') || ''
+            },
+            body: JSON.stringify({ action: 'scrape-medication', url: currentUrl, options })
+          });
+          
+          const resultData = await scrapeResult.json();
+          results.push({
+            url: currentUrl,
+            success: resultData.success,
+            stats: resultData.stats
+          });
+
+          // Si rate limit, arrêter le batch
+          if (resultData.rateLimited) {
+            console.log('Rate limit atteint, arrêt du batch');
+            break;
+          }
+        } catch (err: any) {
+          console.error(`Erreur pour ${currentUrl}:`, err);
+          results.push({
+            url: currentUrl,
+            success: false,
+            error: err?.message || 'Erreur inconnue'
+          });
+        }
+
+        // Pause pour éviter le rate limiting
+        await new Promise(resolve => setTimeout(resolve, 8000));
+      }
+
+      const totalStats = results.reduce((acc, r) => {
+        if (r.stats) {
+          acc.medicationsAdded += r.stats.medicationsAdded || 0;
+          acc.sideEffectsAdded += r.stats.sideEffectsAdded || 0;
+          acc.interactionsAdded += r.stats.interactionsAdded || 0;
+          acc.contraindicationsAdded += r.stats.contraindicationsAdded || 0;
+        }
+        return acc;
+      }, { medicationsAdded: 0, sideEffectsAdded: 0, interactionsAdded: 0, contraindicationsAdded: 0 });
+
+      return new Response(JSON.stringify({
+        success: true,
+        processed: results.length,
+        results,
+        totalStats
+      }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
+    // Action: Scrape - Scraper une page et extraire les données (pathologies)
     if (action === 'scrape') {
       console.log('Scraping de la page:', url);
 
@@ -512,11 +871,11 @@ ${markdown.substring(0, 18000)}`;
     console.error('Erreur medical-scraper:', error);
     const errorMessage = error?.message || 'Erreur inconnue';
     
-    // Vérifier si c'est une erreur 429
-    if (errorMessage.includes('429') || errorMessage.includes('rate limit')) {
+    // Vérifier si c'est une erreur 429 ou 402
+    if (errorMessage.includes('429') || errorMessage.includes('rate limit') || errorMessage.includes('402')) {
       return new Response(JSON.stringify({ 
         success: false, 
-        error: 'Rate limit - veuillez patienter avant de réessayer',
+        error: 'Rate limit ou crédits insuffisants - veuillez patienter ou vérifier votre quota Firecrawl',
         rateLimited: true
       }), {
         status: 429,
