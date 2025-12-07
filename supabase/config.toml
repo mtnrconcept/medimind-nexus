@@ -14,3 +14,6 @@ verify_jwt = false
 
 [functions.cross-data-analyzer]
 verify_jwt = false
+
+[functions.deep-research]
+verify_jwt = false
