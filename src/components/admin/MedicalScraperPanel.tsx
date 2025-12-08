@@ -37,7 +37,6 @@ const RATE_LIMIT_DELAYS: Record<RateLimitMode, number> = {
   fast: 12000,
 };
 
-// --- CORRECTION DES NOMS DE COLONNES ICI ---
 // Les clés (à gauche) doivent correspondre EXACTEMENT à vos colonnes Supabase
 const COLUMN_MAPPINGS: Record<string, string[]> = {
   swissmedic_number: ["Zulassungs", "autorisation", "No d'autorisation", "Numéro", "Zul.-Nr."],
@@ -46,9 +45,7 @@ const COLUMN_MAPPINGS: Record<string, string[]> = {
   atc_code: ["ATC-Code", "Code ATC", "atc"],
   substance: ["Wirkstoff", "Principe", "active", "Substances"],
   indications: ["Anwendungsgebiet", "Champ d'application", "Indication"],
-  // CORRECTION: authorization_date -> first_authorization_date
   first_authorization_date: ["Erstzulassungs", "première autorisation", "Date"],
-  // CORRECTION: validity_date -> validity_duration
   validity_duration: ["Gültigkeitsdauer", "Durée de validité", "Expiry"],
 };
 
@@ -130,6 +127,7 @@ export const MedicalScraperPanel = () => {
       }
 
       if (headerRowIndex === -1) {
+        // Fallback: si on trouve un ID type Swissmedic (5 chiffres) en ligne 6/7, l'en-tête est avant (0)
         if (rawData.length > 6 && String(rawData[6][0]).match(/\d/)) {
           headerRowIndex = 0;
         } else {
@@ -175,6 +173,34 @@ export const MedicalScraperPanel = () => {
       const preview = [];
       const validDataForImport = [];
 
+      // --- FONCTION DE CONVERSION DES DATES (CRITIQUE) ---
+      const convertToISO = (val: any): string | null => {
+        if (!val) return null;
+
+        // Cas 1: Nombre Excel (ex: 42664 pour 2016-10-17)
+        if (typeof val === "number" || (!isNaN(Number(val)) && !String(val).includes("."))) {
+          const num = Number(val);
+          // 25569 = jours entre 1900 et 1970
+          const date = new Date((num - 25569) * 86400 * 1000);
+          if (!isNaN(date.getTime())) return date.toISOString().split("T")[0];
+        }
+
+        const strVal = String(val).trim();
+
+        // Cas 2: Texte DD.MM.YYYY
+        if (strVal.match(/^\d{2}\.\d{2}\.\d{4}$/)) {
+          const parts = strVal.split(".");
+          return `${parts[2]}-${parts[1]}-${parts[0]}`;
+        }
+
+        // Cas 3: Déjà format ISO YYYY-MM-DD
+        if (strVal.match(/^\d{4}-\d{2}-\d{2}$/)) return strVal;
+
+        // Autres cas (ex: "unlimited") -> null pour éviter l'erreur SQL
+        return null;
+      };
+      // -------------------------------------------------
+
       for (const row of dataRows) {
         if (!row || row.length === 0) continue;
 
@@ -185,25 +211,26 @@ export const MedicalScraperPanel = () => {
           let val = row[mapInfo.index];
 
           if (val !== undefined && val !== null) {
-            val = String(val).trim();
-
+            // Nettoyage ID
             if (dbCol === "swissmedic_number") {
+              val = String(val).trim();
               const match = val.match(/^(\d{5})/);
               if (match) {
                 val = match[1];
                 hasId = true;
               }
             }
-            // CORRECTION ICI: Utilisation des nouveaux noms de colonnes pour la logique date
+            // Conversion Date
             else if (dbCol === "first_authorization_date" || dbCol === "validity_duration") {
-              if (val.includes(".")) {
-                // Format DD.MM.YYYY -> YYYY-MM-DD
-                const parts = val.split(".");
-                if (parts.length === 3) val = `${parts[2]}-${parts[1]}-${parts[0]}`;
-              }
+              val = convertToISO(val); // <--- Appel de la conversion ici
+            } else {
+              val = String(val).trim();
             }
 
-            rowObj[dbCol] = val;
+            // On ajoute seulement si la valeur n'est pas nulle
+            if (val !== null) {
+              rowObj[dbCol] = val;
+            }
           }
         });
 
@@ -254,7 +281,7 @@ export const MedicalScraperPanel = () => {
         if (error) {
           console.error("Batch error:", error);
           errorCount += batch.length;
-          addImportLog("error", `Erreur lot ${i / BATCH_SIZE + 1}`, error.message);
+          addImportLog("error", `Erreur lot ${Math.floor(i / BATCH_SIZE) + 1}`, error.message);
         } else {
           successCount += batch.length;
         }
