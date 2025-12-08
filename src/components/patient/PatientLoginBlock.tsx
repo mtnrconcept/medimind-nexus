@@ -53,12 +53,12 @@ const PatientLoginBlock = () => {
   };
 
   return (
-    <Card className="w-full max-w-md mx-auto bg-slate-950/80 border-cyan-500/30 backdrop-blur-sm">
+    <Card className="w-full max-w-md mx-auto bg-card/80 border-primary/30 backdrop-blur-sm">
       <CardHeader className="text-center pb-2">
-        <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-gradient-to-br from-cyan-500/20 to-primary/20 flex items-center justify-center border border-cyan-500/30">
-          <User className="w-8 h-8 text-cyan-400" />
+        <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-primary/10 flex items-center justify-center border border-primary/30">
+          <User className="w-8 h-8 text-primary" />
         </div>
-        <CardTitle className="text-xl text-cyan-400 font-mono">
+        <CardTitle className="text-xl text-primary font-mono">
           Accès Dossier Patient
         </CardTitle>
         <p className="text-sm text-muted-foreground mt-1">
@@ -79,7 +79,7 @@ const PatientLoginBlock = () => {
                 placeholder="Ex: PAT-001"
                 value={patientId}
                 onChange={(e) => setPatientId(e.target.value)}
-                className="pl-10 bg-slate-900/50 border-slate-700 focus:border-cyan-500 font-mono"
+                className="pl-10 bg-secondary border-border focus:border-primary font-mono"
                 required
               />
             </div>
@@ -97,7 +97,7 @@ const PatientLoginBlock = () => {
                 placeholder="••••"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                className="pl-10 bg-slate-900/50 border-slate-700 focus:border-cyan-500 font-mono"
+                className="pl-10 bg-secondary border-border focus:border-primary font-mono"
                 required
               />
             </div>
@@ -113,11 +113,11 @@ const PatientLoginBlock = () => {
           <Button
             type="submit"
             disabled={isLoading || !patientId || !password}
-            className="w-full bg-gradient-to-r from-cyan-600 to-primary hover:from-cyan-500 hover:to-primary/90 font-mono"
+            className="w-full font-mono"
           >
             {isLoading ? (
               <div className="flex items-center gap-2">
-                <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                <div className="w-4 h-4 border-2 border-primary-foreground/30 border-t-primary-foreground rounded-full animate-spin" />
                 Vérification...
               </div>
             ) : (
@@ -129,7 +129,7 @@ const PatientLoginBlock = () => {
           </Button>
         </form>
 
-        <div className="mt-4 pt-4 border-t border-slate-800">
+        <div className="mt-4 pt-4 border-t border-border">
           <p className="text-xs text-center text-muted-foreground">
             Accès réservé au personnel médical autorisé
           </p>

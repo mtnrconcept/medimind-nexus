@@ -118,15 +118,15 @@ const Pathologies = () => {
   const getSeverityColor = (severity: string) => {
     switch (severity) {
       case "mild":
-        return "bg-green-100 text-green-800 border-green-200";
+        return "bg-success/10 text-success border-success/30";
       case "moderate":
-        return "bg-yellow-100 text-yellow-800 border-yellow-200";
+        return "bg-warning/10 text-warning border-warning/30";
       case "severe":
-        return "bg-orange-100 text-orange-800 border-orange-200";
+        return "bg-destructive/20 text-destructive border-destructive/30";
       case "critical":
-        return "bg-red-100 text-red-800 border-red-200";
+        return "bg-destructive/30 text-destructive border-destructive/40";
       default:
-        return "bg-muted text-muted-foreground";
+        return "bg-muted text-muted-foreground border-border";
     }
   };
 
