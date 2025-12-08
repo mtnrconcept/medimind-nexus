@@ -14,6 +14,7 @@ import VitalSignsPanel from '@/components/patient/VitalSignsPanel';
 import AIPredictionsCard from '@/components/patient/AIPredictionsCard';
 import ExtendedLabResults from '@/components/patient/ExtendedLabResults';
 import MedicalHistory from '@/components/patient/MedicalHistory';
+import PatientHealthCharts from '@/components/patient/PatientHealthCharts';
 import { usePatientAlerts, parseExtendedLabResults, type ExtendedLabResults as ExtendedLabResultsType } from '@/hooks/usePatientAlerts';
 import type { Json } from '@/integrations/supabase/types';
 
@@ -196,11 +197,11 @@ const PatientDetail = () => {
         <div className="grid gap-4 lg:grid-cols-4">
           {/* Left Panel - Vitals & Labs */}
           <div className="space-y-4">
-            <VitalSignsPanel 
-              labResults={patient.lab_results_json} 
-              age={patient.age} 
-              height={patient.height_cm} 
-              weight={patient.weight_kg} 
+            <VitalSignsPanel
+              labResults={patient.lab_results_json}
+              age={patient.age}
+              height={patient.height_cm}
+              weight={patient.weight_kg}
             />
             <Card className="border-border/50">
               <CardHeader className="pb-2">
@@ -221,17 +222,100 @@ const PatientDetail = () => {
           {/* Center Panel - Digital Twin + History */}
           <div className="lg:col-span-2 space-y-4">
             <DigitalTwin3DViewer alerts={alerts} pathologyName={patient.pathologies?.name} />
+            <PatientHealthCharts
+              age={patient.age}
+              heightCm={patient.height_cm}
+              weightKg={patient.weight_kg}
+              gender={patient.gender}
+              medicalNotes={patient.medical_notes_nlp}
+            />
             <MedicalHistory age={patient.age} />
             <PharmacologyMatrix treatment={patient.treatment} alerts={alerts} />
           </div>
 
           {/* Right Panel - AI Predictions */}
           <div className="space-y-4">
-            <AIPredictionsCard 
-              alerts={alerts} 
-              labResults={patient.lab_results_json} 
-              pathologyName={patient.pathologies?.name}
+            <AIPredictionsCard
+              alerts={alerts}
+              labResults={patient.lab_results_json}
+              pathologyName={(() => {
+                // Construire une liste de pathologies identifiées
+                const pathologies: string[] = [];
+
+                // Pathologie principale si disponible
+                if (patient.pathologies?.name) {
+                  pathologies.push(patient.pathologies.name);
+                }
+
+                // Détecter pathologies depuis notes médicales et traitement
+                const notesLower = patient.medical_notes_nlp?.toLowerCase() || '';
+                const treatmentLower = patient.treatment?.toLowerCase() || '';
+
+                // HTA
+                if (notesLower.includes('hypertension') ||
+                  notesLower.includes('hta') ||
+                  treatmentLower.includes('lisinopril') ||
+                  treatmentLower.includes('ramipril') ||
+                  treatmentLower.includes('amlodipine') ||
+                  patient.lab_results_json.blood_pressure_sys > 140) {
+                  if (!pathologies.some(p => p.toLowerCase().includes('hypertension'))) {
+                    pathologies.push('Hypertension artérielle');
+                  }
+                }
+
+                // Diabète
+                if (notesLower.includes('diabète') ||
+                  notesLower.includes('diabetes') ||
+                  treatmentLower.includes('metformine') ||
+                  treatmentLower.includes('glibenclamide') ||
+                  treatmentLower.includes('insuline')) {
+                  if (!pathologies.some(p => p.toLowerCase().includes('diabète'))) {
+                    pathologies.push('Diabète de type 2');
+                  }
+                }
+
+                // Hypercholestérolémie
+                if (notesLower.includes('cholestérol') ||
+                  notesLower.includes('hypercholestérolémie') ||
+                  treatmentLower.includes('atorvastatine') ||
+                  treatmentLower.includes('simvastatine') ||
+                  treatmentLower.includes('rosuvastatine')) {
+                  if (!pathologies.some(p => p.toLowerCase().includes('cholestérol'))) {
+                    pathologies.push('Hypercholestérolémie');
+                  }
+                }
+
+                // Goutte
+                if (notesLower.includes('goutte') ||
+                  notesLower.includes('hyperuricémie') ||
+                  treatmentLower.includes('allopurinol') ||
+                  treatmentLower.includes('colchicine')) {
+                  if (!pathologies.some(p => p.toLowerCase().includes('goutte'))) {
+                    pathologies.push('Goutte');
+                  }
+                }
+
+                // Rhinite allergique
+                if (notesLower.includes('rhinite') ||
+                  notesLower.includes('allergie') ||
+                  treatmentLower.includes('antihistaminique') ||
+                  treatmentLower.includes('cétirizine') ||
+                  treatmentLower.includes('loratadine')) {
+                  if (!pathologies.some(p => p.toLowerCase().includes('rhinite'))) {
+                    pathologies.push('Rhinite allergique');
+                  }
+                }
+
+                return pathologies.length > 0
+                  ? pathologies.join(', ')
+                  : 'Non spécifiée';
+              })()}
               age={patient.age}
+              patientId={patient.patient_id}
+              gender={patient.gender}
+              treatment={patient.treatment}
+
+              medicalNotes={patient.medical_notes_nlp}
             />
             <Card className="border-border/50">
               <CardHeader className="pb-2">

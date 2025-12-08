@@ -1,0 +1,831 @@
+================================================================================
+           MEDIMIND NEXUS - DOCUMENTATION TECHNIQUE DÉTAILLÉE
+                        PARTIE 1 : ARCHITECTURE & COMPOSANTS
+================================================================================
+
+📋 SOMMAIRE DE CETTE PARTIE
+================================================================================
+1. Architecture détaillée du système
+2. Flux de données et communication
+3. Composants patients - Fonctionnement détaillé
+4. Gestion d'état et performance
+
+
+================================================================================
+1. ARCHITECTURE DÉTAILLÉE DU SYSTÈME
+================================================================================
+
+1.1 ARCHITECTURE GLOBALE
+-------------------------
+
+Le système MediMind Nexus suit une architecture moderne en couches :
+
+┌─────────────────────────────────────────────────────────────────┐
+│                    COUCHE PRÉSENTATION                          │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐         │
+│  │   Pages      │  │  Composants  │  │   Layouts    │         │
+│  │  (Routes)    │  │     UI       │  │              │         │
+│  └──────────────┘  └──────────────┘  └──────────────┘         │
+├─────────────────────────────────────────────────────────────────┤
+│                    COUCHE LOGIQUE MÉTIER                        │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐         │
+│  │   Hooks      │  │   Services   │  │  Utilities   │         │
+│  │  (Custom)    │  │              │  │              │         │
+│  └──────────────┘  └──────────────┘  └──────────────┘         │
+├─────────────────────────────────────────────────────────────────┤
+│                    COUCHE GESTION D'ÉTAT                        │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐         │
+│  │   Context    │  │ Local State  │  │ React Query  │         │
+│  │     API      │  │   (useState) │  │   (Cache)    │         │
+│  └──────────────┘  └──────────────┘  └──────────────┘         │
+├─────────────────────────────────────────────────────────────────┤
+│                    COUCHE API & DONNÉES                         │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐         │
+│  │   Supabase   │  │     Edge     │  │   OpenAI     │         │
+│  │    Client    │  │  Functions   │  │     API      │         │
+│  └──────────────┘  └──────────────┘  └──────────────┘         │
+├─────────────────────────────────────────────────────────────────┤
+│                    COUCHE PERSISTANCE                           │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐         │
+│  │  PostgreSQL  │  │    Storage   │  │    Cache     │         │
+│  │  (Supabase)  │  │   (Files)    │  │  (Browser)   │         │
+│  └──────────────┘  └──────────────┘  └──────────────┘         │
+└─────────────────────────────────────────────────────────────────┘
+
+1.2 FLUX DE DONNÉES PRINCIPAL
+------------------------------
+
+SCÉNARIO : Affichage d'une fiche patient
+
+1. NAVIGATION
+   User clique sur patient → React Router change l'URL
+   → PatientDetail component se monte
+
+2. CHARGEMENT DES DONNÉES
+   useEffect() se déclenche
+   → Appel Supabase : supabase.from('patients').select(...)
+   → Données récupérées depuis PostgreSQL
+   → État local mis à jour : setPatient(data)
+
+3. CALCUL DES ALERTES
+   Hook usePatientAlerts() s'exécute
+   → Analyse des résultats biologiques
+   → Détection des interactions médicamenteuses
+   → Génération des alertes (CRITICAL, WARNING, INFO)
+   → Retour du tableau d'alertes
+
+4. RENDU DES COMPOSANTS
+   Composants enfants reçoivent les props
+   → VitalSignsPanel : Affiche les constantes
+   → AIPredictionsCard : Génère les recommandations
+   → DigitalTwin3DViewer : Initialise le modèle 3D
+   → PatientHealthCharts : Génère les graphiques
+   → AIAssistant : Prêt pour les questions
+
+5. INTERACTIONS UTILISATEUR
+   User pose une question à l'assistant
+   → Appel Edge Function : /functions/v1/ai-assistant
+   → Streaming de la réponse OpenAI
+   → Mise à jour progressive de l'UI
+
+1.3 PATTERN DE COMMUNICATION
+-----------------------------
+
+A) COMMUNICATION PARENT-ENFANT (Props)
+   PatientDetail (parent)
+   ↓ [props: patient, alerts, labResults]
+   AIPredictionsCard (enfant)
+
+B) COMMUNICATION ENFANT-PARENT (Callbacks)
+   AIAssistant (enfant)
+   ↑ [callback: onQuestionAsked]
+   PatientDetail (parent)
+
+C) COMMUNICATION GLOBALE (Context)
+   AuthProvider (Context)
+   → Tous les composants peuvent accéder à l'état auth
+   → useAuth() hook pour consommer le contexte
+
+D) COMMUNICATION SERVEUR (API)
+   Component
+   → fetch() ou Supabase client
+   → Edge Function ou Database
+   ← Réponse JSON ou Stream
+
+
+================================================================================
+2. FLUX DE DONNÉES ET COMMUNICATION
+================================================================================
+
+2.1 CYCLE DE VIE D'UNE PAGE PATIENT
+------------------------------------
+
+PHASE 1 : INITIALISATION
+-------------------------
+1. URL change : /patients/:id
+2. React Router monte <PatientDetail>
+3. États initiaux :
+   - patient: null
+   - loading: true
+   - decrypting: true
+
+PHASE 2 : DÉCRYPTAGE (Simulation UX)
+-------------------------------------
+1. Animation de décryptage (2 secondes)
+2. Affichage :
+   - Icône cadenas
+   - Barre de progression
+   - Message "Décryptage des données..."
+3. Transition vers chargement réel
+
+PHASE 3 : CHARGEMENT DES DONNÉES
+---------------------------------
+1. Appel Supabase :
+   ```typescript
+   const { data } = await supabase
+     .from('patients')
+     .select(`*, pathologies (id, name, icd_code, category)`)
+     .eq('id', id)
+     .maybeSingle();
+   ```
+
+2. Parsing des données :
+   - lab_results_json → ExtendedLabResults
+   - pathologies → Pathology object
+   - Conversion des types
+
+3. Mise à jour de l'état :
+   ```typescript
+   setPatient({
+     id: data.id,
+     patient_id: data.patient_id,
+     age: data.age,
+     // ... autres champs
+   });
+   setLoading(false);
+   ```
+
+PHASE 4 : CALCUL DES ALERTES
+-----------------------------
+1. Hook usePatientAlerts() s'exécute automatiquement
+2. Analyse séquentielle :
+   a) Interactions médicamenteuses
+   b) Contre-indications allergiques
+   c) Valeurs biologiques anormales
+   d) Surveillance requise
+
+3. Génération des alertes :
+   ```typescript
+   alerts.push({
+     id: 'glucose-hypo',
+     level: 'CRITICAL',
+     type: 'ABNORMAL_VALUE',
+     title: 'Hypoglycémie',
+     description: 'Glycémie à 55 mg/dL...',
+     organ: 'pancreas',
+     action: 'Resucrage immédiat...'
+   });
+   ```
+
+4. Tri par sévérité :
+   CRITICAL → WARNING → INFO
+
+PHASE 5 : RENDU INITIAL
+------------------------
+1. Layout principal s'affiche
+2. Composants se montent dans l'ordre :
+   - SafetyAlertBanner (si alertes critiques)
+   - VitalSignsPanel
+   - DigitalTwin3DViewer
+   - PatientHealthCharts
+   - AIPredictionsCard
+   - AIAssistant
+
+3. Chaque composant :
+   - Reçoit ses props
+   - Initialise son état local
+   - Lance ses effets (useEffect)
+   - Rend son UI
+
+PHASE 6 : INTERACTIONS CONTINUES
+---------------------------------
+1. User interagit avec l'UI
+2. Événements déclenchés
+3. États mis à jour
+4. Re-render des composants concernés
+5. Animations et transitions
+
+
+2.2 GESTION DES ERREURS
+------------------------
+
+STRATÉGIE EN CASCADE :
+
+1. TRY-CATCH au niveau composant
+   ```typescript
+   try {
+     const data = await fetchData();
+   } catch (err) {
+     setError(err.message);
+     toast.error('Erreur de chargement');
+   }
+   ```
+
+2. ÉTATS D'ERREUR
+   - error: string | null
+   - Affichage conditionnel d'un message
+   - Bouton de retry si applicable
+
+3. FALLBACKS
+   - Données par défaut si échec
+   - UI dégradée mais fonctionnelle
+   - Messages utilisateur clairs
+
+4. LOGGING
+   - console.error() pour le debug
+   - Envoi à un service de monitoring (future)
+
+
+================================================================================
+3. COMPOSANTS PATIENTS - FONCTIONNEMENT DÉTAILLÉ
+================================================================================
+
+3.1 AIAssistant - ASSISTANT IA CONVERSATIONNEL
+-----------------------------------------------
+
+ARCHITECTURE :
+┌─────────────────────────────────────────┐
+│         AIAssistant Component           │
+│  ┌───────────────────────────────────┐  │
+│  │   État Local                      │  │
+│  │   - messages: Message[]           │  │
+│  │   - input: string                 │  │
+│  │   - isLoading: boolean            │  │
+│  └───────────────────────────────────┘  │
+│  ┌───────────────────────────────────┐  │
+│  │   UI Elements                     │  │
+│  │   - Questions suggérées           │  │
+│  │   - Zone de messages              │  │
+│  │   - Input + bouton Send           │  │
+│  └───────────────────────────────────┘  │
+│  ┌───────────────────────────────────┐  │
+│  │   Logique                         │  │
+│  │   - streamChat()                  │  │
+│  │   - handleSubmit()                │  │
+│  │   - handleSuggestion()            │  │
+│  └───────────────────────────────────┘  │
+└─────────────────────────────────────────┘
+         ↓ API Call
+┌─────────────────────────────────────────┐
+│    Supabase Edge Function               │
+│    /functions/v1/ai-assistant           │
+└─────────────────────────────────────────┘
+         ↓ OpenAI API
+┌─────────────────────────────────────────┐
+│         OpenAI GPT Model                │
+│    (Streaming Response)                 │
+└─────────────────────────────────────────┘
+
+FLUX DÉTAILLÉ D'UNE QUESTION :
+
+1. USER TAPE UNE QUESTION
+   - Input onChange met à jour l'état
+   - Bouton Send devient actif
+
+2. SOUMISSION
+   ```typescript
+   const handleSubmit = (e) => {
+     e.preventDefault();
+     if (!input.trim() || isLoading) return;
+     streamChat(input.trim());
+   };
+   ```
+
+3. PRÉPARATION DE LA REQUÊTE
+   ```typescript
+   const userMsg = { role: 'user', content: userMessage };
+   setMessages(prev => [...prev, userMsg]);
+   setInput('');
+   setIsLoading(true);
+   ```
+
+4. APPEL API
+   ```typescript
+   const response = await fetch(
+     `${SUPABASE_URL}/functions/v1/ai-assistant`,
+     {
+       method: 'POST',
+       headers: {
+         'Content-Type': 'application/json',
+         'Authorization': `Bearer ${ANON_KEY}`,
+       },
+       body: JSON.stringify({
+         message: userMessage,
+         patient: { ...patientData },
+         conversationHistory: messages,
+       }),
+     }
+   );
+   ```
+
+5. STREAMING DE LA RÉPONSE
+   ```typescript
+   const reader = response.body.getReader();
+   const decoder = new TextDecoder();
+   let assistantContent = '';
+
+   // Ajouter message vide
+   setMessages(prev => [...prev, { 
+     role: 'assistant', 
+     content: '' 
+   }]);
+
+   while (true) {
+     const { done, value } = await reader.read();
+     if (done) break;
+
+     const chunk = decoder.decode(value);
+     const lines = chunk.split('\n');
+
+     for (const line of lines) {
+       if (line.startsWith('data: ')) {
+         const data = line.slice(6).trim();
+         if (data === '[DONE]') break;
+
+         const parsed = JSON.parse(data);
+         const content = parsed.choices?.[0]?.delta?.content;
+         
+         if (content) {
+           assistantContent += content;
+           // Mise à jour progressive
+           setMessages(prev => {
+             const updated = [...prev];
+             updated[updated.length - 1] = {
+               role: 'assistant',
+               content: assistantContent
+             };
+             return updated;
+           });
+         }
+       }
+     }
+   }
+   ```
+
+6. AFFICHAGE PROGRESSIF
+   - Chaque token reçu met à jour l'UI
+   - Effet de "typing" en temps réel
+   - Scroll automatique vers le bas
+
+7. FIN DU STREAMING
+   ```typescript
+   setIsLoading(false);
+   ```
+
+GESTION DES ERREURS :
+- Timeout après 30 secondes
+- Retry automatique (1 fois)
+- Message d'erreur utilisateur
+- Log des erreurs pour debug
+
+
+3.2 AIPredictionsCard - ANALYSE PRÉDICTIVE
+-------------------------------------------
+
+ARCHITECTURE :
+┌─────────────────────────────────────────┐
+│      AIPredictionsCard Component        │
+│  ┌───────────────────────────────────┐  │
+│  │   Props Reçues                    │  │
+│  │   - alerts: PatientAlert[]        │  │
+│  │   - labResults: ExtendedLabResults│  │
+│  │   - pathologyName: string         │  │
+│  │   - age, gender, treatment...     │  │
+│  └───────────────────────────────────┘  │
+│  ┌───────────────────────────────────┐  │
+│  │   État Local                      │  │
+│  │   - analysis: AIAnalysis          │  │
+│  │   - isLoading: boolean            │  │
+│  │   - error: string | null          │  │
+│  └───────────────────────────────────┘  │
+│  ┌───────────────────────────────────┐  │
+│  │   Logique d'Analyse               │  │
+│  │   1. Analyse pathologies          │  │
+│  │   2. Analyse glycémie             │  │
+│  │   3. Analyse tension              │  │
+│  │   4. Analyse fonction rénale      │  │
+│  │   5. Détection effets secondaires │  │
+│  │   6. Calcul score de risque       │  │
+│  │   7. Génération recommandations   │  │
+│  │   8. Tri par urgence              │  │
+│  └───────────────────────────────────┘  │
+└─────────────────────────────────────────┘
+
+ALGORITHME D'ANALYSE DÉTAILLÉ :
+
+ÉTAPE 1 : INITIALISATION
+```typescript
+const recommendations: AIRecommendation[] = [];
+let riskScore = 30; // Score de base
+const keyFindings: string[] = [];
+```
+
+ÉTAPE 2 : ANALYSE DES PATHOLOGIES
+```typescript
+const pathologyLower = pathologyName?.toLowerCase() || '';
+
+if (pathologyLower.includes('diabète')) {
+  riskScore += 15;
+  keyFindings.push(`Pathologie: ${pathologyName}`);
+  
+  // Vérifier complications
+  if (labResults.gfr_ml_min < 60) {
+    keyFindings.push('Risque néphropathie diabétique');
+  }
+  
+  // Recommandation surveillance
+  recommendations.push({
+    type: 'important',
+    category: 'monitoring',
+    title: 'Surveillance diabète',
+    description: 'HbA1c tous les 3 mois...',
+    urgency: 7
+  });
+}
+```
+
+ÉTAPE 3 : ANALYSE GLYCÉMIE (PRIORITÉ HYPOGLYCÉMIE)
+```typescript
+if (labResults.glucose_mg_dl < 70) {
+  // HYPOGLYCÉMIE - CRITIQUE !
+  riskScore += 35;
+  keyFindings.push(
+    `HYPOGLYCÉMIE CRITIQUE (${glucose} mg/dL)`
+  );
+  
+  // Recommandation urgente
+  recommendations.push({
+    type: 'urgent',
+    category: 'medication',
+    title: 'Ajustement URGENT traitement',
+    description: `Glycémie dangereuse à ${glucose}...
+      ${treatment.includes('glibenclamide') 
+        ? 'Glibenclamide suspectée...' 
+        : 'Revoir traitement...'}`,
+    urgency: 10
+  });
+  
+  recommendations.push({
+    type: 'urgent',
+    category: 'monitoring',
+    title: 'Resucrage immédiat',
+    description: '15g glucides rapides...',
+    urgency: 10
+  });
+}
+```
+
+ÉTAPE 4 : ANALYSE TENSION ARTÉRIELLE
+```typescript
+if (labResults.blood_pressure_sys > 140) {
+  riskScore += 20;
+  keyFindings.push(
+    `HTA non contrôlée (${sys}/${dia} mmHg)`
+  );
+  
+  recommendations.push({
+    type: 'urgent',
+    category: 'medication',
+    title: 'Ajustement antihypertenseur',
+    description: 'Tension actuelle nécessite...',
+    urgency: 9
+  });
+}
+```
+
+ÉTAPE 5 : DÉTECTION EFFETS SECONDAIRES
+```typescript
+if (treatment.includes('lisinopril') && 
+    medicalNotes.includes('toux')) {
+  riskScore += 10;
+  keyFindings.push('Toux sèche (effet IEC)');
+  
+  recommendations.push({
+    type: 'urgent',
+    category: 'medication',
+    title: 'Changement classe thérapeutique',
+    description: 'Switch vers ARA2 (Losartan)...',
+    urgency: 9
+  });
+}
+```
+
+ÉTAPE 6 : TRI ET FINALISATION
+```typescript
+// Tri par urgence décroissante
+recommendations.sort((a, b) => b.urgency - a.urgency);
+
+// Génération du résumé
+let summary = `Patient ${age} ans ${gender}...`;
+if (glucose < 70) {
+  summary += '⚠️ SITUATION CRITIQUE...';
+} else if (riskScore >= 70) {
+  summary += 'État préoccupant...';
+}
+
+// Mise à jour de l'état
+setAnalysis({
+  summary,
+  recommendations: recommendations.slice(0, 6),
+  riskScore: Math.min(riskScore, 100),
+  keyFindings
+});
+```
+
+AFFICHAGE DES RÉSULTATS :
+- Résumé en haut avec score de risque coloré
+- Points clés en liste à puces
+- Recommandations triées par urgence
+- Badges de priorité (URGENT, Important, Routine)
+- Icônes par catégorie (💊 🏋️ 🍎 📊 🌟)
+
+
+3.3 PatientHealthCharts - GRAPHIQUES D'ÉVOLUTION
+-------------------------------------------------
+
+ARCHITECTURE :
+┌─────────────────────────────────────────┐
+│    PatientHealthCharts Component        │
+│  ┌───────────────────────────────────┐  │
+│  │   5 Onglets (Tabs)                │  │
+│  │   1. IMC                          │  │
+│  │   2. Poids                        │  │
+│  │   3. Constantes vitales           │  │
+│  │   4. Glycémie                     │  │
+│  │   5. Périodes de maladies         │  │
+│  └───────────────────────────────────┘  │
+│  ┌───────────────────────────────────┐  │
+│  │   Génération de données           │  │
+│  │   - generateHistoricalData()      │  │
+│  │   - generateIllnessPeriods()      │  │
+│  └───────────────────────────────────┘  │
+│  ┌───────────────────────────────────┐  │
+│  │   Graphiques Recharts             │  │
+│  │   - AreaChart (IMC, Glycémie)     │  │
+│  │   - LineChart (Poids, Vitaux)     │  │
+│  │   - BarChart (Maladies)           │  │
+│  └───────────────────────────────────┘  │
+└─────────────────────────────────────────┘
+
+GÉNÉRATION DES DONNÉES HISTORIQUES :
+
+```typescript
+const generateHistoricalData = (
+  currentWeight, 
+  currentHeight, 
+  age
+) => {
+  const data = [];
+  const monthsBack = 12;
+  
+  for (let i = monthsBack; i >= 0; i--) {
+    const date = new Date();
+    date.setMonth(date.getMonth() - i);
+    
+    // Simulation poids (variation ±5kg)
+    const weightVariation = (Math.random() - 0.5) * 10;
+    const weight = currentWeight + weightVariation - (i * 0.3);
+    
+    // Hauteur stable pour adultes
+    const height = currentHeight + (Math.random() - 0.5) * 0.5;
+    
+    // Calcul IMC
+    const bmi = weight / ((height / 100) ** 2);
+    
+    // Simulation glycémie (amélioration dans le temps)
+    const glucose = 55 + (Math.random() * 40) + (i * 2);
+    
+    // Simulation tension
+    const systolic = 125 + (Math.random() * 20);
+    const diastolic = 80 + (Math.random() * 10);
+    
+    data.push({
+      date: date.toLocaleDateString('fr-FR', {
+        month: 'short',
+        year: '2-digit'
+      }),
+      weight: parseFloat(weight.toFixed(1)),
+      height: parseFloat(height.toFixed(1)),
+      bmi: parseFloat(bmi.toFixed(1)),
+      glucose: parseFloat(glucose.toFixed(0)),
+      systolic: parseFloat(systolic.toFixed(0)),
+      diastolic: parseFloat(diastolic.toFixed(0)),
+    });
+  }
+  
+  return data;
+};
+```
+
+DÉTECTION DES PÉRIODES DE MALADIES :
+
+```typescript
+const generateIllnessPeriods = (medicalNotes) => {
+  const illnesses = [];
+  const currentDate = new Date();
+  
+  // Parsing des notes médicales
+  if (medicalNotes?.includes('hypoglycémie')) {
+    illnesses.push({
+      name: 'Hypoglycémies',
+      startDate: new Date(
+        currentDate - 90 * 24 * 60 * 60 * 1000
+      ).toLocaleDateString('fr-FR'),
+      endDate: currentDate.toLocaleDateString('fr-FR'),
+      severity: 8,
+      type: 'chronic',
+      color: '#ef4444' // Rouge
+    });
+  }
+  
+  // Ajout maladies mineures
+  illnesses.push({
+    name: 'Rhume',
+    startDate: '...',
+    endDate: '...',
+    severity: 3,
+    type: 'minor',
+    color: '#06b6d4' // Cyan
+  });
+  
+  return illnesses;
+};
+```
+
+CONFIGURATION DES GRAPHIQUES :
+
+GRAPHIQUE IMC (AreaChart) :
+```typescript
+<AreaChart data={historicalData}>
+  <defs>
+    <linearGradient id="colorBMI">
+      <stop offset="5%" stopColor="#8b5cf6" stopOpacity={0.3}/>
+      <stop offset="95%" stopColor="#8b5cf6" stopOpacity={0}/>
+    </linearGradient>
+  </defs>
+  
+  <CartesianGrid strokeDasharray="3 3" />
+  <XAxis dataKey="date" />
+  <YAxis domain={[15, 35]} />
+  <Tooltip />
+  
+  {/* Lignes de référence */}
+  <ReferenceLine y={18.5} label="Sous-poids" />
+  <ReferenceLine y={25} label="Normal" />
+  <ReferenceLine y={30} label="Surpoids" />
+  
+  <Area 
+    type="monotone" 
+    dataKey="bmi" 
+    stroke="#8b5cf6" 
+    fill="url(#colorBMI)" 
+  />
+</AreaChart>
+```
+
+AFFICHAGE DES MALADIES (Timeline) :
+```typescript
+{illnessPeriods.map((illness, idx) => (
+  <div key={idx}>
+    {/* En-tête */}
+    <div className="flex justify-between">
+      <div className="flex gap-2">
+        <div 
+          className="w-3 h-3 rounded-full" 
+          style={{ backgroundColor: illness.color }}
+        />
+        <span>{illness.name}</span>
+        <span>({illness.type})</span>
+      </div>
+      <span>Sévérité: {illness.severity}/10</span>
+    </div>
+    
+    {/* Dates */}
+    <div className="text-xs">
+      {illness.startDate} → {illness.endDate}
+    </div>
+    
+    {/* Barre de sévérité */}
+    <div className="h-8 bg-muted rounded-md">
+      <div 
+        className="h-full rounded-md"
+        style={{ 
+          backgroundColor: illness.color,
+          width: `${illness.severity * 10}%`
+        }}
+      />
+    </div>
+  </div>
+))}
+```
+
+
+================================================================================
+4. GESTION D'ÉTAT ET PERFORMANCE
+================================================================================
+
+4.1 STRATÉGIES D'OPTIMISATION
+------------------------------
+
+A) MÉMOÏSATION DES CALCULS COÛTEUX
+```typescript
+const labResultsKey = useMemo(
+  () => JSON.stringify(labResults), 
+  [labResults]
+);
+
+// Évite re-render si labResults n'a pas changé
+useEffect(() => {
+  // Logique d'analyse
+}, [labResultsKey]);
+```
+
+B) LAZY LOADING DES COMPOSANTS
+```typescript
+const DigitalTwin3DViewer = lazy(
+  () => import('./DigitalTwin3DViewer')
+);
+
+<Suspense fallback={<Loader />}>
+  <DigitalTwin3DViewer />
+</Suspense>
+```
+
+C) DEBOUNCING DES INPUTS
+```typescript
+const debouncedSearch = useMemo(
+  () => debounce((value) => {
+    performSearch(value);
+  }, 300),
+  []
+);
+```
+
+D) VIRTUALISATION DES LISTES
+```typescript
+// Pour listes longues (>100 items)
+import { FixedSizeList } from 'react-window';
+
+<FixedSizeList
+  height={600}
+  itemCount={items.length}
+  itemSize={50}
+>
+  {Row}
+</FixedSizeList>
+```
+
+4.2 GESTION DU CACHE
+--------------------
+
+React Query pour le cache automatique :
+```typescript
+const { data, isLoading } = useQuery({
+  queryKey: ['patient', id],
+  queryFn: () => fetchPatient(id),
+  staleTime: 5 * 60 * 1000, // 5 minutes
+  cacheTime: 30 * 60 * 1000, // 30 minutes
+});
+```
+
+4.3 PRÉVENTION DES FUITES MÉMOIRE
+----------------------------------
+
+```typescript
+useEffect(() => {
+  let isMounted = true;
+  
+  const fetchData = async () => {
+    const data = await api.get();
+    if (isMounted) {
+      setState(data);
+    }
+  };
+  
+  fetchData();
+  
+  return () => {
+    isMounted = false; // Cleanup
+  };
+}, []);
+```
+
+
+================================================================================
+FIN DE LA PARTIE 1
+================================================================================
+
+PROCHAINE PARTIE : 
+- Partie 2 : Intelligence Artificielle et Algorithmes
+- Partie 3 : Base de données et API
+- Partie 4 : Sécurité et Déploiement

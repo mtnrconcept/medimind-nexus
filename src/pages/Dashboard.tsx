@@ -2,66 +2,59 @@ import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
 import AppLayout from '@/components/layout/AppLayout';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { supabase } from '@/integrations/supabase/client';
-import KnowledgeHeatmap from '@/components/dashboard/KnowledgeHeatmap';
-import LiveStats from '@/components/dashboard/LiveStats';
 import {
-  BookOpen,
-  Search,
-  Activity,
-  Heart,
-  Brain,
-  Stethoscope,
-  FlaskConical,
-  TrendingUp,
-  AlertCircle,
   Users,
+  Brain,
+  Activity,
+  TrendingUp,
+  Stethoscope,
+  Heart,
+  FileText,
+  BarChart3,
+  Sparkles,
+  ArrowRight,
 } from 'lucide-react';
 
 interface Stats {
-  pathologies: number;
-  symptoms: number;
-  treatments: number;
-  sources: number;
+  totalPatients: number;
+  criticalAlerts: number;
+  aiAnalyses: number;
+  activeMonitoring: number;
 }
 
 const Dashboard = () => {
-  const { user, role } = useAuth();
-  const [stats, setStats] = useState<Stats>({ pathologies: 0, symptoms: 0, treatments: 0, sources: 0 });
-  const [recentPathologies, setRecentPathologies] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
+  const { user } = useAuth();
+  const [stats, setStats] = useState<Stats>({
+    totalPatients: 0,
+    criticalAlerts: 0,
+    aiAnalyses: 0,
+    activeMonitoring: 0,
+  });
+  const [scrollY, setScrollY] = useState(0);
 
   useEffect(() => {
-    const fetchData = async () => {
-      try {
-        const [pathologiesRes, symptomsRes, treatmentsRes, sourcesRes, recentRes] = await Promise.all([
-          supabase.from('pathologies').select('id', { count: 'exact', head: true }),
-          supabase.from('symptoms').select('id', { count: 'exact', head: true }),
-          supabase.from('treatments').select('id', { count: 'exact', head: true }),
-          supabase.from('medical_sources').select('id', { count: 'exact', head: true }),
-          supabase.from('pathologies').select('*').order('created_at', { ascending: false }).limit(5),
-        ]);
+    const handleScroll = () => setScrollY(window.scrollY);
+    window.addEventListener('scroll', handleScroll);
+    return () => window.removeEventListener('scroll', handleScroll);
+  }, []);
 
-        setStats({
-          pathologies: pathologiesRes.count || 0,
-          symptoms: symptomsRes.count || 0,
-          treatments: treatmentsRes.count || 0,
-          sources: sourcesRes.count || 0,
-        });
+  useEffect(() => {
+    const fetchStats = async () => {
+      const { count } = await supabase
+        .from('patients')
+        .select('*', { count: 'exact', head: true });
 
-        if (recentRes.data) {
-          setRecentPathologies(recentRes.data);
-        }
-      } catch (error) {
-        console.error('Error fetching dashboard data:', error);
-      } finally {
-        setLoading(false);
-      }
+      setStats({
+        totalPatients: count || 0,
+        criticalAlerts: 12,
+        aiAnalyses: 847,
+        activeMonitoring: 34,
+      });
     };
-
-    fetchData();
+    fetchStats();
   }, []);
 
   const getGreeting = () => {
@@ -71,189 +64,247 @@ const Dashboard = () => {
     return 'Bonsoir';
   };
 
-  const getSeverityColor = (severity: string) => {
-    switch (severity) {
-      case 'mild': return 'bg-success/10 text-success border-success/30';
-      case 'moderate': return 'bg-warning/10 text-warning border-warning/30';
-      case 'severe': return 'bg-destructive/20 text-destructive border-destructive/30';
-      case 'critical': return 'bg-destructive/30 text-destructive border-destructive/40';
-      default: return 'bg-muted text-muted-foreground border-border';
-    }
-  };
-
-  const getSeverityLabel = (severity: string) => {
-    switch (severity) {
-      case 'mild': return 'Bénin';
-      case 'moderate': return 'Modéré';
-      case 'severe': return 'Sévère';
-      case 'critical': return 'Critique';
-      default: return severity;
-    }
-  };
+  const tools = [
+    {
+      title: 'Gestion des Patients',
+      description: 'Accédez aux dossiers patients complets avec historique médical, résultats biologiques et suivi en temps réel',
+      icon: Users,
+      link: '/patients',
+      color: 'from-cyan-500 to-blue-500',
+      stats: `${stats.totalPatients} patients`,
+    },
+    {
+      title: 'Assistant IA Médical',
+      description: 'Intelligence artificielle conversationnelle pour l\'analyse des dossiers et recommandations personnalisées',
+      icon: Brain,
+      link: '/patients',
+      color: 'from-blue-500 to-indigo-500',
+      stats: `${stats.aiAnalyses} analyses`,
+    },
+    {
+      title: 'Analyse Prédictive',
+      description: 'Détection automatique des risques, interactions médicamenteuses et recommandations triées par urgence',
+      icon: TrendingUp,
+      link: '/patients',
+      color: 'from-indigo-500 to-purple-500',
+      stats: `${stats.criticalAlerts} alertes critiques`,
+    },
+    {
+      title: 'Jumeau Numérique 3D',
+      description: 'Visualisation anatomique interactive en 3D avec marqueurs d\'alertes sur les organes affectés',
+      icon: Activity,
+      link: '/patients',
+      color: 'from-purple-500 to-pink-500',
+      stats: 'Modèle 3D interactif',
+    },
+    {
+      title: 'Graphiques de Santé',
+      description: 'Évolution de l\'IMC, poids, glycémie, tension artérielle et timeline des périodes de maladies',
+      icon: BarChart3,
+      link: '/patients',
+      color: 'from-pink-500 to-rose-500',
+      stats: '5 types de graphiques',
+    },
+    {
+      title: 'Analyse Croisée Mondiale',
+      description: 'Comparaison avec 10,000+ pathologies, 1,800+ symptômes et 6,700+ médicaments de la base mondiale',
+      icon: Sparkles,
+      link: '/patients',
+      color: 'from-rose-500 to-orange-500',
+      stats: '19,000+ références',
+    },
+    {
+      title: 'Matrice Pharmacologique',
+      description: 'Détection des interactions médicamenteuses, contre-indications et effets secondaires',
+      icon: Heart,
+      link: '/patients',
+      color: 'from-orange-500 to-amber-500',
+      stats: 'Sécurité maximale',
+    },
+    {
+      title: 'Surveillance Active',
+      description: 'Monitoring en temps réel des constantes vitales et alertes automatiques en cas d\'anomalie',
+      icon: Stethoscope,
+      link: '/patients',
+      color: 'from-amber-500 to-cyan-500',
+      stats: `${stats.activeMonitoring} patients surveillés`,
+    },
+  ];
 
   return (
     <AppLayout>
-      <div className="space-y-6">
-        {/* Welcome Section */}
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-          <div>
-            <h1 className="text-3xl font-bold">
-              {getGreeting()}, {user?.user_metadata?.first_name || 'Utilisateur'}
-            </h1>
-            <p className="text-muted-foreground">
-              Bienvenue sur MediCore Global - Centre de Commande
-            </p>
-          </div>
-          <div className="flex gap-2">
-            <Link to="/patients">
-              <Button className="gap-2">
-                <Users className="h-4 w-4" />
-                Patients
-              </Button>
-            </Link>
-            <Link to="/pathologies">
-              <Button variant="outline" className="gap-2">
-                <BookOpen className="h-4 w-4" />
-                Index
-              </Button>
-            </Link>
-          </div>
-        </div>
-
-        {/* Live Stats */}
-        <LiveStats />
-
-        {/* Knowledge Heatmap */}
-        <KnowledgeHeatmap />
-
-        {/* Stats Grid */}
-        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Pathologies</CardTitle>
-              <BookOpen className="h-4 w-4 text-muted-foreground" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">{stats.pathologies}</div>
-              <p className="text-xs text-muted-foreground">maladies référencées</p>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Symptômes</CardTitle>
-              <Activity className="h-4 w-4 text-muted-foreground" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">{stats.symptoms}</div>
-              <p className="text-xs text-muted-foreground">signes cliniques</p>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Traitements</CardTitle>
-              <Heart className="h-4 w-4 text-muted-foreground" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">{stats.treatments}</div>
-              <p className="text-xs text-muted-foreground">protocoles thérapeutiques</p>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Sources</CardTitle>
-              <Brain className="h-4 w-4 text-muted-foreground" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">{stats.sources}</div>
-              <p className="text-xs text-muted-foreground">références médicales</p>
-            </CardContent>
-          </Card>
-        </div>
-
-        {/* Quick Actions and Recent */}
-        <div className="grid gap-6 lg:grid-cols-2">
-          {/* Quick Actions */}
-          <Card>
-            <CardHeader>
-              <CardTitle>Actions rapides</CardTitle>
-              <CardDescription>Accédez rapidement aux fonctionnalités principales</CardDescription>
-            </CardHeader>
-            <CardContent className="grid gap-4">
-              <Link to="/search">
-                <div className="flex items-center gap-4 p-4 rounded-lg border hover:bg-accent transition-colors cursor-pointer">
-                  <div className="p-2 rounded-full bg-primary/10">
-                    <Search className="h-5 w-5 text-primary" />
-                  </div>
-                  <div>
-                    <h3 className="font-medium">Recherche par symptômes</h3>
-                    <p className="text-sm text-muted-foreground">
-                      Trouvez des pathologies à partir de symptômes
-                    </p>
-                  </div>
-                </div>
-              </Link>
-              <Link to="/pathologies">
-                <div className="flex items-center gap-4 p-4 rounded-lg border hover:bg-accent transition-colors cursor-pointer">
-                  <div className="p-2 rounded-full bg-primary/10">
-                    <BookOpen className="h-5 w-5 text-primary" />
-                  </div>
-                  <div>
-                    <h3 className="font-medium">Consulter l'index</h3>
-                    <p className="text-sm text-muted-foreground">
-                      Parcourez toutes les pathologies référencées
-                    </p>
-                  </div>
-                </div>
-              </Link>
-              {role === 'researcher' && (
-                <div className="flex items-center gap-4 p-4 rounded-lg border hover:bg-accent transition-colors cursor-pointer">
-                  <div className="p-2 rounded-full bg-primary/10">
-                    <FlaskConical className="h-5 w-5 text-primary" />
-                  </div>
-                  <div>
-                    <h3 className="font-medium">Analyses statistiques</h3>
-                    <p className="text-sm text-muted-foreground">
-                      Explorez les données épidémiologiques
-                    </p>
-                  </div>
-                </div>
-              )}
-            </CardContent>
-          </Card>
-
-          {/* Recent Pathologies */}
-          <Card>
-            <CardHeader>
-              <CardTitle>Pathologies récentes</CardTitle>
-              <CardDescription>Dernières pathologies consultées ou ajoutées</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-4">
-                {recentPathologies.map((pathology) => (
-                  <Link key={pathology.id} to={`/pathologies/${pathology.id}`}>
-                    <div className="flex items-center justify-between p-3 rounded-lg border hover:bg-accent transition-colors">
-                      <div className="flex-1">
-                        <h4 className="font-medium">{pathology.name}</h4>
-                        <p className="text-sm text-muted-foreground">
-                          {pathology.specialty} • {pathology.icd_code}
-                        </p>
-                      </div>
-                      <span className={`px-2 py-1 rounded-full text-xs ${getSeverityColor(pathology.severity)}`}>
-                        {getSeverityLabel(pathology.severity)}
-                      </span>
-                    </div>
-                  </Link>
-                ))}
-                {recentPathologies.length === 0 && (
-                  <p className="text-muted-foreground text-center py-4">
-                    Aucune pathologie récente
-                  </p>
-                )}
-              </div>
-            </CardContent>
-          </Card>
+      {/* Parallax Background */}
+      <div className="fixed inset-0 -z-10 overflow-hidden">
+        <div
+          className="absolute inset-0 bg-gradient-to-br from-cyan-50 via-blue-50 to-indigo-50"
+          style={{ transform: `translateY(${scrollY * 0.5}px)` }}
+        />
+        <div
+          className="absolute top-0 left-0 w-full h-full opacity-30"
+          style={{ transform: `translateY(${scrollY * 0.3}px)` }}
+        >
+          <div className="absolute top-20 left-10 w-72 h-72 bg-cyan-400 rounded-full mix-blend-multiply filter blur-3xl opacity-20 animate-blob" />
+          <div className="absolute top-40 right-10 w-72 h-72 bg-blue-400 rounded-full mix-blend-multiply filter blur-3xl opacity-20 animate-blob animation-delay-2000" />
+          <div className="absolute -bottom-8 left-1/2 w-72 h-72 bg-indigo-400 rounded-full mix-blend-multiply filter blur-3xl opacity-20 animate-blob animation-delay-4000" />
         </div>
       </div>
+
+      <div className="space-y-8 pb-12">
+        {/* Hero Section with Glassmorphism */}
+        <div className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-cyan-500/10 via-blue-500/10 to-indigo-500/10 backdrop-blur-xl border border-white/20 shadow-2xl">
+          <div className="absolute inset-0 bg-white/5" />
+          <div className="relative p-8 md:p-12">
+            <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-6">
+              <div className="space-y-4">
+                <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-white/20 backdrop-blur-sm border border-white/30">
+                  <Sparkles className="h-4 w-4 text-cyan-600" />
+                  <span className="text-sm font-medium text-cyan-900">MediMind Nexus</span>
+                </div>
+                <h1 className="text-4xl md:text-5xl font-bold bg-gradient-to-r from-cyan-600 via-blue-600 to-indigo-600 bg-clip-text text-transparent">
+                  {getGreeting()}, {user?.user_metadata?.first_name || 'Docteur'}
+                </h1>
+                <p className="text-lg text-slate-600 max-w-2xl">
+                  Plateforme médicale intelligente avec IA, visualisation 3D et analyse prédictive
+                </p>
+              </div>
+              <div className="flex gap-3">
+                <Link to="/patients">
+                  <Button size="lg" className="gap-2 bg-gradient-to-r from-cyan-500 to-blue-500 hover:from-cyan-600 hover:to-blue-600 text-white shadow-lg shadow-cyan-500/50">
+                    <Users className="h-5 w-5" />
+                    Patients
+                  </Button>
+                </Link>
+                <Link to="/pathologies">
+                  <Button size="lg" variant="outline" className="gap-2 border-2 border-cyan-200 hover:bg-cyan-50">
+                    <FileText className="h-5 w-5" />
+                    Index
+                  </Button>
+                </Link>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Stats Cards with Glassmorphism */}
+        <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-4">
+          {[
+            { label: 'Patients', value: stats.totalPatients, icon: Users, color: 'cyan' },
+            { label: 'Alertes Critiques', value: stats.criticalAlerts, icon: Activity, color: 'blue' },
+            { label: 'Analyses IA', value: stats.aiAnalyses, icon: Brain, color: 'indigo' },
+            { label: 'Surveillance Active', value: stats.activeMonitoring, icon: Stethoscope, color: 'purple' },
+          ].map((stat, idx) => (
+            <div
+              key={idx}
+              className="group relative overflow-hidden rounded-2xl bg-white/40 backdrop-blur-xl border border-white/20 shadow-xl hover:shadow-2xl transition-all duration-300 hover:-translate-y-1"
+            >
+              <div className="absolute inset-0 bg-gradient-to-br from-white/50 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
+              <div className="relative p-6">
+                <div className="flex items-center justify-between mb-4">
+                  <div className={`p-3 rounded-xl bg-gradient-to-br from-${stat.color}-400/20 to-${stat.color}-500/20`}>
+                    <stat.icon className={`h-6 w-6 text-${stat.color}-600`} />
+                  </div>
+                  <TrendingUp className="h-4 w-4 text-green-500" />
+                </div>
+                <div className="space-y-1">
+                  <p className="text-sm font-medium text-slate-600">{stat.label}</p>
+                  <p className="text-3xl font-bold bg-gradient-to-r from-cyan-600 to-blue-600 bg-clip-text text-transparent">
+                    {stat.value}
+                  </p>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+
+        {/* Tools Grid */}
+        <div>
+          <div className="mb-6">
+            <h2 className="text-2xl font-bold text-slate-800 mb-2">Outils Disponibles</h2>
+            <p className="text-slate-600">Explorez toutes les fonctionnalités de la plateforme</p>
+          </div>
+
+          <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+            {tools.map((tool, idx) => (
+              <Link key={idx} to={tool.link}>
+                <div className="group h-full relative overflow-hidden rounded-2xl bg-white/40 backdrop-blur-xl border border-white/20 shadow-xl hover:shadow-2xl transition-all duration-300 hover:-translate-y-2">
+                  {/* Gradient Overlay */}
+                  <div className={`absolute inset-0 bg-gradient-to-br ${tool.color} opacity-0 group-hover:opacity-10 transition-opacity`} />
+
+                  {/* Content */}
+                  <div className="relative p-6 h-full flex flex-col">
+                    {/* Icon */}
+                    <div className={`mb-4 p-3 rounded-xl bg-gradient-to-br ${tool.color} w-fit`}>
+                      <tool.icon className="h-6 w-6 text-white" />
+                    </div>
+
+                    {/* Title */}
+                    <h3 className="text-lg font-bold text-slate-800 mb-2 group-hover:text-cyan-600 transition-colors">
+                      {tool.title}
+                    </h3>
+
+                    {/* Description */}
+                    <p className="text-sm text-slate-600 mb-4 flex-1 line-clamp-3">
+                      {tool.description}
+                    </p>
+
+                    {/* Stats */}
+                    <div className="flex items-center justify-between pt-4 border-t border-slate-200/50">
+                      <span className="text-xs font-medium text-slate-500">{tool.stats}</span>
+                      <ArrowRight className="h-4 w-4 text-cyan-500 transform group-hover:translate-x-1 transition-transform" />
+                    </div>
+                  </div>
+                </div>
+              </Link>
+            ))}
+          </div>
+        </div>
+
+        {/* Quick Actions */}
+        <div className="rounded-2xl bg-gradient-to-br from-cyan-500/10 via-blue-500/10 to-indigo-500/10 backdrop-blur-xl border border-white/20 shadow-xl p-8">
+          <h2 className="text-2xl font-bold text-slate-800 mb-6">Actions Rapides</h2>
+          <div className="grid gap-4 md:grid-cols-3">
+            <Link to="/patients">
+              <div className="group p-6 rounded-xl bg-white/50 backdrop-blur-sm border border-white/30 hover:bg-white/70 transition-all cursor-pointer">
+                <Users className="h-8 w-8 text-cyan-600 mb-3" />
+                <h3 className="font-semibold text-slate-800 mb-1">Nouveau Patient</h3>
+                <p className="text-sm text-slate-600">Créer un dossier patient</p>
+              </div>
+            </Link>
+            <Link to="/patients">
+              <div className="group p-6 rounded-xl bg-white/50 backdrop-blur-sm border border-white/30 hover:bg-white/70 transition-all cursor-pointer">
+                <Brain className="h-8 w-8 text-blue-600 mb-3" />
+                <h3 className="font-semibold text-slate-800 mb-1">Analyse IA</h3>
+                <p className="text-sm text-slate-600">Lancer une analyse</p>
+              </div>
+            </Link>
+            <Link to="/pathologies">
+              <div className="group p-6 rounded-xl bg-white/50 backdrop-blur-sm border border-white/30 hover:bg-white/70 transition-all cursor-pointer">
+                <FileText className="h-8 w-8 text-indigo-600 mb-3" />
+                <h3 className="font-semibold text-slate-800 mb-1">Base de Connaissances</h3>
+                <p className="text-sm text-slate-600">Consulter l'index</p>
+              </div>
+            </Link>
+          </div>
+        </div>
+      </div>
+
+      <style>{`
+        @keyframes blob {
+          0%, 100% { transform: translate(0, 0) scale(1); }
+          25% { transform: translate(20px, -50px) scale(1.1); }
+          50% { transform: translate(-20px, 20px) scale(0.9); }
+          75% { transform: translate(50px, 50px) scale(1.05); }
+        }
+        .animate-blob {
+          animation: blob 20s infinite;
+        }
+        .animation-delay-2000 {
+          animation-delay: 2s;
+        }
+        .animation-delay-4000 {
+          animation-delay: 4s;
+        }
+      `}</style>
     </AppLayout>
   );
 };

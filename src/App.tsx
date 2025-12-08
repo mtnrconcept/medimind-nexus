@@ -15,13 +15,14 @@ import Search from "./pages/Search";
 import Admin from "./pages/Admin";
 import Patients from "./pages/Patients";
 import PatientDetail from "./pages/PatientDetail";
+import CrossDataAnalysis from "./pages/CrossDataAnalysis";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
 
 const AnimatedRoutes = () => {
   const location = useLocation();
-  
+
   return (
     <PageTransition key={location.pathname}>
       <Routes location={location}>
@@ -33,6 +34,7 @@ const AnimatedRoutes = () => {
         <Route path="/search" element={<ProtectedRoute><Search /></ProtectedRoute>} />
         <Route path="/patients" element={<ProtectedRoute><Patients /></ProtectedRoute>} />
         <Route path="/patients/:id" element={<ProtectedRoute><PatientDetail /></ProtectedRoute>} />
+        <Route path="/cross-data-analysis" element={<ProtectedRoute><CrossDataAnalysis /></ProtectedRoute>} />
         <Route path="/admin" element={<ProtectedRoute><Admin /></ProtectedRoute>} />
         <Route path="*" element={<NotFound />} />
       </Routes>

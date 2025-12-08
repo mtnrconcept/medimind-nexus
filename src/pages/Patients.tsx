@@ -9,8 +9,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { supabase } from '@/integrations/supabase/client';
-import { Search, Users, ChevronLeft, ChevronRight, BookUser, Brain } from 'lucide-react';
-import CrossDataAnalyzer from '@/components/patient/CrossDataAnalyzer';
+import { Search, Users, ChevronLeft, ChevronRight, BookUser } from 'lucide-react';
 import PatientDirectory from '@/components/patient/PatientDirectory';
 
 interface Patient {
@@ -56,7 +55,7 @@ const Patients = () => {
   const [selectedGender, setSelectedGender] = useState<string>('all');
   const [currentPage, setCurrentPage] = useState(1);
 
-  const nationalities = useMemo(() => 
+  const nationalities = useMemo(() =>
     [...new Set(patients.map(p => p.nationality))].sort(),
     [patients]
   );
@@ -159,10 +158,6 @@ const Patients = () => {
               <BookUser className="h-4 w-4" />
               Ma Patientèle
             </TabsTrigger>
-            <TabsTrigger value="research" className="flex items-center gap-2">
-              <Brain className="h-4 w-4" />
-              Analyse Cross-Data
-            </TabsTrigger>
             <TabsTrigger value="anonymous" className="flex items-center gap-2">
               <Users className="h-4 w-4" />
               Données Anonymisées
@@ -172,11 +167,6 @@ const Patients = () => {
           {/* Répertoire patients */}
           <TabsContent value="directory">
             <PatientDirectory />
-          </TabsContent>
-
-          {/* Cross-Data AI Analyzer */}
-          <TabsContent value="research">
-            <CrossDataAnalyzer />
           </TabsContent>
 
           {/* Données anonymisées */}

@@ -1,0 +1,1046 @@
+================================================================================
+           MEDIMIND NEXUS - DOCUMENTATION TECHNIQUE DÉTAILLÉE
+                  PARTIE 2 : INTELLIGENCE ARTIFICIELLE & ALGORITHMES
+================================================================================
+
+📋 SOMMAIRE DE CETTE PARTIE
+================================================================================
+1. Système d'Intelligence Artificielle
+2. Algorithmes de détection d'alertes
+3. Analyse croisée des données mondiales
+4. Visualisation 3D et rendu WebGL
+
+
+================================================================================
+1. SYSTÈME D'INTELLIGENCE ARTIFICIELLE
+================================================================================
+
+1.1 ARCHITECTURE IA GLOBALE
+----------------------------
+
+┌─────────────────────────────────────────────────────────────┐
+│                    COUCHE UTILISATEUR                       │
+│  ┌──────────────────┐         ┌──────────────────┐         │
+│  │   AIAssistant    │         │ AIPredictionsCard│         │
+│  │   (Chat UI)      │         │  (Analyse UI)    │         │
+│  └──────────────────┘         └──────────────────┘         │
+└─────────────────────────────────────────────────────────────┘
+                    ↓                       ↓
+┌─────────────────────────────────────────────────────────────┐
+│                  COUCHE ORCHESTRATION                       │
+│  ┌──────────────────────────────────────────────────────┐  │
+│  │         Supabase Edge Function                       │  │
+│  │         /functions/v1/ai-assistant                   │  │
+│  │                                                       │  │
+│  │  1. Réception de la requête                          │  │
+│  │  2. Enrichissement du contexte                       │  │
+│  │  3. Construction du prompt                           │  │
+│  │  4. Appel OpenAI API                                 │  │
+│  │  5. Streaming de la réponse                          │  │
+│  └──────────────────────────────────────────────────────┘  │
+└─────────────────────────────────────────────────────────────┘
+                    ↓
+┌─────────────────────────────────────────────────────────────┐
+│                    COUCHE IA                                │
+│  ┌──────────────────────────────────────────────────────┐  │
+│  │              OpenAI GPT Model                        │  │
+│  │                                                       │  │
+│  │  - Modèle: GPT-4 ou GPT-3.5-turbo                   │  │
+│  │  - Mode: Streaming                                   │  │
+│  │  - Temperature: 0.7 (créativité modérée)            │  │
+│  │  - Max tokens: 2000                                  │  │
+│  └──────────────────────────────────────────────────────┘  │
+└─────────────────────────────────────────────────────────────┘
+                    ↓
+┌─────────────────────────────────────────────────────────────┐
+│                  COUCHE DONNÉES                             │
+│  ┌──────────────────┐  ┌──────────────────┐               │
+│  │  Patient Data    │  │  Medical KB      │               │
+│  │  (PostgreSQL)    │  │  (Embeddings)    │               │
+│  └──────────────────┘  └──────────────────┘               │
+└─────────────────────────────────────────────────────────────┘
+
+
+1.2 EDGE FUNCTION - DÉTAIL COMPLET
+-----------------------------------
+
+FICHIER : supabase/functions/ai-assistant/index.ts
+
+```typescript
+import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+
+const corsHeaders = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+}
+
+serve(async (req) => {
+  // Gestion CORS
+  if (req.method === 'OPTIONS') {
+    return new Response('ok', { headers: corsHeaders })
+  }
+
+  try {
+    // 1. PARSING DE LA REQUÊTE
+    const { message, patient, conversationHistory } = await req.json()
+
+    // 2. VALIDATION
+    if (!message || !patient) {
+      throw new Error('Message et patient requis')
+    }
+
+    // 3. CONSTRUCTION DU CONTEXTE MÉDICAL
+    const medicalContext = `
+DONNÉES PATIENT:
+- ID: ${patient.patient_id}
+- Âge: ${patient.age} ans
+- Sexe: ${patient.gender}
+- Pathologie: ${patient.pathology_name || 'Non spécifiée'}
+- Traitement: ${patient.treatment || 'Aucun'}
+
+RÉSULTATS BIOLOGIQUES:
+- Glycémie: ${patient.lab_results_json?.glucose_mg_dl} mg/dL
+- Tension: ${patient.lab_results_json?.blood_pressure_sys}/${patient.lab_results_json?.blood_pressure_dia} mmHg
+- Température: ${patient.lab_results_json?.temperature_c}°C
+- DFG: ${patient.lab_results_json?.gfr_ml_min || 'N/A'} mL/min
+- Potassium: ${patient.lab_results_json?.potassium_meq_l || 'N/A'} mEq/L
+
+NOTES MÉDICALES:
+${patient.medical_notes_nlp || 'Aucune note'}
+    `.trim()
+
+    // 4. CONSTRUCTION DU PROMPT SYSTÈME
+    const systemPrompt = `Tu es un assistant médical expert spécialisé dans l'analyse de dossiers patients.
+
+RÔLE:
+- Analyser les données médicales avec précision
+- Identifier les risques et complications potentielles
+- Proposer des recommandations basées sur les guidelines
+- Répondre aux questions avec un langage médical approprié mais accessible
+
+RÈGLES:
+- Toujours baser tes réponses sur les données fournies
+- Signaler les valeurs anormales et leur signification clinique
+- Mentionner les interactions médicamenteuses si pertinent
+- Suggérer des examens complémentaires si nécessaire
+- Ne jamais donner de diagnostic définitif (rôle d'aide à la décision)
+- Rester factuel et éviter les spéculations
+
+CONTEXTE PATIENT:
+${medicalContext}
+`
+
+    // 5. CONSTRUCTION DES MESSAGES
+    const messages = [
+      { role: 'system', content: systemPrompt },
+      ...conversationHistory,
+      { role: 'user', content: message }
+    ]
+
+    // 6. APPEL OPENAI API
+    const openaiResponse = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${Deno.env.get('OPENAI_API_KEY')}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: 'gpt-4-turbo-preview', // ou 'gpt-3.5-turbo'
+        messages: messages,
+        temperature: 0.7,
+        max_tokens: 2000,
+        stream: true, // STREAMING ACTIVÉ
+      }),
+    })
+
+    // 7. STREAMING DE LA RÉPONSE
+    const encoder = new TextEncoder()
+    const stream = new ReadableStream({
+      async start(controller) {
+        const reader = openaiResponse.body.getReader()
+        const decoder = new TextDecoder()
+
+        try {
+          while (true) {
+            const { done, value } = await reader.read()
+            if (done) break
+
+            const chunk = decoder.decode(value)
+            const lines = chunk.split('\n').filter(line => line.trim() !== '')
+
+            for (const line of lines) {
+              if (line.startsWith('data: ')) {
+                const data = line.slice(6)
+                if (data === '[DONE]') {
+                  controller.enqueue(encoder.encode('data: [DONE]\n\n'))
+                  break
+                }
+
+                try {
+                  // Transmettre le chunk tel quel
+                  controller.enqueue(encoder.encode(`data: ${data}\n\n`))
+                } catch (e) {
+                  console.error('Erreur parsing:', e)
+                }
+              }
+            }
+          }
+        } finally {
+          controller.close()
+        }
+      },
+    })
+
+    // 8. RETOUR DE LA RÉPONSE STREAMÉE
+    return new Response(stream, {
+      headers: {
+        ...corsHeaders,
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        'Connection': 'keep-alive',
+      },
+    })
+
+  } catch (error) {
+    console.error('Erreur:', error)
+    return new Response(
+      JSON.stringify({ error: error.message }),
+      {
+        status: 500,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      }
+    )
+  }
+})
+```
+
+1.3 ANALYSE PRÉDICTIVE (AIPredictionsCard)
+-------------------------------------------
+
+ALGORITHME COMPLET :
+
+```typescript
+const analyzePatient = (
+  labResults: ExtendedLabResults,
+  pathologyName: string,
+  age: number,
+  gender: string,
+  treatment: string,
+  medicalNotes: string,
+  alerts: PatientAlert[]
+) => {
+  // INITIALISATION
+  const recommendations: AIRecommendation[] = []
+  let riskScore = 30 // Score de base
+  const keyFindings: string[] = []
+
+  // ═══════════════════════════════════════════════════════════
+  // PHASE 1 : ANALYSE DES PATHOLOGIES
+  // ═══════════════════════════════════════════════════════════
+  
+  const pathologyLower = pathologyName?.toLowerCase() || ''
+  
+  // DIABÈTE
+  if (pathologyLower.includes('diabète') || pathologyLower.includes('diabetes')) {
+    riskScore += 15
+    keyFindings.push(`Pathologie: ${pathologyName}`)
+    
+    // Complications diabétiques
+    if (labResults.gfr_ml_min && labResults.gfr_ml_min < 60) {
+      keyFindings.push('Risque de néphropathie diabétique')
+      riskScore += 10
+    }
+    
+    if (labResults.hemoglobin_a1c && labResults.hemoglobin_a1c > 7) {
+      keyFindings.push(`HbA1c élevée (${labResults.hemoglobin_a1c}%)`)
+      riskScore += 10
+    }
+    
+    recommendations.push({
+      type: 'important',
+      category: 'monitoring',
+      title: 'Surveillance diabète',
+      description: `
+        - HbA1c tous les 3 mois (cible < 7%)
+        - Fond d'œil annuel (rétinopathie)
+        - Examen des pieds régulier (neuropathie)
+        - Microalbuminurie annuelle (néphropathie)
+        - Bilan lipidique tous les 6 mois
+      `.trim(),
+      urgency: 7
+    })
+  }
+  
+  // HYPERTENSION
+  if (pathologyLower.includes('hypertension') || pathologyLower.includes('hta')) {
+    riskScore += 10
+    
+    recommendations.push({
+      type: 'important',
+      category: 'lifestyle',
+      title: 'Gestion de l\'HTA',
+      description: `
+        - Auto-mesure tensionnelle 2x/jour
+        - Réduction du sel < 6g/jour
+        - Activité physique 30min/jour
+        - Gestion du stress (relaxation, méditation)
+        - Poids santé (IMC 18.5-25)
+      `.trim(),
+      urgency: 7
+    })
+  }
+  
+  // GOUTTE
+  if (pathologyLower.includes('goutte') || pathologyLower.includes('gout')) {
+    riskScore += 5
+    
+    // Vérifier uricémie
+    if (labResults.uric_acid_mg_dl && labResults.uric_acid_mg_dl > 7) {
+      keyFindings.push(`Hyperuricémie (${labResults.uric_acid_mg_dl} mg/dL)`)
+      riskScore += 5
+    }
+    
+    recommendations.push({
+      type: 'routine',
+      category: 'nutrition',
+      title: 'Prévention des crises de goutte',
+      description: `
+        ALIMENTS À ÉVITER:
+        - Abats (foie, rognons, ris de veau)
+        - Fruits de mer (anchois, sardines, moules)
+        - Viande rouge en excès
+        - Alcool (surtout bière)
+        - Sodas sucrés
+        
+        ALIMENTS À FAVORISER:
+        - Produits laitiers faibles en gras
+        - Légumes (même riches en purines)
+        - Fruits (cerises particulièrement)
+        - Eau 2L/jour minimum
+      `.trim(),
+      urgency: 6
+    })
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // PHASE 2 : ANALYSE GLYCÉMIE (PRIORITÉ ABSOLUE)
+  // ═══════════════════════════════════════════════════════════
+  
+  const glucose = labResults.glucose_mg_dl
+  
+  if (glucose < 70 && glucose > 0) {
+    // ⚠️ HYPOGLYCÉMIE - URGENCE VITALE
+    riskScore += 35
+    keyFindings.unshift(`⚠️ HYPOGLYCÉMIE CRITIQUE (${glucose} mg/dL)`)
+    
+    // Identifier la cause probable
+    let cause = 'Cause à identifier'
+    if (treatment?.toLowerCase().includes('glibenclamide')) {
+      cause = 'Glibenclamide (sulfamide hypoglycémiant)'
+    } else if (treatment?.toLowerCase().includes('insuline')) {
+      cause = 'Insuline (surdosage possible)'
+    } else if (treatment?.toLowerCase().includes('metformine')) {
+      cause = 'Metformine (rare mais possible)'
+    }
+    
+    recommendations.push({
+      type: 'urgent',
+      category: 'medication',
+      title: '🚨 Ajustement URGENT du traitement',
+      description: `
+        SITUATION CRITIQUE:
+        Glycémie dangereusement basse à ${glucose} mg/dL (norme: 70-120)
+        
+        CAUSE PROBABLE: ${cause}
+        
+        ACTIONS IMMÉDIATES:
+        1. Resucrage oral immédiat (15g glucides rapides)
+        2. Contrôle glycémique après 15 minutes
+        3. Si < 70: répéter resucrage
+        
+        AJUSTEMENT TRAITEMENT:
+        ${treatment?.toLowerCase().includes('glibenclamide') 
+          ? `- RÉDUIRE ou ARRÊTER Glibenclamide
+             - Envisager switch vers:
+               * Inhibiteur DPP-4 (Sitagliptine)
+               * Inhibiteur SGLT2 (Empagliflozine)
+               * Metformine seule si non contre-indiquée`
+          : `- Revoir posologie de tous les antidiabétiques
+             - Vérifier fonction rénale
+             - Adapter selon alimentation`}
+        
+        CONSULTATION URGENTE REQUISE
+      `.trim(),
+      urgency: 10
+    })
+    
+    recommendations.push({
+      type: 'urgent',
+      category: 'monitoring',
+      title: '📊 Surveillance rapprochée',
+      description: `
+        - Glycémie capillaire toutes les 2-4 heures
+        - Tenir un carnet glycémique
+        - Noter: heure, glycémie, repas, activité
+        - Identifier les facteurs déclenchants:
+          * Saut de repas
+          * Dose excessive de médicament
+          * Exercice physique intense
+          * Consommation d'alcool
+      `.trim(),
+      urgency: 10
+    })
+    
+    recommendations.push({
+      type: 'important',
+      category: 'nutrition',
+      title: '🍎 Prévention des hypoglycémies',
+      description: `
+        RÈGLES D'OR:
+        - 3 repas + 2-3 collations par jour
+        - Ne jamais sauter de repas
+        - Toujours avoir du sucre rapide:
+          * 3 morceaux de sucre
+          * 1 briquette de jus de fruit
+          * 1 tube de glucose
+        - Collation si délai > 4h entre repas
+        - Collation avant exercice physique
+        - Éviter alcool à jeun
+      `.trim(),
+      urgency: 8
+    })
+    
+    recommendations.push({
+      type: 'important',
+      category: 'lifestyle',
+      title: '📚 Éducation thérapeutique',
+      description: `
+        RECONNAÎTRE LES SIGNES:
+        - Tremblements
+        - Sueurs froides
+        - Palpitations
+        - Faim intense
+        - Confusion, irritabilité
+        - Vision trouble
+        - Fatigue soudaine
+        
+        RÉAGIR:
+        1. Arrêter toute activité
+        2. Resucrage immédiat
+        3. Contrôle glycémie après 15 min
+        4. Collation si repas > 1h
+        
+        INFORMER L'ENTOURAGE:
+        - Expliquer les signes
+        - Montrer où est le sucre
+        - Numéro d'urgence visible
+      `.trim(),
+      urgency: 7
+    })
+    
+  } else if (glucose > 180) {
+    // HYPERGLYCÉMIE
+    riskScore += 15
+    keyFindings.push(`Hyperglycémie (${glucose} mg/dL)`)
+    
+    recommendations.push({
+      type: 'important',
+      category: 'medication',
+      title: 'Contrôle glycémique',
+      description: `
+        Glycémie élevée à ${glucose} mg/dL (norme: 70-120)
+        
+        SURVEILLANCE:
+        - HbA1c tous les 3 mois (cible < 7%)
+        - Glycémie à jeun quotidienne
+        - Glycémie post-prandiale (2h après repas)
+        
+        AJUSTEMENT POSSIBLE:
+        - Augmentation dose antidiabétique
+        - Ajout d'un second médicament si monothérapie
+        - Insulinothérapie si échec bithérapie
+      `.trim(),
+      urgency: 8
+    })
+    
+    recommendations.push({
+      type: 'important',
+      category: 'nutrition',
+      title: 'Régime alimentaire adapté',
+      description: `
+        PRINCIPES:
+        - Index glycémique bas
+        - Fibres alimentaires (légumes, légumineuses)
+        - Protéines maigres
+        - Graisses insaturées (huile d'olive, poissons gras)
+        
+        À LIMITER:
+        - Sucres rapides (bonbons, sodas, pâtisseries)
+        - Glucides raffinés (pain blanc, pâtes blanches)
+        - Graisses saturées (charcuterie, fromages gras)
+        
+        RÉPARTITION:
+        - 45-50% glucides complexes
+        - 30-35% lipides (majoritairement insaturés)
+        - 15-20% protéines
+      `.trim(),
+      urgency: 7
+    })
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // PHASE 3 : ANALYSE TENSION ARTÉRIELLE
+  // ═══════════════════════════════════════════════════════════
+  
+  const systolic = labResults.blood_pressure_sys
+  const diastolic = labResults.blood_pressure_dia
+  
+  if (systolic > 140 || diastolic > 90) {
+    riskScore += 20
+    keyFindings.push(`HTA non contrôlée (${systolic}/${diastolic} mmHg)`)
+    
+    // Classifier le grade d'HTA
+    let htaGrade = ''
+    if (systolic >= 180 || diastolic >= 110) {
+      htaGrade = 'Grade 3 (sévère)'
+      riskScore += 10
+    } else if (systolic >= 160 || diastolic >= 100) {
+      htaGrade = 'Grade 2 (modérée)'
+      riskScore += 5
+    } else {
+      htaGrade = 'Grade 1 (légère)'
+    }
+    
+    recommendations.push({
+      type: 'urgent',
+      category: 'medication',
+      title: 'Ajustement traitement antihypertenseur',
+      description: `
+        SITUATION ACTUELLE:
+        - Tension: ${systolic}/${diastolic} mmHg
+        - Classification: ${htaGrade}
+        - Cible: < 140/90 mmHg (< 130/80 si diabète)
+        
+        STRATÉGIE THÉRAPEUTIQUE:
+        ${systolic >= 160 
+          ? `- Bithérapie recommandée
+             - IEC ou ARA2 + Inhibiteur calcique ou Diurétique`
+          : `- Optimisation monothérapie possible
+             - Augmentation de dose
+             - Ou ajout d'un second antihypertenseur`}
+        
+        CLASSES DISPONIBLES:
+        - IEC (Ramipril, Perindopril)
+        - ARA2 (Losartan, Valsartan) si toux sous IEC
+        - Inhibiteurs calciques (Amlodipine)
+        - Diurétiques thiazidiques (Hydrochlorothiazide)
+        - Bêta-bloquants si indication (post-IDM, IC)
+        
+        SURVEILLANCE:
+        - Auto-mesure tensionnelle 2x/jour
+        - Consultation de suivi dans 1 mois
+      `.trim(),
+      urgency: 9
+    })
+    
+    recommendations.push({
+      type: 'important',
+      category: 'lifestyle',
+      title: 'Mesures hygiéno-diététiques',
+      description: `
+        RÉDUCTION DU SEL:
+        - Objectif: < 6g/jour (< 1 cuillère à café)
+        - Éviter: plats préparés, charcuterie, fromages
+        - Cuisiner maison, utiliser épices et herbes
+        
+        RÉDUCTION ALCOOL:
+        - Maximum 2 verres/jour pour homme
+        - Maximum 1 verre/jour pour femme
+        - Jours sans alcool recommandés
+        
+        ACTIVITÉ PHYSIQUE:
+        - 30 minutes/jour, 5 jours/semaine
+        - Marche rapide, vélo, natation
+        - Éviter efforts intenses brutaux
+        
+        GESTION DU STRESS:
+        - Techniques de relaxation
+        - Méditation, yoga
+        - Sommeil de qualité (7-8h)
+      `.trim(),
+      urgency: 7
+    })
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // PHASE 4 : ANALYSE FONCTION RÉNALE
+  // ═══════════════════════════════════════════════════════════
+  
+  const gfr = labResults.gfr_ml_min
+  
+  if (gfr && gfr < 60) {
+    riskScore += 25
+    
+    // Classifier le stade d'IRC
+    let ircStade = ''
+    if (gfr < 15) {
+      ircStade = 'Stade 5 (terminale)'
+      riskScore += 20
+    } else if (gfr < 30) {
+      ircStade = 'Stade 4 (sévère)'
+      riskScore += 15
+    } else if (gfr < 45) {
+      ircStade = 'Stade 3b (modérée à sévère)'
+      riskScore += 10
+    } else {
+      ircStade = 'Stade 3a (modérée)'
+      riskScore += 5
+    }
+    
+    keyFindings.push(`Insuffisance rénale ${ircStade} (DFG: ${gfr} mL/min)`)
+    
+    recommendations.push({
+      type: 'urgent',
+      category: 'medication',
+      title: '⚠️ Adaptation posologies en IRC',
+      description: `
+        FONCTION RÉNALE ALTÉRÉE:
+        - DFG: ${gfr} mL/min
+        - Classification: ${ircStade}
+        
+        MÉDICAMENTS À ADAPTER:
+        - Metformine: CONTRE-INDIQUÉE si DFG < 30
+        - Glibenclamide: ÉVITER (risque hypoglycémie)
+        - IEC/ARA2: Surveillance K+ et créatinine
+        - AINS: CONTRE-INDIQUÉS
+        - Antibiotiques: Adapter doses (aminosides, quinolones)
+        
+        MÉDICAMENTS À ÉVITER:
+        - Produits de contraste iodés (si DFG < 30)
+        - AINS (ibuprofène, diclofénac)
+        - Certains antibiotiques néphrotoxiques
+        
+        SURVEILLANCE RENFORCÉE:
+        - Créatinine mensuelle
+        - Ionogramme (K+, Na+) mensuel
+        - Protéinurie/Albuminurie
+        - Consultation néphrologique si DFG < 30
+      `.trim(),
+      urgency: 9
+    })
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // PHASE 5 : DÉTECTION EFFETS SECONDAIRES
+  // ═══════════════════════════════════════════════════════════
+  
+  // Toux sèche sous IEC
+  if (treatment?.toLowerCase().includes('lisinopril') && 
+      medicalNotes?.toLowerCase().includes('toux')) {
+    riskScore += 10
+    keyFindings.push('Toux sèche (effet secondaire IEC)')
+    
+    recommendations.push({
+      type: 'urgent',
+      category: 'medication',
+      title: 'Changement de classe thérapeutique',
+      description: `
+        EFFET SECONDAIRE IDENTIFIÉ:
+        Toux sèche sous IEC (Lisinopril)
+        
+        MÉCANISME:
+        - Accumulation de bradykinine
+        - Fréquence: 10-20% des patients
+        - Réversible à l'arrêt
+        
+        SOLUTION:
+        Switch vers ARA2 (Antagoniste Récepteur Angiotensine II)
+        - Efficacité équivalente
+        - Pas de toux (mécanisme différent)
+        
+        OPTIONS:
+        - Losartan 50-100 mg/jour
+        - Valsartan 80-160 mg/jour
+        - Irbésartan 150-300 mg/jour
+        
+        SURVEILLANCE POST-SWITCH:
+        - Tension artérielle à J7, J15, J30
+        - Ionogramme à J7 (risque hyperkaliémie)
+        - Créatinine à J7
+      `.trim(),
+      urgency: 9
+    })
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // PHASE 6 : RECOMMANDATIONS GÉNÉRALES
+  // ═══════════════════════════════════════════════════════════
+  
+  // Activité physique
+  if (!recommendations.some(r => r.category === 'exercise')) {
+    recommendations.push({
+      type: 'important',
+      category: 'exercise',
+      title: 'Activité physique régulière',
+      description: `
+        BÉNÉFICES:
+        - Amélioration contrôle glycémique
+        - Réduction tension artérielle
+        - Perte de poids
+        - Amélioration profil lipidique
+        - Bien-être psychologique
+        
+        RECOMMANDATIONS:
+        - 150 min/semaine d'activité modérée
+        - Ou 75 min/semaine d'activité intense
+        - Répartir sur 3-5 jours
+        
+        ACTIVITÉS RECOMMANDÉES:
+        - Marche rapide
+        - Vélo
+        - Natation
+        - Danse
+        - Jardinage actif
+        
+        PRÉCAUTIONS:
+        - Échauffement et étirements
+        - Hydratation
+        - Collation si diabète (éviter hypoglycémie)
+        - Arrêt si douleur thoracique ou dyspnée
+      `.trim(),
+      urgency: 6
+    })
+  }
+  
+  // Bilans de surveillance
+  recommendations.push({
+    type: 'routine',
+    category: 'monitoring',
+    title: 'Bilans de surveillance',
+    description: `
+      FRÉQUENCE RECOMMANDÉE:
+      
+      TOUS LES 3 MOIS:
+      - Glycémie à jeun
+      - HbA1c (si diabète)
+      
+      TOUS LES 6 MOIS:
+      - Bilan lipidique (CT, HDL, LDL, TG)
+      - Fonction rénale (créatinine, DFG)
+      - Ionogramme (Na+, K+, Cl-)
+      
+      TOUS LES ANS:
+      - Bilan hépatique (ALAT, ASAT)
+      - Microalbuminurie (si diabète)
+      - Fond d'œil (si diabète)
+      - ECG
+      - Consultation cardiologique si facteurs de risque
+      
+      SELON SYMPTÔMES:
+      - NFS si fatigue, pâleur
+      - TSH si troubles thyroïdiens
+      - Vitamine D si fractures, ostéoporose
+    `.trim(),
+    urgency: 5
+  })
+
+  // ═══════════════════════════════════════════════════════════
+  // PHASE 7 : TRI ET FINALISATION
+  // ═══════════════════════════════════════════════════════════
+  
+  // Tri par urgence décroissante
+  recommendations.sort((a, b) => b.urgency - a.urgency)
+  
+  // Génération du résumé
+  let summary = `Patient de ${age} ans ${gender === 'M' ? 'masculin' : 'féminin'} avec ${pathologyName || 'pathologie non spécifiée'}. `
+  
+  if (glucose < 70 && glucose > 0) {
+    summary += `⚠️ SITUATION CRITIQUE: Hypoglycémie sévère nécessitant une intervention immédiate. Le patient n'est PAS en bonne santé optimale.`
+  } else if (riskScore >= 70) {
+    summary += `État de santé préoccupant nécessitant une attention médicale urgente.`
+  } else if (keyFindings.length > 0) {
+    summary += `Points d'attention: ${keyFindings.slice(0, 2).join(', ')}.`
+  } else {
+    summary += `Situation clinique stable nécessitant une surveillance régulière.`
+  }
+  
+  // Retour de l'analyse
+  return {
+    summary,
+    recommendations: recommendations.slice(0, 8), // Top 8
+    riskScore: Math.min(riskScore, 100),
+    keyFindings
+  }
+}
+```
+
+
+================================================================================
+2. ALGORITHMES DE DÉTECTION D'ALERTES
+================================================================================
+
+2.1 HOOK usePatientAlerts - ARCHITECTURE
+-----------------------------------------
+
+```typescript
+export const usePatientAlerts = (
+  labResults: ExtendedLabResults,
+  treatment: string,
+  medicalNotes: string,
+  pathologyName?: string
+): PatientAlert[] => {
+  
+  return useMemo(() => {
+    const alerts: PatientAlert[] = []
+    
+    // 1. Interactions médicamenteuses
+    alerts.push(...detectDrugInteractions(treatment))
+    
+    // 2. Contre-indications allergiques
+    alerts.push(...detectAllergicContraindications(medicalNotes, treatment))
+    
+    // 3. Valeurs biologiques anormales
+    alerts.push(...detectAbnormalValues(labResults))
+    
+    // 4. Complications pathologiques
+    alerts.push(...detectComplications(labResults, pathologyName))
+    
+    // 5. Surveillance requise
+    alerts.push(...detectSurveillanceNeeds(labResults, treatment))
+    
+    // Tri par sévérité
+    return alerts.sort((a, b) => {
+      const severityOrder = { CRITICAL: 0, WARNING: 1, INFO: 2 }
+      return severityOrder[a.level] - severityOrder[b.level]
+    })
+  }, [labResults, treatment, medicalNotes, pathologyName])
+}
+```
+
+2.2 DÉTECTION DES INTERACTIONS MÉDICAMENTEUSES
+-----------------------------------------------
+
+```typescript
+const detectDrugInteractions = (treatment: string): PatientAlert[] => {
+  const alerts: PatientAlert[] = []
+  const treatmentLower = treatment.toLowerCase()
+  
+  // Metformine + Produit de contraste iodé
+  if (treatmentLower.includes('metformine') && 
+      treatmentLower.includes('contraste')) {
+    alerts.push({
+      id: 'metformin-contrast',
+      level: 'CRITICAL',
+      type: 'INTERACTION',
+      title: 'Interaction Metformine - Produit de contraste',
+      description: `Risque d'acidose lactique. Arrêter la metformine 48h avant et après l'examen avec produit de contraste iodé.`,
+      organ: 'kidney',
+      action: 'Arrêt temporaire metformine + surveillance fonction rénale'
+    })
+  }
+  
+  // IEC + Supplémentation potassique
+  if ((treatmentLower.includes('lisinopril') || 
+       treatmentLower.includes('ramipril') ||
+       treatmentLower.includes('perindopril')) &&
+      (treatmentLower.includes('potassium') ||
+       treatmentLower.includes('kalium'))) {
+    alerts.push({
+      id: 'ace-potassium',
+      level: 'WARNING',
+      type: 'INTERACTION',
+      title: 'IEC + Potassium',
+      description: `Risque d'hyperkaliémie. Surveillance ionogramme requise.`,
+      organ: 'heart',
+      action: 'Contrôle K+ hebdomadaire pendant 1 mois'
+    })
+  }
+  
+  // Aspirine + Anticoagulants
+  if (treatmentLower.includes('aspirine') &&
+      (treatmentLower.includes('warfarine') ||
+       treatmentLower.includes('apixaban') ||
+       treatmentLower.includes('rivaroxaban'))) {
+    alerts.push({
+      id: 'aspirin-anticoagulant',
+      level: 'WARNING',
+      type: 'INTERACTION',
+      title: 'Aspirine + Anticoagulant',
+      description: `Risque hémorragique majoré. Évaluer le rapport bénéfice/risque.`,
+      organ: 'blood',
+      action: 'Surveillance signes hémorragiques + INR si AVK'
+    })
+  }
+  
+  // Méthotrexate + AINS
+  if (treatmentLower.includes('méthotrexate') &&
+      (treatmentLower.includes('ibuprofène') ||
+       treatmentLower.includes('diclofénac') ||
+       treatmentLower.includes('naproxène'))) {
+    alerts.push({
+      id: 'mtx-nsaid',
+      level: 'CRITICAL',
+      type: 'INTERACTION',
+      title: 'Méthotrexate + AINS',
+      description: `Risque de toxicité hématologique et rénale. Contre-indication relative.`,
+      organ: 'kidney',
+      action: 'Remplacer AINS par paracétamol si possible'
+    })
+  }
+  
+  return alerts
+}
+```
+
+2.3 DÉTECTION DES VALEURS ANORMALES
+------------------------------------
+
+```typescript
+const detectAbnormalValues = (labResults: ExtendedLabResults): PatientAlert[] => {
+  const alerts: PatientAlert[] = []
+  
+  // HYPOGLYCÉMIE
+  if (labResults.glucose_mg_dl < 70 && labResults.glucose_mg_dl > 0) {
+    alerts.push({
+      id: 'glucose-hypo',
+      level: 'CRITICAL',
+      type: 'ABNORMAL_VALUE',
+      title: '⚠️ Hypoglycémie',
+      description: `Glycémie dangereusement basse à ${labResults.glucose_mg_dl} mg/dL (norme: 70-120). Risque de malaise, coma.`,
+      organ: 'pancreas',
+      action: 'Resucrage immédiat (15g glucides) + contrôle à 15 min + ajustement traitement antidiabétique'
+    })
+  }
+  
+  // HYPERGLYCÉMIE
+  else if (labResults.glucose_mg_dl > 180) {
+    alerts.push({
+      id: 'glucose-hyper',
+      level: 'WARNING',
+      type: 'ABNORMAL_VALUE',
+      title: 'Hyperglycémie',
+      description: `Glycémie élevée à ${labResults.glucose_mg_dl} mg/dL (norme: 70-120). Risque de complications à long terme.`,
+      organ: 'pancreas',
+      action: 'Contrôle HbA1c + ajustement traitement si persistant'
+    })
+  }
+  
+  // HYPERTENSION
+  if (labResults.blood_pressure_sys > 140 || labResults.blood_pressure_dia > 90) {
+    const level = labResults.blood_pressure_sys >= 180 || labResults.blood_pressure_dia >= 110 
+      ? 'CRITICAL' 
+      : 'WARNING'
+    
+    alerts.push({
+      id: 'bp-high',
+      level,
+      type: 'ABNORMAL_VALUE',
+      title: level === 'CRITICAL' ? 'Crise hypertensive' : 'Hypertension non contrôlée',
+      description: `Tension artérielle à ${labResults.blood_pressure_sys}/${labResults.blood_pressure_dia} mmHg (norme: <140/90). ${level === 'CRITICAL' ? 'Urgence hypertensive.' : 'Risque cardiovasculaire accru.'}`,
+      organ: 'heart',
+      action: level === 'CRITICAL' 
+        ? 'Consultation urgente + traitement antihypertenseur IV si symptômes'
+        : 'Optimisation traitement antihypertenseur + mesures hygiéno-diététiques'
+    })
+  }
+  
+  // INSUFFISANCE RÉNALE
+  if (labResults.gfr_ml_min && labResults.gfr_ml_min < 60) {
+    const level = labResults.gfr_ml_min < 30 ? 'CRITICAL' : 'WARNING'
+    const stage = labResults.gfr_ml_min < 15 ? '5 (terminale)' :
+                  labResults.gfr_ml_min < 30 ? '4 (sévère)' :
+                  labResults.gfr_ml_min < 45 ? '3b' : '3a'
+    
+    alerts.push({
+      id: 'renal-insufficiency',
+      level,
+      type: 'ABNORMAL_VALUE',
+      title: `Insuffisance rénale stade ${stage}`,
+      description: `DFG à ${labResults.gfr_ml_min} mL/min (norme: >90). Adaptation posologies médicamenteuses requise.`,
+      organ: 'kidney',
+      action: 'Adaptation doses médicaments + éviter néphrotoxiques + consultation néphrologique'
+    })
+  }
+  
+  // HYPERKALIÉMIE
+  if (labResults.potassium_meq_l && labResults.potassium_meq_l > 5.5) {
+    alerts.push({
+      id: 'potassium-high',
+      level: labResults.potassium_meq_l > 6.5 ? 'CRITICAL' : 'WARNING',
+      type: 'ABNORMAL_VALUE',
+      title: 'Hyperkaliémie',
+      description: `Potassium à ${labResults.potassium_meq_l} mEq/L (norme: 3.5-5.0). Risque de troubles du rythme cardiaque.`,
+      organ: 'heart',
+      action: labResults.potassium_meq_l > 6.5
+        ? 'Urgence: ECG + traitement hypokaliémiant (résine, insuline-glucose, dialyse si sévère)'
+        : 'Arrêt supplémentation K+ + réduction IEC/ARA2 + régime pauvre en K+'
+    })
+  }
+  
+  // ANÉMIE
+  if (labResults.hemoglobin_g_dl && labResults.hemoglobin_g_dl < 10) {
+    alerts.push({
+      id: 'anemia',
+      level: labResults.hemoglobin_g_dl < 7 ? 'CRITICAL' : 'WARNING',
+      type: 'ABNORMAL_VALUE',
+      title: 'Anémie',
+      description: `Hémoglobine à ${labResults.hemoglobin_g_dl} g/dL (norme: 12-16). Fatigue, dyspnée d'effort.`,
+      organ: 'blood',
+      action: 'Bilan martial (fer, ferritine, transferrine) + recherche cause + supplémentation si carentielle'
+    })
+  }
+  
+  // HYPOXÉMIE
+  if (labResults.spo2_percent && labResults.spo2_percent < 94) {
+    alerts.push({
+      id: 'hypoxemia',
+      level: labResults.spo2_percent < 90 ? 'CRITICAL' : 'WARNING',
+      type: 'ABNORMAL_VALUE',
+      title: 'Hypoxémie',
+      description: `SpO2 à ${labResults.spo2_percent}% (norme: >95%). Oxygénation tissulaire insuffisante.`,
+      organ: 'lung',
+      action: labResults.spo2_percent < 90
+        ? 'Oxygénothérapie urgente + recherche cause (pneumonie, BPCO, EP)'
+        : 'Surveillance + oxygénothérapie si symptômes + bilan respiratoire'
+    })
+  }
+  
+  // CYTOLYSE HÉPATIQUE
+  if (labResults.alat_u_l && labResults.alat_u_l > 50) {
+    alerts.push({
+      id: 'liver-cytolysis',
+      level: labResults.alat_u_l > 200 ? 'CRITICAL' : 'WARNING',
+      type: 'ABNORMAL_VALUE',
+      title: 'Cytolyse hépatique',
+      description: `ALAT à ${labResults.alat_u_l} U/L (norme: <40). Souffrance hépatocellulaire.`,
+      organ: 'liver',
+      action: 'Bilan hépatique complet + arrêt médicaments hépatotoxiques + échographie hépatique + recherche cause'
+    })
+  }
+  
+  // SYNDROME INFLAMMATOIRE
+  if (labResults.crp_mg_l && labResults.crp_mg_l > 20) {
+    alerts.push({
+      id: 'inflammation',
+      level: labResults.crp_mg_l > 100 ? 'WARNING' : 'INFO',
+      type: 'ABNORMAL_VALUE',
+      title: 'Syndrome inflammatoire',
+      description: `CRP à ${labResults.crp_mg_l} mg/L (norme: <5). Inflammation ou infection en cours.`,
+      organ: 'immune',
+      action: 'Recherche foyer infectieux + NFS + hémocultures si fièvre + adaptation antibiotique si besoin'
+    })
+  }
+  
+  return alerts
+}
+```
+
+
+================================================================================
+FIN DE LA PARTIE 2
+================================================================================
+
+PROCHAINES PARTIES :
+- Partie 3 : Visualisation 3D et CrossDataAnalyzer
+- Partie 4 : Base de données et Sécurité

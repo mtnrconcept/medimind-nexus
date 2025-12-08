@@ -29,6 +29,7 @@ import {
   Shield,
   Menu,
   X,
+  Sparkles,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -69,6 +70,7 @@ const AppLayout = ({ children }: AppLayoutProps) => {
     { path: '/dashboard', label: 'Tableau de bord', icon: LayoutDashboard },
     { path: '/patients', label: 'Patients', icon: Users },
     { path: '/pathologies', label: 'Pathologies', icon: BookOpen },
+    { path: '/cross-data-analysis', label: 'Analyse Cross-Data', icon: Sparkles },
     { path: '/search', label: 'Recherche', icon: Search },
   ];
 
@@ -76,12 +78,12 @@ const AppLayout = ({ children }: AppLayoutProps) => {
     navItems.push({ path: '/admin', label: 'Admin', icon: Settings });
   }
 
-  const initials = user?.user_metadata?.first_name?.[0]?.toUpperCase() + 
-                   user?.user_metadata?.last_name?.[0]?.toUpperCase() || 'U';
+  const initials = user?.user_metadata?.first_name?.[0]?.toUpperCase() +
+    user?.user_metadata?.last_name?.[0]?.toUpperCase() || 'U';
 
   const NavLink = ({ item, mobile = false }: { item: typeof navItems[0], mobile?: boolean }) => (
-    <Link 
-      to={item.path} 
+    <Link
+      to={item.path}
       onClick={() => mobile && setMobileMenuOpen(false)}
       className="block"
     >
@@ -149,9 +151,9 @@ const AppLayout = ({ children }: AppLayoutProps) => {
                         </div>
                       </div>
                     </div>
-                    <Button 
-                      variant="destructive" 
-                      className="w-full gap-2" 
+                    <Button
+                      variant="destructive"
+                      className="w-full gap-2"
                       onClick={handleSignOut}
                     >
                       <LogOut className="h-4 w-4" />
