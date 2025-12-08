@@ -104,7 +104,12 @@ Medical professional aesthetic - Dark theme with cyan/teal accent
   }
 
   body {
-    @apply bg-background text-foreground;
+    @apply bg-background text-foreground antialiased;
+  }
+
+  /* Smooth scrolling */
+  html {
+    scroll-behavior: smooth;
   }
 }
 
@@ -121,4 +126,57 @@ Medical professional aesthetic - Dark theme with cyan/teal accent
   .glow-primary {
     box-shadow: 0 0 20px hsl(var(--primary) / 0.3);
   }
+
+  /* Touch-friendly targets */
+  .touch-target {
+    @apply min-h-[44px] min-w-[44px];
+  }
+
+  /* Safe area padding for mobile */
+  .safe-area-inset {
+    padding-left: env(safe-area-inset-left);
+    padding-right: env(safe-area-inset-right);
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+}
+
+/* Mobile-specific improvements */
+@media (max-width: 768px) {
+  .container {
+    @apply px-4;
+  }
+
+  /* Larger touch targets on mobile */
+  button, a {
+    @apply min-h-[44px];
+  }
+
+  /* Prevent text selection on navigation */
+  nav {
+    -webkit-user-select: none;
+    user-select: none;
+  }
+}
+
+/* Animation classes */
+@layer utilities {
+  .animate-in {
+    animation: fade-in 0.3s ease-out;
+  }
+
+  @keyframes fade-in {
+    from {
+      opacity: 0;
+      transform: translateY(10px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  .stagger-1 { animation-delay: 0.1s; }
+  .stagger-2 { animation-delay: 0.2s; }
+  .stagger-3 { animation-delay: 0.3s; }
+  .stagger-4 { animation-delay: 0.4s; }
 }
