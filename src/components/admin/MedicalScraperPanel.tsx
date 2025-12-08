@@ -127,7 +127,7 @@ export const MedicalScraperPanel = () => {
       }
 
       if (headerRowIndex === -1) {
-        // Fallback: si on trouve un ID type Swissmedic (5 chiffres) en ligne 6/7, l'en-tête est avant (0)
+        // Fallback
         if (rawData.length > 6 && String(rawData[6][0]).match(/\d/)) {
           headerRowIndex = 0;
         } else {
@@ -171,9 +171,11 @@ export const MedicalScraperPanel = () => {
       const dataRows = rawData.slice(headerRowIndex + 1);
 
       const preview = [];
-      const validDataForImport = [];
+      // UTILISATION D'UNE MAP POUR LA DÉDUPLICATION
+      // Clé = Swissmedic Number, Valeur = Ligne de données
+      const uniqueDataMap = new Map<string, any>();
 
-      // --- FONCTION DE CONVERSION DES DATES (CRITIQUE) ---
+      // --- FONCTION DE CONVERSION DES DATES ---
       const convertToISO = (val: any): string | null => {
         if (!val) return null;
 
@@ -196,7 +198,6 @@ export const MedicalScraperPanel = () => {
         // Cas 3: Déjà format ISO YYYY-MM-DD
         if (strVal.match(/^\d{4}-\d{2}-\d{2}$/)) return strVal;
 
-        // Autres cas (ex: "unlimited") -> null pour éviter l'erreur SQL
         return null;
       };
       // -------------------------------------------------
@@ -222,27 +223,33 @@ export const MedicalScraperPanel = () => {
             }
             // Conversion Date
             else if (dbCol === "first_authorization_date" || dbCol === "validity_duration") {
-              val = convertToISO(val); // <--- Appel de la conversion ici
+              val = convertToISO(val);
             } else {
               val = String(val).trim();
             }
 
-            // On ajoute seulement si la valeur n'est pas nulle
             if (val !== null) {
               rowObj[dbCol] = val;
             }
           }
         });
 
-        if (hasId) {
+        if (hasId && rowObj.swissmedic_number) {
           rowObj.updated_at = new Date().toISOString();
-          validDataForImport.push(rowObj);
+
+          // DÉDUPLICATION : Si l'ID existe déjà, on l'écrase (ou on l'ignore)
+          // Ici on écrase pour avoir la dernière version trouvée
+          uniqueDataMap.set(rowObj.swissmedic_number, rowObj);
+
           if (preview.length < 5) preview.push(rowObj);
         }
       }
 
+      // On convertit la Map en tableau pour l'envoi
+      const validDataForImport = Array.from(uniqueDataMap.values());
+
       setPreviewData(preview);
-      addImportLog("success", `${validDataForImport.length} médicaments valides identifiés.`);
+      addImportLog("success", `${validDataForImport.length} médicaments uniques prêts à importer (doublons retirés).`);
       (window as any).importData = validDataForImport;
     } catch (error: any) {
       console.error(error);
