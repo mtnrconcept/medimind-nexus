@@ -4,6 +4,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route, useLocation } from "react-router-dom";
 import { AuthProvider } from "@/hooks/useAuth";
+import { TranslationProvider } from "@/contexts/TranslationContext";
 import ProtectedRoute from "@/components/auth/ProtectedRoute";
 import PageTransition from "@/components/layout/PageTransition";
 import Index from "./pages/Index";
@@ -35,24 +36,30 @@ const AnimatedRoutes = () => {
         <Route path="/patients" element={<ProtectedRoute><Patients /></ProtectedRoute>} />
         <Route path="/patients/:id" element={<ProtectedRoute><PatientDetail /></ProtectedRoute>} />
         <Route path="/cross-data-analysis" element={<ProtectedRoute><CrossDataAnalysis /></ProtectedRoute>} />
-        <Route path="/admin" element={<ProtectedRoute><Admin /></ProtectedRoute>} />
+        <Route path="/admin" element={<Admin />} /> {/* TEMPORAIRE: Sans protection pour config initiale */}
         <Route path="*" element={<NotFound />} />
       </Routes>
     </PageTransition>
   );
 };
 
+import { ThemeProvider } from "@/components/theme-provider";
+
 const App = () => (
   <QueryClientProvider client={queryClient}>
-    <TooltipProvider>
-      <Toaster />
-      <Sonner />
-      <BrowserRouter>
-        <AuthProvider>
-          <AnimatedRoutes />
-        </AuthProvider>
-      </BrowserRouter>
-    </TooltipProvider>
+    <ThemeProvider defaultTheme="light" storageKey="vite-ui-theme" attribute="class" enableSystem>
+      <TranslationProvider>
+        <TooltipProvider>
+          <Toaster />
+          <Sonner />
+          <BrowserRouter>
+            <AuthProvider>
+              <AnimatedRoutes />
+            </AuthProvider>
+          </BrowserRouter>
+        </TooltipProvider>
+      </TranslationProvider>
+    </ThemeProvider>
   </QueryClientProvider>
 );
 

@@ -9,49 +9,53 @@ Medical professional aesthetic - Dark theme with cyan/teal accent
 
 @layer base {
   :root {
-    /* Light mode - kept for potential future use */
-    --background: 222 47% 11%;
-    --foreground: 210 40% 98%;
+    /* Light Mode - Clinical Clean (Blanc & Turquoise) */
+    --background: 210 40% 98%;
+    /* Fond très légèrement bleuté/blanc */
+    --foreground: 215 25% 27%;
+    /* Texte principal: Bleu Ardoise foncé (Lisibilité max) */
 
-    --card: 222 47% 13%;
-    --card-foreground: 210 40% 98%;
+    --card: 0 0% 100%;
+    --card-foreground: 215 25% 27%;
 
-    --popover: 222 47% 15%;
-    --popover-foreground: 210 40% 98%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 215 25% 27%;
 
-    --primary: 174 72% 56%;
-    --primary-foreground: 222 47% 11%;
+    --primary: 188 78% 41%;
+    /* Turquoise Médical (#179BAE) - Contraste fort sur blanc */
+    --primary-foreground: 0 0% 100%;
 
-    --secondary: 222 30% 18%;
-    --secondary-foreground: 210 40% 98%;
+    --secondary: 210 40% 96.1%;
+    --secondary-foreground: 222.2 47.4% 11.2%;
 
-    --muted: 222 30% 20%;
-    --muted-foreground: 215 20% 65%;
+    --muted: 210 40% 96.1%;
+    --muted-foreground: 215.4 16.3% 46.9%;
+    /* Gris moyen lisible */
 
-    --accent: 174 72% 56%;
-    --accent-foreground: 222 47% 11%;
+    --accent: 188 78% 41%;
+    --accent-foreground: 0 0% 100%;
 
-    --destructive: 0 84% 60%;
+    --destructive: 0 84.2% 60.2%;
     --destructive-foreground: 210 40% 98%;
 
-    --border: 222 30% 22%;
-    --input: 222 30% 18%;
-    --ring: 174 72% 56%;
+    --border: 214.3 31.8% 91.4%;
+    --input: 214.3 31.8% 91.4%;
+    --ring: 188 78% 41%;
 
     --radius: 0.75rem;
 
-    --sidebar-background: 222 47% 9%;
-    --sidebar-foreground: 210 40% 98%;
-    --sidebar-primary: 174 72% 56%;
-    --sidebar-primary-foreground: 222 47% 11%;
-    --sidebar-accent: 222 30% 15%;
-    --sidebar-accent-foreground: 210 40% 98%;
-    --sidebar-border: 222 30% 18%;
-    --sidebar-ring: 174 72% 56%;
+    --sidebar-background: 0 0% 100%;
+    --sidebar-foreground: 215 25% 27%;
+    --sidebar-primary: 188 78% 41%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 210 40% 96.1%;
+    --sidebar-accent-foreground: 215 25% 27%;
+    --sidebar-border: 214.3 31.8% 91.4%;
+    --sidebar-ring: 188 78% 41%;
 
-    /* Status colors as CSS variables for consistency */
+    /* Status colors */
     --success: 142 76% 36%;
-    --success-foreground: 210 40% 98%;
+    --success-foreground: 0 0% 100%;
     --warning: 38 92% 50%;
     --warning-foreground: 222 47% 11%;
     --info: 199 89% 48%;
@@ -59,6 +63,7 @@ Medical professional aesthetic - Dark theme with cyan/teal accent
   }
 
   .dark {
+    /* Dark Mode - Deep Space Glass */
     --background: 222 47% 11%;
     --foreground: 210 40% 98%;
 
@@ -69,6 +74,7 @@ Medical professional aesthetic - Dark theme with cyan/teal accent
     --popover-foreground: 210 40% 98%;
 
     --primary: 174 72% 56%;
+    /* Turquoise fluo pour le sombre */
     --primary-foreground: 222 47% 11%;
 
     --secondary: 222 30% 18%;
@@ -119,8 +125,26 @@ Medical professional aesthetic - Dark theme with cyan/teal accent
     @apply bg-gradient-to-r from-primary to-accent bg-clip-text text-transparent;
   }
 
+  .glass-panel {
+    @apply bg-card/70 backdrop-blur-lg border border-border/40 shadow-sm transition-all duration-300;
+  }
+
   .glass-effect {
-    @apply bg-card/80 backdrop-blur-sm;
+    @apply bg-card/40 backdrop-blur-md;
+  }
+
+  /* Custom Sleek Scrollbar */
+  ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    @apply bg-primary/20 hover:bg-primary/40 rounded-full transition-colors;
   }
 
   .glow-primary {
@@ -147,7 +171,8 @@ Medical professional aesthetic - Dark theme with cyan/teal accent
   }
 
   /* Larger touch targets on mobile */
-  button, a {
+  button,
+  a {
     @apply min-h-[44px];
   }
 
@@ -169,14 +194,26 @@ Medical professional aesthetic - Dark theme with cyan/teal accent
       opacity: 0;
       transform: translateY(10px);
     }
+
     to {
       opacity: 1;
       transform: translateY(0);
     }
   }
 
-  .stagger-1 { animation-delay: 0.1s; }
-  .stagger-2 { animation-delay: 0.2s; }
-  .stagger-3 { animation-delay: 0.3s; }
-  .stagger-4 { animation-delay: 0.4s; }
+  .stagger-1 {
+    animation-delay: 0.1s;
+  }
+
+  .stagger-2 {
+    animation-delay: 0.2s;
+  }
+
+  .stagger-3 {
+    animation-delay: 0.3s;
+  }
+
+  .stagger-4 {
+    animation-delay: 0.4s;
+  }
 }

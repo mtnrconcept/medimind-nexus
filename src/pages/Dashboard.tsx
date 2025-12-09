@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
+import { useAutoTranslation } from '@/contexts/TranslationContext';
 import AppLayout from '@/components/layout/AppLayout';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -27,6 +28,7 @@ interface Stats {
 
 const Dashboard = () => {
   const { user } = useAuth();
+  const { t } = useAutoTranslation();
   const [stats, setStats] = useState<Stats>({
     totalPatients: 0,
     criticalAlerts: 0,
@@ -59,75 +61,75 @@ const Dashboard = () => {
 
   const getGreeting = () => {
     const hour = new Date().getHours();
-    if (hour < 12) return 'Bonjour';
-    if (hour < 18) return 'Bon après-midi';
-    return 'Bonsoir';
+    if (hour < 12) return t('Bonjour');
+    if (hour < 18) return t('Bon après-midi');
+    return t('Bonsoir');
   };
 
   const tools = [
     {
-      title: 'Gestion des Patients',
-      description: 'Accédez aux dossiers patients complets avec historique médical, résultats biologiques et suivi en temps réel',
+      title: t('Gestion des Patients'),
+      description: t('Accédez aux dossiers patients complets avec historique médical, résultats biologiques et suivi en temps réel'),
       icon: Users,
       link: '/patients',
       color: 'from-cyan-500 to-blue-500',
-      stats: `${stats.totalPatients} patients`,
+      stats: `${stats.totalPatients} ${t('patients')}`,
     },
     {
-      title: 'Assistant IA Médical',
-      description: 'Intelligence artificielle conversationnelle pour l\'analyse des dossiers et recommandations personnalisées',
+      title: t('Assistant IA Médical'),
+      description: t('Intelligence artificielle conversationnelle pour l\'analyse des dossiers et recommandations personnalisées'),
       icon: Brain,
       link: '/patients',
       color: 'from-blue-500 to-indigo-500',
-      stats: `${stats.aiAnalyses} analyses`,
+      stats: `${stats.aiAnalyses} ${t('analyses')}`,
     },
     {
-      title: 'Analyse Prédictive',
-      description: 'Détection automatique des risques, interactions médicamenteuses et recommandations triées par urgence',
+      title: t('Analyse Prédictive'),
+      description: t('Détection automatique des risques, interactions médicamenteuses et recommandations triées par urgence'),
       icon: TrendingUp,
       link: '/patients',
       color: 'from-indigo-500 to-purple-500',
-      stats: `${stats.criticalAlerts} alertes critiques`,
+      stats: `${stats.criticalAlerts} ${t('alertes critiques')}`,
     },
     {
-      title: 'Jumeau Numérique 3D',
-      description: 'Visualisation anatomique interactive en 3D avec marqueurs d\'alertes sur les organes affectés',
+      title: t('Jumeau Numérique 3D'),
+      description: t('Visualisation anatomique interactive en 3D avec marqueurs d\'alertes sur les organes affectés'),
       icon: Activity,
       link: '/patients',
       color: 'from-purple-500 to-pink-500',
-      stats: 'Modèle 3D interactif',
+      stats: t('Modèle 3D interactif'),
     },
     {
-      title: 'Graphiques de Santé',
-      description: 'Évolution de l\'IMC, poids, glycémie, tension artérielle et timeline des périodes de maladies',
+      title: t('Graphiques de Santé'),
+      description: t('Évolution de l\'IMC, poids, glycémie, tension artérielle et timeline des périodes de maladies'),
       icon: BarChart3,
       link: '/patients',
       color: 'from-pink-500 to-rose-500',
-      stats: '5 types de graphiques',
+      stats: t('5 types de graphiques'),
     },
     {
-      title: 'Analyse Croisée Mondiale',
-      description: 'Comparaison avec 10,000+ pathologies, 1,800+ symptômes et 6,700+ médicaments de la base mondiale',
+      title: t('Analyse Croisée Mondiale'),
+      description: t('Comparaison avec 10,000+ pathologies, 1,800+ symptômes et 6,700+ médicaments de la base mondiale'),
       icon: Sparkles,
       link: '/patients',
       color: 'from-rose-500 to-orange-500',
-      stats: '19,000+ références',
+      stats: t('19,000+ références'),
     },
     {
-      title: 'Matrice Pharmacologique',
-      description: 'Détection des interactions médicamenteuses, contre-indications et effets secondaires',
+      title: t('Matrice Pharmacologique'),
+      description: t('Détection des interactions médicamenteuses, contre-indications et effets secondaires'),
       icon: Heart,
       link: '/patients',
       color: 'from-orange-500 to-amber-500',
-      stats: 'Sécurité maximale',
+      stats: t('Sécurité maximale'),
     },
     {
-      title: 'Surveillance Active',
-      description: 'Monitoring en temps réel des constantes vitales et alertes automatiques en cas d\'anomalie',
+      title: t('Surveillance Active'),
+      description: t('Monitoring en temps réel des constantes vitales et alertes automatiques en cas d\'anomalie'),
       icon: Stethoscope,
       link: '/patients',
       color: 'from-amber-500 to-cyan-500',
-      stats: `${stats.activeMonitoring} patients surveillés`,
+      stats: `${stats.activeMonitoring} ${t('patients surveillés')}`,
     },
   ];
 
@@ -164,7 +166,7 @@ const Dashboard = () => {
                   {getGreeting()}, {user?.user_metadata?.first_name || 'Docteur'}
                 </h1>
                 <p className="text-lg text-slate-600 max-w-2xl">
-                  Plateforme médicale intelligente avec IA, visualisation 3D et analyse prédictive
+                  {t('Plateforme médicale intelligente avec IA, visualisation 3D et analyse prédictive')}
                 </p>
               </div>
               <div className="flex gap-3">

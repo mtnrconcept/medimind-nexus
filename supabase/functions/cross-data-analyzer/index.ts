@@ -20,6 +20,8 @@ interface CausalLink {
   effectType?: 'therapeutic' | 'adverse' | 'both'; // Type d'effet: thérapeutique, indésirable ou les deux
   therapeuticDetails?: string; // Détails de l'effet thérapeutique
   adverseDetails?: string; // Détails de l'effet indésirable
+  dangerLevel?: 'critical' | 'high' | 'moderate' | 'low'; // Niveau de danger
+  interactionType?: 'drug-drug' | 'drug-treatment' | 'pathology-danger'; // Type d'interaction
 }
 
 interface AnalysisResult {
@@ -41,13 +43,13 @@ async function searchPubMed(query: string, maxResults: number = 5): Promise<{ ti
     const searchResponse = await fetch(searchUrl);
     const searchData = await searchResponse.json();
     const ids = searchData?.esearchresult?.idlist || [];
-    
+
     if (ids.length === 0) return [];
 
     const fetchUrl = `https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi?db=pubmed&id=${ids.join(",")}&retmode=json`;
     const fetchResponse = await fetch(fetchUrl);
     const fetchData = await fetchResponse.json();
-    
+
     const articles: { title: string; url: string; abstract: string }[] = [];
     for (const id of ids) {
       const article = fetchData?.result?.[id];
@@ -67,6 +69,8 @@ async function searchPubMed(query: string, maxResults: number = 5): Promise<{ ti
 }
 
 serve(async (req) => {
+  console.log(`[CrossDataAnalyzer] Requête reçue: ${req.method}`);
+
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
   }
@@ -80,7 +84,7 @@ serve(async (req) => {
 
     // Récupérer les données sélectionnées (incluant les médicaments)
     const [pathologiesRes, symptomsRes, treatmentsRes, medicationsRes, patientsRes] = await Promise.all([
-      pathologyIds?.length > 0 
+      pathologyIds?.length > 0
         ? supabase.from('pathologies').select('*').in('id', pathologyIds)
         : Promise.resolve({ data: [] }),
       symptomIds?.length > 0
@@ -113,7 +117,7 @@ serve(async (req) => {
 
     // Construire les requêtes de recherche web
     const webSearchQueries: string[] = [];
-    
+
     // Rechercher les interactions entre éléments sélectionnés
     for (const pathology of pathologies) {
       for (const treatment of treatments) {
@@ -126,7 +130,7 @@ serve(async (req) => {
         webSearchQueries.push(`${pathology.name} ${symptom.name} corrélation causalité`);
       }
     }
-    
+
     // Interactions médicaments-traitements
     for (const medication of medications) {
       for (const treatment of treatments) {
@@ -136,7 +140,7 @@ serve(async (req) => {
         webSearchQueries.push(`${medication.name} ${symptom.name} effet secondaire indésirable`);
       }
     }
-    
+
     for (const treatment of treatments) {
       for (const symptom of symptoms) {
         webSearchQueries.push(`${treatment.name} ${symptom.name} effet secondaire`);
@@ -168,15 +172,15 @@ serve(async (req) => {
     );
 
     // Construire le contexte pour l'IA
-    const selectedPathologiesContext = pathologies.map((p: any) => 
+    const selectedPathologiesContext = pathologies.map((p: any) =>
       `- ${p.name} (CIM: ${p.icd_code || 'N/A'}, sévérité: ${p.severity || 'N/A'}): ${p.description || ''}`
     ).join('\n');
 
-    const selectedSymptomsContext = symptoms.map((s: any) => 
+    const selectedSymptomsContext = symptoms.map((s: any) =>
       `- ${s.name} (système: ${s.body_system || 'N/A'}): ${s.description || ''}`
     ).join('\n');
 
-    const selectedTreatmentsContext = treatments.map((t: any) => 
+    const selectedTreatmentsContext = treatments.map((t: any) =>
       `- ${t.name} (type: ${t.type || 'N/A'}, pour pathologie: ${t.pathologies?.name || 'N/A'}): ${t.description || ''}\n  Contre-indications: ${t.contraindications?.join(', ') || 'Aucune connue'}`
     ).join('\n');
 
@@ -194,15 +198,15 @@ serve(async (req) => {
     }).join('\n\n');
 
     // Patients avec pathologies sélectionnées
-    const relevantPatients = patients.filter((p: any) => 
+    const relevantPatients = patients.filter((p: any) =>
       pathologyIds?.includes(p.pathology_id)
     );
 
-    const patientContext = relevantPatients.slice(0, 20).map((p: any) => 
-      `- Patient ${p.patient_id.slice(0,6)}: ${p.age} ans, ${p.gender === 'M' ? 'Homme' : 'Femme'}, traitement: ${p.treatment || 'N/A'}, résultat: ${p.outcome === 'RESOLVED' ? 'Résolu' : p.outcome === 'ONGOING' ? 'En cours' : 'Effet secondaire'}`
+    const patientContext = relevantPatients.slice(0, 20).map((p: any) =>
+      `- Patient ${p.patient_id.slice(0, 6)}: ${p.age} ans, ${p.gender === 'M' ? 'Homme' : 'Femme'}, traitement: ${p.treatment || 'N/A'}, résultat: ${p.outcome === 'RESOLVED' ? 'Résolu' : p.outcome === 'ONGOING' ? 'En cours' : 'Effet secondaire'}`
     ).join('\n');
 
-    const symptomLinksContext = symptomLinks.map((sl: any) => 
+    const symptomLinksContext = symptomLinks.map((sl: any) =>
       `- ${sl.symptoms?.name} associé à ${sl.pathologies?.name} (fréquence: ${sl.frequency_percent || 'N/A'}%, primaire: ${sl.is_primary ? 'Oui' : 'Non'})`
     ).join('\n');
 
@@ -212,84 +216,81 @@ serve(async (req) => {
       return `Recherche: "${wr.query}"\nArticles trouvés:\n${articlesInfo || '  Aucun article trouvé'}`;
     }).join('\n\n');
 
-const systemPrompt = `Tu es un expert médical francophone spécialisé dans l'analyse cross-data et l'évaluation thérapeutique. Tu analyses les corrélations entre symptômes, pathologies, traitements ET médicaments.
+    const systemPrompt = `Tu es un expert médical francophone spécialisé dans l'analyse cross-data et l'évaluation thérapeutique.
 
-IMPORTANT: Tu dois TOUJOURS répondre en FRANÇAIS.
+RÈGLE ABSOLUE: Analyse UNIQUEMENT les éléments fournis dans la liste. Ne génère JAMAIS de liens avec des éléments qui ne sont pas explicitement listés.
 
-## RÈGLE CRITIQUE - TYPES DE TRAITEMENTS À CONSIDÉRER
+## TYPES DE LIENS À GÉNÉRER
 
-Les traitements peuvent être de plusieurs types, TOUS sont valides et potentiellement adaptés:
-1. **Traitements médicamenteux** (antidépresseurs, anxiolytiques, etc.)
-2. **Traitements comportementaux/mode de vie** - TRÈS IMPORTANTS pour les pathologies psychiatriques:
-   - Abstinence d'alcool → ADAPTÉ pour dépression, anxiété (l'alcool aggrave ces conditions)
-   - Arrêt du tabac → ADAPTÉ pour de nombreuses pathologies
-   - Exercice physique → ADAPTÉ pour dépression, anxiété
-   - Amélioration du sommeil → ADAPTÉ pour dépression, troubles cognitifs
-   - Régime alimentaire → ADAPTÉ pour diabète, maladies cardiovasculaires
-3. **Psychothérapies** (TCC, psychanalyse, etc.)
-4. **Interventions chirurgicales**
+### TYPE 1: MÉDICAMENT/TRAITEMENT → PATHOLOGIE
+Pour chaque médicament/traitement ET pathologie sélectionnés:
+- from: nom exact du médicament/traitement (fromType: "medication"/"treatment")
+- to: nom exact de la pathologie (toType: "pathology")
+- isAppropriate: TRUE si le médicament TRAITE cette pathologie
+- isAppropriate: FALSE si le médicament est CONTRE-INDIQUÉ pour cette pathologie
+- Si contre-indiqué, ajouter dangerLevel et adverseDetails
 
-ATTENTION: L'abstinence d'alcool EST un traitement ADAPTÉ pour la dépression car:
-- L'alcool est un dépresseur du système nerveux central
-- L'alcool interfère avec les traitements antidépresseurs
-- L'abstinence améliore significativement les symptômes dépressifs
+### TYPE 2: PATHOLOGIE → SYMPTÔME
+Si une pathologie sélectionnée CAUSE un symptôme sélectionné:
+- from: nom de la pathologie (fromType: "pathology")
+- to: nom du symptôme (toType: "symptom")
+- probability selon la fréquence du symptôme dans cette pathologie
 
-## RÈGLE CRITIQUE - DISTINCTION EFFET THÉRAPEUTIQUE vs EFFET INDÉSIRABLE
+### TYPE 3: MÉDICAMENT → SYMPTÔME (Effets indésirables)
+Si un médicament peut CAUSER un symptôme sélectionné:
+- effectType: "adverse"
+- adverseDetails: description de l'effet
 
-Quand un MÉDICAMENT ou TRAITEMENT est lié à un SYMPTÔME, tu DOIS distinguer clairement:
-- **effectType: "therapeutic"** = Le traitement TRAITE/SOULAGE ce symptôme (c'est son indication)
-- **effectType: "adverse"** = Le traitement CAUSE/PROVOQUE ce symptôme comme effet secondaire
-- **effectType: "both"** = Le traitement peut À LA FOIS traiter ET causer ce symptôme
+### TYPE 4: INTERACTIONS MÉDICAMENTEUSES
+Si deux médicaments sélectionnés peuvent interagir:
+- from/to: les deux médicaments (fromType/toType: "medication")
+- interactionType: "drug-drug"
+- dangerLevel selon gravité
 
-Pour les liens avec effectType "both", tu DOIS remplir:
-- therapeuticDetails: explication de l'effet thérapeutique (comment il traite)
-- adverseDetails: explication de l'effet indésirable (comment il peut causer)
+### TYPE 5: DANGERS COMBINÉS
+Si un médicament immunosuppresseur ET une pathologie infectieuse sont tous deux sélectionnés:
+- Créer un lien de danger
+- dangerLevel: "critical" ou "high"
 
-## OBJECTIFS PRINCIPAUX
+## FORMAT DE RÉPONSE JSON
 
-1. **L'ADÉQUATION TRAITEMENT/PATHOLOGIE**: Pour chaque combinaison traitement-pathologie ou médicament-pathologie, indique clairement si c'est ADAPTÉ (isAppropriate: true), ou NON ADAPTÉ (isAppropriate: false). Les traitements comportementaux comme l'abstinence d'alcool sont ADAPTÉS pour les troubles psychiatriques!
-2. **DISTINCTION TRAITE vs CAUSE**: Pour chaque lien traitement/médicament-symptôme, indique si ça TRAITE ou CAUSE le symptôme (ou les deux!)
-3. Les interactions entre médicaments et traitements
-4. Les contre-indications par rapport aux pathologies sélectionnées
-5. Les preuves scientifiques issues de PubMed
-
-Tu DOIS répondre UNIQUEMENT en JSON valide avec cette structure exacte:
 {
   "causalLinks": [
     {
-      "from": "nom de l'élément source",
+      "from": "nom EXACT de l'élément tel que fourni",
       "fromType": "symptom" | "pathology" | "treatment" | "medication",
-      "to": "nom de l'élément cible",
+      "to": "nom EXACT de l'élément tel que fourni", 
       "toType": "symptom" | "pathology" | "treatment" | "medication",
-      "relationship": "description courte du lien en français",
+      "relationship": "description courte",
       "probability": "high" | "medium" | "low",
-      "evidence": "explication détaillée basée sur les données médicales, en français",
-      "patientCount": nombre de patients où ce lien est observé (0 si non applicable),
-      "webSources": ["URL des sources pertinentes"],
-      "isAppropriate": true ou false (pour les liens traitement/médicament vers pathologie - les traitements mode de vie sont souvent ADAPTÉS!),
-      "effectType": "therapeutic" | "adverse" | "both" (OBLIGATOIRE pour liens médicament/traitement → symptôme),
-      "therapeuticDetails": "description de l'effet thérapeutique (si effectType est therapeutic ou both)",
-      "adverseDetails": "description de l'effet indésirable avec fréquence si connue (si effectType est adverse ou both)"
+      "evidence": "explication détaillée",
+      "patientCount": 0,
+      "webSources": [],
+      "isAppropriate": true ou false (OBLIGATOIRE pour liens médicament→pathologie),
+      "effectType": "therapeutic" | "adverse" | "both",
+      "therapeuticDetails": "si therapeutic",
+      "adverseDetails": "si adverse ou contre-indiqué",
+      "dangerLevel": "critical" | "high" | "moderate" | "low",
+      "interactionType": "drug-drug" | "drug-treatment" | "pathology-danger"
     }
   ],
-  "summary": "résumé global de l'analyse en 2-3 phrases, avec une conclusion claire sur l'adéquation des traitements aux pathologies, en français",
-  "warnings": ["avertissement critique 1 en français", "avertissement 2 en français"],
-  "recommendations": ["recommandation thérapeutique 1 en français", "recommandation 2 en français"],
-  "webResearch": [
-    {
-      "query": "requête de recherche",
-      "findings": ["découverte médicale 1 en français", "découverte 2 en français"],
-      "sources": [{"title": "titre de l'article", "url": "URL"}]
-    }
-  ]
-}`;
+  "summary": "résumé de l'analyse",
+  "warnings": ["avertissements"],
+  "recommendations": ["recommandations"],
+  "webResearch": []
+}
 
-const userPrompt = `Analyse les liens de causalité et L'ADÉQUATION THÉRAPEUTIQUE entre ces éléments médicaux:
+## RÈGLES CRITIQUES
+1. N'utilise QUE les éléments listés dans les sections ci-dessous
+2. Ne génère PAS de liens avec des éléments non listés
+3. Utilise les noms EXACTS tels que fournis`;
+
+    const userPrompt = `Analyse les liens de causalité et L'ADÉQUATION THÉRAPEUTIQUE entre ces éléments médicaux:
 
 ## PATHOLOGIES SÉLECTIONNÉES
 ${selectedPathologiesContext || 'Aucune'}
 
-## SYMPTÔMES SÉLECTIONNÉS (peuvent être des effets indésirables OU des indications de traitement)
+## SYMPTÔMES SÉLECTIONNÉS
 ${selectedSymptomsContext || 'Aucun'}
 
 ## TRAITEMENTS SÉLECTIONNÉS
@@ -307,71 +308,85 @@ ${patientContext || 'Aucun patient trouvé'}
 ## RECHERCHE SCIENTIFIQUE PUBMED
 ${webResearchContext || 'Aucune recherche effectuée'}
 
-ANALYSE REQUISE:
-1. **PRIORITÉ 1 - ADÉQUATION TRAITEMENT/PATHOLOGIE**: Pour chaque traitement ou médicament sélectionné, évalue s'il est ADAPTÉ, PARTIELLEMENT ADAPTÉ ou NON ADAPTÉ pour chaque pathologie sélectionnée. Utilise isAppropriate=true/false.
+## ANALYSES OBLIGATOIRES - GÉNÈRE UN LIEN POUR CHAQUE:
 
-2. **PRIORITÉ 2 - DISTINCTION TRAITE vs CAUSE (CRITIQUE!)**: Pour chaque lien entre un médicament/traitement et un symptôme:
-   - Si le médicament TRAITE ce symptôme → effectType: "therapeutic", remplis therapeuticDetails
-   - Si le médicament CAUSE ce symptôme (effet secondaire) → effectType: "adverse", remplis adverseDetails
-   - Si le médicament peut FAIRE LES DEUX (ex: Fentanyl traite la douleur mais peut causer des maux de tête) → effectType: "both", remplis therapeuticDetails ET adverseDetails
+### 1. LIENS PATHOLOGIE → SYMPTÔME (OBLIGATOIRE!)
+Si une pathologie peut CAUSER un symptôme sélectionné, crée un lien:
+- from: nom de la pathologie, fromType: "pathology"
+- to: nom du symptôme, toType: "symptom"
+- relationship: "cause typiquement" ou "peut provoquer"
+- probability: selon la fréquence du symptôme dans cette pathologie
 
-3. **PRIORITÉ 3 - INTERACTIONS**: Y a-t-il des interactions dangereuses entre les médicaments sélectionnés ?
+EXEMPLE CRITIQUE: Si "syndrome néphrotique" et "œdème" sont sélectionnés → CRÉE LE LIEN! Le syndrome néphrotique cause l'œdème par hypoalbuminémie.
 
-4. **PRIORITÉ 4 - CONTRE-INDICATIONS**: Y a-t-il des contre-indications par rapport aux pathologies ?
+### 2. DANGERS INFECTION + IMMUNOSUPPRESSION (OBLIGATOIRE!)
+Si une INFECTION VIRALE (varicelle, zona, etc.) ET des IMMUNOSUPPRESSEURS/CORTICOÏDES sont sélectionnés:
+- Crée un lien de DANGER entre le médicament immunosuppresseur et la pathologie infectieuse
+- probability: "high", dangerLevel: "critical"
+- Explique le risque de forme grave/disséminée
+
+EXEMPLE CRITIQUE: Si "varicelle" et "prednisolone" sont sélectionnés → CRÉE UN WARNING! La varicelle sous corticoïdes peut être mortelle.
+
+### 3. CONTRE-INDICATIONS MÉDICAMENTS + PATHOLOGIE RÉNALE (OBLIGATOIRE!)
+Si des AINS (Algifor, ibuprofène) ET une pathologie rénale sont sélectionnés:
+- isAppropriate: false
+- Explique que les AINS aggravent la fonction rénale
+
+### 4. ADÉQUATION TRAITEMENT/PATHOLOGIE
+Pour chaque médicament/traitement et chaque pathologie:
+- isAppropriate: true si c'est un traitement indiqué
+- isAppropriate: false si c'est contre-indiqué
+
+### 5. DISTINCTION TRAITE vs CAUSE SYMPTÔME
+Pour chaque médicament et symptôme:
+- effectType: "therapeutic" si le médicament traite ce symptôme
+- effectType: "adverse" si le médicament cause ce symptôme
+- effectType: "both" si les deux sont possibles
 
 Base tes analyses sur les indications officielles, les contre-indications, la littérature médicale (PubMed) et tes connaissances médicales.
 
-Réponds UNIQUEMENT en français avec le JSON demandé.`;
+Réponds UNIQUEMENT en français avec le JSON demandé. N'OUBLIE AUCUN LIEN PERTINENT!`;
 
-    console.log('Appel de Lovable AI pour l\'analyse cross-data...');
+    console.log('Appel de Claude AI pour l\'analyse cross-data...');
 
-    const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY');
-    if (!LOVABLE_API_KEY) {
-      throw new Error('LOVABLE_API_KEY non configurée');
+    const CLAUDE_API_KEY = Deno.env.get('CLAUDE_API_KEY');
+    if (!CLAUDE_API_KEY) {
+      throw new Error('CLAUDE_API_KEY non configurée');
     }
 
-    const aiResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
+    const aiResponse = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: {
-        'Authorization': `Bearer ${LOVABLE_API_KEY}`,
-        'Content-Type': 'application/json',
+        'x-api-key': CLAUDE_API_KEY,
+        'anthropic-version': '2023-06-01',
+        'content-type': 'application/json',
       },
       body: JSON.stringify({
-        model: 'google/gemini-2.5-flash',
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: userPrompt }
-        ],
-        temperature: 0.3,
+        model: 'claude-3-haiku-20240307', // Haiku pour plus de rapidité
+        max_tokens: 4000,
+        messages: [{ role: 'user', content: systemPrompt + "\n\n" + userPrompt }]
       }),
     });
 
     if (!aiResponse.ok) {
       const errorText = await aiResponse.text();
-      console.error('Erreur API IA:', aiResponse.status, errorText);
-      
+      console.error('Erreur API Claude:', aiResponse.status, errorText);
+
       if (aiResponse.status === 429) {
         return new Response(
           JSON.stringify({ error: 'Limite de requêtes atteinte. Veuillez réessayer dans quelques instants.' }),
           { status: 429, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
         );
       }
-      
-      if (aiResponse.status === 402) {
-        return new Response(
-          JSON.stringify({ error: 'Crédits insuffisants. Veuillez recharger votre compte.' }),
-          { status: 402, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-        );
-      }
-      
-      throw new Error(`Erreur API IA: ${aiResponse.status}`);
+
+      throw new Error(`Erreur API Claude: ${aiResponse.status}`);
     }
 
     const aiData = await aiResponse.json();
-    const content = aiData.choices?.[0]?.message?.content;
+    const content = aiData.content?.[0]?.text;
 
     if (!content) {
-      throw new Error('Aucun contenu dans la réponse IA');
+      throw new Error('Aucun contenu dans la réponse Claude');
     }
 
     // Parser le JSON de la réponse

@@ -10,7 +10,7 @@ const corsHeaders = {
 // Helper pour attendre avec retry sur 429
 async function scrapeWithRateLimitRetry(firecrawl: any, url: string, maxRetries = 3): Promise<any> {
   let lastError = null;
-  
+
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
       const result = await firecrawl.scrapeUrl(url, {
@@ -21,38 +21,38 @@ async function scrapeWithRateLimitRetry(firecrawl: any, url: string, maxRetries 
     } catch (err: any) {
       lastError = err;
       const errorMessage = err?.message || String(err);
-      
+
       // Détecter les erreurs 429 (rate limit)
       if (errorMessage.includes('429') || errorMessage.includes('rate limit') || errorMessage.includes('Too Many')) {
         const waitTime = 10000 * attempt; // 10s, 20s, 30s
-        console.log(`Rate limit (429) détecté, attente ${waitTime/1000}s avant retry ${attempt}/${maxRetries}`);
+        console.log(`Rate limit (429) détecté, attente ${waitTime / 1000}s avant retry ${attempt}/${maxRetries}`);
         await new Promise(resolve => setTimeout(resolve, waitTime));
         continue;
       }
-      
+
       // Erreurs 502/503/504 (timeout serveur, bad gateway) - retry avec backoff
-      if (errorMessage.includes('502') || errorMessage.includes('503') || errorMessage.includes('504') || 
-          errorMessage.includes('Bad Gateway') || errorMessage.includes('Service Unavailable') ||
-          errorMessage.includes('Gateway Timeout')) {
+      if (errorMessage.includes('502') || errorMessage.includes('503') || errorMessage.includes('504') ||
+        errorMessage.includes('Bad Gateway') || errorMessage.includes('Service Unavailable') ||
+        errorMessage.includes('Gateway Timeout')) {
         const waitTime = 8000 * attempt; // 8s, 16s, 24s
-        console.log(`Erreur serveur (${errorMessage.includes('502') ? '502' : errorMessage.includes('503') ? '503' : '504'}), attente ${waitTime/1000}s avant retry ${attempt}/${maxRetries}`);
+        console.log(`Erreur serveur (${errorMessage.includes('502') ? '502' : errorMessage.includes('503') ? '503' : '504'}), attente ${waitTime / 1000}s avant retry ${attempt}/${maxRetries}`);
         await new Promise(resolve => setTimeout(resolve, waitTime));
         continue;
       }
-      
+
       // Autres erreurs réseau - retry avec backoff
       if (errorMessage.includes('Network') || errorMessage.includes('fetch') || errorMessage.includes('timeout')) {
         const waitTime = 5000 * attempt;
-        console.log(`Erreur réseau, attente ${waitTime/1000}s avant retry ${attempt}/${maxRetries}`);
+        console.log(`Erreur réseau, attente ${waitTime / 1000}s avant retry ${attempt}/${maxRetries}`);
         await new Promise(resolve => setTimeout(resolve, waitTime));
         continue;
       }
-      
+
       // Erreur non-recoverable
       throw err;
     }
   }
-  
+
   throw lastError || new Error('Max retries exceeded');
 }
 
@@ -63,17 +63,329 @@ serve(async (req) => {
 
   try {
     const firecrawlApiKey = Deno.env.get('FIRECRAWL_API_KEY');
-    const lovableApiKey = Deno.env.get('LOVABLE_API_KEY');
     const supabaseUrl = Deno.env.get('SUPABASE_URL');
     const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
 
-    if (!firecrawlApiKey) {
-      throw new Error('FIRECRAWL_API_KEY non configurée');
+    const claudeApiKey = Deno.env.get('CLAUDE_API_KEY');
+
+    if (!firecrawlApiKey) throw new Error('FIRECRAWL_API_KEY non configurée');
+    if (!claudeApiKey) throw new Error('CLAUDE_API_KEY non configurée');
+
+    // Helper pour appeler Claude
+    async function extractWithClaude(markdown: string, type: 'medication' | 'pathology'): Promise<any> {
+      const systemPrompt = type === 'medication'
+        ? "Tu es un expert pharmacologue suisse. Extrais les données structurées de cette notice de médicament (Compendium.ch) en JSON strict."
+        : "Tu es un médecin expert. Extrais les données structurées de cette page médicale en JSON strict.";
+
+      const schemaMedication = `{
+        "medication": {
+          "name": "string", "manufacturer": "string", "swissmedic_name": "string", "characteristics": "string",
+          "atc_code": "string", "atc_description": "string", "composition": "string", "substance": "string",
+          "indications": "string", "posology": "string", "dosage_forms": ["string"],
+          "pharmacode": "string", "gtin": "string", "dispensing_category": "string (A/B/C/D/E)",
+          "therapeutic_area": "string"
+        },
+        "side_effects": [{"name": "string", "frequency": "string", "severity": "string", "description": "string"}],
+        "interactions": [{"interacting_drug": "string", "interaction_type": "string", "severity": "string", "description": "string"}],
+        "contraindications": [{"condition": "string", "severity": "string", "description": "string"}]
+      }`;
+
+      const schemaPathology = `{
+        "pathology": {
+          "name": "string", "icd_code": "string", "description": "string", "category": "string",
+          "specialty": "string", "severity": "mild/moderate/severe/critical", "synonyms": ["string"]
+        },
+        "symptoms": [{"name": "string", "description": "string", "body_system": "string", "is_primary": boolean, "frequency_percent": number}],
+        "treatments": [{"name": "string", "type": "medication/surgery/therapy/lifestyle/other", "description": "string", "contraindications": ["string"]}]
+      }`;
+
+      const userPrompt = `Extrais TOUTES les informations disponibles au format JSON.
+      
+      Schéma attendu:
+      ${type === 'medication' ? schemaMedication : schemaPathology}
+
+      Contenu Markdown:
+      ${markdown.substring(0, 50000)} (tronqué si trop long)`;
+
+      const response = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: {
+          'x-api-key': claudeApiKey!,
+          'anthropic-version': '2023-06-01',
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify({
+          model: 'claude-3-haiku-20240307',
+          max_tokens: 4000,
+          messages: [{ role: 'user', content: userPrompt }]
+        })
+      });
+
+      if (!response.ok) {
+        throw new Error(`Claude API Error: ${await response.text()}`);
+      }
+
+      const data = await response.json();
+      const content = data.content[0].text;
+
+      // Extraction du JSON depuis la réponse (parfois Claude ajoute du texte autour)
+      const jsonMatch = content.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        return JSON.parse(jsonMatch[0]);
+      }
+      return JSON.parse(content);
     }
 
-    if (!lovableApiKey) {
-      throw new Error('LOVABLE_API_KEY non configurée');
-    }
+    // Fonction d'extraction par parsing du markdown (sans IA)
+    const extractMedicationFromMarkdown = (markdown: string, sourceUrl: string) => {
+      const lines = markdown.split('\n');
+      const data: any = {
+        medication: {
+          name: null,
+          manufacturer: null,
+          swissmedic_name: null,
+          characteristics: null,
+          atc_code: null,
+          atc_description: null,
+          composition: null,
+          substance: null,
+          indications: null,
+          posology: null,
+          dosage_forms: [],
+          pharmacode: null,
+          gtin: null,
+          dispensing_category: null,
+          therapeutic_area: null,
+          source_url: sourceUrl
+        },
+        side_effects: [],
+        interactions: [],
+        contraindications: []
+      };
+
+      // Extraire le nom du médicament (premier titre H1 ou H2)
+      for (const line of lines) {
+        if (line.startsWith('# ') || line.startsWith('## ')) {
+          data.medication.name = line.replace(/^#+\s*/, '').trim();
+          data.medication.swissmedic_name = data.medication.name; // Par défaut, même que le nom
+          break;
+        }
+      }
+
+      // Chercher des patterns spécifiques
+      const fullText = markdown.toLowerCase();
+
+      // Code ATC
+      const atcMatch = markdown.match(/(?:ATC|code\s+ATC)[:\s]*([A-Z]\d{2}[A-Z]{2}\d{2}|\w{5,7})/i);
+      if (atcMatch) data.medication.atc_code = atcMatch[1].toUpperCase();
+
+      // Fabricant
+      const fabMatch = markdown.match(/(?:Titulaire|Fabricant|Manufacturer|Zulassungsinhaberin)[:\s]*([^\n]+)/i);
+      if (fabMatch) data.medication.manufacturer = fabMatch[1].trim();
+
+      // Substance active
+      const substanceMatch = markdown.match(/(?:Principe actif|Substance active|Wirkstoff|Active substance)[:\s]*([^\n]+)/i);
+      if (substanceMatch) data.medication.substance = substanceMatch[1].trim();
+
+      // Composition
+      const compositionMatch = markdown.match(/(?:Composition|Zusammensetzung)[:\s]*([^\n]+(?:\n[^#\n]+)*)/i);
+      if (compositionMatch) data.medication.composition = compositionMatch[1].trim().substring(0, 1000);
+
+      // Indications
+      const indicMatch = markdown.match(/(?:Indications?|Anwendungsgebiet)[:\s]*([^\n]+(?:\n[^#\n]+)*)/i);
+      if (indicMatch) data.medication.indications = indicMatch[1].trim().substring(0, 2000);
+
+      // Posologie
+      const posologyMatch = markdown.match(/(?:Posologie|Dosierung|Dosage)[:\s]*([^\n]+(?:\n[^#\n]+)*)/i);
+      if (posologyMatch) data.medication.posology = posologyMatch[1].trim().substring(0, 1000);
+
+      // Pharmacode
+      const pharmacodeMatch = markdown.match(/(?:Pharmacode)[:\s]*(\d+)/i);
+      if (pharmacodeMatch) data.medication.pharmacode = pharmacodeMatch[1];
+
+      // GTIN
+      const gtinMatch = markdown.match(/(?:GTIN|EAN)[:\s]*(\d{13})/i);
+      if (gtinMatch) data.medication.gtin = gtinMatch[1];
+
+      // Catégorie de remise
+      const catMatch = markdown.match(/(?:Catégorie|Abgabekategorie)[:\s]*([A-E])/i);
+      if (catMatch) data.medication.dispensing_category = catMatch[1].toUpperCase();
+
+      // Contre-indications
+      const contraMatch = markdown.match(/(?:Contre-indications?|Contraindications?|Gegenanzeigen)[:\s]*([^\n]+(?:\n[^#\n]+)*)/i);
+      if (contraMatch) {
+        const contraText = contraMatch[1].trim();
+        const items = contraText.split(/[,;•\-\n]/).filter(s => s.trim().length > 3);
+        data.contraindications = items.slice(0, 10).map(item => ({
+          condition: item.trim().substring(0, 200),
+          severity: 'absolute',
+          description: item.trim()
+        }));
+      }
+
+      // Effets secondaires
+      const sideEffectsSection = markdown.match(/(?:Effets\s+(?:indésirables|secondaires)|Side\s+effects?|Nebenwirkungen)[:\s]*([^#]+?)(?=##|$)/i);
+      if (sideEffectsSection) {
+        const seText = sideEffectsSection[1];
+        const seItems = seText.split(/[•\-\n]/).filter(s => s.trim().length > 3);
+        data.side_effects = seItems.slice(0, 20).map(item => ({
+          name: item.trim().substring(0, 100),
+          frequency: 'common',
+          severity: 'mild',
+          description: item.trim().substring(0, 200)
+        }));
+      }
+
+      return data;
+    };
+
+    // Fonction d'extraction pour les pathologies (améliorée pour Mayo Clinic etc.)
+    const extractPathologyFromMarkdown = (markdown: string, sourceUrl: string) => {
+      const lines = markdown.split('\n');
+      const data: any = {
+        pathology: {
+          name: null,
+          icd_code: null,
+          description: null,
+          category: 'Other',
+          specialty: 'Médecine générale',
+          severity: 'moderate',
+          synonyms: [],
+          source_url: sourceUrl
+        },
+        symptoms: [],
+        treatments: []
+      };
+
+      // Chercher le nom de la pathologie (ignorer "On this page", "Overview", etc.)
+      const skipTitles = ['on this page', 'overview', 'table of contents', 'contents', 'menu'];
+
+      // D'abord essayer de trouver le nom après "## Overview"
+      const overviewMatch = markdown.match(/##\s*Overview\s*\n+([^\n]+)/i);
+      if (overviewMatch) {
+        // Prendre la première phrase significative après Overview
+        const firstSentence = overviewMatch[1].match(/^([^.]+)\./);
+        if (firstSentence) {
+          // Extraire le nom de la condition (première partie avant "is a condition" etc.)
+          const nameMatch = firstSentence[1].match(/^(.+?)\s*(?:is|are|can be|involves|refers)/i);
+          if (nameMatch) {
+            data.pathology.name = nameMatch[1].replace(/\([^)]+\)/g, '').trim();
+          }
+        }
+      }
+
+      // Sinon chercher le premier titre pertinent
+      if (!data.pathology.name) {
+        for (const line of lines) {
+          if (line.startsWith('# ') || line.startsWith('## ')) {
+            const title = line.replace(/^#+\s*/, '').trim().toLowerCase();
+            if (!skipTitles.includes(title)) {
+              data.pathology.name = line.replace(/^#+\s*/, '').trim();
+              break;
+            }
+          }
+        }
+      }
+
+      // Chercher dans l'URL pour le nom si pas trouvé
+      if (!data.pathology.name) {
+        const urlMatch = sourceUrl.match(/diseases-conditions\/([^\/]+)/);
+        if (urlMatch) {
+          data.pathology.name = urlMatch[1].replace(/-/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+        }
+      }
+
+      // Description - chercher le premier paragraphe après Overview
+      const descMatch = markdown.match(/##\s*Overview\s*\n+([^\n]+(?:\n[^#\n]+)*)/i);
+      if (descMatch) {
+        data.pathology.description = descMatch[1].replace(/!\[.*?\]\(.*?\)/g, '').trim().substring(0, 1500);
+      } else {
+        // Fallback: premier paragraphe significatif
+        for (const line of lines) {
+          if (!line.startsWith('#') && !line.startsWith('-') && !line.startsWith('*') && line.trim().length > 80) {
+            data.pathology.description = line.trim().substring(0, 1500);
+            break;
+          }
+        }
+      }
+
+      // Symptômes - section ## Symptoms
+      const symptomsSection = markdown.match(/##\s*Symptoms?\s*\n([\s\S]*?)(?=##|$)/i);
+      if (symptomsSection) {
+        const symText = symptomsSection[1];
+        // Extraire les items en **bold** ou avec tirets
+        const boldItems = symText.match(/\*\*([^*]+)\*\*/g) || [];
+        const dashItems = symText.match(/^-\s+(.+)/gm) || [];
+
+        const allSymptoms = new Set<string>();
+
+        boldItems.forEach(item => {
+          const clean = item.replace(/\*\*/g, '').trim();
+          if (clean.length > 3 && clean.length < 100) {
+            allSymptoms.add(clean);
+          }
+        });
+
+        dashItems.forEach(item => {
+          const clean = item.replace(/^-\s+/, '').replace(/\*\*/g, '').trim().substring(0, 100);
+          if (clean.length > 3) {
+            allSymptoms.add(clean);
+          }
+        });
+
+        data.symptoms = Array.from(allSymptoms).slice(0, 15).map(name => ({
+          name: name.substring(0, 100),
+          description: name,
+          body_system: 'Général'
+        }));
+      }
+
+      // Traitements - chercher dans tout le contenu les mentions de traitements
+      const treatmentPatterns = [
+        /(?:treatment|traitement)s?\s+(?:include|incluent|such as|comme)\s+([^.]+)/gi,
+        /(?:ice and rest|rest and ice|medications?|surgery|therapy|therapies|exercise|insoles)/gi,
+        /##\s*Treatment\s*\n([\s\S]*?)(?=##|$)/i
+      ];
+
+      const treatments = new Set<string>();
+
+      // Chercher les mentions de traitements dans le texte
+      const treatmentKeywords = markdown.match(/(?:ice|rest|medications?|surgery|therapy|exercise|insoles|arch supports|physical therapy|massage|stretching)/gi);
+      if (treatmentKeywords) {
+        treatmentKeywords.forEach(t => treatments.add(t.toLowerCase()));
+      }
+
+      // Section Treatment explicite
+      const treatSection = markdown.match(/##\s*Treatment\s*\n([\s\S]*?)(?=##|$)/i);
+      if (treatSection) {
+        const treatItems = treatSection[1].match(/\*\*([^*]+)\*\*/g) || [];
+        treatItems.forEach(item => {
+          treatments.add(item.replace(/\*\*/g, '').trim());
+        });
+      }
+
+      data.treatments = Array.from(treatments).slice(0, 10).map(name => ({
+        name: name.substring(0, 100),
+        type: name.match(/surgery|chirurgie/i) ? 'surgery' :
+          name.match(/therapy|exercise/i) ? 'therapy' :
+            name.match(/medication|drug/i) ? 'medication' : 'lifestyle',
+        description: `Traitement: ${name}`
+      }));
+
+      // Déterminer la catégorie et spécialité selon l'URL ou le contenu
+      if (sourceUrl.includes('foot') || sourceUrl.includes('metatars')) {
+        data.pathology.specialty = 'Orthopédie';
+        data.pathology.category = 'Musculosquelettique';
+      } else if (sourceUrl.includes('heart') || sourceUrl.includes('cardio')) {
+        data.pathology.specialty = 'Cardiologie';
+        data.pathology.category = 'Cardiovasculaire';
+      } else if (sourceUrl.includes('lung') || sourceUrl.includes('respiratory')) {
+        data.pathology.specialty = 'Pneumologie';
+        data.pathology.category = 'Respiratoire';
+      }
+
+      return data;
+    };
 
     const supabase = createClient(supabaseUrl!, supabaseServiceKey!);
     const firecrawl = new FirecrawlApp({ apiKey: firecrawlApiKey });
@@ -84,7 +396,7 @@ serve(async (req) => {
     // Action: Map - Découvrir toutes les URLs d'un site
     if (action === 'map') {
       console.log('Mapping du site:', url);
-      
+
       try {
         const mapResult = await firecrawl.mapUrl(url, {
           limit: options?.limit || 100,
@@ -98,10 +410,10 @@ serve(async (req) => {
         const relevantUrls = (mapResult.links || []).filter((link: string) => {
           const lowerLink = link.toLowerCase();
           // Exclure les pages non pertinentes
-          if (lowerLink.includes('/videos/') || 
-              lowerLink.includes('/news/') || 
-              lowerLink.includes('/recipes/') ||
-              lowerLink.includes('/lifestyle/')) {
+          if (lowerLink.includes('/videos/') ||
+            lowerLink.includes('/news/') ||
+            lowerLink.includes('/recipes/') ||
+            lowerLink.includes('/lifestyle/')) {
             return false;
           }
           return (
@@ -153,7 +465,7 @@ serve(async (req) => {
     // Action: Map Compendium - Découvrir les URLs de médicaments sur Compendium.ch
     if (action === 'map-compendium') {
       console.log('Mapping Compendium.ch');
-      
+
       try {
         const mapResult = await firecrawl.mapUrl(url || 'https://compendium.ch/fr/product', {
           limit: options?.limit || 500,
@@ -229,125 +541,9 @@ serve(async (req) => {
       const markdown = scrapeResult.markdown || '';
       console.log('Contenu médicament extrait, longueur:', markdown.length);
 
-      // Extraction des données via Lovable AI
-      const extractionPrompt = `Tu es un expert en pharmacologie. Analyse ce contenu markdown d'une page de médicament Compendium.ch et extrais TOUTES les informations au format JSON strict.
-
-INSTRUCTIONS CRITIQUES:
-- Réponds UNIQUEMENT avec le JSON, sans texte avant ou après
-- Si une information n'est pas disponible, utilise null ou un tableau vide []
-- Assure-toi que le JSON est valide
-- Extrais TOUTES les informations disponibles sur la page
-
-CHAMPS À EXTRAIRE DU COMPENDIUM.CH:
-- Nom commercial complet
-- Fabricant/Titulaire
-- Dénomination Swissmedic
-- Caractéristiques (description courte)
-- Code ATC complet avec libellé
-- Composition détaillée (substances actives avec dosages)
-- Indications thérapeutiques
-- Posologie complète
-- Contre-indications
-- Pharmacode(s)
-- GTIN
-- Catégorie de remise (A, B, C, D, E)
-- Formes galéniques disponibles
-
-Pour les effets secondaires: fréquences = "very_common" (>10%), "common" (1-10%), "uncommon" (0.1-1%), "rare" (0.01-0.1%), "very_rare" (<0.01%)
-Pour la sévérité: "mild", "moderate", "severe"
-Pour les interactions: type = "potentiation", "antagonism", "increased_toxicity", "decreased_efficacy"
-Pour sévérité interaction: "minor", "moderate", "major", "contraindicated"
-
-Format JSON attendu:
-{
-  "medication": {
-    "name": "Nom commercial complet du médicament",
-    "manufacturer": "Nom du fabricant/titulaire",
-    "swissmedic_name": "Dénomination Swissmedic officielle",
-    "characteristics": "Description courte/caractéristiques",
-    "atc_code": "Code ATC (ex: D11AZ)",
-    "atc_description": "Libellé complet du code ATC",
-    "composition": "Composition détaillée avec substances et dosages",
-    "substance": "Substance(s) active(s) principale(s)",
-    "indications": "Indications thérapeutiques complètes",
-    "posology": "Posologie recommandée complète",
-    "dosage_forms": ["crème", "tube 50g", etc.],
-    "pharmacode": "Pharmacode principal",
-    "gtin": "Code GTIN/EAN",
-    "dispensing_category": "Catégorie de remise (A/B/C/D/E)"
-  },
-  "side_effects": [
-    {
-      "name": "Nom de l'effet secondaire",
-      "frequency": "very_common/common/uncommon/rare/very_rare",
-      "body_system": "Système affecté",
-      "description": "Description",
-      "severity": "mild/moderate/severe"
-    }
-  ],
-  "interactions": [
-    {
-      "interacting_drug": "Nom du médicament/substance",
-      "interaction_type": "potentiation/antagonism/increased_toxicity/decreased_efficacy",
-      "severity": "minor/moderate/major/contraindicated",
-      "description": "Description de l'interaction",
-      "recommendation": "Recommandation clinique"
-    }
-  ],
-  "contraindications": [
-    {
-      "condition": "Condition contre-indiquée",
-      "severity": "relative/absolute",
-      "description": "Description complète"
-    }
-  ]
-}
-
-Contenu à analyser:
-${markdown.substring(0, 25000)}`;
-
-      const aiResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${lovableApiKey}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          model: 'google/gemini-2.5-flash',
-          messages: [
-            { role: 'system', content: 'Tu es un expert pharmacologue qui extrait des données structurées de notices de médicaments. Tu réponds uniquement en JSON valide.' },
-            { role: 'user', content: extractionPrompt }
-          ],
-        }),
-      });
-
-      if (!aiResponse.ok) {
-        const errorText = await aiResponse.text();
-        console.error('Erreur AI:', errorText);
-        throw new Error(`Erreur de l'API AI: ${aiResponse.status}`);
-      }
-
-      const aiData = await aiResponse.json();
-      const aiContent = aiData.choices?.[0]?.message?.content || '';
-      
-      // Parser le JSON de la réponse
-      let extractedData;
-      try {
-        let cleanedContent = aiContent.trim();
-        if (cleanedContent.startsWith('```json')) {
-          cleanedContent = cleanedContent.slice(7);
-        }
-        if (cleanedContent.startsWith('```')) {
-          cleanedContent = cleanedContent.slice(3);
-        }
-        if (cleanedContent.endsWith('```')) {
-          cleanedContent = cleanedContent.slice(0, -3);
-        }
-        extractedData = JSON.parse(cleanedContent.trim());
-      } catch (parseError) {
-        console.error('Erreur de parsing JSON:', parseError, 'Contenu:', aiContent);
-        throw new Error('Impossible de parser les données du médicament');
-      }
+      // Extraction des données par Claude AI
+      const extractedData = await extractWithClaude(markdown, 'medication');
+      console.log('Données extraites:', extractedData.medication?.name);
 
       const stats = {
         medicationsAdded: 0,
@@ -365,7 +561,7 @@ ${markdown.substring(0, 25000)}`;
           .maybeSingle();
 
         let medicationId;
-        
+
         if (!existingMed) {
           const med = extractedData.medication;
           const { data: newMed, error: medError } = await supabase
@@ -385,7 +581,10 @@ ${markdown.substring(0, 25000)}`;
               pharmacode: med.pharmacode,
               gtin: med.gtin,
               dispensing_category: med.dispensing_category,
-              source_url: url
+              source_url: url,
+              category: med.therapeutic_area || null, // Nouvelle colonne uniformisée
+              synonyms: null, // Nouvelle colonne uniformisée
+              updated_at: new Date().toISOString()
             })
             .select('id')
             .single();
@@ -481,11 +680,11 @@ ${markdown.substring(0, 25000)}`;
     if (action === 'batch-medications') {
       const results = [];
       const batchUrls = urls || [];
-      
+
       for (let i = 0; i < batchUrls.length; i++) {
         const currentUrl = batchUrls[i];
         console.log(`Batch medication ${i + 1}/${batchUrls.length}: ${currentUrl}`);
-        
+
         try {
           const scrapeResult = await fetch(req.url, {
             method: 'POST',
@@ -495,7 +694,7 @@ ${markdown.substring(0, 25000)}`;
             },
             body: JSON.stringify({ action: 'scrape-medication', url: currentUrl, options })
           });
-          
+
           const resultData = await scrapeResult.json();
           results.push({
             url: currentUrl,
@@ -572,95 +771,9 @@ ${markdown.substring(0, 25000)}`;
       const markdown = scrapeResult.markdown || '';
       console.log('Contenu extrait, longueur:', markdown.length);
 
-      // Extraction des données via Lovable AI
-      const extractionPrompt = `Tu es un expert en extraction de données médicales. Analyse ce contenu markdown d'une page médicale et extrais TOUTES les informations disponibles au format JSON strict.
-
-INSTRUCTIONS CRITIQUES:
-- Réponds UNIQUEMENT avec le JSON, sans texte avant ou après
-- Si une information n'est pas disponible, utilise null ou un tableau vide []
-- Assure-toi que le JSON est valide
-- Pour severity, utilise UNIQUEMENT: "mild", "moderate", "severe" ou "critical"
-- IMPORTANT: Extrais TOUS les traitements mentionnés, même partiellement (médicaments, thérapies, chirurgies, conseils de style de vie, etc.)
-- Les traitements incluent: médicaments, antibiotiques, analgésiques, chimiothérapie, radiothérapie, chirurgie, physiothérapie, psychothérapie, changements alimentaires, exercice, etc.
-
-Format attendu:
-{
-  "pathology": {
-    "name": "Nom de la pathologie en français (traduis si nécessaire)",
-    "icd_code": "Code ICD-10 si mentionné ou null",
-    "description": "Description complète de la pathologie (2-3 phrases)",
-    "category": "Catégorie médicale (infectiologie, cardiologie, neurologie, etc.)",
-    "specialty": "Spécialité médicale concernée",
-    "severity": "mild ou moderate ou severe ou critical",
-    "synonyms": ["autres noms de la pathologie"]
-  },
-  "symptoms": [
-    {
-      "name": "Nom du symptôme en français",
-      "description": "Description du symptôme",
-      "body_system": "Système corporel (respiratoire, cardiovasculaire, digestif, nerveux, etc.)",
-      "is_primary": true,
-      "frequency_percent": 80
-    }
-  ],
-  "treatments": [
-    {
-      "name": "Nom du traitement/médicament en français",
-      "type": "medication ou surgery ou therapy ou lifestyle ou other",
-      "description": "Description du traitement et son utilisation",
-      "contraindications": ["liste des contre-indications si mentionnées"]
-    }
-  ]
-}
-
-RAPPEL: Même si la page parle principalement de symptômes, extrais TOUS les traitements mentionnés!
-
-Contenu à analyser:
-${markdown.substring(0, 18000)}`;
-
-      const aiResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${lovableApiKey}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          model: 'google/gemini-2.5-flash',
-          messages: [
-            { role: 'system', content: 'Tu es un expert médical qui extrait des données structurées de textes médicaux. Tu réponds uniquement en JSON valide.' },
-            { role: 'user', content: extractionPrompt }
-          ],
-        }),
-      });
-
-      if (!aiResponse.ok) {
-        const errorText = await aiResponse.text();
-        console.error('Erreur AI:', errorText);
-        throw new Error(`Erreur de l'API AI: ${aiResponse.status}`);
-      }
-
-      const aiData = await aiResponse.json();
-      const aiContent = aiData.choices?.[0]?.message?.content || '';
-      
-      // Parser le JSON de la réponse
-      let extractedData;
-      try {
-        // Nettoyer la réponse (enlever les backticks markdown si présents)
-        let cleanedContent = aiContent.trim();
-        if (cleanedContent.startsWith('```json')) {
-          cleanedContent = cleanedContent.slice(7);
-        }
-        if (cleanedContent.startsWith('```')) {
-          cleanedContent = cleanedContent.slice(3);
-        }
-        if (cleanedContent.endsWith('```')) {
-          cleanedContent = cleanedContent.slice(0, -3);
-        }
-        extractedData = JSON.parse(cleanedContent.trim());
-      } catch (parseError) {
-        console.error('Erreur de parsing JSON:', parseError, 'Contenu:', aiContent);
-        throw new Error('Impossible de parser les données extraites');
-      }
+      // Extraction des données par Claude AI
+      const extractedData = await extractWithClaude(markdown, 'pathology');
+      console.log('Données extraites:', extractedData.pathology?.name);
 
       // Insérer les données dans la base
       const stats = {
@@ -679,7 +792,7 @@ ${markdown.substring(0, 18000)}`;
           .maybeSingle();
 
         let pathologyId;
-        
+
         if (!existingPathology) {
           // Valider la severity
           const validSeverities = ['mild', 'moderate', 'severe', 'critical'];
@@ -697,7 +810,8 @@ ${markdown.substring(0, 18000)}`;
               category: extractedData.pathology.category,
               specialty: extractedData.pathology.specialty,
               severity: severity,
-              synonyms: extractedData.pathology.synonyms || []
+              synonyms: extractedData.pathology.synonyms || [],
+              updated_at: new Date().toISOString()
             })
             .select('id')
             .single();
@@ -732,7 +846,10 @@ ${markdown.substring(0, 18000)}`;
                 .insert({
                   name: symptom.name,
                   description: symptom.description,
-                  body_system: symptom.body_system
+                  body_system: symptom.body_system,
+                  category: symptom.body_system, // Uniformisation: category = body_system
+                  severity: symptom.severity || null,
+                  synonyms: null
                 })
                 .select('id')
                 .single();
@@ -775,10 +892,10 @@ ${markdown.substring(0, 18000)}`;
         // Insérer les traitements
         console.log('Traitements extraits:', JSON.stringify(extractedData.treatments || []));
         console.log('PathologyId pour traitements:', pathologyId);
-        
+
         if (extractedData.treatments && Array.isArray(extractedData.treatments) && pathologyId) {
           console.log(`Nombre de traitements à insérer: ${extractedData.treatments.length}`);
-          
+
           for (const treatment of extractedData.treatments) {
             if (!treatment.name) {
               console.log('Traitement ignoré: pas de nom');
@@ -810,7 +927,7 @@ ${markdown.substring(0, 18000)}`;
                 'other': 'other'
               };
               const validType = typeMapping[treatment.type?.toLowerCase()] || 'other';
-              
+
               const { data: insertedTreatment, error: treatError } = await supabase
                 .from('treatments')
                 .insert({
@@ -818,7 +935,9 @@ ${markdown.substring(0, 18000)}`;
                   name: treatment.name,
                   type: validType,
                   description: treatment.description,
-                  contraindications: treatment.contraindications || []
+                  contraindications: treatment.contraindications || [],
+                  severity: null, // Sera renseigné selon la situation clinique
+                  updated_at: new Date().toISOString()
                 })
                 .select('id')
                 .single();
@@ -852,11 +971,11 @@ ${markdown.substring(0, 18000)}`;
     if (action === 'batch') {
       const results = [];
       const batchUrls = urls || [];
-      
+
       for (let i = 0; i < batchUrls.length; i++) {
         const currentUrl = batchUrls[i];
         console.log(`Batch scraping ${i + 1}/${batchUrls.length}: ${currentUrl}`);
-        
+
         try {
           // Appel récursif pour scraper chaque URL
           const scrapeResult = await fetch(req.url, {
@@ -867,7 +986,7 @@ ${markdown.substring(0, 18000)}`;
             },
             body: JSON.stringify({ action: 'scrape', url: currentUrl, options })
           });
-          
+
           const resultData = await scrapeResult.json();
           results.push({
             url: currentUrl,
@@ -912,11 +1031,11 @@ ${markdown.substring(0, 18000)}`;
   } catch (error: any) {
     console.error('Erreur medical-scraper:', error);
     const errorMessage = error?.message || 'Erreur inconnue';
-    
+
     // Vérifier si c'est une erreur 429 ou 402
     if (errorMessage.includes('429') || errorMessage.includes('rate limit') || errorMessage.includes('402')) {
-      return new Response(JSON.stringify({ 
-        success: false, 
+      return new Response(JSON.stringify({
+        success: false,
         error: 'Rate limit ou crédits insuffisants - veuillez patienter ou vérifier votre quota Firecrawl',
         rateLimited: true
       }), {
@@ -924,9 +1043,9 @@ ${markdown.substring(0, 18000)}`;
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
-    
-    return new Response(JSON.stringify({ 
-      success: false, 
+
+    return new Response(JSON.stringify({
+      success: false,
       error: errorMessage
     }), {
       status: 500,

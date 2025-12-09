@@ -8,6 +8,7 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { supabase } from '@/integrations/supabase/client';
+import { useAutoTranslation } from '@/contexts/TranslationContext';
 import {
   Brain,
   Loader2,
@@ -31,6 +32,7 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { VideoLoader } from './VideoLoader';
+import { RelationshipMatrix } from './RelationshipMatrix';
 
 interface Pathology {
   id: string;
@@ -130,6 +132,9 @@ const CrossDataAnalyzer = ({ patientData }: CrossDataAnalyzerProps) => {
   const [filterSymptomBodySystem, setFilterSymptomBodySystem] = useState<string>('all');
   const [filterTreatmentType, setFilterTreatmentType] = useState<string>('all');
   const [filterMedicationAtc, setFilterMedicationAtc] = useState<string>('all');
+
+  // Hook de traduction automatique
+  const { t } = useAutoTranslation();
 
   // Options de filtres extraites des données
   const pathologyCategories = useMemo(() => {
@@ -233,7 +238,8 @@ const CrossDataAnalyzer = ({ patientData }: CrossDataAnalyzerProps) => {
         const { data, error } = await supabase
           .from(table)
           .select(selectQuery)
-          .order('name')
+          .order('name', { ascending: true })
+          .order('id', { ascending: true }) // Tri stable pour éviter les doublons de pagination
           .range(from, from + pageSize - 1);
 
         if (error) {
@@ -250,7 +256,8 @@ const CrossDataAnalyzer = ({ patientData }: CrossDataAnalyzerProps) => {
         }
       }
 
-      return allData;
+      // Déduplication de sécurité sur l'ID
+      return Array.from(new Map(allData.map((item: any) => [item.id, item])).values());
     };
 
     const fetchData = async () => {
@@ -288,6 +295,7 @@ const CrossDataAnalyzer = ({ patientData }: CrossDataAnalyzerProps) => {
         const selectedPathIds: string[] = [];
         const selectedTreatIds: string[] = [];
         const selectedMedIds: string[] = [];
+        const selectedSymptIds: string[] = [];
 
         console.log('🔍 Données patient reçues:', patientData);
 
@@ -315,6 +323,7 @@ const CrossDataAnalyzer = ({ patientData }: CrossDataAnalyzerProps) => {
             'allergic rhinitis': ['rhinite allergique'], 'rhinite allergique': ['allergic rhinitis'],
             'gout': ['goutte'], 'goutte': ['gout'],
             'hypercholesterolemia': ['hypercholestérolémie'], 'hypercholestérolémie': ['hypercholesterolemia'],
+            'asthma': ['asthme'], 'asthme': ['asthma'],
             'metformin': ['metformine'], 'metformine': ['metformin'],
             'glibenclamide': ['glyburide'], 'glyburide': ['glibenclamide'],
             'atorvastatin': ['atorvastatine'], 'atorvastatine': ['atorvastatin'],
@@ -338,10 +347,58 @@ const CrossDataAnalyzer = ({ patientData }: CrossDataAnalyzerProps) => {
           return false;
         };
 
-        // 1. Sélectionner la pathologie principale
-        if (patientData.pathologies?.name) {
+        // ========== PRIORITÉ 1: Tables de liaison ==========
+
+        // 1a. Pathologies depuis tables de liaison
+        if (patientData.linked_pathologies?.length > 0) {
+          console.log('📦 Utilisation des pathologies liées:', patientData.linked_pathologies.length);
+          patientData.linked_pathologies.forEach((lp: any) => {
+            if (lp.pathologies?.id && !selectedPathIds.includes(lp.pathologies.id)) {
+              selectedPathIds.push(lp.pathologies.id);
+              console.log('✅ Pathologie liée:', lp.pathologies.name);
+            }
+          });
+        }
+
+        // 1b. Médicaments depuis tables de liaison
+        if (patientData.linked_medications?.length > 0) {
+          console.log('📦 Utilisation des médicaments liés:', patientData.linked_medications.length);
+          patientData.linked_medications.forEach((lm: any) => {
+            if (lm.medications?.id && !selectedMedIds.includes(lm.medications.id)) {
+              selectedMedIds.push(lm.medications.id);
+              console.log('✅ Médicament lié:', lm.medications.name);
+            }
+          });
+        }
+
+        // 1c. Symptômes depuis tables de liaison
+        if (patientData.linked_symptoms?.length > 0) {
+          console.log('📦 Utilisation des symptômes liés:', patientData.linked_symptoms.length);
+          patientData.linked_symptoms.forEach((ls: any) => {
+            if (ls.symptoms?.id && !selectedSymptIds.includes(ls.symptoms.id)) {
+              selectedSymptIds.push(ls.symptoms.id);
+              console.log('✅ Symptôme lié:', ls.symptoms.name);
+            }
+          });
+        }
+
+        // 1d. Traitements depuis tables de liaison
+        if (patientData.linked_treatments?.length > 0) {
+          console.log('📦 Utilisation des traitements liés:', patientData.linked_treatments.length);
+          patientData.linked_treatments.forEach((lt: any) => {
+            if (lt.treatments?.id && !selectedTreatIds.includes(lt.treatments.id)) {
+              selectedTreatIds.push(lt.treatments.id);
+              console.log('✅ Traitement lié:', lt.treatments.name);
+            }
+          });
+        }
+
+        // ========== PRIORITÉ 2: Fallback sur données texte ==========
+
+        // 2a. Pathologie principale (ancienne méthode)
+        if (selectedPathIds.length === 0 && patientData.pathologies?.name) {
           const pathologyName = patientData.pathologies.name;
-          console.log('🔍 Recherche pathologie:', pathologyName);
+          console.log('🔍 Recherche pathologie (fallback):', pathologyName);
 
           const foundPathology = pathologies.find(p => matchesWithNuance(p.name, pathologyName));
           if (foundPathology) {
@@ -399,15 +456,15 @@ const CrossDataAnalyzer = ({ patientData }: CrossDataAnalyzerProps) => {
           });
         }
 
-        // 4. Sélectionner traitements liés
-        if (selectedPathIds.length > 0) {
+        // 4. Sélectionner traitements liés (seulement si pas déjà rempli par les tables de liaison)
+        if (selectedTreatIds.length === 0 && selectedPathIds.length > 0) {
           const relatedTreatments = treatments.filter(t =>
             selectedPathIds.includes(t.pathology_id)
           );
           relatedTreatments.slice(0, 5).forEach(t => {
             if (!selectedTreatIds.includes(t.id)) {
               selectedTreatIds.push(t.id);
-              console.log('✅ Traitement lié:', t.name);
+              console.log('✅ Traitement lié (auto):', t.name);
             }
           });
         }
@@ -416,18 +473,27 @@ const CrossDataAnalyzer = ({ patientData }: CrossDataAnalyzerProps) => {
         setSelectedPathologies(selectedPathIds);
         setSelectedTreatments(selectedTreatIds);
         setSelectedMedications(selectedMedIds);
+        setSelectedSymptoms(selectedSymptIds);
 
         console.log('📊 Résumé:', {
           pathologies: selectedPathIds.length,
+          symptômes: selectedSymptIds.length,
           traitements: selectedTreatIds.length,
           médicaments: selectedMedIds.length
         });
 
-        const totalSelected = selectedPathIds.length + selectedTreatIds.length + selectedMedIds.length;
+        const totalSelected = selectedPathIds.length + selectedSymptIds.length +
+          selectedTreatIds.length + selectedMedIds.length;
 
         if (totalSelected > 0) {
+          const parts = [];
+          if (selectedPathIds.length > 0) parts.push(`${selectedPathIds.length} pathologie(s)`);
+          if (selectedSymptIds.length > 0) parts.push(`${selectedSymptIds.length} symptôme(s)`);
+          if (selectedTreatIds.length > 0) parts.push(`${selectedTreatIds.length} traitement(s)`);
+          if (selectedMedIds.length > 0) parts.push(`${selectedMedIds.length} médicament(s)`);
+
           toast.success(
-            `${totalSelected} éléments pré-sélectionnés : ${selectedPathIds.length} pathologie(s), ${selectedTreatIds.length} traitement(s), ${selectedMedIds.length} médicament(s)`,
+            `${totalSelected} éléments pré-sélectionnés : ${parts.join(', ')}`,
             { duration: 5000 }
           );
         } else {
@@ -669,17 +735,17 @@ const CrossDataAnalyzer = ({ patientData }: CrossDataAnalyzerProps) => {
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <Brain className="h-5 w-5 text-primary" />
-            Analyse IA Cross-Data
+            {t('Analyse IA Cross-Data')}
           </CardTitle>
           <CardDescription className="flex items-center gap-2">
             <Globe className="h-4 w-4" />
-            Analyse les liens de causalité en croisant vos données patients et la littérature médicale (PubMed)
+            {t('Analyse les liens de causalité en croisant vos données patients et la littérature médicale')} (PubMed)
           </CardDescription>
           <div className="flex gap-2 text-xs text-muted-foreground mt-2 flex-wrap">
-            <Badge variant="outline">{pathologies.length} pathologies</Badge>
-            <Badge variant="outline">{symptoms.length} symptômes</Badge>
-            <Badge variant="outline">{treatments.length} traitements</Badge>
-            <Badge variant="outline" className="bg-orange-500/10 border-orange-500/30">{medications.length} médicaments</Badge>
+            <Badge variant="outline">{pathologies.length} {t('pathologies')}</Badge>
+            <Badge variant="outline">{symptoms.length} {t('symptômes')}</Badge>
+            <Badge variant="outline">{treatments.length} {t('traitements')}</Badge>
+            <Badge variant="outline" className="bg-orange-500/10 border-orange-500/30">{medications.length} {t('médicaments')}</Badge>
           </div>
         </CardHeader>
         <CardContent className="space-y-6">
@@ -701,7 +767,7 @@ const CrossDataAnalyzer = ({ patientData }: CrossDataAnalyzerProps) => {
               <div className="relative">
                 <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                 <Input
-                  placeholder="Rechercher..."
+                  placeholder={t('Rechercher...')}
                   value={searchPathologies}
                   onChange={(e) => setSearchPathologies(e.target.value)}
                   className="pl-8 pr-8 h-8 text-sm"
@@ -720,10 +786,10 @@ const CrossDataAnalyzer = ({ patientData }: CrossDataAnalyzerProps) => {
               <div className="space-y-1.5">
                 <Select value={filterPathologyCategory} onValueChange={setFilterPathologyCategory}>
                   <SelectTrigger className="h-7 text-xs">
-                    <SelectValue placeholder="Catégorie" />
+                    <SelectValue placeholder={t('Catégorie')} />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="all">Toutes catégories</SelectItem>
+                    <SelectItem value="all">{t('Toutes catégories')}</SelectItem>
                     {pathologyCategories.map(cat => (
                       <SelectItem key={cat} value={cat}>{cat}</SelectItem>
                     ))}
@@ -732,10 +798,10 @@ const CrossDataAnalyzer = ({ patientData }: CrossDataAnalyzerProps) => {
 
                 <Select value={filterPathologySpecialty} onValueChange={setFilterPathologySpecialty}>
                   <SelectTrigger className="h-7 text-xs">
-                    <SelectValue placeholder="Spécialité" />
+                    <SelectValue placeholder={t('Spécialité')} />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="all">Toutes spécialités</SelectItem>
+                    <SelectItem value="all">{t('Toutes spécialités')}</SelectItem>
                     {pathologySpecialties.map(spec => (
                       <SelectItem key={spec} value={spec}>{spec}</SelectItem>
                     ))}
@@ -744,10 +810,10 @@ const CrossDataAnalyzer = ({ patientData }: CrossDataAnalyzerProps) => {
 
                 <Select value={filterPathologySeverity} onValueChange={setFilterPathologySeverity}>
                   <SelectTrigger className="h-7 text-xs">
-                    <SelectValue placeholder="Sévérité" />
+                    <SelectValue placeholder={t('Sévérité')} />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="all">Toutes sévérités</SelectItem>
+                    <SelectItem value="all">{t('Toutes sévérités')}</SelectItem>
                     {pathologySeverities.map(sev => (
                       <SelectItem key={sev} value={sev}>{getSeverityLabel(sev)}</SelectItem>
                     ))}
@@ -807,7 +873,7 @@ const CrossDataAnalyzer = ({ patientData }: CrossDataAnalyzerProps) => {
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2 font-medium">
                   <Activity className="h-4 w-4 text-blue-500" />
-                  Symptômes ({selectedSymptoms.length})
+                  {t('Symptômes')} ({selectedSymptoms.length})
                 </div>
                 <span className="text-xs text-muted-foreground">
                   {filteredSymptoms.length}/{symptoms.length}
@@ -818,7 +884,7 @@ const CrossDataAnalyzer = ({ patientData }: CrossDataAnalyzerProps) => {
               <div className="relative">
                 <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                 <Input
-                  placeholder="Rechercher..."
+                  placeholder={t('Rechercher...')}
                   value={searchSymptoms}
                   onChange={(e) => setSearchSymptoms(e.target.value)}
                   className="pl-8 pr-8 h-8 text-sm"
@@ -836,10 +902,10 @@ const CrossDataAnalyzer = ({ patientData }: CrossDataAnalyzerProps) => {
               {/* Filtre par système corporel */}
               <Select value={filterSymptomBodySystem} onValueChange={setFilterSymptomBodySystem}>
                 <SelectTrigger className="h-7 text-xs">
-                  <SelectValue placeholder="Système corporel" />
+                  <SelectValue placeholder={t('Système corporel')} />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="all">Tous systèmes</SelectItem>
+                  <SelectItem value="all">{t('Tous systèmes')}</SelectItem>
                   {symptomBodySystems.map(sys => (
                     <SelectItem key={sys} value={sys}>{sys}</SelectItem>
                   ))}
@@ -855,9 +921,9 @@ const CrossDataAnalyzer = ({ patientData }: CrossDataAnalyzerProps) => {
                   onClick={() => selectAllFiltered(filteredSymptoms, selectedSymptoms, setSelectedSymptoms)}
                 >
                   {areAllFilteredSelected(filteredSymptoms, selectedSymptoms) ? (
-                    <><Square className="h-3 w-3 mr-1" /> Tout désélect.</>
+                    <><Square className="h-3 w-3 mr-1" /> {t('Tout désélect.')}</>
                   ) : (
-                    <><CheckSquare className="h-3 w-3 mr-1" /> Tout sélect.</>
+                    <><CheckSquare className="h-3 w-3 mr-1" /> {t('Tout sélect.')}</>
                   )}
                 </Button>
                 {hasSymptomFilters && (
@@ -870,7 +936,7 @@ const CrossDataAnalyzer = ({ patientData }: CrossDataAnalyzerProps) => {
               <ScrollArea className="h-40 border rounded-md p-2">
                 <div className="space-y-1">
                   {filteredSymptoms.length === 0 ? (
-                    <p className="text-sm text-muted-foreground text-center py-4">Aucun résultat</p>
+                    <p className="text-sm text-muted-foreground text-center py-4">{t('Aucun résultat')}</p>
                   ) : (
                     filteredSymptoms.map((s) => (
                       <div key={s.id} className="flex items-center gap-2">
@@ -898,7 +964,7 @@ const CrossDataAnalyzer = ({ patientData }: CrossDataAnalyzerProps) => {
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2 font-medium">
                   <Pill className="h-4 w-4 text-green-500" />
-                  Traitements ({selectedTreatments.length})
+                  {t('Traitements')} ({selectedTreatments.length})
                 </div>
                 <span className="text-xs text-muted-foreground">
                   {filteredTreatments.length}/{treatments.length}
@@ -909,7 +975,7 @@ const CrossDataAnalyzer = ({ patientData }: CrossDataAnalyzerProps) => {
               <div className="relative">
                 <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                 <Input
-                  placeholder="Rechercher..."
+                  placeholder={t('Rechercher...')}
                   value={searchTreatments}
                   onChange={(e) => setSearchTreatments(e.target.value)}
                   className="pl-8 pr-8 h-8 text-sm"
@@ -927,10 +993,10 @@ const CrossDataAnalyzer = ({ patientData }: CrossDataAnalyzerProps) => {
               {/* Filtre par type de traitement */}
               <Select value={filterTreatmentType} onValueChange={setFilterTreatmentType}>
                 <SelectTrigger className="h-7 text-xs">
-                  <SelectValue placeholder="Type de traitement" />
+                  <SelectValue placeholder={t('Type de traitement')} />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="all">Tous types</SelectItem>
+                  <SelectItem value="all">{t('Tous types')}</SelectItem>
                   {treatmentTypes.map(type => (
                     <SelectItem key={type} value={type}>{getTreatmentTypeLabel(type)}</SelectItem>
                   ))}
@@ -946,9 +1012,9 @@ const CrossDataAnalyzer = ({ patientData }: CrossDataAnalyzerProps) => {
                   onClick={() => selectAllFiltered(filteredTreatments, selectedTreatments, setSelectedTreatments)}
                 >
                   {areAllFilteredSelected(filteredTreatments, selectedTreatments) ? (
-                    <><Square className="h-3 w-3 mr-1" /> Tout désélect.</>
+                    <><Square className="h-3 w-3 mr-1" /> {t('Tout désélect.')}</>
                   ) : (
-                    <><CheckSquare className="h-3 w-3 mr-1" /> Tout sélect.</>
+                    <><CheckSquare className="h-3 w-3 mr-1" /> {t('Tout sélect.')}</>
                   )}
                 </Button>
                 {hasTreatmentFilters && (
@@ -961,21 +1027,21 @@ const CrossDataAnalyzer = ({ patientData }: CrossDataAnalyzerProps) => {
               <ScrollArea className="h-40 border rounded-md p-2">
                 <div className="space-y-1">
                   {filteredTreatments.length === 0 ? (
-                    <p className="text-sm text-muted-foreground text-center py-4">Aucun résultat</p>
+                    <p className="text-sm text-muted-foreground text-center py-4">{t('Aucun résultat')}</p>
                   ) : (
-                    filteredTreatments.map((t) => (
-                      <div key={t.id} className="flex items-center gap-2">
+                    filteredTreatments.map((tr) => (
+                      <div key={tr.id} className="flex items-center gap-2">
                         <Checkbox
-                          id={`treatment-${t.id}`}
-                          checked={selectedTreatments.includes(t.id)}
-                          onCheckedChange={() => toggleSelection(t.id, selectedTreatments, setSelectedTreatments)}
+                          id={`treatment-${tr.id}`}
+                          checked={selectedTreatments.includes(tr.id)}
+                          onCheckedChange={() => toggleSelection(tr.id, selectedTreatments, setSelectedTreatments)}
                         />
                         <label
-                          htmlFor={`treatment-${t.id}`}
+                          htmlFor={`treatment-${tr.id}`}
                           className="text-sm cursor-pointer truncate flex-1"
-                          title={t.name}
+                          title={tr.name}
                         >
-                          {t.name}
+                          {tr.name}
                         </label>
                       </div>
                     ))
@@ -989,7 +1055,7 @@ const CrossDataAnalyzer = ({ patientData }: CrossDataAnalyzerProps) => {
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2 font-medium">
                   <Tablets className="h-4 w-4 text-orange-500" />
-                  Médicaments ({selectedMedications.length})
+                  {t('Médicaments')} ({selectedMedications.length})
                 </div>
                 <span className="text-xs text-muted-foreground">
                   {filteredMedications.length}/{medications.length}
@@ -1000,7 +1066,7 @@ const CrossDataAnalyzer = ({ patientData }: CrossDataAnalyzerProps) => {
               <div className="relative">
                 <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                 <Input
-                  placeholder="Nom ou substance..."
+                  placeholder={t('Nom ou substance...')}
                   value={searchMedications}
                   onChange={(e) => setSearchMedications(e.target.value)}
                   className="pl-8 pr-8 h-8 text-sm"
@@ -1018,10 +1084,10 @@ const CrossDataAnalyzer = ({ patientData }: CrossDataAnalyzerProps) => {
               {/* Filtre par groupe ATC */}
               <Select value={filterMedicationAtc} onValueChange={setFilterMedicationAtc}>
                 <SelectTrigger className="h-7 text-xs">
-                  <SelectValue placeholder="Groupe ATC" />
+                  <SelectValue placeholder={t('Groupe ATC')} />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="all">Tous groupes ATC</SelectItem>
+                  <SelectItem value="all">{t('Tous groupes ATC')}</SelectItem>
                   {medicationAtcCodes.map(code => (
                     <SelectItem key={code} value={code}>{getAtcGroupLabel(code)}</SelectItem>
                   ))}
@@ -1037,9 +1103,9 @@ const CrossDataAnalyzer = ({ patientData }: CrossDataAnalyzerProps) => {
                   onClick={() => selectAllFiltered(filteredMedications, selectedMedications, setSelectedMedications)}
                 >
                   {areAllFilteredSelected(filteredMedications, selectedMedications) ? (
-                    <><Square className="h-3 w-3 mr-1" /> Tout désélect.</>
+                    <><Square className="h-3 w-3 mr-1" /> {t('Tout désélect.')}</>
                   ) : (
-                    <><CheckSquare className="h-3 w-3 mr-1" /> Tout sélect.</>
+                    <><CheckSquare className="h-3 w-3 mr-1" /> {t('Tout sélect.')}</>
                   )}
                 </Button>
                 {hasMedicationFilters && (
@@ -1053,7 +1119,7 @@ const CrossDataAnalyzer = ({ patientData }: CrossDataAnalyzerProps) => {
                 <div className="space-y-1">
                   {filteredMedications.length === 0 ? (
                     <p className="text-sm text-muted-foreground text-center py-4">
-                      {medications.length === 0 ? 'Scrapez Compendium.ch pour ajouter des médicaments' : 'Aucun résultat'}
+                      {medications.length === 0 ? t('Scrapez Compendium.ch pour ajouter des médicaments') : t('Aucun résultat')}
                     </p>
                   ) : (
                     filteredMedications.map((m) => (
@@ -1082,7 +1148,7 @@ const CrossDataAnalyzer = ({ patientData }: CrossDataAnalyzerProps) => {
           {/* Bouton d'analyse */}
           <div className="flex items-center justify-between">
             <p className="text-sm text-muted-foreground">
-              {getTotalSelected()} élément(s) sélectionné(s) • Recherche web incluse
+              {getTotalSelected()} {t('élément(s) sélectionné(s)')} • {t('Recherche web incluse')}
             </p>
             <Button
               onClick={runAnalysis}
@@ -1315,6 +1381,19 @@ const CrossDataAnalyzer = ({ patientData }: CrossDataAnalyzerProps) => {
               )}
             </div>
           )}
+
+          {/* Matrice des Relations */}
+          <RelationshipMatrix
+            pathologies={pathologies}
+            symptoms={symptoms}
+            treatments={treatments}
+            medications={medications}
+            selectedPathologies={selectedPathologies}
+            selectedSymptoms={selectedSymptoms}
+            selectedTreatments={selectedTreatments}
+            selectedMedications={selectedMedications}
+            analysisResult={result}
+          />
         </CardContent>
       </Card>
     </div>

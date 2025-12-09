@@ -9,6 +9,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { supabase } from '@/integrations/supabase/client';
+import { useAutoTranslation } from '@/contexts/TranslationContext';
 import { Search, Users, ChevronLeft, ChevronRight, BookUser } from 'lucide-react';
 import PatientDirectory from '@/components/patient/PatientDirectory';
 
@@ -46,6 +47,7 @@ const nationalityFlags: Record<string, string> = {
 };
 
 const Patients = () => {
+  const { t } = useAutoTranslation();
   const [patients, setPatients] = useState<Patient[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
@@ -127,11 +129,11 @@ const Patients = () => {
   const getOutcomeBadge = (outcome: string) => {
     switch (outcome) {
       case 'RESOLVED':
-        return <Badge className="bg-green-500/20 text-green-700 dark:text-green-400 border-green-500/30">Résolu</Badge>;
+        return <Badge className="bg-green-500/20 text-green-700 dark:text-green-400 border-green-500/30">{t('Résolu')}</Badge>;
       case 'ONGOING':
-        return <Badge className="bg-yellow-500/20 text-yellow-700 dark:text-yellow-400 border-yellow-500/30">En cours</Badge>;
+        return <Badge className="bg-yellow-500/20 text-yellow-700 dark:text-yellow-400 border-yellow-500/30">{t('En cours')}</Badge>;
       case 'SIDE_EFFECT':
-        return <Badge className="bg-destructive/20 text-destructive border-destructive/30">Effet secondaire</Badge>;
+        return <Badge className="bg-destructive/20 text-destructive border-destructive/30">{t('Effet secondaire')}</Badge>;
       default:
         return <Badge variant="secondary">{outcome}</Badge>;
     }
@@ -145,10 +147,10 @@ const Patients = () => {
         <div>
           <h1 className="text-3xl font-bold flex items-center gap-2">
             <Users className="h-8 w-8" />
-            Gestion Patients
+            {t('Gestion Patients')}
           </h1>
           <p className="text-muted-foreground mt-1">
-            Gérez votre patientèle et accédez aux données anonymisées
+            {t('Gérez votre patientèle et accédez aux données anonymisées')}
           </p>
         </div>
 
@@ -156,11 +158,11 @@ const Patients = () => {
           <TabsList>
             <TabsTrigger value="directory" className="flex items-center gap-2">
               <BookUser className="h-4 w-4" />
-              Ma Patientèle
+              {t('Ma Patientèle')}
             </TabsTrigger>
             <TabsTrigger value="anonymous" className="flex items-center gap-2">
               <Users className="h-4 w-4" />
-              Données Anonymisées
+              {t('Données Anonymisées')}
             </TabsTrigger>
           </TabsList>
 

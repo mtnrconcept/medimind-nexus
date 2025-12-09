@@ -1,5 +1,6 @@
 import { ReactNode, useState } from 'react';
 import { useNavigate, useLocation, Link } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
 import { useAuth } from '@/hooks/useAuth';
 import { Button } from '@/components/ui/button';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
@@ -32,6 +33,8 @@ import {
   Sparkles,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { ThemeToggle } from '@/components/ThemeToggle';
+import { LanguageSelector } from '@/components/ui/language-selector';
 
 interface AppLayoutProps {
   children: ReactNode;
@@ -40,6 +43,7 @@ interface AppLayoutProps {
 const AppLayout = ({ children }: AppLayoutProps) => {
   const navigate = useNavigate();
   const location = useLocation();
+  const { t } = useTranslation();
   const { user, role, signOut } = useAuth();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
@@ -59,24 +63,25 @@ const AppLayout = ({ children }: AppLayoutProps) => {
 
   const getRoleLabel = () => {
     switch (role) {
-      case 'doctor': return 'Médecin';
-      case 'researcher': return 'Chercheur';
-      case 'admin': return 'Administrateur';
-      default: return 'Utilisateur';
+      case 'doctor': return t('nav.doctor', 'Médecin');
+      case 'researcher': return t('nav.researcher', 'Chercheur');
+      case 'admin': return t('nav.admin', 'Administrateur');
+      default: return t('nav.user', 'Utilisateur');
     }
   };
 
   const navItems = [
-    { path: '/dashboard', label: 'Tableau de bord', icon: LayoutDashboard },
-    { path: '/patients', label: 'Patients', icon: Users },
-    { path: '/pathologies', label: 'Pathologies', icon: BookOpen },
-    { path: '/cross-data-analysis', label: 'Analyse Cross-Data', icon: Sparkles },
-    { path: '/search', label: 'Recherche', icon: Search },
+    { path: '/dashboard', label: t('nav.dashboard'), icon: LayoutDashboard },
+    { path: '/patients', label: t('nav.patients'), icon: Users },
+    { path: '/pathologies', label: t('nav.pathologies'), icon: BookOpen },
+    { path: '/cross-data-analysis', label: t('analysis.crossDataAnalysis', 'Analyse Cross-Data'), icon: Sparkles },
+    { path: '/search', label: t('common.search'), icon: Search },
   ];
 
-  if (role === 'admin') {
-    navItems.push({ path: '/admin', label: 'Admin', icon: Settings });
-  }
+  // TEMPORAIRE: Admin visible pour tous pendant la config initiale
+  // if (role === 'admin') {
+  navItems.push({ path: '/admin', label: t('nav.admin'), icon: Settings });
+  // }
 
   const initials = user?.user_metadata?.first_name?.[0]?.toUpperCase() +
     user?.user_metadata?.last_name?.[0]?.toUpperCase() || 'U';
@@ -135,6 +140,10 @@ const AppLayout = ({ children }: AppLayoutProps) => {
                     ))}
                   </nav>
                   <div className="p-4 border-t border-border">
+                    <div className="flex items-center justify-between mb-4">
+                      <span className="text-sm font-medium">Apparence</span>
+                      <ThemeToggle />
+                    </div>
                     <div className="flex items-center gap-3 mb-4">
                       <Avatar className="h-10 w-10">
                         <AvatarFallback className="bg-primary text-primary-foreground">
@@ -179,42 +188,47 @@ const AppLayout = ({ children }: AppLayoutProps) => {
             </nav>
           </div>
 
-          {/* User Menu */}
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="ghost" className="gap-2 px-2">
-                <Avatar className="h-8 w-8">
-                  <AvatarFallback className="bg-primary text-primary-foreground text-sm">
-                    {initials}
-                  </AvatarFallback>
-                </Avatar>
-                <span className="hidden sm:inline-block text-sm">
-                  {user?.user_metadata?.first_name}
-                </span>
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-56 bg-popover border-border">
-              <DropdownMenuLabel className="font-normal">
-                <div className="flex flex-col space-y-1">
-                  <p className="text-sm font-medium leading-none">
-                    {user?.user_metadata?.first_name} {user?.user_metadata?.last_name}
-                  </p>
-                  <p className="text-xs leading-none text-muted-foreground">
-                    {user?.email}
-                  </p>
-                  <div className="flex items-center gap-1 pt-1 text-xs text-muted-foreground">
-                    {getRoleIcon()}
-                    {getRoleLabel()}
+          <div className="flex items-center gap-2">
+            <LanguageSelector />
+            <ThemeToggle />
+
+            {/* User Menu */}
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="ghost" className="gap-2 px-2">
+                  <Avatar className="h-8 w-8">
+                    <AvatarFallback className="bg-primary text-primary-foreground text-sm">
+                      {initials}
+                    </AvatarFallback>
+                  </Avatar>
+                  <span className="hidden sm:inline-block text-sm">
+                    {user?.user_metadata?.first_name}
+                  </span>
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-56 bg-popover border-border">
+                <DropdownMenuLabel className="font-normal">
+                  <div className="flex flex-col space-y-1">
+                    <p className="text-sm font-medium leading-none">
+                      {user?.user_metadata?.first_name} {user?.user_metadata?.last_name}
+                    </p>
+                    <p className="text-xs leading-none text-muted-foreground">
+                      {user?.email}
+                    </p>
+                    <div className="flex items-center gap-1 pt-1 text-xs text-muted-foreground">
+                      {getRoleIcon()}
+                      {getRoleLabel()}
+                    </div>
                   </div>
-                </div>
-              </DropdownMenuLabel>
-              <DropdownMenuSeparator className="bg-border" />
-              <DropdownMenuItem onClick={handleSignOut} className="text-destructive focus:text-destructive">
-                <LogOut className="mr-2 h-4 w-4" />
-                Se déconnecter
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
+                </DropdownMenuLabel>
+                <DropdownMenuSeparator className="bg-border" />
+                <DropdownMenuItem onClick={handleSignOut} className="text-destructive focus:text-destructive">
+                  <LogOut className="mr-2 h-4 w-4" />
+                  Se déconnecter
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
         </div>
       </header>
 
