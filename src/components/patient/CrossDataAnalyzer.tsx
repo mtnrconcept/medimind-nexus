@@ -1,4 +1,5 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
+import { Virtuoso } from 'react-virtuoso';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -28,11 +29,16 @@ import {
   X,
   CheckSquare,
   Square,
-  Tablets
+  Tablets,
+  Network,
+  LayoutGrid,
+  ChevronDown,
+  ChevronUp,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { VideoLoader } from './VideoLoader';
 import { RelationshipMatrix } from './RelationshipMatrix';
+import { RiskNetworkGraph } from './RiskNetworkGraph';
 
 interface Pathology {
   id: string;
@@ -113,6 +119,7 @@ const CrossDataAnalyzer = ({ patientData }: CrossDataAnalyzerProps) => {
   const [isAutoSelecting, setIsAutoSelecting] = useState(false);
   const [result, setResult] = useState<AnalysisResult | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [viewMode, setViewMode] = useState<'list' | 'network'>('list');
 
   const [selectedPathologies, setSelectedPathologies] = useState<string[]>([]);
   const [selectedSymptoms, setSelectedSymptoms] = useState<string[]>([]);
@@ -135,6 +142,32 @@ const CrossDataAnalyzer = ({ patientData }: CrossDataAnalyzerProps) => {
 
   // Hook de traduction automatique
   const { t } = useAutoTranslation();
+
+  // Debounce search terms
+  const [debouncedSearchPathologies, setDebouncedSearchPathologies] = useState(searchPathologies);
+  const [debouncedSearchSymptoms, setDebouncedSearchSymptoms] = useState(searchSymptoms);
+  const [debouncedSearchTreatments, setDebouncedSearchTreatments] = useState(searchTreatments);
+  const [debouncedSearchMedications, setDebouncedSearchMedications] = useState(searchMedications);
+
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedSearchPathologies(searchPathologies), 300);
+    return () => clearTimeout(timer);
+  }, [searchPathologies]);
+
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedSearchSymptoms(searchSymptoms), 300);
+    return () => clearTimeout(timer);
+  }, [searchSymptoms]);
+
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedSearchTreatments(searchTreatments), 300);
+    return () => clearTimeout(timer);
+  }, [searchTreatments]);
+
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedSearchMedications(searchMedications), 300);
+    return () => clearTimeout(timer);
+  }, [searchMedications]);
 
   // Options de filtres extraites des données
   const pathologyCategories = useMemo(() => {
@@ -181,8 +214,8 @@ const CrossDataAnalyzer = ({ patientData }: CrossDataAnalyzerProps) => {
   // Filtrage des données
   const filteredPathologies = useMemo(() => {
     return pathologies.filter(p => {
-      const matchesSearch = !searchPathologies.trim() ||
-        p.name.toLowerCase().includes(searchPathologies.toLowerCase());
+      const matchesSearch = !debouncedSearchPathologies.trim() ||
+        p.name.toLowerCase().includes(debouncedSearchPathologies.toLowerCase());
       const matchesCategory = filterPathologyCategory === 'all' ||
         p.category === filterPathologyCategory;
       const matchesSpecialty = filterPathologySpecialty === 'all' ||
@@ -191,38 +224,38 @@ const CrossDataAnalyzer = ({ patientData }: CrossDataAnalyzerProps) => {
         p.severity === filterPathologySeverity;
       return matchesSearch && matchesCategory && matchesSpecialty && matchesSeverity;
     });
-  }, [pathologies, searchPathologies, filterPathologyCategory, filterPathologySpecialty, filterPathologySeverity]);
+  }, [pathologies, debouncedSearchPathologies, filterPathologyCategory, filterPathologySpecialty, filterPathologySeverity]);
 
   const filteredSymptoms = useMemo(() => {
     return symptoms.filter(s => {
-      const matchesSearch = !searchSymptoms.trim() ||
-        s.name.toLowerCase().includes(searchSymptoms.toLowerCase());
+      const matchesSearch = !debouncedSearchSymptoms.trim() ||
+        s.name.toLowerCase().includes(debouncedSearchSymptoms.toLowerCase());
       const matchesBodySystem = filterSymptomBodySystem === 'all' ||
         s.body_system === filterSymptomBodySystem;
       return matchesSearch && matchesBodySystem;
     });
-  }, [symptoms, searchSymptoms, filterSymptomBodySystem]);
+  }, [symptoms, debouncedSearchSymptoms, filterSymptomBodySystem]);
 
   const filteredTreatments = useMemo(() => {
     return treatments.filter(t => {
-      const matchesSearch = !searchTreatments.trim() ||
-        t.name.toLowerCase().includes(searchTreatments.toLowerCase());
+      const matchesSearch = !debouncedSearchTreatments.trim() ||
+        t.name.toLowerCase().includes(debouncedSearchTreatments.toLowerCase());
       const matchesType = filterTreatmentType === 'all' ||
         t.type === filterTreatmentType;
       return matchesSearch && matchesType;
     });
-  }, [treatments, searchTreatments, filterTreatmentType]);
+  }, [treatments, debouncedSearchTreatments, filterTreatmentType]);
 
   const filteredMedications = useMemo(() => {
     return medications.filter(m => {
-      const matchesSearch = !searchMedications.trim() ||
-        m.name.toLowerCase().includes(searchMedications.toLowerCase()) ||
-        (m.substance && m.substance.toLowerCase().includes(searchMedications.toLowerCase()));
+      const matchesSearch = !debouncedSearchMedications.trim() ||
+        m.name.toLowerCase().includes(debouncedSearchMedications.toLowerCase()) ||
+        (m.substance && m.substance.toLowerCase().includes(debouncedSearchMedications.toLowerCase()));
       const matchesAtc = filterMedicationAtc === 'all' ||
         (m.atc_code && m.atc_code.startsWith(filterMedicationAtc));
       return matchesSearch && matchesAtc;
     });
-  }, [medications, searchMedications, filterMedicationAtc]);
+  }, [medications, debouncedSearchMedications, filterMedicationAtc]);
 
   useEffect(() => {
     const fetchAllRows = async <T,>(
@@ -607,33 +640,7 @@ const CrossDataAnalyzer = ({ patientData }: CrossDataAnalyzerProps) => {
     }
   };
 
-  const getProbabilityBadge = (probability: string) => {
-    switch (probability) {
-      case 'high':
-        return <Badge className="bg-destructive/20 text-destructive border-destructive/30">Forte</Badge>;
-      case 'medium':
-        return <Badge className="bg-yellow-500/20 text-yellow-700 dark:text-yellow-400 border-yellow-500/30">Moyenne</Badge>;
-      case 'low':
-        return <Badge className="bg-green-500/20 text-green-700 dark:text-green-400 border-green-500/30">Faible</Badge>;
-      default:
-        return <Badge variant="secondary">{probability}</Badge>;
-    }
-  };
 
-  const getTypeIcon = (type: string) => {
-    switch (type) {
-      case 'symptom':
-        return <Activity className="h-4 w-4 text-blue-500" />;
-      case 'pathology':
-        return <Stethoscope className="h-4 w-4 text-purple-500" />;
-      case 'treatment':
-        return <Pill className="h-4 w-4 text-green-500" />;
-      case 'medication':
-        return <Tablets className="h-4 w-4 text-orange-500" />;
-      default:
-        return null;
-    }
-  };
 
   const getTypeLabel = (type: string) => {
     switch (type) {
@@ -708,6 +715,8 @@ const CrossDataAnalyzer = ({ patientData }: CrossDataAnalyzerProps) => {
     setFilterMedicationAtc('all');
   };
 
+
+
   const hasPathologyFilters = searchPathologies || filterPathologyCategory !== 'all' ||
     filterPathologySpecialty !== 'all' || filterPathologySeverity !== 'all';
   const hasSymptomFilters = searchSymptoms || filterSymptomBodySystem !== 'all';
@@ -733,14 +742,39 @@ const CrossDataAnalyzer = ({ patientData }: CrossDataAnalyzerProps) => {
 
       <Card className="h-full border-none shadow-none">
         <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Brain className="h-5 w-5 text-primary" />
-            {t('Analyse IA Cross-Data')}
-          </CardTitle>
-          <CardDescription className="flex items-center gap-2">
-            <Globe className="h-4 w-4" />
-            {t('Analyse les liens de causalité en croisant vos données patients et la littérature médicale')} (PubMed)
-          </CardDescription>
+          <div className="flex items-center justify-between">
+            <div>
+              <CardTitle className="flex items-center gap-2">
+                <Brain className="h-5 w-5 text-primary" />
+                {t('Analyse IA Cross-Data')}
+              </CardTitle>
+              <CardDescription className="flex items-center gap-2 mt-1">
+                <Globe className="h-4 w-4" />
+                {t('Analyse les liens de causalité en croisant vos données patients et la littérature médicale')} (PubMed)
+              </CardDescription>
+            </div>
+            {/* Boutons de mode de vue */}
+            <div className="flex gap-1 p-1 bg-muted rounded-lg">
+              <Button
+                variant={viewMode === 'list' ? 'default' : 'ghost'}
+                size="sm"
+                onClick={() => setViewMode('list')}
+                className="gap-2"
+              >
+                <LayoutGrid className="h-4 w-4" />
+                Liste
+              </Button>
+              <Button
+                variant={viewMode === 'network' ? 'default' : 'ghost'}
+                size="sm"
+                onClick={() => setViewMode('network')}
+                className="gap-2"
+              >
+                <Network className="h-4 w-4" />
+                Graphique
+              </Button>
+            </div>
+          </div>
           <div className="flex gap-2 text-xs text-muted-foreground mt-2 flex-wrap">
             <Badge variant="outline">{pathologies.length} {t('pathologies')}</Badge>
             <Badge variant="outline">{symptoms.length} {t('symptômes')}</Badge>
@@ -749,655 +783,720 @@ const CrossDataAnalyzer = ({ patientData }: CrossDataAnalyzerProps) => {
           </div>
         </CardHeader>
         <CardContent className="space-y-6">
-          {/* Panneaux de sélection */}
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-            {/* Pathologies */}
-            <div className="space-y-2 border rounded-lg p-3">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2 font-medium">
-                  <Stethoscope className="h-4 w-4 text-purple-500" />
-                  Pathologies ({selectedPathologies.length})
-                </div>
-                <span className="text-xs text-muted-foreground">
-                  {filteredPathologies.length}/{pathologies.length}
-                </span>
-              </div>
+          {/* Mode Graphique en Réseau */}
+          {viewMode === 'network' ? (
+            <RiskNetworkGraph
+              externalPathologies={pathologies}
+              externalSymptoms={symptoms}
+              externalTreatments={treatments}
+              externalMedications={medications}
+              selectedPathologyIds={selectedPathologies}
+              selectedSymptomIds={selectedSymptoms}
+              selectedTreatmentIds={selectedTreatments}
+              selectedMedicationIds={selectedMedications}
+              analysisResultFromParent={result}
+            />
+          ) : (
+            <>
+              {/* Panneaux de sélection */}
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                {/* Pathologies */}
+                <div className="space-y-2 border rounded-lg p-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2 font-medium">
+                      <Stethoscope className="h-4 w-4 text-purple-500" />
+                      Pathologies ({selectedPathologies.length})
+                    </div>
+                    <span className="text-xs text-muted-foreground">
+                      {filteredPathologies.length}/{pathologies.length}
+                    </span>
+                  </div>
 
-              {/* Recherche textuelle */}
-              <div className="relative">
-                <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                <Input
-                  placeholder={t('Rechercher...')}
-                  value={searchPathologies}
-                  onChange={(e) => setSearchPathologies(e.target.value)}
-                  className="pl-8 pr-8 h-8 text-sm"
-                />
-                {searchPathologies && (
-                  <button
-                    onClick={() => setSearchPathologies('')}
-                    className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                  >
-                    <X className="h-4 w-4" />
-                  </button>
-                )}
-              </div>
-
-              {/* Filtres avancés */}
-              <div className="space-y-1.5">
-                <Select value={filterPathologyCategory} onValueChange={setFilterPathologyCategory}>
-                  <SelectTrigger className="h-7 text-xs">
-                    <SelectValue placeholder={t('Catégorie')} />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">{t('Toutes catégories')}</SelectItem>
-                    {pathologyCategories.map(cat => (
-                      <SelectItem key={cat} value={cat}>{cat}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-
-                <Select value={filterPathologySpecialty} onValueChange={setFilterPathologySpecialty}>
-                  <SelectTrigger className="h-7 text-xs">
-                    <SelectValue placeholder={t('Spécialité')} />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">{t('Toutes spécialités')}</SelectItem>
-                    {pathologySpecialties.map(spec => (
-                      <SelectItem key={spec} value={spec}>{spec}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-
-                <Select value={filterPathologySeverity} onValueChange={setFilterPathologySeverity}>
-                  <SelectTrigger className="h-7 text-xs">
-                    <SelectValue placeholder={t('Sévérité')} />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">{t('Toutes sévérités')}</SelectItem>
-                    {pathologySeverities.map(sev => (
-                      <SelectItem key={sev} value={sev}>{getSeverityLabel(sev)}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-
-              {/* Actions groupées */}
-              <div className="flex items-center justify-between gap-2">
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="h-7 text-xs"
-                  onClick={() => selectAllFiltered(filteredPathologies, selectedPathologies, setSelectedPathologies)}
-                >
-                  {areAllFilteredSelected(filteredPathologies, selectedPathologies) ? (
-                    <><Square className="h-3 w-3 mr-1" /> Tout désélect.</>
-                  ) : (
-                    <><CheckSquare className="h-3 w-3 mr-1" /> Tout sélect.</>
-                  )}
-                </Button>
-                {hasPathologyFilters && (
-                  <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={resetPathologyFilters}>
-                    <X className="h-3 w-3 mr-1" /> Réinit. filtres
-                  </Button>
-                )}
-              </div>
-
-              <ScrollArea className="h-40 border rounded-md p-2">
-                <div className="space-y-1">
-                  {filteredPathologies.length === 0 ? (
-                    <p className="text-sm text-muted-foreground text-center py-4">Aucun résultat</p>
-                  ) : (
-                    filteredPathologies.map((p) => (
-                      <div key={p.id} className="flex items-center gap-2">
-                        <Checkbox
-                          id={`pathology-${p.id}`}
-                          checked={selectedPathologies.includes(p.id)}
-                          onCheckedChange={() => toggleSelection(p.id, selectedPathologies, setSelectedPathologies)}
-                        />
-                        <label
-                          htmlFor={`pathology-${p.id}`}
-                          className="text-sm cursor-pointer truncate flex-1"
-                          title={p.name}
-                        >
-                          {p.name}
-                        </label>
-                      </div>
-                    ))
-                  )}
-                </div>
-              </ScrollArea>
-            </div>
-
-            {/* Symptômes */}
-            <div className="space-y-2 border rounded-lg p-3">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2 font-medium">
-                  <Activity className="h-4 w-4 text-blue-500" />
-                  {t('Symptômes')} ({selectedSymptoms.length})
-                </div>
-                <span className="text-xs text-muted-foreground">
-                  {filteredSymptoms.length}/{symptoms.length}
-                </span>
-              </div>
-
-              {/* Recherche textuelle */}
-              <div className="relative">
-                <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                <Input
-                  placeholder={t('Rechercher...')}
-                  value={searchSymptoms}
-                  onChange={(e) => setSearchSymptoms(e.target.value)}
-                  className="pl-8 pr-8 h-8 text-sm"
-                />
-                {searchSymptoms && (
-                  <button
-                    onClick={() => setSearchSymptoms('')}
-                    className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                  >
-                    <X className="h-4 w-4" />
-                  </button>
-                )}
-              </div>
-
-              {/* Filtre par système corporel */}
-              <Select value={filterSymptomBodySystem} onValueChange={setFilterSymptomBodySystem}>
-                <SelectTrigger className="h-7 text-xs">
-                  <SelectValue placeholder={t('Système corporel')} />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">{t('Tous systèmes')}</SelectItem>
-                  {symptomBodySystems.map(sys => (
-                    <SelectItem key={sys} value={sys}>{sys}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-
-              {/* Actions groupées */}
-              <div className="flex items-center justify-between gap-2">
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="h-7 text-xs"
-                  onClick={() => selectAllFiltered(filteredSymptoms, selectedSymptoms, setSelectedSymptoms)}
-                >
-                  {areAllFilteredSelected(filteredSymptoms, selectedSymptoms) ? (
-                    <><Square className="h-3 w-3 mr-1" /> {t('Tout désélect.')}</>
-                  ) : (
-                    <><CheckSquare className="h-3 w-3 mr-1" /> {t('Tout sélect.')}</>
-                  )}
-                </Button>
-                {hasSymptomFilters && (
-                  <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={resetSymptomFilters}>
-                    <X className="h-3 w-3 mr-1" /> Réinit. filtres
-                  </Button>
-                )}
-              </div>
-
-              <ScrollArea className="h-40 border rounded-md p-2">
-                <div className="space-y-1">
-                  {filteredSymptoms.length === 0 ? (
-                    <p className="text-sm text-muted-foreground text-center py-4">{t('Aucun résultat')}</p>
-                  ) : (
-                    filteredSymptoms.map((s) => (
-                      <div key={s.id} className="flex items-center gap-2">
-                        <Checkbox
-                          id={`symptom-${s.id}`}
-                          checked={selectedSymptoms.includes(s.id)}
-                          onCheckedChange={() => toggleSelection(s.id, selectedSymptoms, setSelectedSymptoms)}
-                        />
-                        <label
-                          htmlFor={`symptom-${s.id}`}
-                          className="text-sm cursor-pointer truncate flex-1"
-                          title={s.name}
-                        >
-                          {s.name}
-                        </label>
-                      </div>
-                    ))
-                  )}
-                </div>
-              </ScrollArea>
-            </div>
-
-            {/* Traitements */}
-            <div className="space-y-2 border rounded-lg p-3">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2 font-medium">
-                  <Pill className="h-4 w-4 text-green-500" />
-                  {t('Traitements')} ({selectedTreatments.length})
-                </div>
-                <span className="text-xs text-muted-foreground">
-                  {filteredTreatments.length}/{treatments.length}
-                </span>
-              </div>
-
-              {/* Recherche textuelle */}
-              <div className="relative">
-                <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                <Input
-                  placeholder={t('Rechercher...')}
-                  value={searchTreatments}
-                  onChange={(e) => setSearchTreatments(e.target.value)}
-                  className="pl-8 pr-8 h-8 text-sm"
-                />
-                {searchTreatments && (
-                  <button
-                    onClick={() => setSearchTreatments('')}
-                    className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                  >
-                    <X className="h-4 w-4" />
-                  </button>
-                )}
-              </div>
-
-              {/* Filtre par type de traitement */}
-              <Select value={filterTreatmentType} onValueChange={setFilterTreatmentType}>
-                <SelectTrigger className="h-7 text-xs">
-                  <SelectValue placeholder={t('Type de traitement')} />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">{t('Tous types')}</SelectItem>
-                  {treatmentTypes.map(type => (
-                    <SelectItem key={type} value={type}>{getTreatmentTypeLabel(type)}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-
-              {/* Actions groupées */}
-              <div className="flex items-center justify-between gap-2">
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="h-7 text-xs"
-                  onClick={() => selectAllFiltered(filteredTreatments, selectedTreatments, setSelectedTreatments)}
-                >
-                  {areAllFilteredSelected(filteredTreatments, selectedTreatments) ? (
-                    <><Square className="h-3 w-3 mr-1" /> {t('Tout désélect.')}</>
-                  ) : (
-                    <><CheckSquare className="h-3 w-3 mr-1" /> {t('Tout sélect.')}</>
-                  )}
-                </Button>
-                {hasTreatmentFilters && (
-                  <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={resetTreatmentFilters}>
-                    <X className="h-3 w-3 mr-1" /> Réinit. filtres
-                  </Button>
-                )}
-              </div>
-
-              <ScrollArea className="h-40 border rounded-md p-2">
-                <div className="space-y-1">
-                  {filteredTreatments.length === 0 ? (
-                    <p className="text-sm text-muted-foreground text-center py-4">{t('Aucun résultat')}</p>
-                  ) : (
-                    filteredTreatments.map((tr) => (
-                      <div key={tr.id} className="flex items-center gap-2">
-                        <Checkbox
-                          id={`treatment-${tr.id}`}
-                          checked={selectedTreatments.includes(tr.id)}
-                          onCheckedChange={() => toggleSelection(tr.id, selectedTreatments, setSelectedTreatments)}
-                        />
-                        <label
-                          htmlFor={`treatment-${tr.id}`}
-                          className="text-sm cursor-pointer truncate flex-1"
-                          title={tr.name}
-                        >
-                          {tr.name}
-                        </label>
-                      </div>
-                    ))
-                  )}
-                </div>
-              </ScrollArea>
-            </div>
-
-            {/* Médicaments */}
-            <div className="space-y-2 border rounded-lg p-3 border-orange-500/30">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2 font-medium">
-                  <Tablets className="h-4 w-4 text-orange-500" />
-                  {t('Médicaments')} ({selectedMedications.length})
-                </div>
-                <span className="text-xs text-muted-foreground">
-                  {filteredMedications.length}/{medications.length}
-                </span>
-              </div>
-
-              {/* Recherche textuelle */}
-              <div className="relative">
-                <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                <Input
-                  placeholder={t('Nom ou substance...')}
-                  value={searchMedications}
-                  onChange={(e) => setSearchMedications(e.target.value)}
-                  className="pl-8 pr-8 h-8 text-sm"
-                />
-                {searchMedications && (
-                  <button
-                    onClick={() => setSearchMedications('')}
-                    className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                  >
-                    <X className="h-4 w-4" />
-                  </button>
-                )}
-              </div>
-
-              {/* Filtre par groupe ATC */}
-              <Select value={filterMedicationAtc} onValueChange={setFilterMedicationAtc}>
-                <SelectTrigger className="h-7 text-xs">
-                  <SelectValue placeholder={t('Groupe ATC')} />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">{t('Tous groupes ATC')}</SelectItem>
-                  {medicationAtcCodes.map(code => (
-                    <SelectItem key={code} value={code}>{getAtcGroupLabel(code)}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-
-              {/* Actions groupées */}
-              <div className="flex items-center justify-between gap-2">
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="h-7 text-xs"
-                  onClick={() => selectAllFiltered(filteredMedications, selectedMedications, setSelectedMedications)}
-                >
-                  {areAllFilteredSelected(filteredMedications, selectedMedications) ? (
-                    <><Square className="h-3 w-3 mr-1" /> {t('Tout désélect.')}</>
-                  ) : (
-                    <><CheckSquare className="h-3 w-3 mr-1" /> {t('Tout sélect.')}</>
-                  )}
-                </Button>
-                {hasMedicationFilters && (
-                  <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={resetMedicationFilters}>
-                    <X className="h-3 w-3 mr-1" /> Réinit. filtres
-                  </Button>
-                )}
-              </div>
-
-              <ScrollArea className="h-40 border rounded-md p-2">
-                <div className="space-y-1">
-                  {filteredMedications.length === 0 ? (
-                    <p className="text-sm text-muted-foreground text-center py-4">
-                      {medications.length === 0 ? t('Scrapez Compendium.ch pour ajouter des médicaments') : t('Aucun résultat')}
-                    </p>
-                  ) : (
-                    filteredMedications.map((m) => (
-                      <div key={m.id} className="flex items-center gap-2">
-                        <Checkbox
-                          id={`medication-${m.id}`}
-                          checked={selectedMedications.includes(m.id)}
-                          onCheckedChange={() => toggleSelection(m.id, selectedMedications, setSelectedMedications)}
-                        />
-                        <label
-                          htmlFor={`medication-${m.id}`}
-                          className="text-sm cursor-pointer truncate flex-1"
-                          title={`${m.name}${m.substance ? ` (${m.substance})` : ''}`}
-                        >
-                          {m.name}
-                          {m.atc_code && <span className="text-xs text-muted-foreground ml-1">[{m.atc_code}]</span>}
-                        </label>
-                      </div>
-                    ))
-                  )}
-                </div>
-              </ScrollArea>
-            </div>
-          </div>
-
-          {/* Bouton d'analyse */}
-          <div className="flex items-center justify-between">
-            <p className="text-sm text-muted-foreground">
-              {getTotalSelected()} {t('élément(s) sélectionné(s)')} • {t('Recherche web incluse')}
-            </p>
-            <Button
-              onClick={runAnalysis}
-              disabled={analyzing || getTotalSelected() < 2}
-            >
-              {analyzing ? (
-                <>
-                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                  Analyse en cours...
-                </>
-              ) : (
-                <>
-                  <Brain className="h-4 w-4 mr-2" />
-                  Analyser les liens
-                </>
-              )}
-            </Button>
-          </div>
-
-          {/* Erreur */}
-          {error && (
-            <div className="flex items-center gap-2 p-4 bg-destructive/10 border border-destructive/30 rounded-lg">
-              <AlertTriangle className="h-5 w-5 text-destructive" />
-              <p className="text-sm text-destructive">{error}</p>
-            </div>
-          )}
-
-          {/* Résultats */}
-          {result && (
-            <div className="space-y-6 pt-4 border-t">
-              {/* Résumé */}
-              <div className="p-4 bg-muted/50 rounded-lg">
-                <h4 className="font-medium mb-2">Résumé de l'analyse</h4>
-                <p className="text-sm text-muted-foreground">{result.summary}</p>
-              </div>
-
-              {/* Liens de causalité */}
-              {result.causalLinks && result.causalLinks.length > 0 && (
-                <div className="space-y-3">
-                  <h4 className="font-medium flex items-center gap-2">
-                    <Link2 className="h-4 w-4" />
-                    Liens de causalité détectés
-                  </h4>
-                  <div className="space-y-3">
-                    {result.causalLinks.map((link, index) => (
-                      <div
-                        key={index}
-                        className={`p-4 border rounded-lg bg-card space-y-3 ${link.isAppropriate === true ? 'border-green-500/50 bg-green-500/5' :
-                          link.isAppropriate === false ? 'border-destructive/50 bg-destructive/5' :
-                            link.effectType === 'both' ? 'border-orange-500/50 bg-orange-500/5' :
-                              link.effectType === 'therapeutic' ? 'border-green-500/30' :
-                                link.effectType === 'adverse' ? 'border-destructive/30' : ''
-                          }`}
+                  {/* Recherche textuelle */}
+                  <div className="relative">
+                    <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                    <Input
+                      placeholder={t('Rechercher...')}
+                      value={searchPathologies}
+                      onChange={(e) => setSearchPathologies(e.target.value)}
+                      className="pl-8 pr-8 h-8 text-sm"
+                    />
+                    {searchPathologies && (
+                      <button
+                        onClick={() => setSearchPathologies('')}
+                        className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
                       >
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <div className="flex items-center gap-1.5 px-2 py-1 bg-muted rounded">
-                            {getTypeIcon(link.fromType)}
-                            <span className="text-sm font-medium">{link.from}</span>
-                            <span className="text-xs text-muted-foreground">({getTypeLabel(link.fromType)})</span>
-                          </div>
-                          <ArrowRight className="h-4 w-4 text-muted-foreground" />
-                          <div className="flex items-center gap-1.5 px-2 py-1 bg-muted rounded">
-                            {getTypeIcon(link.toType)}
-                            <span className="text-sm font-medium">{link.to}</span>
-                            <span className="text-xs text-muted-foreground">({getTypeLabel(link.toType)})</span>
-                          </div>
-                          {getProbabilityBadge(link.probability)}
-                          {/* Indicateur d'adéquation thérapeutique */}
-                          {link.isAppropriate !== undefined && (
-                            link.isAppropriate ? (
-                              <Badge className="bg-green-500/20 text-green-700 dark:text-green-400 border-green-500/30 flex items-center gap-1">
-                                <CheckCircle2 className="h-3 w-3" />
-                                Adapté
-                              </Badge>
-                            ) : (
-                              <Badge className="bg-destructive/20 text-destructive border-destructive/30 flex items-center gap-1">
-                                <XCircle className="h-3 w-3" />
-                                Non adapté
-                              </Badge>
-                            )
-                          )}
-                          {/* Indicateur d'effet: thérapeutique, indésirable ou les deux */}
-                          {link.effectType === 'therapeutic' && (
-                            <Badge className="bg-green-500/20 text-green-700 dark:text-green-400 border-green-500/30 flex items-center gap-1">
-                              <CheckCircle2 className="h-3 w-3" />
-                              Traite
-                            </Badge>
-                          )}
-                          {link.effectType === 'adverse' && (
-                            <Badge className="bg-destructive/20 text-destructive border-destructive/30 flex items-center gap-1">
-                              <AlertTriangle className="h-3 w-3" />
-                              Peut causer
-                            </Badge>
-                          )}
-                          {link.effectType === 'both' && (
-                            <Badge className="bg-orange-500/20 text-orange-700 dark:text-orange-400 border-orange-500/30 flex items-center gap-1">
-                              <AlertTriangle className="h-3 w-3" />
-                              Double effet
-                            </Badge>
-                          )}
-                        </div>
+                        <X className="h-4 w-4" />
+                      </button>
+                    )}
+                  </div>
 
-                        <p className="text-sm font-medium text-primary">{link.relationship}</p>
+                  {/* Filtres avancés */}
+                  <div className="space-y-1.5">
+                    <Select value={filterPathologyCategory} onValueChange={setFilterPathologyCategory}>
+                      <SelectTrigger className="h-7 text-xs">
+                        <SelectValue placeholder={t('Catégorie')} />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">{t('Toutes catégories')}</SelectItem>
+                        {pathologyCategories.map(cat => (
+                          <SelectItem key={cat} value={cat}>{cat}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
 
-                        {/* Affichage détaillé pour les effets thérapeutiques et indésirables */}
-                        {(link.effectType === 'therapeutic' || link.effectType === 'both') && link.therapeuticDetails && (
-                          <div className="p-3 bg-green-500/10 border border-green-500/20 rounded-md">
-                            <div className="flex items-center gap-2 text-sm font-medium text-green-700 dark:text-green-400 mb-1">
-                              <CheckCircle2 className="h-4 w-4" />
-                              Effet thérapeutique
-                            </div>
-                            <p className="text-sm text-muted-foreground">{link.therapeuticDetails}</p>
+                    <Select value={filterPathologySpecialty} onValueChange={setFilterPathologySpecialty}>
+                      <SelectTrigger className="h-7 text-xs">
+                        <SelectValue placeholder={t('Spécialité')} />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">{t('Toutes spécialités')}</SelectItem>
+                        {pathologySpecialties.map(spec => (
+                          <SelectItem key={spec} value={spec}>{spec}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+
+                    <Select value={filterPathologySeverity} onValueChange={setFilterPathologySeverity}>
+                      <SelectTrigger className="h-7 text-xs">
+                        <SelectValue placeholder={t('Sévérité')} />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">{t('Toutes sévérités')}</SelectItem>
+                        {pathologySeverities.map(sev => (
+                          <SelectItem key={sev} value={sev}>{getSeverityLabel(sev)}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  {/* Actions groupées */}
+                  <div className="flex items-center justify-between gap-2">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-7 text-xs"
+                      onClick={() => selectAllFiltered(filteredPathologies, selectedPathologies, setSelectedPathologies)}
+                    >
+                      {areAllFilteredSelected(filteredPathologies, selectedPathologies) ? (
+                        <><Square className="h-3 w-3 mr-1" /> Tout désélect.</>
+                      ) : (
+                        <><CheckSquare className="h-3 w-3 mr-1" /> Tout sélect.</>
+                      )}
+                    </Button>
+                    {hasPathologyFilters && (
+                      <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={resetPathologyFilters}>
+                        <X className="h-3 w-3 mr-1" /> Réinit. filtres
+                      </Button>
+                    )}
+                  </div>
+
+                  <div className="h-40 border rounded-md">
+                    {filteredPathologies.length === 0 ? (
+                      <p className="text-sm text-muted-foreground text-center py-4">Aucun résultat</p>
+                    ) : (
+                      <Virtuoso
+                        style={{ height: '100%' }}
+                        data={filteredPathologies}
+                        itemContent={(_, p) => (
+                          <div className="flex items-center gap-2 p-2 hover:bg-muted/50 rounded-sm">
+                            <Checkbox
+                              id={`pathology-${p.id}`}
+                              checked={selectedPathologies.includes(p.id)}
+                              onCheckedChange={() => toggleSelection(p.id, selectedPathologies, setSelectedPathologies)}
+                            />
+                            <label
+                              htmlFor={`pathology-${p.id}`}
+                              className="text-sm cursor-pointer truncate flex-1"
+                              title={p.name}
+                            >
+                              {p.name}
+                            </label>
                           </div>
                         )}
-
-                        {(link.effectType === 'adverse' || link.effectType === 'both') && link.adverseDetails && (
-                          <div className="p-3 bg-destructive/10 border border-destructive/20 rounded-md">
-                            <div className="flex items-center gap-2 text-sm font-medium text-destructive mb-1">
-                              <AlertTriangle className="h-4 w-4" />
-                              Effet indésirable potentiel
-                            </div>
-                            <p className="text-sm text-muted-foreground">{link.adverseDetails}</p>
-                          </div>
-                        )}
-
-                        {/* Evidence générale (si pas d'effectType spécifique) */}
-                        {!link.effectType && link.evidence && (
-                          <p className="text-sm text-muted-foreground">{link.evidence}</p>
-                        )}
-
-                        {/* Evidence pour les liens avec effectType (contexte additionnel) */}
-                        {link.effectType && link.evidence && !link.therapeuticDetails && !link.adverseDetails && (
-                          <p className="text-sm text-muted-foreground">{link.evidence}</p>
-                        )}
-
-                        <div className="flex items-center gap-4 text-xs text-muted-foreground">
-                          {link.patientCount > 0 && (
-                            <span>Observé chez {link.patientCount} patient(s)</span>
-                          )}
-                          {link.webSources && link.webSources.length > 0 && (
-                            <span className="flex items-center gap-1">
-                              <Globe className="h-3 w-3" />
-                              {link.webSources.length} source(s) web
-                            </span>
-                          )}
-                        </div>
-                      </div>
-                    ))}
+                      />
+                    )}
                   </div>
                 </div>
-              )}
 
-              {/* Recherche web */}
-              {result.webResearch && result.webResearch.length > 0 && (
-                <div className="space-y-3">
-                  <h4 className="font-medium flex items-center gap-2 text-blue-600 dark:text-blue-400">
-                    <BookOpen className="h-4 w-4" />
-                    Recherche scientifique (PubMed)
-                  </h4>
-                  <div className="space-y-3">
-                    {result.webResearch.map((research, index) => (
-                      <div key={index} className="p-3 border rounded-lg bg-muted/30">
-                        <p className="text-sm font-medium mb-2">Recherche : "{research.query}"</p>
-                        {research.findings && research.findings.length > 0 && (
-                          <ul className="space-y-1 mb-2">
-                            {research.findings.map((finding, fIndex) => (
-                              <li key={fIndex} className="text-sm text-muted-foreground flex items-start gap-2">
-                                <CheckCircle2 className="h-4 w-4 text-green-500 mt-0.5 flex-shrink-0" />
-                                {finding}
-                              </li>
-                            ))}
-                          </ul>
-                        )}
-                        {research.sources && research.sources.length > 0 && (
-                          <div className="flex flex-wrap gap-2">
-                            {research.sources.map((source, sIndex) => (
-                              <a
-                                key={sIndex}
-                                href={source.url}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="inline-flex items-center gap-1 text-xs text-primary hover:underline"
-                              >
-                                <ExternalLink className="h-3 w-3" />
-                                {source.title.slice(0, 50)}...
-                              </a>
-                            ))}
+                {/* Symptômes */}
+                <div className="space-y-2 border rounded-lg p-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2 font-medium">
+                      <Activity className="h-4 w-4 text-blue-500" />
+                      {t('Symptômes')} ({selectedSymptoms.length})
+                    </div>
+                    <span className="text-xs text-muted-foreground">
+                      {filteredSymptoms.length}/{symptoms.length}
+                    </span>
+                  </div>
+
+                  {/* Recherche textuelle */}
+                  <div className="relative">
+                    <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                    <Input
+                      placeholder={t('Rechercher...')}
+                      value={searchSymptoms}
+                      onChange={(e) => setSearchSymptoms(e.target.value)}
+                      className="pl-8 pr-8 h-8 text-sm"
+                    />
+                    {searchSymptoms && (
+                      <button
+                        onClick={() => setSearchSymptoms('')}
+                        className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                      >
+                        <X className="h-4 w-4" />
+                      </button>
+                    )}
+                  </div>
+
+                  {/* Filtre par système corporel */}
+                  <Select value={filterSymptomBodySystem} onValueChange={setFilterSymptomBodySystem}>
+                    <SelectTrigger className="h-7 text-xs">
+                      <SelectValue placeholder={t('Système corporel')} />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">{t('Tous systèmes')}</SelectItem>
+                      {symptomBodySystems.map(sys => (
+                        <SelectItem key={sys} value={sys}>{sys}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+
+                  {/* Actions groupées */}
+                  <div className="flex items-center justify-between gap-2">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-7 text-xs"
+                      onClick={() => selectAllFiltered(filteredSymptoms, selectedSymptoms, setSelectedSymptoms)}
+                    >
+                      {areAllFilteredSelected(filteredSymptoms, selectedSymptoms) ? (
+                        <><Square className="h-3 w-3 mr-1" /> {t('Tout désélect.')}</>
+                      ) : (
+                        <><CheckSquare className="h-3 w-3 mr-1" /> {t('Tout sélect.')}</>
+                      )}
+                    </Button>
+                    {hasSymptomFilters && (
+                      <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={resetSymptomFilters}>
+                        <X className="h-3 w-3 mr-1" /> Réinit. filtres
+                      </Button>
+                    )}
+                  </div>
+
+                  <div className="h-40 border rounded-md">
+                    {filteredSymptoms.length === 0 ? (
+                      <p className="text-sm text-muted-foreground text-center py-4">{t('Aucun résultat')}</p>
+                    ) : (
+                      <Virtuoso
+                        style={{ height: '100%' }}
+                        data={filteredSymptoms}
+                        itemContent={(_, s) => (
+                          <div className="flex items-center gap-2 p-2 hover:bg-muted/50 rounded-sm">
+                            <Checkbox
+                              id={`symptom-${s.id}`}
+                              checked={selectedSymptoms.includes(s.id)}
+                              onCheckedChange={() => toggleSelection(s.id, selectedSymptoms, setSelectedSymptoms)}
+                            />
+                            <label
+                              htmlFor={`symptom-${s.id}`}
+                              className="text-sm cursor-pointer truncate flex-1"
+                              title={s.name}
+                            >
+                              {s.name}
+                            </label>
                           </div>
                         )}
-                      </div>
-                    ))}
+                      />
+                    )}
                   </div>
                 </div>
-              )}
 
-              {/* Avertissements */}
-              {result.warnings && result.warnings.length > 0 && (
-                <div className="space-y-2">
-                  <h4 className="font-medium flex items-center gap-2 text-yellow-600 dark:text-yellow-400">
-                    <AlertTriangle className="h-4 w-4" />
-                    Avertissements
-                  </h4>
-                  <ul className="space-y-1">
-                    {result.warnings.map((warning, index) => (
-                      <li key={index} className="text-sm text-muted-foreground flex items-start gap-2">
-                        <XCircle className="h-4 w-4 text-yellow-500 mt-0.5 flex-shrink-0" />
-                        {warning}
-                      </li>
-                    ))}
-                  </ul>
+                {/* Traitements */}
+                <div className="space-y-2 border rounded-lg p-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2 font-medium">
+                      <Pill className="h-4 w-4 text-green-500" />
+                      {t('Traitements')} ({selectedTreatments.length})
+                    </div>
+                    <span className="text-xs text-muted-foreground">
+                      {filteredTreatments.length}/{treatments.length}
+                    </span>
+                  </div>
+
+                  {/* Recherche textuelle */}
+                  <div className="relative">
+                    <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                    <Input
+                      placeholder={t('Rechercher...')}
+                      value={searchTreatments}
+                      onChange={(e) => setSearchTreatments(e.target.value)}
+                      className="pl-8 pr-8 h-8 text-sm"
+                    />
+                    {searchTreatments && (
+                      <button
+                        onClick={() => setSearchTreatments('')}
+                        className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                      >
+                        <X className="h-4 w-4" />
+                      </button>
+                    )}
+                  </div>
+
+                  {/* Filtre par type de traitement */}
+                  <Select value={filterTreatmentType} onValueChange={setFilterTreatmentType}>
+                    <SelectTrigger className="h-7 text-xs">
+                      <SelectValue placeholder={t('Type de traitement')} />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">{t('Tous types')}</SelectItem>
+                      {treatmentTypes.map(type => (
+                        <SelectItem key={type} value={type}>{getTreatmentTypeLabel(type)}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+
+                  {/* Actions groupées */}
+                  <div className="flex items-center justify-between gap-2">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-7 text-xs"
+                      onClick={() => selectAllFiltered(filteredTreatments, selectedTreatments, setSelectedTreatments)}
+                    >
+                      {areAllFilteredSelected(filteredTreatments, selectedTreatments) ? (
+                        <><Square className="h-3 w-3 mr-1" /> {t('Tout désélect.')}</>
+                      ) : (
+                        <><CheckSquare className="h-3 w-3 mr-1" /> {t('Tout sélect.')}</>
+                      )}
+                    </Button>
+                    {hasTreatmentFilters && (
+                      <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={resetTreatmentFilters}>
+                        <X className="h-3 w-3 mr-1" /> Réinit. filtres
+                      </Button>
+                    )}
+                  </div>
+
+                  <div className="h-40 border rounded-md">
+                    {filteredTreatments.length === 0 ? (
+                      <p className="text-sm text-muted-foreground text-center py-4">{t('Aucun résultat')}</p>
+                    ) : (
+                      <Virtuoso
+                        style={{ height: '100%' }}
+                        data={filteredTreatments}
+                        itemContent={(_, tr) => (
+                          <div className="flex items-center gap-2 p-2 hover:bg-muted/50 rounded-sm">
+                            <Checkbox
+                              id={`treatment-${tr.id}`}
+                              checked={selectedTreatments.includes(tr.id)}
+                              onCheckedChange={() => toggleSelection(tr.id, selectedTreatments, setSelectedTreatments)}
+                            />
+                            <label
+                              htmlFor={`treatment-${tr.id}`}
+                              className="text-sm cursor-pointer truncate flex-1"
+                              title={tr.name}
+                            >
+                              {tr.name}
+                            </label>
+                          </div>
+                        )}
+                      />
+                    )}
+                  </div>
+                </div>
+
+                {/* Médicaments */}
+                <div className="space-y-2 border rounded-lg p-3 border-orange-500/30">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2 font-medium">
+                      <Tablets className="h-4 w-4 text-orange-500" />
+                      {t('Médicaments')} ({selectedMedications.length})
+                    </div>
+                    <span className="text-xs text-muted-foreground">
+                      {filteredMedications.length}/{medications.length}
+                    </span>
+                  </div>
+
+                  {/* Recherche textuelle */}
+                  <div className="relative">
+                    <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                    <Input
+                      placeholder={t('Nom ou substance...')}
+                      value={searchMedications}
+                      onChange={(e) => setSearchMedications(e.target.value)}
+                      className="pl-8 pr-8 h-8 text-sm"
+                    />
+                    {searchMedications && (
+                      <button
+                        onClick={() => setSearchMedications('')}
+                        className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                      >
+                        <X className="h-4 w-4" />
+                      </button>
+                    )}
+                  </div>
+
+                  {/* Filtre par groupe ATC */}
+                  <Select value={filterMedicationAtc} onValueChange={setFilterMedicationAtc}>
+                    <SelectTrigger className="h-7 text-xs">
+                      <SelectValue placeholder={t('Groupe ATC')} />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">{t('Tous groupes ATC')}</SelectItem>
+                      {medicationAtcCodes.map(code => (
+                        <SelectItem key={code} value={code}>{getAtcGroupLabel(code)}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+
+                  {/* Actions groupées */}
+                  <div className="flex items-center justify-between gap-2">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-7 text-xs"
+                      onClick={() => selectAllFiltered(filteredMedications, selectedMedications, setSelectedMedications)}
+                    >
+                      {areAllFilteredSelected(filteredMedications, selectedMedications) ? (
+                        <><Square className="h-3 w-3 mr-1" /> {t('Tout désélect.')}</>
+                      ) : (
+                        <><CheckSquare className="h-3 w-3 mr-1" /> {t('Tout sélect.')}</>
+                      )}
+                    </Button>
+                    {hasMedicationFilters && (
+                      <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={resetMedicationFilters}>
+                        <X className="h-3 w-3 mr-1" /> Réinit. filtres
+                      </Button>
+                    )}
+                  </div>
+
+                  <div className="h-40 border rounded-md">
+                    {filteredMedications.length === 0 ? (
+                      <p className="text-sm text-muted-foreground text-center py-4">
+                        {medications.length === 0 ? t('Scrapez Compendium.ch pour ajouter des médicaments') : t('Aucun résultat')}
+                      </p>
+                    ) : (
+                      <Virtuoso
+                        style={{ height: '100%' }}
+                        data={filteredMedications}
+                        itemContent={(_, m) => (
+                          <div className="flex items-center gap-2 p-2 hover:bg-muted/50 rounded-sm">
+                            <Checkbox
+                              id={`medication-${m.id}`}
+                              checked={selectedMedications.includes(m.id)}
+                              onCheckedChange={() => toggleSelection(m.id, selectedMedications, setSelectedMedications)}
+                            />
+                            <label
+                              htmlFor={`medication-${m.id}`}
+                              className="text-sm cursor-pointer truncate flex-1"
+                              title={`${m.name}${m.substance ? ` (${m.substance})` : ''}`}
+                            >
+                              {m.name}
+                              {m.atc_code && <span className="text-xs text-muted-foreground ml-1">[{m.atc_code}]</span>}
+                            </label>
+                          </div>
+                        )}
+                      />
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {/* Bouton d'analyse */}
+              <div className="flex items-center justify-between">
+                <p className="text-sm text-muted-foreground">
+                  {getTotalSelected()} {t('élément(s) sélectionné(s)')} • {t('Recherche web incluse')}
+                </p>
+                <Button
+                  onClick={runAnalysis}
+                  disabled={analyzing || getTotalSelected() < 2}
+                >
+                  {analyzing ? (
+                    <>
+                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                      Analyse en cours...
+                    </>
+                  ) : (
+                    <>
+                      <Brain className="h-4 w-4 mr-2" />
+                      Analyser les liens
+                    </>
+                  )}
+                </Button>
+              </div>
+
+              {/* Erreur */}
+              {error && (
+                <div className="flex items-center gap-2 p-4 bg-destructive/10 border border-destructive/30 rounded-lg">
+                  <AlertTriangle className="h-5 w-5 text-destructive" />
+                  <p className="text-sm text-destructive">{error}</p>
                 </div>
               )}
 
-              {/* Recommandations */}
-              {result.recommendations && result.recommendations.length > 0 && (
-                <div className="space-y-2">
-                  <h4 className="font-medium flex items-center gap-2 text-green-600 dark:text-green-400">
-                    <CheckCircle2 className="h-4 w-4" />
-                    Recommandations
-                  </h4>
-                  <ul className="space-y-1">
-                    {result.recommendations.map((rec, index) => (
-                      <li key={index} className="text-sm text-muted-foreground flex items-start gap-2">
-                        <HelpCircle className="h-4 w-4 text-primary mt-0.5 flex-shrink-0" />
-                        {rec}
-                      </li>
-                    ))}
-                  </ul>
+              {/* Résultats */}
+              {result && (
+                <div className="space-y-6 pt-4 border-t">
+                  {/* Résumé */}
+                  <div className="p-4 bg-muted/50 rounded-lg">
+                    <h4 className="font-medium mb-2">Résumé de l'analyse</h4>
+                    <p className="text-sm text-muted-foreground">{result.summary}</p>
+                  </div>
+
+                  {/* Liens de causalité */}
+                  {result.causalLinks && result.causalLinks.length > 0 && (
+                    <div className="space-y-3">
+                      <h4 className="font-medium flex items-center gap-2">
+                        <Link2 className="h-4 w-4" />
+                        Liens de causalité détectés
+                      </h4>
+                      <div className="space-y-3">
+                        {result.causalLinks.map((link, index) => (
+                          <CausalLinkCard key={index} link={link} />
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Recherche web */}
+                  {result.webResearch && result.webResearch.length > 0 && (
+                    <div className="space-y-3">
+                      <h4 className="font-medium flex items-center gap-2 text-blue-600 dark:text-blue-400">
+                        <BookOpen className="h-4 w-4" />
+                        Recherche scientifique (PubMed)
+                      </h4>
+                      <div className="space-y-3">
+                        {result.webResearch.map((research, index) => (
+                          <div key={index} className="p-3 border rounded-lg bg-muted/30">
+                            <p className="text-sm font-medium mb-2">Recherche : "{research.query}"</p>
+                            {research.findings && research.findings.length > 0 && (
+                              <ul className="space-y-1 mb-2">
+                                {research.findings.map((finding, fIndex) => (
+                                  <li key={fIndex} className="text-sm text-muted-foreground flex items-start gap-2">
+                                    <CheckCircle2 className="h-4 w-4 text-green-500 mt-0.5 flex-shrink-0" />
+                                    {finding}
+                                  </li>
+                                ))}
+                              </ul>
+                            )}
+                            {research.sources && research.sources.length > 0 && (
+                              <div className="flex flex-wrap gap-2">
+                                {research.sources.map((source, sIndex) => (
+                                  <a
+                                    key={sIndex}
+                                    href={source.url}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="inline-flex items-center gap-1 text-xs text-primary hover:underline"
+                                  >
+                                    <ExternalLink className="h-3 w-3" />
+                                    {source.title.slice(0, 50)}...
+                                  </a>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Avertissements */}
+                  {result.warnings && result.warnings.length > 0 && (
+                    <div className="space-y-2">
+                      <h4 className="font-medium flex items-center gap-2 text-yellow-600 dark:text-yellow-400">
+                        <AlertTriangle className="h-4 w-4" />
+                        Avertissements
+                      </h4>
+                      <ul className="space-y-1">
+                        {result.warnings.map((warning, index) => (
+                          <li key={index} className="text-sm text-muted-foreground flex items-start gap-2">
+                            <XCircle className="h-4 w-4 text-yellow-500 mt-0.5 flex-shrink-0" />
+                            {warning}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+
+                  {/* Recommandations */}
+                  {result.recommendations && result.recommendations.length > 0 && (
+                    <div className="space-y-2">
+                      <h4 className="font-medium flex items-center gap-2 text-green-600 dark:text-green-400">
+                        <CheckCircle2 className="h-4 w-4" />
+                        Recommandations
+                      </h4>
+                      <ul className="space-y-1">
+                        {result.recommendations.map((rec, index) => (
+                          <li key={index} className="text-sm text-muted-foreground flex items-start gap-2">
+                            <HelpCircle className="h-4 w-4 text-primary mt-0.5 flex-shrink-0" />
+                            {rec}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
                 </div>
               )}
-            </div>
+
+              {/* Matrice des Relations */}
+              <RelationshipMatrix
+                pathologies={pathologies}
+                symptoms={symptoms}
+                treatments={treatments}
+                medications={medications}
+                selectedPathologies={selectedPathologies}
+                selectedSymptoms={selectedSymptoms}
+                selectedTreatments={selectedTreatments}
+                selectedMedications={selectedMedications}
+                analysisResult={result}
+              />
+            </>
           )}
-
-          {/* Matrice des Relations */}
-          <RelationshipMatrix
-            pathologies={pathologies}
-            symptoms={symptoms}
-            treatments={treatments}
-            medications={medications}
-            selectedPathologies={selectedPathologies}
-            selectedSymptoms={selectedSymptoms}
-            selectedTreatments={selectedTreatments}
-            selectedMedications={selectedMedications}
-            analysisResult={result}
-          />
         </CardContent>
       </Card>
     </div>
   );
 };
+
+const getProbabilityBadge = (probability: string) => {
+  switch (probability) {
+    case 'high':
+      return <Badge className="bg-destructive/20 text-destructive border-destructive/30">Forte</Badge>;
+    case 'medium':
+      return <Badge className="bg-yellow-500/20 text-yellow-700 dark:text-yellow-400 border-yellow-500/30">Moyenne</Badge>;
+    case 'low':
+      return <Badge className="bg-green-500/20 text-green-700 dark:text-green-400 border-green-500/30">Faible</Badge>;
+    default:
+      return <Badge variant="secondary">{probability}</Badge>;
+  }
+};
+
+const getTypeIcon = (type: string) => {
+  switch (type) {
+    case 'symptom':
+      return <Activity className="h-4 w-4 text-blue-500" />;
+    case 'pathology':
+      return <Stethoscope className="h-4 w-4 text-purple-500" />;
+    case 'treatment':
+      return <Pill className="h-4 w-4 text-green-500" />;
+    case 'medication':
+      return <Tablets className="h-4 w-4 text-orange-500" />;
+    default:
+      return null;
+  }
+};
+
+// Composant Carte rétractable pour un lien de causalité
+function CausalLinkCard({ link }: { link: CausalLink }) {
+  const [isExpanded, setIsExpanded] = useState(false);
+
+  return (
+    <div
+      className={`border rounded-lg bg-card transition-all ${link.isAppropriate === true ? 'border-green-500/50 bg-green-500/5' :
+        link.isAppropriate === false ? 'border-destructive/50 bg-destructive/5' :
+          link.effectType === 'both' ? 'border-orange-500/50 bg-orange-500/5' :
+            link.effectType === 'therapeutic' ? 'border-green-500/30' :
+              link.effectType === 'adverse' ? 'border-destructive/30' : ''
+        }`}
+    >
+      {/* En-tête cliquable */}
+      <div
+        onClick={() => setIsExpanded(!isExpanded)}
+        className="p-4 flex items-center justify-between cursor-pointer hover:bg-black/5 dark:hover:bg-white/5 rounded-t-lg transition-colors"
+      >
+        <div className="flex items-center gap-2 flex-wrap flex-1 mr-2">
+          <div className="flex items-center gap-1.5 px-2 py-1 bg-muted rounded">
+            {getTypeIcon(link.fromType)}
+            <span className="text-sm font-medium">{link.from}</span>
+          </div>
+          <ArrowRight className="h-4 w-4 text-muted-foreground" />
+          <div className="flex items-center gap-1.5 px-2 py-1 bg-muted rounded">
+            {getTypeIcon(link.toType)}
+            <span className="text-sm font-medium">{link.to}</span>
+          </div>
+
+          {getProbabilityBadge(link.probability)}
+
+          {/* Badges résumés */}
+          {link.isAppropriate !== undefined && (
+            link.isAppropriate ? (
+              <Badge className="bg-green-500/20 text-green-700 dark:text-green-400 border-green-500/30 flex items-center gap-1 h-6">
+                <CheckCircle2 className="h-3 w-3" />
+                Adapté
+              </Badge>
+            ) : (
+              <Badge className="bg-destructive/20 text-destructive border-destructive/30 flex items-center gap-1 h-6">
+                <XCircle className="h-3 w-3" />
+                Non adapté
+              </Badge>
+            )
+          )}
+
+          {link.effectType === 'therapeutic' && (
+            <Badge className="bg-green-500/20 text-green-700 dark:text-green-400 border-green-500/30 flex items-center gap-1 h-6">Traite</Badge>
+          )}
+          {link.effectType === 'adverse' && (
+            <Badge className="bg-destructive/20 text-destructive border-destructive/30 flex items-center gap-1 h-6">Risque</Badge>
+          )}
+        </div>
+
+        <Button variant="ghost" size="sm" className="h-8 w-8 p-0 shrink-0">
+          {isExpanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+        </Button>
+      </div>
+
+      {/* Détails dépliables */}
+      {isExpanded && (
+        <div className="px-4 pb-4 pt-0 space-y-3 animate-in fade-in slide-in-from-top-1 duration-200">
+          <div className="h-px bg-border/50 mb-3" />
+
+          <p className="text-sm font-medium text-primary">{link.relationship}</p>
+
+          {(link.effectType === 'therapeutic' || link.effectType === 'both') && link.therapeuticDetails && (
+            <div className="p-3 bg-green-500/10 border border-green-500/20 rounded-md">
+              <div className="flex items-center gap-2 text-sm font-medium text-green-700 dark:text-green-400 mb-1">
+                <CheckCircle2 className="h-4 w-4" />
+                Effet thérapeutique
+              </div>
+              <p className="text-sm text-muted-foreground">{link.therapeuticDetails}</p>
+            </div>
+          )}
+
+          {(link.effectType === 'adverse' || link.effectType === 'both') && link.adverseDetails && (
+            <div className="p-3 bg-destructive/10 border border-destructive/20 rounded-md">
+              <div className="flex items-center gap-2 text-sm font-medium text-destructive mb-1">
+                <AlertTriangle className="h-4 w-4" />
+                Effet indésirable potentiel
+              </div>
+              <p className="text-sm text-muted-foreground">{link.adverseDetails}</p>
+            </div>
+          )}
+
+          {!link.effectType && link.evidence && (
+            <p className="text-sm text-muted-foreground italic border-l-2 pl-3 border-muted">{link.evidence}</p>
+          )}
+
+          {link.effectType && link.evidence && !link.therapeuticDetails && !link.adverseDetails && (
+            <p className="text-sm text-muted-foreground italic border-l-2 pl-3 border-muted">{link.evidence}</p>
+          )}
+
+          <div className="flex items-center gap-4 text-xs text-muted-foreground pt-2">
+            {link.patientCount > 0 && (
+              <span>Observé chez {link.patientCount} patient(s)</span>
+            )}
+            {link.webSources && link.webSources.length > 0 && (
+              <span className="flex items-center gap-1">
+                <Globe className="h-3 w-3" />
+                {link.webSources.length} source(s) web
+              </span>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+
 
 export default CrossDataAnalyzer;

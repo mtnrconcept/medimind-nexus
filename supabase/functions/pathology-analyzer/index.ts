@@ -47,9 +47,21 @@ serve(async (req) => {
 
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
     const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
-    const supabase = createClient(supabaseUrl, supabaseKey);
 
-    // Fetch all related data in parallel
+    // Fix: Force Service Role to bypass RLS, same as in embed-data
+    const supabase = createClient(supabaseUrl, supabaseKey, {
+      auth: {
+        autoRefreshToken: false,
+        persistSession: false
+      },
+      global: {
+        headers: { Authorization: `Bearer ${supabaseKey}` }
+      }
+    });
+
+    console.log(`[PathologyAnalyzer] Analysing ID: ${pathologyId}`);
+
+    // Fetch all related data in parallel with error handling
     const [pathologyRes, symptomsRes, treatmentsRes, patientsRes, sourcesRes] = await Promise.all([
       supabase.from('pathologies').select('*').eq('id', pathologyId).single(),
       supabase.from('pathology_symptoms')
@@ -59,6 +71,11 @@ serve(async (req) => {
       supabase.from('patients').select('*').eq('pathology_id', pathologyId),
       supabase.from('medical_sources').select('*').eq('pathology_id', pathologyId),
     ]);
+
+    // Trace specifics errors
+    if (pathologyRes.error) console.error('[Error] Pathologies:', pathologyRes.error);
+    if (symptomsRes.error) console.error('[Error] Symptoms:', symptomsRes.error);
+    if (treatmentsRes.error) console.error('[Error] Treatments:', treatmentsRes.error);
 
     const pathology = pathologyRes.data;
     const symptoms = symptomsRes.data || [];
@@ -206,9 +223,9 @@ Réponds UNIQUEMENT avec un JSON valide au format suivant (sans markdown, sans c
     } catch (parseError) {
       console.error('Failed to parse AI response:', content);
       return new Response(
-        JSON.stringify({ 
+        JSON.stringify({
           error: 'Erreur de parsing de la réponse IA',
-          raw: content 
+          raw: content
         }),
         { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );

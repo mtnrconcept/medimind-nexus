@@ -15,6 +15,7 @@ import { toast } from "sonner";
 import { MedicalScraperPanel } from "@/components/admin/MedicalScraperPanel";
 import DataImportPanel from "@/components/admin/DataImportPanel";
 import DatabaseTranslationPanel from "@/components/admin/DatabaseTranslationPanel";
+import OpenFDAImportPanel from "@/components/admin/OpenFDAImportPanel";
 import {
   Users,
   Activity,
@@ -392,6 +393,9 @@ const Admin = () => {
 
           {/* Onglet Outils (Import fichiers + Scraper + Traduction) */}
           <TabsContent value="tools" className="space-y-6">
+            {/* Import des données gratuites (OpenFDA, symptômes) */}
+            <OpenFDAImportPanel />
+
             {/* Traduction des données en français */}
             <DatabaseTranslationPanel />
 

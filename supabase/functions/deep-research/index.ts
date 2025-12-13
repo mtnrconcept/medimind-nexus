@@ -41,13 +41,13 @@ async function searchPubMed(query: string, maxResults: number = 5): Promise<WebS
     const searchResponse = await fetch(searchUrl);
     const searchData = await searchResponse.json();
     const ids = searchData?.esearchresult?.idlist || [];
-    
+
     if (ids.length === 0) return [];
 
     const fetchUrl = `https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi?db=pubmed&id=${ids.join(",")}&retmode=json`;
     const fetchResponse = await fetch(fetchUrl);
     const fetchData = await fetchResponse.json();
-    
+
     const sources: WebSource[] = [];
     for (const id of ids) {
       const article = fetchData?.result?.[id];
@@ -101,14 +101,14 @@ serve(async (req) => {
           pathologies(id, name, icd_code, description, severity, category)
         `)
         .in('symptom_id', symptomIds);
-      
+
       if (links) {
         // Grouper par pathologie
         const pathologyMap = new Map();
         for (const link of links) {
           const pathology = link.pathologies as any;
           if (!pathology) continue;
-          
+
           if (!pathologyMap.has(pathology.id)) {
             pathologyMap.set(pathology.id, {
               ...pathology,
@@ -116,12 +116,12 @@ serve(async (req) => {
               totalScore: 0
             });
           }
-          
+
           const existing = pathologyMap.get(pathology.id);
           existing.matchedSymptoms.push((link.symptoms as any)?.name);
           existing.totalScore += link.frequency_percent || 50;
         }
-        
+
         dbPathologies = Array.from(pathologyMap.values())
           .sort((a, b) => b.totalScore - a.totalScore);
       }
@@ -131,9 +131,9 @@ serve(async (req) => {
     const symptomQuery = symptomNames.join(' AND ');
     const pubmedQuery = `${symptomQuery} diagnosis differential`;
     console.log('Recherche PubMed:', pubmedQuery);
-    
+
     const pubmedSources = await searchPubMed(pubmedQuery, 10);
-    
+
     // Recherches supplémentaires par combinaison de symptômes
     const additionalSearches: WebSource[] = [];
     if (symptomNames.length >= 2) {
@@ -143,19 +143,19 @@ serve(async (req) => {
     }
 
     // 3. Construire le contexte pour l'IA
-    const dbContext = dbPathologies.length > 0 
-      ? dbPathologies.map(p => 
-          `- ${p.name} (CIM: ${p.icd_code || 'N/A'}, sévérité: ${p.severity || 'N/A'}): ${p.description || 'Pas de description'}\n  Symptômes correspondants: ${p.matchedSymptoms.join(', ')}`
-        ).join('\n')
+    const dbContext = dbPathologies.length > 0
+      ? dbPathologies.map(p =>
+        `- ${p.name} (CIM: ${p.icd_code || 'N/A'}, sévérité: ${p.severity || 'N/A'}): ${p.description || 'Pas de description'}\n  Symptômes correspondants: ${p.matchedSymptoms.join(', ')}`
+      ).join('\n')
       : 'Aucune pathologie trouvée dans la base de données locale';
 
-    const webContext = [...pubmedSources, ...additionalSearches].map(s => 
+    const webContext = [...pubmedSources, ...additionalSearches].map(s =>
       `- "${s.title}" (${s.url})`
     ).join('\n');
 
-    const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY');
-    if (!LOVABLE_API_KEY) {
-      throw new Error('LOVABLE_API_KEY non configurée');
+    const CLAUDE_API_KEY = Deno.env.get('CLAUDE_API_KEY');
+    if (!CLAUDE_API_KEY) {
+      throw new Error('CLAUDE_API_KEY non configurée');
     }
 
     const systemPrompt = `Tu es un expert médical francophone spécialisé dans le diagnostic différentiel. Tu effectues une "Deep Research" en analysant les symptômes fournis pour identifier TOUTES les pathologies possibles.
@@ -209,18 +209,20 @@ Analyse ces symptômes et identifie TOUTES les pathologies possibles qui pourrai
 
 Classe-les par ordre de probabilité et indique les signaux d'alerte à surveiller.`;
 
-    console.log('Appel Lovable AI pour Deep Research...');
+    console.log('Appel Claude API pour Deep Research...');
 
-    const aiResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
+    const aiResponse = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: {
-        'Authorization': `Bearer ${LOVABLE_API_KEY}`,
+        'x-api-key': CLAUDE_API_KEY,
+        'anthropic-version': '2023-06-01',
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        model: 'google/gemini-2.5-flash',
+        model: 'claude-sonnet-4-20250514',
+        max_tokens: 4096,
+        system: systemPrompt,
         messages: [
-          { role: 'system', content: systemPrompt },
           { role: 'user', content: userPrompt }
         ],
         temperature: 0.3,
@@ -229,27 +231,27 @@ Classe-les par ordre de probabilité et indique les signaux d'alerte à surveill
 
     if (!aiResponse.ok) {
       const errorText = await aiResponse.text();
-      console.error('Erreur API IA:', aiResponse.status, errorText);
-      
+      console.error('Erreur API Claude:', aiResponse.status, errorText);
+
       if (aiResponse.status === 429) {
         return new Response(
           JSON.stringify({ error: 'Limite de requêtes atteinte. Réessayez dans quelques instants.' }),
           { status: 429, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
         );
       }
-      
-      if (aiResponse.status === 402) {
+
+      if (aiResponse.status === 401) {
         return new Response(
-          JSON.stringify({ error: 'Crédits insuffisants. Veuillez recharger votre compte.' }),
-          { status: 402, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+          JSON.stringify({ error: 'Clé API Claude invalide. Vérifiez votre configuration.' }),
+          { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
         );
       }
-      
-      throw new Error(`Erreur API IA: ${aiResponse.status}`);
+
+      throw new Error(`Erreur API Claude: ${aiResponse.status}`);
     }
 
     const aiData = await aiResponse.json();
-    const content = aiData.choices?.[0]?.message?.content;
+    const content = aiData.content?.[0]?.text;
 
     if (!content) {
       throw new Error('Aucun contenu dans la réponse IA');

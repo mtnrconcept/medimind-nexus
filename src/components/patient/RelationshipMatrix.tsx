@@ -1,21 +1,22 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from '@/components/ui/tooltip';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import {
-    CheckCircle2,
-    XCircle,
-    AlertTriangle,
-    Minus,
+    Dialog,
+    DialogContent,
+    DialogHeader,
+    DialogTitle,
+} from '@/components/ui/dialog';
+import {
     Stethoscope,
     Activity,
     Pill,
     Tablets,
-    Network,
-    Zap,
-    ShieldAlert
+    ArrowRight,
+    Info,
 } from 'lucide-react';
 
 interface Pathology {
@@ -59,6 +60,7 @@ interface CausalLink {
     adverseDetails?: string;
     dangerLevel?: 'critical' | 'high' | 'moderate' | 'low';
     interactionType?: 'drug-drug' | 'drug-treatment' | 'pathology-danger';
+    symptomFrequency?: 'principal' | 'frequent' | 'possible' | 'rare';
 }
 
 interface AnalysisResult {
@@ -81,34 +83,23 @@ interface RelationshipMatrixProps {
     analysisResult: AnalysisResult | null;
 }
 
-type RelationType = 'positive' | 'negative' | 'warning' | 'danger' | 'none';
+// Types de pastilles
+type PillType = 'danger' | 'contraindicated' | 'interaction' | 'treats' | 'symptom' | null;
 
-interface Relation {
-    type: RelationType;
-    target: string;
-    description?: string;
-    dangerLevel?: string;
+interface PillInfo {
+    type: PillType;
+    label: string;
+    description: string;
+    color: string;
+    bgColor: string;
+    link: CausalLink; // Lien complet pour le dialog
 }
 
-// Nouvelle structure avec toutes les colonnes
-interface ElementRow {
+// Élément unifié pour la matrice
+interface MatrixElement {
     id: string;
     name: string;
-    elementType: 'pathology' | 'symptom' | 'treatment' | 'medication';
-
-    // Colonnes bidirectionnelles
-    treatedBy: Relation[];           // Médicaments/traitements qui traitent cet élément
-    contraindicatedMeds: Relation[]; // Médicaments contre-indiqués (pour pathologies)
-    causedByPathology: Relation[];   // Pathologies qui causent ce symptôme
-
-    // Colonnes pour médicaments/traitements
-    treats: Relation[];              // Ce que cet élément traite
-    causesSymptoms: Relation[];      // Symptômes causés (effets indésirables)
-
-    // Colonnes d'interactions
-    drugInteractions: Relation[];    // Interactions médicamenteuses
-    treatmentInteractions: Relation[]; // Interactions traitement
-    dangerWithPathology: Relation[]; // Danger avec pathologie (ex: infection + immunosuppresseur)
+    type: 'pathology' | 'symptom' | 'treatment' | 'medication';
 }
 
 export function RelationshipMatrix({
@@ -123,6 +114,10 @@ export function RelationshipMatrix({
     analysisResult
 }: RelationshipMatrixProps) {
 
+    // État pour le dialog de détails du lien
+    const [selectedLink, setSelectedLink] = useState<CausalLink | null>(null);
+    const [showLinkDialog, setShowLinkDialog] = useState(false);
+
     // Normaliser les noms pour comparaison
     const normalizeForComparison = (name: string): string => {
         return name.toLowerCase()
@@ -135,630 +130,488 @@ export function RelationshipMatrix({
             .replace(/[ç]/g, 'c')
             .replace(/[œ]/g, 'oe')
             .replace(/[æ]/g, 'ae')
-            .replace(/[,.\-_]/g, ' ')
+            .replace(/[,.\\-_]/g, ' ')
             .replace(/\s+/g, ' ');
     };
 
-    // Vérifier si deux noms correspondent (inclusion partielle)
+    // Vérifier si deux noms correspondent (version stricte)
     const matchesElement = (linkName: string, elementName: string): boolean => {
         const linkNorm = normalizeForComparison(linkName);
         const elemNorm = normalizeForComparison(elementName);
 
-        // Correspondance exacte ou inclusion
+        // Correspondance exacte
         if (linkNorm === elemNorm) return true;
-        if (linkNorm.includes(elemNorm) || elemNorm.includes(linkNorm)) return true;
 
-        // Vérifier les mots clés principaux (au moins 3 caractères)
-        const linkWords = linkNorm.split(' ').filter(w => w.length >= 3);
+        // Inclusions : assouplissement du ratio pour les noms longs (médicaments)
+        // Si le nom du lien est contenu dans l'élément, c'est souvent un bon match (ex: "Metformine" dans "Metformine 1000mg")
+        if (elemNorm.length >= 5) {
+            // Si le lien est court (ex: AI output) et inclus dans l'élément long (DB)
+            if (elemNorm.includes(linkNorm)) {
+                // Ratio abaissé à 0.3 pour capturer "Metformine" (10) dans "Metformine...long..." (30+)
+                if (linkNorm.length >= elemNorm.length * 0.3) return true;
+                // Si le lien est au tout début (ex: marque ou substance au début)
+                if (elemNorm.startsWith(linkNorm)) return true;
+            }
+            // Inverse (rare): élément inclus dans lien
+            if (linkNorm.includes(elemNorm) && elemNorm.length >= linkNorm.length * 0.6) return true;
+        }
+
+        // Comparaison par mots
+        const linkWords = linkNorm.split(' ').filter(w => w.length >= 3); // 3+ chars (inclut "type", "nom")
         const elemWords = elemNorm.split(' ').filter(w => w.length >= 3);
 
-        // Si au moins 50% des mots correspondent
-        const matchingWords = linkWords.filter(lw =>
-            elemWords.some(ew => lw.includes(ew) || ew.includes(lw))
-        );
+        if (linkWords.length === 0 || elemWords.length === 0) return false;
 
-        return matchingWords.length >= Math.min(1, Math.floor(linkWords.length * 0.5));
+        // 1. Couverture de l'élément par le lien (ex: "Diabete type 2" vs "Diabete")
+        const matchingElemWords = elemWords.filter(ew =>
+            linkWords.some(lw => lw === ew || (lw.length >= 4 && ew.length >= 4 && (lw.includes(ew) || ew.includes(lw))))
+        );
+        const elemCoverage = matchingElemWords.length / elemWords.length;
+        if (elemCoverage >= 0.7) return true;
+
+        // 2. Couverture du lien par l'élément (NOUVEAU - CRITIQUE)
+        // Ex: Link="Metformine", Elem="Metformine 1000mg sachet"
+        // Link words ["metformine"] sont tous dans Elem words
+        const matchingLinkWords = linkWords.filter(lw =>
+            elemWords.some(ew => lw === ew || (lw.length >= 4 && ew.length >= 4 && (lw.includes(ew) || ew.includes(lw))))
+        );
+        const linkCoverage = matchingLinkWords.length / linkWords.length;
+
+        // Si 100% des mots significatifs du lien sont trouvés dans l'élément, c'est un match
+        if (linkCoverage >= 0.9) return true;
+
+        return false;
     };
 
-    // Analyse bidirectionnelle des relations
-    const analyzeElementRelations = (
-        elementName: string,
-        elementType: 'pathology' | 'symptom' | 'treatment' | 'medication',
-        causalLinks: CausalLink[]
-    ): Omit<ElementRow, 'id' | 'name' | 'elementType'> => {
-        const result = {
-            treatedBy: [] as Relation[],
-            contraindicatedMeds: [] as Relation[],
-            causedByPathology: [] as Relation[],
-            treats: [] as Relation[],
-            causesSymptoms: [] as Relation[],
-            drugInteractions: [] as Relation[],
-            treatmentInteractions: [] as Relation[],
-            dangerWithPathology: [] as Relation[]
-        };
+    // Créer la liste de tous les éléments sélectionnés
+    const allElements = useMemo((): MatrixElement[] => {
+        const elements: MatrixElement[] = [];
 
-        causalLinks.forEach(link => {
-            const isSource = matchesElement(link.from, elementName);
-            const isTarget = matchesElement(link.to, elementName);
-
-            // ========== PATHOLOGIE ==========
-            if (elementType === 'pathology') {
-                // Pathologie comme CIBLE → qui la traite?
-                if (isTarget && (link.fromType === 'medication' || link.fromType === 'treatment')) {
-                    if (link.isAppropriate === true || link.effectType === 'therapeutic') {
-                        result.treatedBy.push({
-                            type: 'positive',
-                            target: link.from,
-                            description: link.therapeuticDetails || link.evidence || link.relationship
-                        });
-                    }
-                    if (link.isAppropriate === false) {
-                        const isDanger = link.dangerLevel === 'critical' || link.dangerLevel === 'high';
-                        result.contraindicatedMeds.push({
-                            type: isDanger ? 'danger' : 'negative',
-                            target: link.from,
-                            description: link.adverseDetails || link.evidence || link.relationship,
-                            dangerLevel: link.dangerLevel
-                        });
-                    }
-                }
-
-                // Pathologie comme SOURCE → quels symptômes cause-t-elle?
-                if (isSource && link.toType === 'symptom') {
-                    result.causesSymptoms.push({
-                        type: 'positive',
-                        target: link.to,
-                        description: link.evidence || link.relationship
-                    });
-                }
-
-                // Danger avec médicaments (ex: varicelle + immunosuppresseur)
-                if (isTarget && link.dangerLevel && (link.dangerLevel === 'critical' || link.dangerLevel === 'high')) {
-                    result.dangerWithPathology.push({
-                        type: 'danger',
-                        target: link.from,
-                        description: link.evidence || link.relationship,
-                        dangerLevel: link.dangerLevel
-                    });
-                }
-            }
-
-            // ========== SYMPTÔME ==========
-            if (elementType === 'symptom') {
-                // Symptôme comme CIBLE → quelle pathologie le cause?
-                if (isTarget && link.fromType === 'pathology') {
-                    result.causedByPathology.push({
-                        type: 'positive',
-                        target: link.from,
-                        description: link.evidence || `Symptôme typique de ${link.from}`
-                    });
-                }
-
-                // Symptôme comme CIBLE → quel médicament le traite ou le cause?
-                if (isTarget && (link.fromType === 'medication' || link.fromType === 'treatment')) {
-                    if (link.effectType === 'therapeutic') {
-                        result.treatedBy.push({
-                            type: 'positive',
-                            target: link.from,
-                            description: link.therapeuticDetails || link.evidence
-                        });
-                    }
-                    if (link.effectType === 'adverse') {
-                        result.treatedBy.push({
-                            type: 'warning',
-                            target: link.from,
-                            description: `Effet indésirable: ${link.adverseDetails || link.evidence}`
-                        });
-                    }
-                }
-            }
-
-            // ========== MÉDICAMENT ==========
-            if (elementType === 'medication') {
-                // Médicament comme SOURCE → quelles pathologies traite-t-il?
-                if (isSource && link.toType === 'pathology') {
-                    if (link.isAppropriate === true || link.effectType === 'therapeutic') {
-                        result.treats.push({
-                            type: 'positive',
-                            target: link.to,
-                            description: link.therapeuticDetails || link.evidence || link.relationship
-                        });
-                    }
-                    if (link.isAppropriate === false) {
-                        result.contraindicatedMeds.push({
-                            type: 'negative',
-                            target: link.to,
-                            description: link.adverseDetails || link.evidence
-                        });
-                    }
-                }
-
-                // Médicament comme SOURCE → quels symptômes cause-t-il?
-                if (isSource && link.toType === 'symptom') {
-                    const relType = link.effectType === 'adverse' ? 'warning' :
-                        link.effectType === 'therapeutic' ? 'positive' : 'warning';
-                    result.causesSymptoms.push({
-                        type: relType,
-                        target: link.to,
-                        description: link.effectType === 'adverse'
-                            ? (link.adverseDetails || link.evidence)
-                            : (link.therapeuticDetails || link.evidence)
-                    });
-                }
-
-                // Interactions médicamenteuses
-                if ((isSource || isTarget) && link.fromType === 'medication' && link.toType === 'medication') {
-                    const otherDrug = isSource ? link.to : link.from;
-                    result.drugInteractions.push({
-                        type: link.dangerLevel === 'critical' || link.dangerLevel === 'high' ? 'danger' : 'warning',
-                        target: otherDrug,
-                        description: link.evidence || link.relationship,
-                        dangerLevel: link.dangerLevel
-                    });
-                }
-
-                // Interactions traitement
-                if ((isSource || isTarget) &&
-                    ((link.fromType === 'medication' && link.toType === 'treatment') ||
-                        (link.fromType === 'treatment' && link.toType === 'medication'))) {
-                    const otherItem = isSource ? link.to : link.from;
-                    result.treatmentInteractions.push({
-                        type: 'warning',
-                        target: otherItem,
-                        description: link.evidence || link.relationship
-                    });
-                }
-
-                // Danger avec pathologie (ex: immunosuppresseur + infection virale)
-                if (isSource && link.toType === 'pathology' && link.dangerLevel) {
-                    result.dangerWithPathology.push({
-                        type: 'danger',
-                        target: link.to,
-                        description: link.evidence || link.relationship,
-                        dangerLevel: link.dangerLevel
-                    });
-                }
-            }
-
-            // ========== TRAITEMENT ==========
-            if (elementType === 'treatment') {
-                // Traitement comme SOURCE → quelles pathologies traite-t-il?
-                if (isSource && link.toType === 'pathology') {
-                    if (link.isAppropriate === true || link.effectType === 'therapeutic') {
-                        result.treats.push({
-                            type: 'positive',
-                            target: link.to,
-                            description: link.therapeuticDetails || link.evidence || link.relationship
-                        });
-                    }
-                    if (link.isAppropriate === false) {
-                        result.contraindicatedMeds.push({
-                            type: 'negative',
-                            target: link.to,
-                            description: link.adverseDetails || link.evidence
-                        });
-                    }
-                }
-
-                // Traitement comme SOURCE → quels symptômes cause-t-il?
-                if (isSource && link.toType === 'symptom') {
-                    result.causesSymptoms.push({
-                        type: link.effectType === 'adverse' ? 'warning' : 'positive',
-                        target: link.to,
-                        description: link.effectType === 'adverse'
-                            ? (link.adverseDetails || link.evidence)
-                            : (link.therapeuticDetails || link.evidence)
-                    });
-                }
-
-                // Interactions avec médicaments
-                if ((isSource || isTarget) &&
-                    ((link.fromType === 'treatment' && link.toType === 'medication') ||
-                        (link.fromType === 'medication' && link.toType === 'treatment'))) {
-                    const otherItem = isSource ? link.to : link.from;
-                    result.treatmentInteractions.push({
-                        type: 'warning',
-                        target: otherItem,
-                        description: link.evidence || link.relationship
-                    });
-                }
-            }
+        // Pathologies
+        pathologies.filter(p => selectedPathologies.includes(p.id)).forEach(p => {
+            elements.push({ id: p.id, name: p.name, type: 'pathology' });
         });
 
-        // Supprimer les doublons de chaque catégorie
-        const dedupeRelations = (relations: Relation[]): Relation[] => {
-            const unique: Relation[] = [];
-            relations.forEach(rel => {
-                if (!unique.find(r => r.target === rel.target && r.type === rel.type)) {
-                    unique.push(rel);
-                }
-            });
-            return unique;
-        };
+        // Symptômes
+        symptoms.filter(s => selectedSymptoms.includes(s.id)).forEach(s => {
+            elements.push({ id: s.id, name: s.name, type: 'symptom' });
+        });
 
+        // Traitements
+        treatments.filter(t => selectedTreatments.includes(t.id)).forEach(t => {
+            elements.push({ id: t.id, name: t.name, type: 'treatment' });
+        });
+
+        // Médicaments
+        medications.filter(m => selectedMedications.includes(m.id)).forEach(m => {
+            elements.push({ id: m.id, name: m.name, type: 'medication' });
+        });
+
+        return elements;
+    }, [pathologies, symptoms, treatments, medications, selectedPathologies, selectedSymptoms, selectedTreatments, selectedMedications]);
+
+    // Obtenir la pastille pour une intersection
+    const getPillForIntersection = (rowElement: MatrixElement, colElement: MatrixElement): PillInfo | null => {
+        if (rowElement.id === colElement.id) return null; // Même élément
+
+        const causalLinks = analysisResult?.causalLinks || [];
+
+        // Chercher un lien entre les deux éléments EXACTEMENT (dans les deux directions)
+        // Le lien doit correspondre à CES DEUX éléments spécifiques, pas à d'autres
+        const link = causalLinks.find(l => {
+            // Direction 1: row -> col
+            const matchRowToCol = matchesElement(l.from, rowElement.name) && matchesElement(l.to, colElement.name);
+            // Direction 2: col -> row
+            const matchColToRow = matchesElement(l.from, colElement.name) && matchesElement(l.to, rowElement.name);
+
+            if (!matchRowToCol && !matchColToRow) return false;
+
+            // Validation supplémentaire : vérifier que les types correspondent aussi
+            const fromMatchesRow = l.fromType === rowElement.type;
+            const toMatchesCol = l.toType === colElement.type;
+            const fromMatchesCol = l.fromType === colElement.type;
+            const toMatchesRow = l.toType === rowElement.type;
+
+            // Le lien doit correspondre aux types dans l'une des deux directions
+            return (matchRowToCol && fromMatchesRow && toMatchesCol) ||
+                (matchColToRow && fromMatchesCol && toMatchesRow);
+        });
+
+        if (!link) return null;
+
+        // Déterminer le label de probabilité
+        const probabilityLabel = link.probability === 'high' ? 'Forte' :
+            link.probability === 'medium' ? 'Moyenne' :
+                link.probability === 'low' ? 'Faible' : '';
+
+        // 🔴 ROUGE - DANGER
+        // Interaction dangereuse (dangerLevel critical ou high)
+        if (link.dangerLevel === 'critical' || link.dangerLevel === 'high') {
+            return {
+                type: 'danger',
+                label: link.dangerLevel === 'critical' ? '⚠️ Critique' : '🔶 Élevé',
+                description: link.evidence || link.relationship || 'Interaction dangereuse',
+                color: '#dc2626',
+                bgColor: '#fef2f2',
+                link
+            };
+        }
+
+        // 🟠 ORANGE - CONTRE-INDIQUÉ
+        // Médicament contre-indiqué pour pathologie, ou danger modéré
+        if (link.isAppropriate === false || link.dangerLevel === 'moderate') {
+            return {
+                type: 'contraindicated',
+                label: '✗ Contre-indiqué',
+                description: link.evidence || link.relationship || 'Contre-indication',
+                color: '#ea580c',
+                bgColor: '#fff7ed',
+                link
+            };
+        }
+
+        // 🟡 JAUNE - INTERACTION POSSIBLE / EFFETS SECONDAIRES
+        if (link.effectType === 'adverse' || link.effectType === 'both' ||
+            link.dangerLevel === 'low' ||
+            link.interactionType === 'drug-drug') {
+            return {
+                type: 'interaction',
+                label: '⚡ Interaction',
+                description: link.evidence || link.relationship || 'Interaction possible',
+                color: '#ca8a04',
+                bgColor: '#fefce8',
+                link
+            };
+        }
+
+        // 🟢 VERT - TRAITE / ADAPTÉ (médicament → pathologie)
+        if (link.isAppropriate === true || link.effectType === 'therapeutic') {
+            return {
+                type: 'treats',
+                label: '✓ Traite',
+                description: link.therapeuticDetails || link.evidence || link.relationship || 'Traitement adapté',
+                color: '#16a34a',
+                bgColor: '#f0fdf4',
+                link
+            };
+        }
+
+        // 🟢 VERT - SYMPTÔME (pathologie → symptôme)
+        if (link.symptomFrequency) {
+            const frequencyLabel = link.symptomFrequency === 'principal' ? '★ Principal' :
+                link.symptomFrequency === 'frequent' ? '◆ Fréquent' :
+                    link.symptomFrequency === 'possible' ? '◇ Possible' : '○ Rare';
+            const isNormal = link.symptomFrequency === 'principal' || link.symptomFrequency === 'frequent';
+            return {
+                type: 'symptom',
+                label: frequencyLabel,
+                description: link.evidence || link.relationship || 'Symptôme associé',
+                color: isNormal ? '#16a34a' : '#ca8a04',
+                bgColor: isNormal ? '#f0fdf4' : '#fefce8',
+                link
+            };
+        }
+
+        // Lien par défaut (informatif - avec probabilité si disponible)
         return {
-            treatedBy: dedupeRelations(result.treatedBy),
-            contraindicatedMeds: dedupeRelations(result.contraindicatedMeds),
-            causedByPathology: dedupeRelations(result.causedByPathology),
-            treats: dedupeRelations(result.treats),
-            causesSymptoms: dedupeRelations(result.causesSymptoms),
-            drugInteractions: dedupeRelations(result.drugInteractions),
-            treatmentInteractions: dedupeRelations(result.treatmentInteractions),
-            dangerWithPathology: dedupeRelations(result.dangerWithPathology)
+            type: 'interaction',
+            label: probabilityLabel || 'Lien',
+            description: link.evidence || link.relationship || 'Relation détectée',
+            color: '#3b82f6',
+            bgColor: '#eff6ff',
+            link
         };
     };
 
-    // Construire les lignes du tableau
-    const selectedItems = useMemo(() => {
-        const items: ElementRow[] = [];
-        const rawCausalLinks = analysisResult?.causalLinks || [];
-
-        // Créer une liste de tous les noms d'éléments sélectionnés pour le filtrage
-        const selectedNames: string[] = [];
-
-        selectedPathologies.forEach(id => {
-            const p = pathologies.find(p => p.id === id);
-            if (p) selectedNames.push(normalizeForComparison(p.name));
-        });
-        selectedSymptoms.forEach(id => {
-            const s = symptoms.find(s => s.id === id);
-            if (s) selectedNames.push(normalizeForComparison(s.name));
-        });
-        selectedTreatments.forEach(id => {
-            const t = treatments.find(t => t.id === id);
-            if (t) selectedNames.push(normalizeForComparison(t.name));
-        });
-        selectedMedications.forEach(id => {
-            const m = medications.find(m => m.id === id);
-            if (m) selectedNames.push(normalizeForComparison(m.name));
-        });
-
-        // Fonction pour vérifier si un nom de lien correspond à un élément sélectionné
-        const isSelectedElement = (linkName: string): boolean => {
-            const linkNorm = normalizeForComparison(linkName);
-            return selectedNames.some(selName =>
-                linkNorm.includes(selName) || selName.includes(linkNorm) ||
-                linkNorm === selName
-            );
-        };
-
-        // FILTRER les causalLinks: garder les liens où AU MOINS UN élément (from OU to) est sélectionné
-        // Cela permet à l'IA de mentionner des éléments non sélectionnés dans les explications
-        const causalLinks = rawCausalLinks.filter(link =>
-            isSelectedElement(link.from) || isSelectedElement(link.to)
-        );
-
-        console.log(`[RelationshipMatrix] Liens pertinents: ${causalLinks.length}/${rawCausalLinks.length}`);
-
-        // Fonction pour vérifier si un élément a au moins un lien
-        const hasAnyRelation = (relations: Omit<ElementRow, 'id' | 'name' | 'elementType'>): boolean => {
-            return (
-                relations.treatedBy.length > 0 ||
-                relations.contraindicatedMeds.length > 0 ||
-                relations.causedByPathology.length > 0 ||
-                relations.treats.length > 0 ||
-                relations.causesSymptoms.length > 0 ||
-                relations.drugInteractions.length > 0 ||
-                relations.treatmentInteractions.length > 0 ||
-                relations.dangerWithPathology.length > 0
-            );
-        };
-
-        // Pathologies - n'ajouter que si elles ont des liens
-        selectedPathologies.forEach(id => {
-            const pathology = pathologies.find(p => p.id === id);
-            if (pathology) {
-                const relations = analyzeElementRelations(pathology.name, 'pathology', causalLinks);
-                if (hasAnyRelation(relations)) {
-                    items.push({
-                        id: pathology.id,
-                        name: pathology.name,
-                        elementType: 'pathology',
-                        ...relations
-                    });
-                }
-            }
-        });
-
-        // Symptômes - n'ajouter que si ils ont des liens
-        selectedSymptoms.forEach(id => {
-            const symptom = symptoms.find(s => s.id === id);
-            if (symptom) {
-                const relations = analyzeElementRelations(symptom.name, 'symptom', causalLinks);
-                if (hasAnyRelation(relations)) {
-                    items.push({
-                        id: symptom.id,
-                        name: symptom.name,
-                        elementType: 'symptom',
-                        ...relations
-                    });
-                }
-            }
-        });
-
-        // Traitements - n'ajouter que si ils ont des liens
-        selectedTreatments.forEach(id => {
-            const treatment = treatments.find(t => t.id === id);
-            if (treatment) {
-                const relations = analyzeElementRelations(treatment.name, 'treatment', causalLinks);
-                if (hasAnyRelation(relations)) {
-                    items.push({
-                        id: treatment.id,
-                        name: treatment.name,
-                        elementType: 'treatment',
-                        ...relations
-                    });
-                }
-            }
-        });
-
-        // Médicaments - n'ajouter que si ils ont des liens
-        selectedMedications.forEach(id => {
-            const medication = medications.find(m => m.id === id);
-            if (medication) {
-                const relations = analyzeElementRelations(medication.name, 'medication', causalLinks);
-                if (hasAnyRelation(relations)) {
-                    items.push({
-                        id: medication.id,
-                        name: medication.name,
-                        elementType: 'medication',
-                        ...relations
-                    });
-                }
-            }
-        });
-
-        return items;
-    }, [pathologies, symptoms, treatments, medications, selectedPathologies, selectedSymptoms, selectedTreatments, selectedMedications, analysisResult, normalizeForComparison, analyzeElementRelations]);
-
-    // Icône selon le type d'élément
-    const getElementIcon = (type: ElementRow['elementType']) => {
+    // Obtenir l'icône pour un type d'élément
+    const getTypeIcon = (type: MatrixElement['type']) => {
         switch (type) {
             case 'pathology':
-                return <Stethoscope className="h-4 w-4 text-red-500" />;
+                return <Stethoscope className="h-3 w-3 text-red-500" />;
             case 'symptom':
-                return <Activity className="h-4 w-4 text-blue-500" />;
+                return <Activity className="h-3 w-3 text-blue-500" />;
             case 'treatment':
-                return <Pill className="h-4 w-4 text-green-500" />;
+                return <Tablets className="h-3 w-3 text-green-500" />;
             case 'medication':
-                return <Tablets className="h-4 w-4 text-orange-500" />;
+                return <Pill className="h-3 w-3 text-orange-500" />;
         }
     };
 
-    // Badge selon le type
-    const getTypeBadge = (type: ElementRow['elementType']) => {
-        const labels = {
-            pathology: 'Pathologie',
-            symptom: 'Symptôme',
-            treatment: 'Traitement',
-            medication: 'Médicament'
-        };
-        const colors = {
-            pathology: 'bg-red-500/20 text-red-700 dark:text-red-400 border-red-500/30',
-            symptom: 'bg-blue-500/20 text-blue-700 dark:text-blue-400 border-blue-500/30',
-            treatment: 'bg-green-500/20 text-green-700 dark:text-green-400 border-green-500/30',
-            medication: 'bg-orange-500/20 text-orange-700 dark:text-orange-400 border-orange-500/30'
-        };
-        return <Badge className={colors[type]}>{labels[type]}</Badge>;
+    // Obtenir la couleur de fond pour le header selon le type
+    const getTypeHeaderBg = (type: MatrixElement['type']) => {
+        switch (type) {
+            case 'pathology':
+                return 'bg-red-50 dark:bg-red-900/20';
+            case 'symptom':
+                return 'bg-blue-50 dark:bg-blue-900/20';
+            case 'treatment':
+                return 'bg-green-50 dark:bg-green-900/20';
+            case 'medication':
+                return 'bg-orange-50 dark:bg-orange-900/20';
+        }
     };
 
-    // Afficher les relations dans une cellule
-    const renderRelationCell = (relations: Relation[]) => {
-        if (relations.length === 0) {
-            return (
-                <div className="flex justify-center">
-                    <Minus className="h-4 w-4 text-muted-foreground" />
-                </div>
-            );
-        }
-
+    if (allElements.length === 0) {
         return (
-            <div className="flex flex-wrap gap-1 justify-center">
-                {relations.map((rel, idx) => {
-                    const isDanger = rel.type === 'danger' || rel.dangerLevel === 'critical' || rel.dangerLevel === 'high';
-                    const bgClass = isDanger
-                        ? 'bg-red-500/20 border border-red-500/40'
-                        : rel.type === 'warning'
-                            ? 'bg-orange-500/10 border border-orange-500/30'
-                            : rel.type === 'positive'
-                                ? 'bg-green-500/10 border border-green-500/30'
-                                : 'bg-muted/50';
-
-                    return (
-                        <Tooltip key={idx}>
-                            <TooltipTrigger asChild>
-                                <div className={`flex items-center gap-1 px-2 py-1 rounded-md cursor-help ${bgClass}`}>
-                                    {rel.type === 'positive' && <CheckCircle2 className="h-3 w-3 text-green-500 flex-shrink-0" />}
-                                    {rel.type === 'negative' && <XCircle className="h-3 w-3 text-red-500 flex-shrink-0" />}
-                                    {rel.type === 'warning' && <AlertTriangle className="h-3 w-3 text-orange-500 flex-shrink-0" />}
-                                    {rel.type === 'danger' && <ShieldAlert className="h-3 w-3 text-red-600 flex-shrink-0" />}
-                                    <span className={`text-xs truncate max-w-[80px] ${isDanger ? 'font-semibold text-red-600' : ''}`}>
-                                        {rel.target}
-                                    </span>
-                                </div>
-                            </TooltipTrigger>
-                            <TooltipContent className={isDanger ? 'bg-red-50 dark:bg-red-900/50 border-red-500 max-w-sm' : 'max-w-sm'}>
-                                <div>
-                                    {isDanger && (
-                                        <p className="font-bold text-red-600 mb-1">⚠️ DANGER</p>
-                                    )}
-                                    <p className="text-sm">{rel.description || `Relation avec ${rel.target}`}</p>
-                                </div>
-                            </TooltipContent>
-                        </Tooltip>
-                    );
-                })}
-            </div>
+            <Card>
+                <CardContent className="py-8 text-center text-muted-foreground">
+                    Sélectionnez des éléments pour voir la matrice de relations
+                </CardContent>
+            </Card>
         );
-    };
-
-    if (selectedItems.length === 0) {
-        return null;
     }
 
     return (
-        <Card className="mt-6">
-            <CardHeader className="pb-3">
-                <CardTitle className="flex items-center gap-2 text-lg">
-                    <Network className="h-5 w-5 text-primary" />
-                    Matrice des Relations
-                </CardTitle>
-                <p className="text-sm text-muted-foreground">
-                    Visualisation complète des liens entre les éléments sélectionnés
-                </p>
-            </CardHeader>
-            <CardContent>
-                {/* Légende */}
-                <div className="flex flex-wrap gap-3 mb-4 text-xs">
-                    <div className="flex items-center gap-1 px-2 py-1 bg-green-500/10 border border-green-500/30 rounded">
-                        <CheckCircle2 className="h-3.5 w-3.5 text-green-500" />
-                        <span>Relation positive</span>
-                    </div>
-                    <div className="flex items-center gap-1 px-2 py-1 bg-red-500/10 border border-red-500/30 rounded">
-                        <XCircle className="h-3.5 w-3.5 text-red-500" />
-                        <span>Contre-indication</span>
-                    </div>
-                    <div className="flex items-center gap-1 px-2 py-1 bg-red-500/20 border border-red-500/50 rounded">
-                        <ShieldAlert className="h-3.5 w-3.5 text-red-600" />
-                        <span className="font-semibold text-red-600">DANGER</span>
-                    </div>
-                    <div className="flex items-center gap-1 px-2 py-1 bg-orange-500/10 border border-orange-500/30 rounded">
-                        <AlertTriangle className="h-3.5 w-3.5 text-orange-500" />
-                        <span>Vigilance</span>
-                    </div>
-                    <div className="flex items-center gap-1">
-                        <Minus className="h-3.5 w-3.5 text-muted-foreground" />
-                        <span className="text-muted-foreground">Non applicable</span>
-                    </div>
-                </div>
+        <TooltipProvider>
+            <Card>
+                <CardHeader className="pb-2">
+                    <CardTitle className="text-sm flex items-center justify-between">
+                        <span>Matrice des relations ({allElements.length} éléments)</span>
+                        <div className="flex gap-2 text-xs">
+                            <Badge className="bg-green-500/20 text-green-700 border-green-500/30">
+                                ✓ Traite / Normal
+                            </Badge>
+                            <Badge className="bg-yellow-500/20 text-yellow-700 border-yellow-500/30">
+                                ⚡ Interaction
+                            </Badge>
+                            <Badge className="bg-orange-500/20 text-orange-700 border-orange-500/30">
+                                ⚠ Contre-indiqué
+                            </Badge>
+                            <Badge className="bg-red-500/20 text-red-700 border-red-500/30">
+                                ⛔ Danger
+                            </Badge>
+                        </div>
+                    </CardTitle>
+                </CardHeader>
+                <CardContent>
+                    <ScrollArea className="w-full">
+                        <div className="min-w-max">
+                            <Table>
+                                <TableHeader>
+                                    <TableRow>
+                                        {/* Cellule vide en haut à gauche */}
+                                        <TableHead className="w-[180px] sticky left-0 z-20 bg-background border-r">
+                                            <span className="text-xs text-muted-foreground">↓ Ligne / Colonne →</span>
+                                        </TableHead>
+                                        {/* Headers colonnes */}
+                                        {allElements.map((element) => (
+                                            <TableHead
+                                                key={`col-${element.id}`}
+                                                className={`text-center min-w-[100px] max-w-[120px] p-2 ${getTypeHeaderBg(element.type)}`}
+                                            >
+                                                <div className="flex flex-col items-center gap-1">
+                                                    {getTypeIcon(element.type)}
+                                                    <span className="text-xs font-medium truncate max-w-[100px]" title={element.name}>
+                                                        {element.name.length > 12 ? element.name.slice(0, 12) + '...' : element.name}
+                                                    </span>
+                                                </div>
+                                            </TableHead>
+                                        ))}
+                                    </TableRow>
+                                </TableHeader>
+                                <TableBody>
+                                    {allElements.map((rowElement) => (
+                                        <TableRow key={`row-${rowElement.id}`}>
+                                            {/* Header de ligne */}
+                                            <TableCell
+                                                className={`sticky left-0 z-10 font-medium border-r ${getTypeHeaderBg(rowElement.type)}`}
+                                            >
+                                                <div className="flex items-center gap-2">
+                                                    {getTypeIcon(rowElement.type)}
+                                                    <span className="text-xs truncate max-w-[140px]" title={rowElement.name}>
+                                                        {rowElement.name}
+                                                    </span>
+                                                </div>
+                                            </TableCell>
+                                            {/* Cellules d'intersection */}
+                                            {allElements.map((colElement) => {
+                                                const pill = getPillForIntersection(rowElement, colElement);
+                                                const isDiagonal = rowElement.id === colElement.id;
 
-                <ScrollArea className="w-full">
-                    <Table>
-                        <TableHeader>
-                            <TableRow className="bg-muted/30">
-                                <TableHead className="w-[180px] font-semibold">Élément</TableHead>
-                                <TableHead className="w-[90px] text-center font-semibold">Type</TableHead>
-                                <TableHead className="text-center min-w-[120px]">
-                                    <span className="flex items-center justify-center gap-1 text-green-600">
-                                        <Tablets className="h-3 w-3" />
-                                        Traité par
-                                    </span>
-                                </TableHead>
-                                <TableHead className="text-center min-w-[120px]">
-                                    <span className="flex items-center justify-center gap-1 text-red-600">
-                                        <XCircle className="h-3 w-3" />
-                                        Contre-indiqué
-                                    </span>
-                                </TableHead>
-                                <TableHead className="text-center min-w-[120px]">
-                                    <span className="flex items-center justify-center gap-1 text-purple-600">
-                                        <Stethoscope className="h-3 w-3" />
-                                        Causé par patho.
-                                    </span>
-                                </TableHead>
-                                <TableHead className="text-center min-w-[120px]">
-                                    <span className="flex items-center justify-center gap-1 text-green-600">
-                                        <CheckCircle2 className="h-3 w-3" />
-                                        Traite
-                                    </span>
-                                </TableHead>
-                                <TableHead className="text-center min-w-[120px]">
-                                    <span className="flex items-center justify-center gap-1 text-orange-600">
-                                        <AlertTriangle className="h-3 w-3" />
-                                        Cause sympt.
-                                    </span>
-                                </TableHead>
-                                <TableHead className="text-center min-w-[120px]">
-                                    <span className="flex items-center justify-center gap-1 text-purple-600">
-                                        <Zap className="h-3 w-3" />
-                                        Inter. méd.
-                                    </span>
-                                </TableHead>
-                                <TableHead className="text-center min-w-[120px]">
-                                    <span className="flex items-center justify-center gap-1 text-red-600">
-                                        <ShieldAlert className="h-3 w-3" />
-                                        Dangers
-                                    </span>
-                                </TableHead>
-                            </TableRow>
-                        </TableHeader>
-                        <TableBody>
-                            {selectedItems.map((item) => (
-                                <TableRow key={`${item.elementType}-${item.id}`} className="hover:bg-muted/20">
-                                    <TableCell className="font-medium">
-                                        <div className="flex items-center gap-2">
-                                            {getElementIcon(item.elementType)}
-                                            <span className="truncate max-w-[150px]" title={item.name}>
-                                                {item.name}
-                                            </span>
-                                        </div>
-                                    </TableCell>
-                                    <TableCell className="text-center">
-                                        {getTypeBadge(item.elementType)}
-                                    </TableCell>
-                                    {/* Traité par - Pour pathologies et symptômes */}
-                                    <TableCell>
-                                        {item.elementType === 'pathology' || item.elementType === 'symptom'
-                                            ? renderRelationCell(item.treatedBy)
-                                            : <Minus className="h-4 w-4 text-muted-foreground mx-auto" />
-                                        }
-                                    </TableCell>
-                                    {/* Contre-indiqué - Pour pathologies (médicaments CI) et médicaments (patho CI) */}
-                                    <TableCell>
-                                        {item.elementType === 'pathology' || item.elementType === 'medication' || item.elementType === 'treatment'
-                                            ? renderRelationCell(item.contraindicatedMeds)
-                                            : <Minus className="h-4 w-4 text-muted-foreground mx-auto" />
-                                        }
-                                    </TableCell>
-                                    {/* Causé par pathologie - Pour symptômes */}
-                                    <TableCell>
-                                        {item.elementType === 'symptom'
-                                            ? renderRelationCell(item.causedByPathology)
-                                            : <Minus className="h-4 w-4 text-muted-foreground mx-auto" />
-                                        }
-                                    </TableCell>
-                                    {/* Traite - Pour médicaments et traitements */}
-                                    <TableCell>
-                                        {item.elementType === 'medication' || item.elementType === 'treatment'
-                                            ? renderRelationCell(item.treats)
-                                            : <Minus className="h-4 w-4 text-muted-foreground mx-auto" />
-                                        }
-                                    </TableCell>
-                                    {/* Cause symptômes - Pour pathologies, médicaments, traitements */}
-                                    <TableCell>
-                                        {item.elementType !== 'symptom'
-                                            ? renderRelationCell(item.causesSymptoms)
-                                            : <Minus className="h-4 w-4 text-muted-foreground mx-auto" />
-                                        }
-                                    </TableCell>
-                                    {/* Interactions médicamenteuses - Pour médicaments */}
-                                    <TableCell>
-                                        {item.elementType === 'medication'
-                                            ? renderRelationCell([...item.drugInteractions, ...item.treatmentInteractions])
-                                            : item.elementType === 'treatment'
-                                                ? renderRelationCell(item.treatmentInteractions)
-                                                : <Minus className="h-4 w-4 text-muted-foreground mx-auto" />
-                                        }
-                                    </TableCell>
-                                    {/* Dangers - Pour tous */}
-                                    <TableCell>
-                                        {renderRelationCell(item.dangerWithPathology)}
-                                    </TableCell>
-                                </TableRow>
-                            ))}
-                        </TableBody>
-                    </Table>
-                    <ScrollBar orientation="horizontal" />
-                </ScrollArea>
+                                                return (
+                                                    <TableCell
+                                                        key={`cell-${rowElement.id}-${colElement.id}`}
+                                                        className={`text-center p-1 ${isDiagonal ? 'bg-gray-100 dark:bg-gray-800' : ''}`}
+                                                    >
+                                                        {isDiagonal ? (
+                                                            <span className="text-gray-400">—</span>
+                                                        ) : pill ? (
+                                                            <Tooltip>
+                                                                <TooltipTrigger asChild>
+                                                                    <Badge
+                                                                        className="cursor-pointer text-[10px] px-2 py-0.5 transition-transform hover:scale-110"
+                                                                        style={{
+                                                                            backgroundColor: pill.bgColor,
+                                                                            color: pill.color,
+                                                                            borderColor: pill.color,
+                                                                            borderWidth: '1px'
+                                                                        }}
+                                                                        onClick={() => {
+                                                                            setSelectedLink(pill.link);
+                                                                            setShowLinkDialog(true);
+                                                                        }}
+                                                                    >
+                                                                        {pill.label}
+                                                                    </Badge>
+                                                                </TooltipTrigger>
+                                                                <TooltipContent className="max-w-[300px]">
+                                                                    <div className="space-y-1">
+                                                                        <p className="font-semibold text-sm">
+                                                                            {rowElement.name} ↔ {colElement.name}
+                                                                        </p>
+                                                                        <p className="text-xs">{pill.description}</p>
+                                                                        <p className="text-xs text-muted-foreground italic">Cliquer pour plus de détails</p>
+                                                                    </div>
+                                                                </TooltipContent>
+                                                            </Tooltip>
+                                                        ) : (
+                                                            <span className="text-gray-300">—</span>
+                                                        )}
+                                                    </TableCell>
+                                                );
+                                            })}
+                                        </TableRow>
+                                    ))}
+                                </TableBody>
+                            </Table>
+                        </div>
+                        <ScrollBar orientation="horizontal" />
+                    </ScrollArea>
+                </CardContent>
+            </Card>
 
-                {!analysisResult && (
-                    <p className="text-sm text-muted-foreground text-center mt-4">
-                        Lancez une analyse pour voir les relations détectées entre les éléments.
-                    </p>
-                )}
-            </CardContent>
-        </Card>
+            {/* Dialog des détails du lien (même design que RiskNetworkGraph) */}
+            <Dialog open={showLinkDialog} onOpenChange={setShowLinkDialog}>
+                <DialogContent className="max-w-lg">
+                    <DialogHeader>
+                        <DialogTitle className="flex items-center gap-2">
+                            <Info className="h-5 w-5 text-primary" />
+                            Détails du lien de causalité
+                        </DialogTitle>
+                    </DialogHeader>
+                    {selectedLink && (
+                        <div className="space-y-4">
+                            {/* Relation visuelle */}
+                            <div className="flex items-center gap-3 p-3 bg-muted/50 rounded-lg flex-wrap">
+                                <Badge variant="outline" className="px-3 py-1">
+                                    {selectedLink.fromType === 'pathology' ? '🏥' :
+                                        selectedLink.fromType === 'symptom' ? '🩺' :
+                                            selectedLink.fromType === 'medication' ? '💊' : '⚕️'}
+                                    {' '}{selectedLink.fromType}
+                                </Badge>
+                                <span className="font-medium">{selectedLink.from}</span>
+                                <ArrowRight className="h-4 w-4 text-muted-foreground" />
+                                <Badge variant="outline" className="px-3 py-1">
+                                    {selectedLink.toType === 'pathology' ? '🏥' :
+                                        selectedLink.toType === 'symptom' ? '🩺' :
+                                            selectedLink.toType === 'medication' ? '💊' : '⚕️'}
+                                    {' '}{selectedLink.toType}
+                                </Badge>
+                                <span className="font-medium">{selectedLink.to}</span>
+                            </div>
+
+                            {/* Description de la relation */}
+                            <div>
+                                <p className="text-sm font-medium text-muted-foreground mb-1">Relation</p>
+                                <p className="text-sm">{selectedLink.relationship}</p>
+                            </div>
+
+                            {/* Indicateurs */}
+                            <div className="grid grid-cols-2 gap-3">
+                                {selectedLink.isAppropriate !== undefined && (
+                                    <div className="p-3 rounded-lg border">
+                                        <p className="text-xs text-muted-foreground mb-1">Adéquation</p>
+                                        <Badge
+                                            className={selectedLink.isAppropriate
+                                                ? 'bg-green-500/20 text-green-700 border-green-500/30'
+                                                : 'bg-red-500/20 text-red-700 border-red-500/30'}
+                                        >
+                                            {selectedLink.isAppropriate ? '✓ Adapté' : '✗ Contre-indiqué'}
+                                        </Badge>
+                                    </div>
+                                )}
+
+                                {selectedLink.dangerLevel && (
+                                    <div className="p-3 rounded-lg border">
+                                        <p className="text-xs text-muted-foreground mb-1">Niveau de danger</p>
+                                        <Badge
+                                            className={
+                                                selectedLink.dangerLevel === 'critical' ? 'bg-red-500/20 text-red-700' :
+                                                    selectedLink.dangerLevel === 'high' ? 'bg-orange-500/20 text-orange-700' :
+                                                        selectedLink.dangerLevel === 'moderate' ? 'bg-yellow-500/20 text-yellow-700' :
+                                                            'bg-green-500/20 text-green-700'
+                                            }
+                                        >
+                                            {selectedLink.dangerLevel === 'critical' ? '🔴 Critique' :
+                                                selectedLink.dangerLevel === 'high' ? '🟠 Élevé' :
+                                                    selectedLink.dangerLevel === 'moderate' ? '🟡 Modéré' :
+                                                        '🟢 Faible'}
+                                        </Badge>
+                                    </div>
+                                )}
+
+                                {selectedLink.symptomFrequency && (
+                                    <div className="p-3 rounded-lg border">
+                                        <p className="text-xs text-muted-foreground mb-1">Fréquence du symptôme</p>
+                                        <Badge variant="outline">
+                                            {selectedLink.symptomFrequency === 'principal' ? '★ Principal' :
+                                                selectedLink.symptomFrequency === 'frequent' ? '◆ Fréquent' :
+                                                    selectedLink.symptomFrequency === 'possible' ? '◇ Possible' :
+                                                        '○ Rare'}
+                                        </Badge>
+                                    </div>
+                                )}
+
+                                {selectedLink.effectType && (
+                                    <div className="p-3 rounded-lg border">
+                                        <p className="text-xs text-muted-foreground mb-1">Type d'effet</p>
+                                        <Badge variant="outline">
+                                            {selectedLink.effectType === 'therapeutic' ? '💊 Thérapeutique' :
+                                                selectedLink.effectType === 'adverse' ? '⚠️ Indésirable' :
+                                                    '⚖️ Les deux'}
+                                        </Badge>
+                                    </div>
+                                )}
+                            </div>
+
+                            {/* Evidence / Explication détaillée */}
+                            {selectedLink.evidence && (
+                                <div className="p-4 bg-blue-50 dark:bg-blue-900/20 rounded-lg border border-blue-200 dark:border-blue-800">
+                                    <p className="text-sm font-medium text-blue-800 dark:text-blue-300 mb-2">
+                                        📚 Explication médicale
+                                    </p>
+                                    <p className="text-sm text-blue-700 dark:text-blue-400">
+                                        {selectedLink.evidence}
+                                    </p>
+                                </div>
+                            )}
+
+                            {/* Détails thérapeutiques et indésirables */}
+                            {selectedLink.therapeuticDetails && (
+                                <div className="p-3 bg-green-50 dark:bg-green-900/20 rounded-lg border border-green-200">
+                                    <p className="text-sm font-medium text-green-800 dark:text-green-300 mb-1">
+                                        💊 Effet thérapeutique
+                                    </p>
+                                    <p className="text-sm text-green-700 dark:text-green-400">
+                                        {selectedLink.therapeuticDetails}
+                                    </p>
+                                </div>
+                            )}
+
+                            {selectedLink.adverseDetails && (
+                                <div className="p-3 bg-orange-50 dark:bg-orange-900/20 rounded-lg border border-orange-200">
+                                    <p className="text-sm font-medium text-orange-800 dark:text-orange-300 mb-1">
+                                        ⚠️ Effet indésirable
+                                    </p>
+                                    <p className="text-sm text-orange-700 dark:text-orange-400">
+                                        {selectedLink.adverseDetails}
+                                    </p>
+                                </div>
+                            )}
+                        </div>
+                    )}
+                </DialogContent>
+            </Dialog>
+        </TooltipProvider>
     );
 }
-
-export default RelationshipMatrix;

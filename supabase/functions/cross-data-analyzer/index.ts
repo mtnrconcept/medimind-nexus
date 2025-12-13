@@ -22,6 +22,48 @@ interface CausalLink {
   adverseDetails?: string; // Détails de l'effet indésirable
   dangerLevel?: 'critical' | 'high' | 'moderate' | 'low'; // Niveau de danger
   interactionType?: 'drug-drug' | 'drug-treatment' | 'pathology-danger'; // Type d'interaction
+  symptomFrequency?: 'principal' | 'frequent' | 'possible' | 'rare'; // Pour liens pathologie→symptôme
+}
+
+interface Alternative {
+  for: string;           // The problematic medication/treatment
+  forType: string;       // Type: medication or treatment
+  reason: string;        // Why it's problematic
+  suggestions: string[]; // Alternative medications/treatments
+  evidence?: string;
+}
+
+interface ProposedChange {
+  action: 'replace' | 'remove' | 'add';
+  target: string;        // Medication/treatment name
+  targetType: 'medication' | 'treatment';
+  reason: string;
+  replacement?: string;  // For 'replace' action
+  replacementType?: 'medication' | 'treatment';
+  improvementScore: number; // How much this change improves the schema (0-100)
+}
+
+interface SchemaStats {
+  redLinks: number;      // Critical/high danger
+  orangeLinks: number;   // Moderate danger
+  greenLinks: number;    // Safe/appropriate
+  totalDangerScore: number;
+  inappropriateCount: number;
+  adverseEffectCount: number;
+}
+
+interface SchemaComparison {
+  currentScore: number;     // 0-100 benefit/risk score
+  proposedScore: number;    // 0-100 benefit/risk score
+  improvementPercent: number;
+  currentStats: SchemaStats;
+  proposedStats: SchemaStats;
+  proposedChanges: ProposedChange[];
+  benefitRiskRatio: {
+    current: number;  // Benefits / Risks ratio
+    proposed: number;
+  };
+  clinicalSummary: string; // Summary of proposed changes
 }
 
 interface AnalysisResult {
@@ -29,12 +71,15 @@ interface AnalysisResult {
   summary: string;
   warnings: string[];
   recommendations: string[];
+  alternatives: Alternative[];
+  schemaComparison?: SchemaComparison;
   webResearch: {
     query: string;
     findings: string[];
     sources: { title: string; url: string }[];
   }[];
 }
+
 
 // Fonction pour rechercher sur PubMed
 async function searchPubMed(query: string, maxResults: number = 5): Promise<{ title: string; url: string; abstract: string }[]> {
@@ -67,6 +112,121 @@ async function searchPubMed(query: string, maxResults: number = 5): Promise<{ ti
     return [];
   }
 }
+
+// Fonction pour générer un hash de requête (pour le cache)
+function generateRequestHash(pathologyIds: string[], symptomIds: string[], treatmentIds: string[], medicationIds: string[]): string {
+  const sorted = [
+    ...pathologyIds.sort(),
+    ...symptomIds.sort(),
+    ...treatmentIds.sort(),
+    ...medicationIds.sort()
+  ].join('|');
+  // Simple hash
+  let hash = 0;
+  for (let i = 0; i < sorted.length; i++) {
+    const char = sorted.charCodeAt(i);
+    hash = ((hash << 5) - hash) + char;
+    hash = hash & hash;
+  }
+  return hash.toString(36);
+}
+
+// Fonction pour chercher les liens en cache
+async function findCachedLinks(
+  supabase: any,
+  elements: { name: string; type: string }[]
+): Promise<CausalLink[]> {
+  const cachedLinks: CausalLink[] = [];
+
+  // Chercher les liens existants entre tous les éléments
+  for (let i = 0; i < elements.length; i++) {
+    for (let j = i + 1; j < elements.length; j++) {
+      const elem1 = elements[i];
+      const elem2 = elements[j];
+
+      // Chercher dans les deux directions
+      const { data: links1 } = await supabase
+        .from('causal_links_cache')
+        .select('*')
+        .ilike('from_element', `%${elem1.name}%`)
+        .ilike('to_element', `%${elem2.name}%`);
+
+      const { data: links2 } = await supabase
+        .from('causal_links_cache')
+        .select('*')
+        .ilike('from_element', `%${elem2.name}%`)
+        .ilike('to_element', `%${elem1.name}%`);
+
+      // Convertir au format CausalLink
+      const allLinks = [...(links1 || []), ...(links2 || [])];
+      for (const link of allLinks) {
+        cachedLinks.push({
+          from: link.from_element,
+          fromType: link.from_type,
+          to: link.to_element,
+          toType: link.to_type,
+          relationship: link.relationship,
+          probability: link.probability || 'medium',
+          evidence: link.evidence || '',
+          patientCount: 0,
+          webSources: [],
+          isAppropriate: link.is_appropriate,
+          effectType: link.effect_type,
+          therapeuticDetails: link.therapeutic_details,
+          adverseDetails: link.adverse_details,
+          dangerLevel: link.danger_level,
+          interactionType: link.interaction_type,
+          symptomFrequency: link.symptom_frequency,
+        });
+
+        // Incrémenter le hit count
+        await supabase
+          .from('causal_links_cache')
+          .update({ hit_count: link.hit_count + 1, updated_at: new Date().toISOString() })
+          .eq('id', link.id);
+      }
+    }
+  }
+
+  return cachedLinks;
+}
+
+// Fonction pour sauvegarder les liens en cache
+async function saveLinkToCache(supabase: any, link: CausalLink, aiModel: string): Promise<void> {
+  try {
+    // Générer le hash de la paire
+    const pairHash = [link.from, link.fromType, link.to, link.toType]
+      .map(s => s.toLowerCase())
+      .sort()
+      .join('|');
+
+    await supabase.from('causal_links_cache').upsert({
+      from_element: link.from,
+      from_type: link.fromType,
+      to_element: link.to,
+      to_type: link.toType,
+      pair_hash: pairHash,
+      relationship: link.relationship,
+      probability: link.probability,
+      evidence: link.evidence,
+      is_appropriate: link.isAppropriate,
+      effect_type: link.effectType,
+      therapeutic_details: link.therapeuticDetails,
+      adverse_details: link.adverseDetails,
+      danger_level: link.dangerLevel,
+      interaction_type: link.interactionType,
+      symptom_frequency: link.symptomFrequency,
+      ai_model: aiModel,
+      updated_at: new Date().toISOString(),
+    }, {
+      onConflict: 'pair_hash',
+      ignoreDuplicates: false
+    });
+  } catch (error) {
+    console.error('[Cache] Erreur sauvegarde lien:', error);
+  }
+}
+
 
 serve(async (req) => {
   console.log(`[CrossDataAnalyzer] Requête reçue: ${req.method}`);
@@ -104,6 +264,24 @@ serve(async (req) => {
     const treatments = treatmentsRes.data || [];
     const medications = medicationsRes.data || [];
     const patients = patientsRes.data || [];
+
+    // Préparer la liste des éléments pour la recherche en cache
+    const allElements: { name: string; type: string }[] = [
+      ...pathologies.map((p: any) => ({ name: p.name, type: 'pathology' })),
+      ...symptoms.map((s: any) => ({ name: s.name, type: 'symptom' })),
+      ...treatments.map((t: any) => ({ name: t.name, type: 'treatment' })),
+      ...medications.map((m: any) => ({ name: m.name, type: 'medication' })),
+    ];
+
+    // Rechercher les liens existants en cache
+    console.log('[CrossDataAnalyzer] Recherche dans le cache...');
+    const cachedLinks = await findCachedLinks(supabase, allElements);
+    console.log(`[CrossDataAnalyzer] ${cachedLinks.length} liens trouvés en cache`);
+
+    // Si on a trouvé des liens en cache pour TOUTES les paires, on peut les retourner directement
+    const expectedPairs = (allElements.length * (allElements.length - 1)) / 2;
+    const cacheHitRatio = cachedLinks.length / Math.max(expectedPairs, 1);
+    console.log(`[CrossDataAnalyzer] Ratio cache: ${(cacheHitRatio * 100).toFixed(1)}%`);
 
     // Récupérer les liens symptômes pour les pathologies sélectionnées
     let symptomLinks: any[] = [];
@@ -146,6 +324,14 @@ serve(async (req) => {
         webSearchQueries.push(`${treatment.name} ${symptom.name} effet secondaire`);
       }
     }
+
+    // DÉSACTIVÉ: Retour cache rapide - on veut toujours générer la synthèse
+    // Le cache sera utilisé pour enrichir les liens, mais on appelle toujours l'IA pour la synthèse
+    // if (cacheHitRatio >= 0.8 && cachedLinks.length >= 2) {
+    //   console.log('[CrossDataAnalyzer] Cache suffisant, retour direct sans appel API');
+    //   ...
+    // }
+    console.log(`[CrossDataAnalyzer] ${cachedLinks.length} liens en cache, mais appel IA pour synthèse complète`);
 
     // Si pas assez de requêtes spécifiques, rechercher chaque élément individuellement
     if (webSearchQueries.length === 0) {
@@ -216,74 +402,174 @@ serve(async (req) => {
       return `Recherche: "${wr.query}"\nArticles trouvés:\n${articlesInfo || '  Aucun article trouvé'}`;
     }).join('\n\n');
 
-    const systemPrompt = `Tu es un expert médical francophone spécialisé dans l'analyse cross-data et l'évaluation thérapeutique.
+    const systemPrompt = `Tu es un MÉDECIN EXPERT francophone spécialisé dans l'analyse cross-data et l'évaluation thérapeutique.
 
-RÈGLE ABSOLUE: Analyse UNIQUEMENT les éléments fournis dans la liste. Ne génère JAMAIS de liens avec des éléments qui ne sont pas explicitement listés.
+## RÈGLES LOGIQUES FONDAMENTALES (À RESPECTER IMPÉRATIVEMENT)
+
+### RÈGLE 1: DIRECTION DES LIENS
+- Un médicament TRAITE une pathologie → fromType="medication", toType="pathology", isAppropriate=true, effectType="therapeutic"
+- Un médicament est CONTRE-INDIQUÉ pour une pathologie → fromType="medication", toType="pathology", isAppropriate=false
+- Une pathologie CAUSE un symptôme → fromType="pathology", toType="symptom", symptomFrequency="principal/frequent/possible/rare"
+- Un médicament CAUSE un symptôme (effet secondaire) → fromType="medication", toType="symptom", effectType="adverse"
+- NE JAMAIS INVERSER CES DIRECTIONS!
+
+### RÈGLE 2: DISTINCTION CRITIQUE - TRAITE vs CONTRE-INDIQUÉ
+⚠️ TRÈS IMPORTANT - NE PAS CONFONDRE:
+
+**Un médicament TRAITE une pathologie (isAppropriate=true):**
+- Prednisolone → Syndrome néphrotique = TRAITE (isAppropriate=true, effectType="therapeutic")
+- Sandimmun → Syndrome néphrotique = TRAITE (isAppropriate=true, effectType="therapeutic")  
+- Diurétiques → Syndrome néphrotique = TRAITE (isAppropriate=true, effectType="therapeutic")
+- Enalapril → Syndrome néphrotique = TRAITE (protège les reins)
+
+**Un médicament est CONTRE-INDIQUÉ pour une pathologie (isAppropriate=false):**
+- Algifor/AINS → Syndrome néphrotique = CONTRE-INDIQUÉ (isAppropriate=false, dangerLevel="high")
+- Prednisolone → Varicelle = DANGER (isAppropriate=false, dangerLevel="critical")
+- Sandimmun → Varicelle = DANGER (isAppropriate=false, dangerLevel="critical")
+
+### RÈGLE 3: PATHOLOGIE → SYMPTÔME (utiliser symptomFrequency, PAS isAppropriate)
+Quand une pathologie CAUSE un symptôme:
+- NE JAMAIS utiliser isAppropriate ou effectType pour ces liens!
+- Utiliser UNIQUEMENT symptomFrequency:
+  * "principal" = signe cardinal (\>90% des cas)
+  * "frequent" = fréquent (50-90%)
+  * "possible" = possible (10-50%)
+  * "rare" = rare (\<10%)
+
+**EXEMPLES CORRECTS:**
+- Syndrome néphrotique → Œdème des paupières: symptomFrequency="principal"
+- Syndrome néphrotique → Fièvre prolongée: NE PAS CRÉER (pas de lien direct)
+- Varicelle → Fièvre: symptomFrequency="frequent"
+- Varicelle → Abcès: symptomFrequency="possible" (complication)
+
+### RÈGLE 4: NE PAS CRÉER DE LIENS ENTRE ÉLÉMENTS NON LIÉS MÉDICALEMENT
+⚠️ S'il n'y a PAS de relation médicale directe, NE PAS créer de lien!
+- Syndrome néphrotique → Varicelle: PAS DE LIEN (pas de relation causale directe)
+- Varicelle → Syndrome néphrotique: PAS DE LIEN (pas de relation causale directe)
+- Deux pathologies non liées: PAS DE LIEN
+
+### RÈGLE 5: LOGIQUE THÉRAPEUTIQUE
+- Les immunosuppresseurs (Prednisolone, Sandimmun) TRAITENT les maladies auto-immunes/inflammatoires
+- Les immunosuppresseurs sont CONTRE-INDIQUÉS en cas d'infection active (varicelle, zona)
+- Les AINS sont CONTRE-INDIQUÉS en insuffisance rénale
+- Les diurétiques TRAITENT l'œdème du syndrome néphrotique
 
 ## TYPES DE LIENS À GÉNÉRER
 
-### TYPE 1: MÉDICAMENT/TRAITEMENT → PATHOLOGIE
-Pour chaque médicament/traitement ET pathologie sélectionnés:
-- from: nom exact du médicament/traitement (fromType: "medication"/"treatment")
-- to: nom exact de la pathologie (toType: "pathology")
-- isAppropriate: TRUE si le médicament TRAITE cette pathologie
-- isAppropriate: FALSE si le médicament est CONTRE-INDIQUÉ pour cette pathologie
-- Si contre-indiqué, ajouter dangerLevel et adverseDetails
+### 1. PATHOLOGIE → SYMPTÔME
+Quand une pathologie CAUSE ou PROVOQUE un symptôme:
+- fromType: "pathology", toType: "symptom"
+- symptomFrequency: "principal" (signe cardinal), "frequent" (>50%), "possible" (10-50%), "rare" (<10%)
+- NE PAS utiliser isAppropriate pour ce type de lien!
 
-### TYPE 2: PATHOLOGIE → SYMPTÔME
-Si une pathologie sélectionnée CAUSE un symptôme sélectionné:
-- from: nom de la pathologie (fromType: "pathology")
-- to: nom du symptôme (toType: "symptom")
-- probability selon la fréquence du symptôme dans cette pathologie
+### 2. MÉDICAMENT/TRAITEMENT → PATHOLOGIE  
+- Si le médicament TRAITE la pathologie: isAppropriate=true, effectType="therapeutic"
+- Si le médicament est CONTRE-INDIQUÉ: isAppropriate=false, dangerLevel selon gravité
+- JAMAIS les deux à la fois!
 
-### TYPE 3: MÉDICAMENT → SYMPTÔME (Effets indésirables)
-Si un médicament peut CAUSER un symptôme sélectionné:
-- effectType: "adverse"
-- adverseDetails: description de l'effet
+### 3. MÉDICAMENT → SYMPTÔME
+- Si le médicament TRAITE le symptôme (antipyrétique→fièvre): effectType="therapeutic"
+- Si le médicament CAUSE le symptôme (effet indésirable): effectType="adverse"
+- Si les deux sont possibles: effectType="both"
 
-### TYPE 4: INTERACTIONS MÉDICAMENTEUSES
-Si deux médicaments sélectionnés peuvent interagir:
-- from/to: les deux médicaments (fromType/toType: "medication")
-- interactionType: "drug-drug"
-- dangerLevel selon gravité
+### 4. MÉDICAMENT → MÉDICAMENT (INTERACTION)
+- Interactions médicamenteuses dangereuses
+- interactionType="drug-drug", dangerLevel selon gravité
 
-### TYPE 5: DANGERS COMBINÉS
-Si un médicament immunosuppresseur ET une pathologie infectieuse sont tous deux sélectionnés:
-- Créer un lien de danger
-- dangerLevel: "critical" ou "high"
-
-## FORMAT DE RÉPONSE JSON
-
+## FORMAT JSON
 {
   "causalLinks": [
     {
-      "from": "nom EXACT de l'élément tel que fourni",
+      "from": "NOM EXACT",
       "fromType": "symptom" | "pathology" | "treatment" | "medication",
-      "to": "nom EXACT de l'élément tel que fourni", 
+      "to": "NOM EXACT", 
       "toType": "symptom" | "pathology" | "treatment" | "medication",
       "relationship": "description courte",
       "probability": "high" | "medium" | "low",
-      "evidence": "explication détaillée",
+      "evidence": "Explication médicale détaillée",
       "patientCount": 0,
       "webSources": [],
-      "isAppropriate": true ou false (OBLIGATOIRE pour liens médicament→pathologie),
-      "effectType": "therapeutic" | "adverse" | "both",
-      "therapeuticDetails": "si therapeutic",
-      "adverseDetails": "si adverse ou contre-indiqué",
-      "dangerLevel": "critical" | "high" | "moderate" | "low",
-      "interactionType": "drug-drug" | "drug-treatment" | "pathology-danger"
+      "isAppropriate": true/false (UNIQUEMENT pour médicament→pathologie),
+      "effectType": "therapeutic" | "adverse" | "both" (UNIQUEMENT pour médicament→symptôme ou médicament→pathologie),
+      "therapeuticDetails": "...",
+      "adverseDetails": "...",
+      "dangerLevel": "critical" | "high" | "moderate" | "low" (UNIQUEMENT si danger/contre-indication),
+      "interactionType": "drug-drug" | "drug-treatment" | "pathology-danger",
+      "symptomFrequency": "principal" | "frequent" | "possible" | "rare" (UNIQUEMENT pour pathologie→symptôme)
     }
   ],
-  "summary": "résumé de l'analyse",
-  "warnings": ["avertissements"],
-  "recommendations": ["recommandations"],
-  "webResearch": []
+  "summary": "Résumé clinique global de la situation",
+  "warnings": ["⚠️ Avertissements importants"],
+  "recommendations": ["Recommandations thérapeutiques"],
+  "alternatives": [
+    {
+      "for": "Nom du médicament problématique",
+      "forType": "medication",
+      "reason": "Raison de la contre-indication ou du danger",
+      "suggestions": ["Alternative 1", "Alternative 2"],
+      "evidence": "Justification médicale"
+    }
+  ],
+  "schemaComparison": {
+    "currentScore": 65,
+    "proposedScore": 88,
+    "improvementPercent": 35,
+    "currentStats": {
+      "redLinks": 2,
+      "orangeLinks": 3,
+      "greenLinks": 5,
+      "totalDangerScore": 150,
+      "inappropriateCount": 1,
+      "adverseEffectCount": 3
+    },
+    "proposedStats": {
+      "redLinks": 0,
+      "orangeLinks": 1,
+      "greenLinks": 8,
+      "totalDangerScore": 25,
+      "inappropriateCount": 0,
+      "adverseEffectCount": 1
+    },
+    "proposedChanges": [
+      {
+        "action": "replace",
+        "target": "Médicament à remplacer",
+        "targetType": "medication",
+        "reason": "Interaction dangereuse avec X",
+        "replacement": "Médicament alternatif",
+        "replacementType": "medication",
+        "improvementScore": 40
+      }
+    ],
+    "benefitRiskRatio": {
+      "current": 1.2,
+      "proposed": 3.5
+    },
+    "clinicalSummary": "Synthèse des modifications proposées..."
+  }
 }
 
-## RÈGLES CRITIQUES
-1. N'utilise QUE les éléments listés dans les sections ci-dessous
-2. Ne génère PAS de liens avec des éléments non listés
-3. Utilise les noms EXACTS tels que fournis`;
+## GÉNÉRATION DES ALTERNATIVES
+Pour CHAQUE médicament avec dangerLevel="critical" ou "high", ou isAppropriate=false:
+- Générer une entrée dans "alternatives" avec des médicaments de remplacement
+- Les alternatives doivent avoir la même indication thérapeutique mais sans l'interaction/danger
+- Inclure 2-4 alternatives par médicament problématique
+
+## GÉNÉRATION DE LA COMPARAISON DE SCHÉMA
+TOUJOURS générer "schemaComparison":
+1. Calculer currentStats en comptant les liens par type de danger
+2. Proposer des changements (replace/remove) pour chaque médicament problématique
+3. Calculer proposedStats en simulant les changements
+4. Score = 100 - (redLinks*20 + orangeLinks*10 + inappropriateCount*15)
+5. benefitRiskRatio = greenLinks / (redLinks + orangeLinks + 1)
+6. improvementPercent = ((proposedScore - currentScore) / currentScore) * 100
+
+## VÉRIFICATIONS AVANT DE GÉNÉRER CHAQUE LIEN
+1. Y a-t-il une relation médicale DIRECTE entre ces deux éléments? Si non, ne pas créer de lien.
+2. Le médicament TRAITE-t-il ou est-il CONTRE-INDIQUÉ? (Choisir UN SEUL)
+3. Pour pathologie→symptôme: utiliser symptomFrequency, jamais isAppropriate
+4. Les types from/to correspondent-ils aux éléments?
+5. La direction du lien est-elle correcte?`;
 
     const userPrompt = `Analyse les liens de causalité et L'ADÉQUATION THÉRAPEUTIQUE entre ces éléments médicaux:
 
@@ -308,44 +594,41 @@ ${patientContext || 'Aucun patient trouvé'}
 ## RECHERCHE SCIENTIFIQUE PUBMED
 ${webResearchContext || 'Aucune recherche effectuée'}
 
-## ANALYSES OBLIGATOIRES - GÉNÈRE UN LIEN POUR CHAQUE:
+## ⚠️ INSTRUCTIONS CRITIQUES - GÉNÉRATION SYSTÉMATIQUE DE LIENS ⚠️
 
-### 1. LIENS PATHOLOGIE → SYMPTÔME (OBLIGATOIRE!)
-Si une pathologie peut CAUSER un symptôme sélectionné, crée un lien:
-- from: nom de la pathologie, fromType: "pathology"
-- to: nom du symptôme, toType: "symptom"
-- relationship: "cause typiquement" ou "peut provoquer"
-- probability: selon la fréquence du symptôme dans cette pathologie
+Tu DOIS générer un lien pour CHAQUE paire d'éléments ayant une relation médicale.
 
-EXEMPLE CRITIQUE: Si "syndrome néphrotique" et "œdème" sont sélectionnés → CRÉE LE LIEN! Le syndrome néphrotique cause l'œdème par hypoalbuminémie.
+### PAIRES OBLIGATOIRES À ANALYSER:
 
-### 2. DANGERS INFECTION + IMMUNOSUPPRESSION (OBLIGATOIRE!)
-Si une INFECTION VIRALE (varicelle, zona, etc.) ET des IMMUNOSUPPRESSEURS/CORTICOÏDES sont sélectionnés:
-- Crée un lien de DANGER entre le médicament immunosuppresseur et la pathologie infectieuse
-- probability: "high", dangerLevel: "critical"
-- Explique le risque de forme grave/disséminée
+**1. POUR CHAQUE MÉDICAMENT × CHAQUE PATHOLOGIE:**
+- Le médicament TRAITE-t-il cette pathologie? → isAppropriate=true, effectType="therapeutic"
+- Le médicament est-il CONTRE-INDIQUÉ? → isAppropriate=false, dangerLevel approprié
+- Si aucune relation → NE PAS créer de lien (mais c'est rare!)
 
-EXEMPLE CRITIQUE: Si "varicelle" et "prednisolone" sont sélectionnés → CRÉE UN WARNING! La varicelle sous corticoïdes peut être mortelle.
+**2. POUR CHAQUE MÉDICAMENT × CHAQUE SYMPTÔME:**
+- Le médicament TRAITE-t-il ce symptôme? → effectType="therapeutic" 
+- Le médicament CAUSE-t-il ce symptôme (effet secondaire)? → effectType="adverse"
+- Les deux? → effectType="both"
 
-### 3. CONTRE-INDICATIONS MÉDICAMENTS + PATHOLOGIE RÉNALE (OBLIGATOIRE!)
-Si des AINS (Algifor, ibuprofène) ET une pathologie rénale sont sélectionnés:
-- isAppropriate: false
-- Explique que les AINS aggravent la fonction rénale
+**3. POUR CHAQUE PATHOLOGIE × CHAQUE SYMPTÔME:**
+- La pathologie CAUSE-t-elle ce symptôme? → symptomFrequency approprié
+- Principal (\>90%), Fréquent (50-90%), Possible (10-50%), Rare (\<10%)
 
-### 4. ADÉQUATION TRAITEMENT/PATHOLOGIE
-Pour chaque médicament/traitement et chaque pathologie:
-- isAppropriate: true si c'est un traitement indiqué
-- isAppropriate: false si c'est contre-indiqué
+**4. POUR CHAQUE MÉDICAMENT × CHAQUE AUTRE MÉDICAMENT:**
+- Y a-t-il une interaction médicamenteuse? → interactionType="drug-drug", dangerLevel
 
-### 5. DISTINCTION TRAITE vs CAUSE SYMPTÔME
-Pour chaque médicament et symptôme:
-- effectType: "therapeutic" si le médicament traite ce symptôme
-- effectType: "adverse" si le médicament cause ce symptôme
-- effectType: "both" si les deux sont possibles
+### RÈGLE D'OR: MIEUX VAUT TROP DE LIENS QUE PAS ASSEZ!
+Si tu hésites, CRÉE LE LIEN avec une probabilité "low" ou "medium".
 
-Base tes analyses sur les indications officielles, les contre-indications, la littérature médicale (PubMed) et tes connaissances médicales.
+### SYNTHÈSE OBLIGATOIRE:
+Tu DOIS générer:
+- Un "summary" de 3-5 phrases résumant la situation clinique
+- Au moins 2-3 "warnings" (points d'attention, risques)
+- Au moins 3-5 "recommendations" (conseils thérapeutiques pratiques)
 
-Réponds UNIQUEMENT en français avec le JSON demandé. N'OUBLIE AUCUN LIEN PERTINENT!`;
+Base tes analyses sur les indications officielles, les contre-indications, la littérature médicale et tes connaissances médicales.
+
+Réponds UNIQUEMENT en français avec le JSON demandé. GÉNÈRE LE MAXIMUM DE LIENS PERTINENTS!`;
 
     console.log('Appel de Claude AI pour l\'analyse cross-data...');
 
@@ -362,9 +645,11 @@ Réponds UNIQUEMENT en français avec le JSON demandé. N'OUBLIE AUCUN LIEN PERT
         'content-type': 'application/json',
       },
       body: JSON.stringify({
-        model: 'claude-3-haiku-20240307', // Haiku pour plus de rapidité
-        max_tokens: 4000,
-        messages: [{ role: 'user', content: systemPrompt + "\n\n" + userPrompt }]
+        model: 'claude-sonnet-4-20250514', // Claude Sonnet 4 - excellent équilibre qualité/coût
+        max_tokens: 8000,
+        messages: [
+          { role: 'user', content: systemPrompt + "\n\n" + userPrompt + "\n\nGénère maintenant le JSON avec TOUS les liens pertinents. Réfléchis bien à chaque relation médicale avant de répondre." }
+        ]
       }),
     });
 
@@ -405,6 +690,7 @@ Réponds UNIQUEMENT en français avec le JSON demandé. N'OUBLIE AUCUN LIEN PERT
         summary: "L'analyse n'a pas pu être complétée correctement.",
         warnings: ["Erreur de parsing de la réponse IA"],
         recommendations: ["Veuillez réessayer l'analyse"],
+        alternatives: [],
         webResearch: []
       };
     }
@@ -420,16 +706,40 @@ Réponds UNIQUEMENT en français avec le JSON demandé. N'OUBLIE AUCUN LIEN PERT
 
     console.log('Analyse terminée avec succès');
 
+    // Sauvegarder les nouveaux liens en cache
+    const aiModel = 'claude-opus-4-5-20251101';
+    console.log(`[CrossDataAnalyzer] Sauvegarde de ${analysis.causalLinks?.length || 0} liens en cache...`);
+
+    for (const link of (analysis.causalLinks || [])) {
+      await saveLinkToCache(supabase, link, aiModel);
+    }
+    console.log('[CrossDataAnalyzer] Liens sauvegardés en cache');
+
+    // Fusionner avec les liens du cache existants (éviter les doublons)
+    const existingFromTo = new Set(
+      (analysis.causalLinks || []).map((l: CausalLink) => `${l.from}|${l.to}`)
+    );
+
+    const mergedLinks = [
+      ...(analysis.causalLinks || []),
+      ...cachedLinks.filter((cl: CausalLink) => !existingFromTo.has(`${cl.from}|${cl.to}`))
+    ];
+
     return new Response(
       JSON.stringify({
-        analysis,
+        analysis: {
+          ...analysis,
+          causalLinks: mergedLinks,
+        },
         context: {
           pathologiesCount: pathologies.length,
           symptomsCount: symptoms.length,
           treatmentsCount: treatments.length,
           medicationsCount: medications.length,
           patientsAnalyzed: relevantPatients.length,
-          pubmedSearches: webResearchResults.length
+          pubmedSearches: webResearchResults.length,
+          cacheHits: cachedLinks.length,
+          newLinksGenerated: analysis.causalLinks?.length || 0
         }
       }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
