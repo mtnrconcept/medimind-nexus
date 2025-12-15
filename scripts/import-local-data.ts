@@ -1,275 +1,201 @@
-/**
- * Script d'import des données médicales locales vers Supabase
- * Usage: npm run import:data
- */
 
 import { createClient } from '@supabase/supabase-js';
 import * as fs from 'fs';
 import * as path from 'path';
-import { config } from 'dotenv';
-import { fileURLToPath } from 'url';
+import * as dotenv from 'dotenv';
+import * as XLSX from 'xlsx';
 
-// Charger les variables d'environnement
-config();
+// Load environment variables
+dotenv.config();
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
+// We need the service role key to bypass RLS for bulk imports
+const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
-const SUPABASE_URL = process.env.VITE_SUPABASE_URL || '';
-const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.VITE_SUPABASE_PUBLISHABLE_KEY || '';
-
-if (!SUPABASE_URL || !SUPABASE_KEY) {
-    console.error('❌ Variables requises dans .env');
+if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
+    console.error('Error: SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY must be set in .env');
     process.exit(1);
 }
 
-const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
-const DATA_DIR = path.join(__dirname, '../src/data');
+const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
+    auth: {
+        autoRefreshToken: false,
+        persistSession: false,
+    },
+});
 
-// Parse CSV avec gestion des guillemets et point-virgules
-function parseCSV(filePath: string): Record<string, any>[] {
-    const content = fs.readFileSync(filePath, 'utf-8');
-    const lines = content.split('\n').filter(line => line.trim());
-    if (lines.length === 0) return [];
+const BATCH_SIZE = 100;
 
-    // Parser la première ligne pour les headers
-    const headerLine = lines[0];
-    const headers = parseCSVLine(headerLine);
+async function importMedications() {
+    const filePath = path.resolve(process.cwd(), 'src/data/medications-export-2025-12-08_00-24-29.csv');
+    console.log(`Reading medications from ${filePath}...`);
 
-    return lines.slice(1).map(line => {
-        const values = parseCSVLine(line);
-        const row: Record<string, any> = {};
-
-        headers.forEach((h, i) => {
-            let value = values[i] || '';
-            // Parser les arrays JSON
-            if (value.startsWith('[') && value.endsWith(']')) {
-                try {
-                    row[h] = JSON.parse(value.replace(/""/g, '"'));
-                } catch {
-                    row[h] = value;
-                }
-            } else if (value === '' || value === 'null') {
-                row[h] = null;
-            } else {
-                row[h] = value;
-            }
-        });
-        return row;
-    }).filter(row => Object.values(row).some(v => v !== null && v !== ''));
-}
-
-// Parse une ligne CSV en tenant compte des guillemets
-function parseCSVLine(line: string): string[] {
-    const values: string[] = [];
-    let current = '';
-    let inQuotes = false;
-
-    for (let i = 0; i < line.length; i++) {
-        const char = line[i];
-        if (char === '"') {
-            if (inQuotes && line[i + 1] === '"') {
-                current += '"';
-                i++; // Skip next quote
-            } else {
-                inQuotes = !inQuotes;
-            }
-        } else if (char === ';' && !inQuotes) {
-            values.push(current.trim());
-            current = '';
-        } else {
-            current += char;
-        }
-    }
-    values.push(current.trim());
-    return values;
-}
-
-// Import générique
-async function importTable(
-    tableName: string,
-    filePrefix: string,
-    mapRow: (row: any) => any | null,
-    displayName: string
-): Promise<{ inserted: number; errors: number; skipped: number }> {
-    const files = fs.readdirSync(DATA_DIR).filter(f =>
-        f.startsWith(filePrefix) && f.endsWith('.csv')
-    );
-
-    if (files.length === 0) {
-        console.log(`⚠️ Aucun fichier ${filePrefix} trouvé`);
-        return { inserted: 0, errors: 0, skipped: 0 };
+    if (!fs.existsSync(filePath)) {
+        console.error(`File not found: ${filePath}`);
+        return;
     }
 
-    const csvPath = path.join(DATA_DIR, files[0]);
-    console.log(`📥 Import ${displayName} depuis ${files[0]}...`);
+    // Read file manually to handle potential encoding issues if any, but xlsx usually fine
+    const fileBuffer = fs.readFileSync(filePath);
+    const workbook = XLSX.read(fileBuffer, { type: 'buffer', cellDates: true });
+    const sheetName = workbook.SheetNames[0];
+    const sheet = workbook.Sheets[sheetName];
 
-    const rows = parseCSV(csvPath);
-    console.log(`   ${rows.length} lignes trouvées`);
+    // XLSX utils sheet_to_json handles CSV parsing
+    // The CSV is semicolon delimited. XLSX *might* auto-detect, but we can check.
+    // Actually, for CSVs, it's often safer to specify delimiter if parsing text, 
+    // but let's try auto-detection first. 
+    // If we read as buffer, XLSX determines format.
 
-    let inserted = 0, errors = 0, skipped = 0;
-    const BATCH_SIZE = 50;
+    const data = XLSX.utils.sheet_to_json(sheet);
 
-    for (let i = 0; i < rows.length; i += BATCH_SIZE) {
-        const batch = rows.slice(i, i + BATCH_SIZE)
-            .map(mapRow)
-            .filter((row): row is Record<string, any> => row !== null && row.id);
+    console.log(`Parsed ${data.length} medications.`);
 
-        if (batch.length === 0) {
-            skipped += BATCH_SIZE;
-            continue;
+    let batch = [];
+    let processedCount = 0;
+
+    for (const row of data) {
+        const anyRow = row as any;
+
+        // Parse JSON arrays
+        let dosage_forms = null;
+        try {
+            if (anyRow.dosage_forms) {
+                // Handle "[\"val\"]" vs array
+                dosage_forms = JSON.parse(anyRow.dosage_forms);
+            }
+        } catch (e) {
+            // console.warn('Failed to parse dosage_forms', anyRow.dosage_forms);
         }
 
-        // Essayer l'upsert batch d'abord
-        const { error } = await supabase
-            .from(tableName)
-            .upsert(batch, { onConflict: 'id', ignoreDuplicates: true });
+        // Clean fields
+        const medication = {
+            id: anyRow.id,
+            name: anyRow.name,
+            atc_code: anyRow.atc_code,
+            substance: anyRow.substance,
+            description: anyRow.description,
+            dosage_forms: dosage_forms,
+            indications: anyRow.indications,
+            posology: anyRow.posology,
+            source_url: anyRow.source_url,
+            // created_at: anyRow.created_at, // Let supabase handle or use provided
+            // updated_at: anyRow.updated_at,
+            manufacturer: anyRow.manufacturer,
+            swissmedic_name: anyRow.swissmedic_name,
+            pharmacode: anyRow.pharmacode,
+            gtin: anyRow.gtin,
+            dispensing_category: anyRow.dispensing_category,
+            characteristics: anyRow.characteristics,
+            composition: anyRow.composition,
+            swissmedic_number: anyRow.swissmedic_number,
+            authorization_type: anyRow.authorization_type,
+            medication_category: anyRow.medication_category,
+            first_authorization_date: anyRow.first_authorization_date ? new Date(anyRow.first_authorization_date).toISOString() : null,
+            validity_duration: anyRow.validity_duration,
+            genetically_produced: anyRow.genetically_produced === 'true' || anyRow.genetically_produced === true,
+            narcotic_category: anyRow.narcotic_category,
+            authorization_status: anyRow.authorization_status
+        };
 
+        batch.push(medication);
+
+        if (batch.length >= BATCH_SIZE) {
+            const { error } = await supabase.from('medications').upsert(batch);
+            if (error) {
+                console.error('Error inserting batch:', error);
+            } else {
+                processedCount += batch.length;
+                process.stdout.write(`\rImported ${processedCount}/${data.length} medications...`);
+            }
+            batch = [];
+        }
+    }
+
+    if (batch.length > 0) {
+        const { error } = await supabase.from('medications').upsert(batch);
         if (error) {
-            // Si erreur de contrainte unique, insérer ligne par ligne
-            if (error.message.includes('unique') || error.message.includes('duplicate')) {
-                for (const row of batch) {
-                    const { error: rowError } = await supabase
-                        .from(tableName)
-                        .upsert(row, { onConflict: 'id', ignoreDuplicates: true });
-
-                    if (rowError) {
-                        if (rowError.message.includes('unique') || rowError.message.includes('duplicate')) {
-                            skipped++;
-                        } else {
-                            errors++;
-                        }
-                    } else {
-                        inserted++;
-                    }
-                }
-            } else {
-                errors += batch.length;
-            }
+            console.error('Error inserting final batch:', error);
         } else {
-            inserted += batch.length;
+            processedCount += batch.length;
+            console.log(`\rImported ${processedCount}/${data.length} medications.`);
         }
-
-        process.stdout.write(`\r   Progression: ${Math.min(i + BATCH_SIZE, rows.length)}/${rows.length} (${inserted} OK, ${skipped} skip, ${errors} err)`);
     }
-
-    console.log(`\n   ✅ ${displayName}: ${inserted} importés, ${skipped} ignorés (doublons), ${errors} erreurs`);
-    return { inserted, errors, skipped };
 }
 
-// Validation UUID
-function isValidUUID(str: string): boolean {
-    if (!str) return false;
-    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-    return uuidRegex.test(str);
+async function importPathologies() {
+    const filePath = path.resolve(process.cwd(), 'src/data/pathologies-export-2025-12-08_00-25-22.csv');
+    console.log(`Reading pathologies from ${filePath}...`);
+
+    if (!fs.existsSync(filePath)) {
+        console.error(`File not found: ${filePath}`);
+        return;
+    }
+
+    const fileBuffer = fs.readFileSync(filePath);
+    const workbook = XLSX.read(fileBuffer, { type: 'buffer' });
+    const sheetName = workbook.SheetNames[0];
+    const sheet = workbook.Sheets[sheetName];
+
+    const data = XLSX.utils.sheet_to_json(sheet);
+
+    console.log(`Parsed ${data.length} pathologies.`);
+
+    let batch = [];
+    let processedCount = 0;
+
+    for (const row of data) {
+        const anyRow = row as any;
+
+        let synonyms = null;
+        try {
+            if (anyRow.synonyms) {
+                synonyms = JSON.parse(anyRow.synonyms);
+            }
+        } catch (e) { }
+
+        const pathology = {
+            id: anyRow.id,
+            name: anyRow.name,
+            icd_code: anyRow.icd_code,
+            synonyms: synonyms,
+            description: anyRow.description,
+            category: anyRow.category,
+            specialty: anyRow.specialty,
+            severity: anyRow.severity
+            // created_at / updated_at handled by DB or ignored
+        };
+
+        batch.push(pathology);
+
+        if (batch.length >= BATCH_SIZE) {
+            const { error } = await supabase.from('pathologies').upsert(batch);
+            if (error) {
+                console.error('Error inserting batch:', error);
+            } else {
+                processedCount += batch.length;
+                process.stdout.write(`\rImported ${processedCount}/${data.length} pathologies...`);
+            }
+            batch = [];
+        }
+    }
+
+    if (batch.length > 0) {
+        const { error } = await supabase.from('pathologies').upsert(batch);
+        if (error) {
+            console.error('Error inserting final batch:', error);
+        } else {
+            processedCount += batch.length;
+            console.log(`\rImported ${processedCount}/${data.length} pathologies.`);
+        }
+    }
 }
 
-async function main(): Promise<void> {
-    console.log('🚀 Import des données médicales locales vers Supabase\n');
-    console.log(`📁 Dossier source: ${DATA_DIR}`);
-    console.log(`🔗 Supabase URL: ${SUPABASE_URL}\n`);
-
-    const startTime = Date.now();
-    const results: Record<string, { inserted: number; errors: number }> = {};
-
-    // 1. Pathologies - table parent
-    results.pathologies = await importTable('pathologies', 'pathologies-export', (row) => {
-        if (!isValidUUID(row.id)) return null;
-        return {
-            id: row.id,
-            name: row.name,
-            icd_code: row.icd_code,
-            synonyms: Array.isArray(row.synonyms) ? row.synonyms : null,
-            description: row.description,
-            category: row.category,
-            specialty: row.specialty,
-            severity: row.severity,
-            created_at: row.created_at,
-            updated_at: row.updated_at
-        };
-    }, 'Pathologies');
-
-    // 2. Médicaments - table parent
-    results.medications = await importTable('medications', 'medications-export', (row) => {
-        if (!isValidUUID(row.id)) return null;
-        return {
-            id: row.id,
-            name: row.name,
-            atc_code: row.atc_code || null,
-            substance: row.substance || null,
-            description: row.description || null,
-            dosage_forms: Array.isArray(row.dosage_forms) ? row.dosage_forms : null,
-            indications: row.indications || null,
-            posology: row.posology || null,
-            source_url: row.source_url || null,
-            manufacturer: row.manufacturer || null,
-            swissmedic_name: row.swissmedic_name || null,
-            pharmacode: row.pharmacode || null,
-            gtin: row.gtin || null,
-            dispensing_category: row.dispensing_category || null,
-            characteristics: row.characteristics || null,
-            composition: row.composition || null,
-            created_at: row.created_at,
-            updated_at: row.updated_at || row.created_at
-        };
-    }, 'Médicaments');
-
-    // 3. Traitements - lié aux pathologies
-    results.treatments = await importTable('treatments', 'treatments-export', (row) => {
-        if (!isValidUUID(row.id)) return null;
-        // Vérifier que pathology_id est un UUID valide
-        const pathologyId = isValidUUID(row.pathology_id) ? row.pathology_id : null;
-        return {
-            id: row.id,
-            pathology_id: pathologyId,
-            name: row.name,
-            type: row.type || null,
-            description: row.description || null,
-            contraindications: Array.isArray(row.contraindications) ? row.contraindications : null,
-            created_at: row.created_at
-        };
-    }, 'Traitements');
-
-    // 4. Effets secondaires - lié aux médicaments
-    results.side_effects = await importTable('side_effects', 'side_effects-export', (row) => {
-        if (!isValidUUID(row.id) || !isValidUUID(row.medication_id)) return null;
-        return {
-            id: row.id,
-            medication_id: row.medication_id,
-            name: row.name,
-            frequency: row.frequency || null,
-            body_system: row.body_system || null,
-            description: row.description || null,
-            severity: row.severity || null,
-            created_at: row.created_at
-        };
-    }, 'Effets secondaires');
-
-    // 5. Interactions - lié aux médicaments
-    results.drug_interactions = await importTable('drug_interactions', 'drug_interactions-export', (row) => {
-        if (!isValidUUID(row.id) || !isValidUUID(row.medication_id)) return null;
-        return {
-            id: row.id,
-            medication_id: row.medication_id,
-            interacting_drug: row.interacting_drug,
-            interaction_type: row.interaction_type || null,
-            severity: row.severity || null,
-            description: row.description || null,
-            recommendation: row.recommendation || null,
-            created_at: row.created_at
-        };
-    }, 'Interactions');
-
-    const duration = ((Date.now() - startTime) / 1000).toFixed(1);
-
-    console.log('\n📊 Résumé:');
-    let totalInserted = 0, totalErrors = 0;
-    for (const [table, stats] of Object.entries(results)) {
-        console.log(`   ${table}: ${stats.inserted} ✅ / ${stats.errors} ❌`);
-        totalInserted += stats.inserted;
-        totalErrors += stats.errors;
-    }
-    console.log(`\n✨ Import terminé en ${duration}s - Total: ${totalInserted} insérés, ${totalErrors} erreurs`);
+async function main() {
+    console.log('Starting import...');
+    await importMedications();
+    await importPathologies();
+    console.log('Done.');
 }
 
 main().catch(console.error);

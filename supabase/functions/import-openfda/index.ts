@@ -159,14 +159,29 @@ serve(async (req) => {
                 sideEffectsMap.set(name, new Set(sideEffects));
             }
 
-            // Insert medications
-            const { error: medError } = await supabase
-                .from('medications')
-                .upsert(medications, { onConflict: 'name', ignoreDuplicates: true });
+            // Insert medications one by one to handle case-insensitive duplicates
+            let insertedCount = 0;
+            for (const med of medications) {
+                // Check if medication already exists (case-insensitive)
+                const { data: existing } = await supabase
+                    .from('medications')
+                    .select('id')
+                    .ilike('name', med.name)
+                    .maybeSingle();
 
-            if (medError) {
-                console.error('Error inserting medications:', medError);
+                if (!existing) {
+                    const { error: medError } = await supabase
+                        .from('medications')
+                        .insert(med);
+
+                    if (medError) {
+                        console.error('Error inserting medication:', med.name, medError);
+                    } else {
+                        insertedCount++;
+                    }
+                }
             }
+            console.log(`Inserted ${insertedCount} new medications`);
 
             // Insert side effects as symptoms
             const allSideEffects = new Set<string>();
@@ -184,15 +199,26 @@ serve(async (req) => {
                     is_primary: false,
                 }));
 
-            if (symptomsToInsert.length > 0) {
-                const { error: sympError } = await supabase
+            // Insert symptoms one by one to handle case-insensitive duplicates
+            let insertedSymptoms = 0;
+            for (const symp of symptomsToInsert) {
+                const { data: existing } = await supabase
                     .from('symptoms')
-                    .upsert(symptomsToInsert, { onConflict: 'name', ignoreDuplicates: true });
+                    .select('id')
+                    .ilike('name', symp.name)
+                    .maybeSingle();
 
-                if (sympError) {
-                    console.error('Error inserting symptoms:', sympError);
+                if (!existing) {
+                    const { error: sympError } = await supabase
+                        .from('symptoms')
+                        .insert(symp);
+
+                    if (!sympError) {
+                        insertedSymptoms++;
+                    }
                 }
             }
+            console.log(`Inserted ${insertedSymptoms} new symptoms`);
 
             return new Response(
                 JSON.stringify({

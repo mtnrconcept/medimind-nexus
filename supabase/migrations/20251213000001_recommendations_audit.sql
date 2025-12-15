@@ -1,8 +1,7 @@
 -- Migration: recommendations_audit
 -- Creates table for tracking AI recommendations with full audit trail
 
--- Enable UUID extension if not already enabled
-CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+-- Note: Using gen_random_uuid() which is available natively in PostgreSQL 13+
 
 -- ============================================
 -- RECOMMENDATIONS LOG TABLE
@@ -10,7 +9,7 @@ CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 -- Stores all AI-generated recommendations for audit and compliance
 
 CREATE TABLE IF NOT EXISTS recommendations_log (
-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   patient_id UUID REFERENCES patients(id) ON DELETE CASCADE,
   
   -- Recommendation details
@@ -83,7 +82,7 @@ CREATE INDEX IF NOT EXISTS idx_recommendations_urgency ON recommendations_log(ur
 -- Tracks all actions taken on a recommendation (for detailed audit trail)
 
 CREATE TABLE IF NOT EXISTS recommendation_actions (
-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   recommendation_id UUID REFERENCES recommendations_log(id) ON DELETE CASCADE,
   
   action_type TEXT NOT NULL CHECK (action_type IN (
@@ -123,7 +122,7 @@ CREATE INDEX IF NOT EXISTS idx_recommendation_actions_by ON recommendation_actio
 -- Reusable recommendation templates for common scenarios
 
 CREATE TABLE IF NOT EXISTS recommendation_templates (
-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   
   -- Template metadata
   name TEXT NOT NULL,
@@ -285,10 +284,15 @@ $$ LANGUAGE plpgsql SECURITY DEFINER;
 -- Function to reject a recommendation
 CREATE OR REPLACE FUNCTION reject_recommendation(
   p_recommendation_id UUID,
-  p_notes TEXT NOT NULL -- Notes required for rejection
+  p_notes TEXT -- Notes required for rejection (validated in function body)
 )
 RETURNS VOID AS $$
 BEGIN
+  -- Validate that notes are provided
+  IF p_notes IS NULL OR p_notes = '' THEN
+    RAISE EXCEPTION 'Notes are required for rejection';
+  END IF;
+
   UPDATE recommendations_log
   SET 
     status = 'rejected',
@@ -311,11 +315,16 @@ $$ LANGUAGE plpgsql SECURITY DEFINER;
 -- Function to modify and accept a recommendation
 CREATE OR REPLACE FUNCTION modify_recommendation(
   p_recommendation_id UUID,
-  p_modified_text TEXT NOT NULL,
+  p_modified_text TEXT, -- Required (validated in function body)
   p_notes TEXT DEFAULT NULL
 )
 RETURNS VOID AS $$
 BEGIN
+  -- Validate that modified text is provided
+  IF p_modified_text IS NULL OR p_modified_text = '' THEN
+    RAISE EXCEPTION 'Modified text is required';
+  END IF;
+
   UPDATE recommendations_log
   SET 
     status = 'modified',

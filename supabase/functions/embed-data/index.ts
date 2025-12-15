@@ -43,7 +43,7 @@ serve(async (req) => {
             quantized: true,
         });
 
-        const tables = ['pathologies', 'symptoms', 'treatments', 'medications'];
+        const tables = ['pathologies', 'symptoms', 'treatments', 'medications', 'substances'];
         let totalProcessed = 0;
         const batchSize = 20; // Increased to speed up processing
 

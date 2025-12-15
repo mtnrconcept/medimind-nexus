@@ -46,8 +46,8 @@ BEGIN
                 ON CONFLICT (patient_id, pathology_id) DO NOTHING;
                 extracted_count := extracted_count + 1;
             -- Vérifier les synonymes
-            ELSIF pathology_rec.synonyms IS NOT NULL THEN
-                FOR i IN 1..array_length(pathology_rec.synonyms, 1)
+            ELSIF pathology_rec.synonyms IS NOT NULL AND array_length(pathology_rec.synonyms, 1) > 0 THEN
+                FOR i IN 1..COALESCE(array_length(pathology_rec.synonyms, 1), 0)
                 LOOP
                     IF notes_lower LIKE '%' || LOWER(pathology_rec.synonyms[i]) || '%' THEN
                         INSERT INTO patient_pathologies (patient_id, pathology_id, status, notes)

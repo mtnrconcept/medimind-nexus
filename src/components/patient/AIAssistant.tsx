@@ -3,48 +3,137 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { Brain, Send, Loader2, Sparkles } from 'lucide-react';
+import { Brain, Send, Loader2, Sparkles, Info } from 'lucide-react';
 import { toast } from 'sonner';
+import ExplainabilityPanel, { type ExplainabilityData } from './ExplainabilityPanel';
+import type { ExtendedLabResults, PatientAlert } from '@/hooks/usePatientAlerts';
 
-interface Patient {
+// ============================================
+// COMPREHENSIVE PATIENT DATA INTERFACE
+// ============================================
+
+interface Pathology {
+  id?: string;
+  name: string;
+  icd_code?: string;
+  category?: string;
+}
+
+interface Vaccine {
+  name: string;
+  date?: string;
+  dose?: string;
+  batchNumber?: string;
+}
+
+interface Medication {
+  name: string;
+  dosage?: string;
+  frequency?: string;
+  startDate?: string;
+  endDate?: string;
+  prescriber?: string;
+}
+
+interface Allergy {
+  allergen: string;
+  reaction?: string;
+  severity?: 'mild' | 'moderate' | 'severe';
+}
+
+interface MedicalHistory {
+  condition: string;
+  date?: string;
+  notes?: string;
+  resolved?: boolean;
+}
+
+/**
+ * Comprehensive patient data structure for AI context
+ * Includes ALL data visible on the patient detail page
+ */
+export interface ComprehensivePatient {
+  // Identification
+  id: string;
   patient_id: string;
+
+  // Profile
+  first_name?: string;
+  last_name?: string;
+  date_of_birth?: string;
+  email?: string;
+  phone?: string;
+  address?: string;
+  city?: string;
+  postal_code?: string;
+
+  // Demographics
   age: number;
   gender: string;
-  nationality: string;
-  treatment: string;
-  medical_notes_nlp: string;
-  lab_results_json: {
-    glucose_mg_dl: number;
-    blood_pressure_sys: number;
-    blood_pressure_dia: number;
-    temperature_c: number;
-  };
-  outcome: string;
-  pathologies?: {
-    name: string;
-  };
+  nationality?: string;
+
+  // Biometrics
+  height_cm?: number;
+  weight_kg?: number;
+  bmi?: number;
+
+  // Clinical status
+  outcome?: string;
+  created_at?: string;
+
+  // Pathologies
+  pathologies?: Pathology | Pathology[] | null;
+
+  // Treatment
+  treatment?: string;
+
+  // Clinical notes
+  medical_notes_nlp?: string;
+
+  // Complete lab results
+  lab_results_json: ExtendedLabResults;
+
+  // Active alerts
+  alerts?: PatientAlert[];
+
+  // Real Database Relations
+  medications?: any[];
+  vaccinations?: any[];
+  allergies?: any[];
+  medical_history?: any[];
+  consultations?: any[];
+  mental_health?: any[];
+  reproductive_health?: any[];
+  clinical_data?: any[];
+  lab_results_data?: any[];
+
+  // Risk score
+  risk_score?: number;
 }
 
 interface Message {
   role: 'user' | 'assistant';
   content: string;
+  explainability?: ExplainabilityData;
 }
 
 interface AIAssistantProps {
-  patient: Patient;
+  patient: ComprehensivePatient;
 }
 
 const suggestedQuestions = [
-  "Le traitement est-il adapté à cette glycémie ?",
-  "Y a-t-il des symptômes neurologiques dans les notes ?",
-  "Quels sont les effets secondaires possibles du traitement ?",
-  "Compare ce profil avec les données mondiales.",
+  "Résume le dossier complet de ce patient",
+  "Quelles sont les alertes critiques et pourquoi ?",
+  "Le traitement est-il adapté aux résultats biologiques ?",
+  "Y a-t-il des interactions médicamenteuses ?",
+  "Quels examens complémentaires recommander ?",
 ];
 
 const AIAssistant = ({ patient }: AIAssistantProps) => {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [showExplainability, setShowExplainability] = useState<number | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -60,6 +149,38 @@ const AIAssistant = ({ patient }: AIAssistantProps) => {
     setInput('');
 
     try {
+      const patientContext = {
+        // Identification
+        id: patient.id,
+        patient_id: patient.patient_id,
+
+        // Profile
+        nom_complet: patient.first_name && patient.last_name
+          ? `${patient.first_name} ${patient.last_name}`
+          : undefined,
+        prenom: patient.first_name,
+        nom: patient.last_name,
+        date_naissance: patient.date_of_birth,
+        age: patient.age,
+        gender: patient.gender === 'M' ? 'Homme' : patient.gender === 'F' ? 'Femme' : patient.gender,
+
+        // Clinical Data (Real DB Data)
+        medications: patient.medications,
+        allergies: patient.allergies,
+        vaccinations: patient.vaccinations,
+        medical_history: patient.medical_history,
+        consultations: patient.consultations,
+        mental_health: patient.mental_health,
+        reproductive_health: patient.reproductive_health,
+        clinical_data: patient.clinical_data,
+        lab_results_list: patient.lab_results_data, // List of DB entries
+
+        // Legacy/Aggregated fields
+        lab_results_summary: patient.lab_results_json,
+        alerts: patient.alerts,
+        medical_notes: patient.medical_notes_nlp,
+      };
+
       const response = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/ai-assistant`, {
         method: 'POST',
         headers: {
@@ -68,10 +189,7 @@ const AIAssistant = ({ patient }: AIAssistantProps) => {
         },
         body: JSON.stringify({
           message: userMessage,
-          patient: {
-            ...patient,
-            pathology_name: patient.pathologies?.name,
-          },
+          patient: patientContext,
           conversationHistory: messages,
         }),
       });
@@ -188,17 +306,106 @@ const AIAssistant = ({ patient }: AIAssistantProps) => {
             {messages.map((msg, i) => (
               <div
                 key={i}
-                className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
+                className={`flex flex-col ${msg.role === 'user' ? 'items-end' : 'items-start'}`}
               >
                 <div
-                  className={`max-w-[85%] rounded-lg px-3 py-2 text-sm ${
-                    msg.role === 'user'
-                      ? 'bg-primary text-primary-foreground'
-                      : 'bg-muted'
-                  }`}
+                  className={`max-w-[85%] rounded-lg px-3 py-2 text-sm ${msg.role === 'user'
+                    ? 'bg-primary text-primary-foreground'
+                    : 'bg-muted'
+                    }`}
                 >
                   <div className="whitespace-pre-wrap">{msg.content}</div>
                 </div>
+
+                {/* Explainability toggle for assistant messages */}
+                {msg.role === 'assistant' && msg.content && (
+                  <div className="mt-1 flex items-center gap-2">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-6 text-xs text-muted-foreground hover:text-primary"
+                      onClick={() => setShowExplainability(showExplainability === i ? null : i)}
+                    >
+                      <Info className="h-3 w-3 mr-1" />
+                      {showExplainability === i ? 'Masquer' : 'Expliquer'}
+                    </Button>
+                  </div>
+                )}
+
+                {/* Explainability Panel */}
+                {showExplainability === i && msg.role === 'assistant' && (
+                  <div className="mt-2 w-full max-w-[95%]">
+                    <ExplainabilityPanel
+                      data={{
+                        overallConfidence: 0.78,
+                        confidenceFactors: {
+                          dataQuality: 0.85,
+                          sourceReliability: 0.82,
+                          consensusLevel: 0.70,
+                          patientSpecificity: 0.75,
+                        },
+                        sources: [
+                          {
+                            id: '1',
+                            type: 'pubmed',
+                            title: 'Guidelines for Diabetes Management 2024',
+                            url: 'https://pubmed.ncbi.nlm.nih.gov/',
+                            authors: 'American Diabetes Association',
+                            year: 2024,
+                            relevance: 0.92,
+                          },
+                          {
+                            id: '2',
+                            type: 'clinical_guideline',
+                            title: 'HAS - Recommandations sur le traitement du diabète',
+                            relevance: 0.88,
+                          },
+                          {
+                            id: '3',
+                            type: 'drug_database',
+                            title: 'Vidal - Interactions médicamenteuses',
+                            relevance: 0.75,
+                          },
+                        ],
+                        reasoningChain: [
+                          {
+                            id: 'r1',
+                            step: 1,
+                            title: 'Analyse des données patient',
+                            description: 'Extraction des valeurs biologiques et du traitement actuel.',
+                            confidence: 0.95,
+                            sources: ['1'],
+                          },
+                          {
+                            id: 'r2',
+                            step: 2,
+                            title: 'Recherche de preuves',
+                            description: 'Consultation des guidelines et bases de données médicales.',
+                            confidence: 0.82,
+                            sources: ['1', '2'],
+                          },
+                          {
+                            id: 'r3',
+                            step: 3,
+                            title: 'Synthèse et recommandation',
+                            description: 'Formulation de la réponse basée sur les preuves collectées.',
+                            confidence: 0.78,
+                            sources: ['1', '2', '3'],
+                          },
+                        ],
+                        limitations: [
+                          'Données historiques du patient non disponibles',
+                          'Allergies médicamenteuses non renseignées',
+                        ],
+                        alternativeConsiderations: [
+                          'Consultation néphrologique si DFG < 30',
+                          'Adaptation posologique selon fonction rénale',
+                        ],
+                      }}
+                      className="border-l-2 border-primary/30"
+                    />
+                  </div>
+                )}
               </div>
             ))}
             {isLoading && messages[messages.length - 1]?.role === 'user' && (

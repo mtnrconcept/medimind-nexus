@@ -115,7 +115,7 @@ serve(async (req) => {
           'content-type': 'application/json'
         },
         body: JSON.stringify({
-          model: 'claude-3-haiku-20240307',
+          model: 'claude-opus-4-5-20251101',
           max_tokens: 4000,
           messages: [{ role: 'user', content: userPrompt }]
         })
@@ -1021,6 +1021,274 @@ serve(async (req) => {
         processed: results.length,
         results,
         totalStats
+      }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
+    // Action: Enrich medications - Scrape Compendium to update substance/composition for existing medications
+    if (action === 'enrich-medications') {
+      console.log('Enrichissement des médicaments avec données Compendium');
+
+      // Get medications without substance data
+      const { data: medsToEnrich, error: fetchError } = await supabase
+        .from('medications')
+        .select('id, name, substance, composition')
+        .or('substance.is.null,substance.eq.')
+        .limit(options?.limit || 20);
+
+      if (fetchError) throw fetchError;
+
+      console.log(`${medsToEnrich?.length || 0} médicaments à enrichir`);
+
+      const results: any[] = [];
+      const enrichedCount = { updated: 0, failed: 0, skipped: 0 };
+
+      for (const med of medsToEnrich || []) {
+        console.log(`Enrichissement: ${med.name}`);
+
+        try {
+          // Search for medication on Compendium.ch
+          const searchUrl = `https://compendium.ch/fr/search?q=${encodeURIComponent(med.name)}`;
+
+          const searchResult = await scrapeWithRateLimitRetry(firecrawl, searchUrl);
+          if (!searchResult.success) {
+            console.log(`Pas de résultat pour ${med.name}`);
+            enrichedCount.skipped++;
+            continue;
+          }
+
+          // Try to find a product link in the search results
+          const markdown = searchResult.markdown || '';
+          const productMatch = markdown.match(/\[([^\]]+)\]\((https:\/\/compendium\.ch\/fr\/product\/[^\)]+)\)/);
+
+          if (!productMatch) {
+            console.log(`Pas de lien produit trouvé pour ${med.name}`);
+            enrichedCount.skipped++;
+            continue;
+          }
+
+          const productUrl = productMatch[2];
+          console.log(`Scraping produit: ${productUrl}`);
+
+          // Scrape the product page
+          const productResult = await scrapeWithRateLimitRetry(firecrawl, productUrl);
+          if (!productResult.success) {
+            enrichedCount.failed++;
+            continue;
+          }
+
+          const productMarkdown = productResult.markdown || '';
+
+          // Extract substance and composition using regex (fast, no API call)
+          let substance = null;
+          let composition = null;
+          let atcCode = null;
+
+          const substanceMatch = productMarkdown.match(/(?:Principe actif|Substance active|Wirkstoff)[:\s]*([^\n]+)/i);
+          if (substanceMatch) substance = substanceMatch[1].trim().substring(0, 200);
+
+          const compositionMatch = productMarkdown.match(/(?:Composition|Zusammensetzung)[:\s]*([^\n]+(?:\n[^#\n]+)*)/i);
+          if (compositionMatch) composition = compositionMatch[1].trim().substring(0, 1000);
+
+          const atcMatch = productMarkdown.match(/(?:ATC|code\s+ATC)[:\s]*([A-Z]\d{2}[A-Z]{2}\d{2})/i);
+          if (atcMatch) atcCode = atcMatch[1].toUpperCase();
+
+          if (substance || composition || atcCode) {
+            // Update medication
+            const updateData: any = {};
+            if (substance) updateData.substance = substance;
+            if (composition) updateData.composition = composition;
+            if (atcCode && !med.atc_code) updateData.atc_code = atcCode;
+            updateData.source_url = productUrl;
+            updateData.updated_at = new Date().toISOString();
+
+            const { error: updateError } = await supabase
+              .from('medications')
+              .update(updateData)
+              .eq('id', med.id);
+
+            if (!updateError) {
+              enrichedCount.updated++;
+              results.push({
+                id: med.id,
+                name: med.name,
+                substance,
+                atcCode,
+                success: true
+              });
+              console.log(`✓ ${med.name} enrichi: ${substance}`);
+            } else {
+              enrichedCount.failed++;
+              console.error(`Erreur update ${med.name}:`, updateError);
+            }
+          } else {
+            enrichedCount.skipped++;
+            console.log(`Pas de données extraites pour ${med.name}`);
+          }
+
+          // Pause to avoid rate limiting
+          await new Promise(resolve => setTimeout(resolve, 5000));
+
+        } catch (err: any) {
+          console.error(`Erreur pour ${med.name}:`, err?.message);
+          enrichedCount.failed++;
+
+          if (err?.message?.includes('429') || err?.message?.includes('rate limit')) {
+            console.log('Rate limit atteint, arrêt');
+            break;
+          }
+        }
+      }
+
+      return new Response(JSON.stringify({
+        success: true,
+        totalToEnrich: medsToEnrich?.length || 0,
+        enrichedCount,
+        results
+      }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
+    // Action: Scrape equivalence tables - Extract drug equivalence data from ClinCalc, PsychiatrieNet, etc.
+    if (action === 'scrape-equivalence') {
+      console.log('Scraping equivalence table:', url);
+
+      const category = options?.category || 'benzodiazepine'; // benzodiazepine, antipsychotic, opioid
+
+      let scrapeResult;
+      try {
+        scrapeResult = await scrapeWithRateLimitRetry(firecrawl, url);
+      } catch (err: any) {
+        const errorMessage = err?.message || String(err);
+        if (errorMessage.includes('429') || errorMessage.includes('rate limit') || errorMessage.includes('402')) {
+          return new Response(JSON.stringify({
+            success: false,
+            error: 'Rate limit Firecrawl',
+            rateLimited: true
+          }), {
+            status: 429,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          });
+        }
+        throw err;
+      }
+
+      if (!scrapeResult.success) {
+        throw new Error('Échec du scraping de la page');
+      }
+
+      const markdown = scrapeResult.markdown || '';
+      console.log('Contenu extraction équivalence, longueur:', markdown.length);
+
+      // Extract equivalence data with Claude
+      const equivalencePrompt = `Tu es un pharmacologue expert. Extrais les données d'équivalence de cette page.
+
+Catégorie: ${category}
+
+Schéma JSON strict attendu:
+{
+  "reference_drug": "string (médicament de référence, ex: diazepam pour benzos, chlorpromazine pour AP)",
+  "reference_dose": number (dose de référence en mg),
+  "equivalences": [
+    {
+      "drug_name": "string",
+      "equivalent_dose": number,
+      "unit": "mg",
+      "half_life_hours": number ou null,
+      "half_life_range": "string (ex: '6-12')",
+      "onset": "rapid|intermediate|slow",
+      "duration": "short|intermediate|long",
+      "active_metabolites": boolean,
+      "notes": "string"
+    }
+  ]
+}
+
+Contenu Markdown:
+${markdown.substring(0, 40000)}`;
+
+      const claudeApiKey = Deno.env.get('CLAUDE_API_KEY');
+      const response = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: {
+          'x-api-key': claudeApiKey!,
+          'anthropic-version': '2023-06-01',
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify({
+          model: 'claude-opus-4-5-20251101',
+          max_tokens: 4000,
+          messages: [{ role: 'user', content: equivalencePrompt }]
+        })
+      });
+
+      if (!response.ok) {
+        throw new Error(`Claude API Error: ${await response.text()}`);
+      }
+
+      const data = await response.json();
+      const content = data.content[0].text;
+
+      // Parse JSON from Claude response
+      const jsonMatch = content.match(/\{[\s\S]*\}/);
+      let extractedData;
+      try {
+        extractedData = jsonMatch ? JSON.parse(jsonMatch[0]) : JSON.parse(content);
+      } catch (e) {
+        console.error('Failed to parse equivalence JSON:', content);
+        throw new Error('Failed to parse Claude response');
+      }
+
+      console.log('Equivalences extracted:', extractedData.equivalences?.length || 0);
+
+      // Insert into drug_equivalences table
+      const stats = { added: 0, updated: 0, errors: 0 };
+
+      if (extractedData.equivalences && Array.isArray(extractedData.equivalences)) {
+        for (const eq of extractedData.equivalences) {
+          try {
+            const payload = {
+              category,
+              drug_name: eq.drug_name,
+              equivalent_dose: eq.equivalent_dose,
+              unit: eq.unit || 'mg',
+              reference_drug: extractedData.reference_drug || (category === 'benzodiazepine' ? 'diazepam' : 'chlorpromazine'),
+              reference_dose: extractedData.reference_dose || (category === 'benzodiazepine' ? 10 : 100),
+              half_life_hours: eq.half_life_hours,
+              half_life_range: eq.half_life_range,
+              onset: eq.onset,
+              duration: eq.duration,
+              active_metabolites: eq.active_metabolites || false,
+              notes: eq.notes,
+              source_url: url,
+              updated_at: new Date().toISOString()
+            };
+
+            const { error } = await supabase
+              .from('drug_equivalences')
+              .upsert(payload, { onConflict: 'category,drug_name' });
+
+            if (error) {
+              console.error('Error inserting equivalence:', error);
+              stats.errors++;
+            } else {
+              stats.added++;
+            }
+          } catch (e: any) {
+            console.error('Error processing equivalence:', e);
+            stats.errors++;
+          }
+        }
+      }
+
+      return new Response(JSON.stringify({
+        success: true,
+        url,
+        category,
+        extractedData,
+        stats
       }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });

@@ -176,6 +176,14 @@ CREATE EXTENSION IF NOT EXISTS unaccent;
 ALTER TABLE causal_links_cache ENABLE ROW LEVEL SECURITY;
 ALTER TABLE analysis_cache ENABLE ROW LEVEL SECURITY;
 
+-- Drop existing policies if they exist (for idempotent migration)
+DROP POLICY IF EXISTS "Allow read causal_links_cache" ON causal_links_cache;
+DROP POLICY IF EXISTS "Allow read analysis_cache" ON analysis_cache;
+DROP POLICY IF EXISTS "Allow insert causal_links_cache" ON causal_links_cache;
+DROP POLICY IF EXISTS "Allow update causal_links_cache" ON causal_links_cache;
+DROP POLICY IF EXISTS "Allow insert analysis_cache" ON analysis_cache;
+DROP POLICY IF EXISTS "Allow update analysis_cache" ON analysis_cache;
+
 -- Permettre la lecture à tous les utilisateurs authentifiés
 CREATE POLICY "Allow read causal_links_cache" ON causal_links_cache
     FOR SELECT TO authenticated USING (true);

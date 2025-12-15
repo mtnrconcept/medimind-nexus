@@ -75,6 +75,7 @@ const AppLayout = ({ children }: AppLayoutProps) => {
     { path: '/patients', label: t('nav.patients'), icon: Users },
     { path: '/pathologies', label: t('nav.pathologies'), icon: BookOpen },
     { path: '/cross-data-analysis', label: t('analysis.crossDataAnalysis', 'Analyse Cross-Data'), icon: Sparkles },
+    { path: '/continuous-discovery', label: 'Discovery Engine', icon: FlaskConical },
     { path: '/search', label: t('common.search'), icon: Search },
   ];
 

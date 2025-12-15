@@ -645,7 +645,7 @@ Réponds UNIQUEMENT en français avec le JSON demandé. GÉNÈRE LE MAXIMUM DE L
         'content-type': 'application/json',
       },
       body: JSON.stringify({
-        model: 'claude-sonnet-4-20250514', // Claude Sonnet 4 - excellent équilibre qualité/coût
+        model: 'claude-opus-4-5-20251101', // Claude Opus 4.5 - Performance maximale
         max_tokens: 8000,
         messages: [
           { role: 'user', content: systemPrompt + "\n\n" + userPrompt + "\n\nGénère maintenant le JSON avec TOUS les liens pertinents. Réfléchis bien à chaque relation médicale avant de répondre." }

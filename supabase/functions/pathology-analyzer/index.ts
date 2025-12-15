@@ -151,27 +151,28 @@ Réponds UNIQUEMENT avec un JSON valide au format suivant (sans markdown, sans c
   "recommendations": [{"action": "...", "priority": "haute|moyenne|faible", "rationale": "..."}]
 }`;
 
-    const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY');
-    if (!LOVABLE_API_KEY) {
+    const CLAUDE_API_KEY = Deno.env.get('CLAUDE_API_KEY');
+    if (!CLAUDE_API_KEY) {
+      console.error('Configuration Error: CLAUDE_API_KEY is missing in Edge Function secrets.');
       return new Response(
-        JSON.stringify({ error: 'LOVABLE_API_KEY not configured' }),
-        { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        JSON.stringify({ error: 'Configuration Error: CLAUDE_API_KEY not configured in backend secrets. Please set it in Supabase Dashboard.' }),
+        { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
 
-    const aiResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
+    const aiResponse = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: {
-        'Authorization': `Bearer ${LOVABLE_API_KEY}`,
-        'Content-Type': 'application/json',
+        'x-api-key': CLAUDE_API_KEY,
+        'anthropic-version': '2023-06-01',
+        'content-type': 'application/json',
       },
       body: JSON.stringify({
-        model: 'google/gemini-2.5-flash',
+        model: 'claude-opus-4-5-20251101',
+        max_tokens: 4000,
         messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: `Analyse cette pathologie et retourne le JSON d'analyse.` },
-        ],
-        stream: false,
+          { role: 'user', content: systemPrompt + "\n\nAnalyse cette pathologie et retourne le JSON d'analyse." }
+        ]
       }),
     });
 
@@ -182,27 +183,21 @@ Réponds UNIQUEMENT avec un JSON valide au format suivant (sans markdown, sans c
           { status: 429, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
         );
       }
-      if (aiResponse.status === 402) {
-        return new Response(
-          JSON.stringify({ error: 'Crédits insuffisants. Veuillez recharger votre compte.' }),
-          { status: 402, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-        );
-      }
       const errorText = await aiResponse.text();
-      console.error('AI Gateway error:', aiResponse.status, errorText);
+      console.error('Anthropic API error:', aiResponse.status, errorText);
       return new Response(
-        JSON.stringify({ error: 'Erreur du service IA' }),
-        { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        JSON.stringify({ error: `Erreur du service IA (${aiResponse.status}): ${errorText}` }),
+        { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
 
     const aiData = await aiResponse.json();
-    const content = aiData.choices?.[0]?.message?.content;
+    const content = aiData.content?.[0]?.text;
 
     if (!content) {
       return new Response(
-        JSON.stringify({ error: 'Réponse IA vide' }),
-        { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        JSON.stringify({ error: 'Réponse IA vide ou malformée' }),
+        { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
 
@@ -227,7 +222,7 @@ Réponds UNIQUEMENT avec un JSON valide au format suivant (sans markdown, sans c
           error: 'Erreur de parsing de la réponse IA',
           raw: content
         }),
-        { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
 
@@ -253,7 +248,7 @@ Réponds UNIQUEMENT avec un JSON valide au format suivant (sans markdown, sans c
     console.error('Pathology analyzer error:', error);
     return new Response(
       JSON.stringify({ error: error instanceof Error ? error.message : 'Unknown error' }),
-      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
   }
 });

@@ -2,7 +2,7 @@
 -- Creates tables for configurable alert rules and patient alert history
 
 -- Enable UUID extension if not already enabled
-CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+-- Note: In PostgreSQL 13+, gen_random_uuid() is available natively
 
 -- ============================================
 -- ALERT RULES CONFIGURATION TABLE
@@ -10,7 +10,7 @@ CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 -- Allows dynamic configuration of alert thresholds and rules
 
 CREATE TABLE IF NOT EXISTS alert_rules (
-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   rule_key TEXT UNIQUE NOT NULL, -- e.g., 'glucose_hypo', 'bp_critical'
   category TEXT NOT NULL CHECK (category IN ('VITAL', 'LAB', 'INTERACTION', 'CONTRAINDICATION', 'SURVEILLANCE')),
   level TEXT NOT NULL CHECK (level IN ('CRITICAL', 'WARNING', 'INFO')),
@@ -49,7 +49,7 @@ CREATE INDEX IF NOT EXISTS idx_alert_rules_enabled ON alert_rules(enabled);
 -- Stores triggered alerts for audit trail and analytics
 
 CREATE TABLE IF NOT EXISTS patient_alerts (
-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   patient_id UUID REFERENCES patients(id) ON DELETE CASCADE,
   rule_id UUID REFERENCES alert_rules(id) ON DELETE SET NULL,
   
@@ -91,7 +91,7 @@ CREATE INDEX IF NOT EXISTS idx_patient_alerts_created ON patient_alerts(created_
 -- Who should be notified when certain alert types are triggered
 
 CREATE TABLE IF NOT EXISTS alert_subscriptions (
-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE,
   
   -- Subscription scope

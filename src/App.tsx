@@ -17,7 +17,11 @@ import Admin from "./pages/Admin";
 import Patients from "./pages/Patients";
 import PatientDetail from "./pages/PatientDetail";
 import CrossDataAnalysis from "./pages/CrossDataAnalysis";
+import ContinuousDiscovery from "./pages/ContinuousDiscovery";
+import SwitchCalculator from "./pages/SwitchCalculator";
 import NotFound from "./pages/NotFound";
+import SMARTLaunch from "./pages/smart/Launch";
+import SMARTCallback from "./pages/smart/Callback";
 
 const queryClient = new QueryClient();
 
@@ -36,7 +40,14 @@ const AnimatedRoutes = () => {
         <Route path="/patients" element={<ProtectedRoute><Patients /></ProtectedRoute>} />
         <Route path="/patients/:id" element={<ProtectedRoute><PatientDetail /></ProtectedRoute>} />
         <Route path="/cross-data-analysis" element={<ProtectedRoute><CrossDataAnalysis /></ProtectedRoute>} />
+        <Route path="/continuous-discovery" element={<ProtectedRoute><ContinuousDiscovery /></ProtectedRoute>} />
+        <Route path="/tools/switch-calculator" element={<ProtectedRoute><SwitchCalculator /></ProtectedRoute>} />
         <Route path="/admin" element={<Admin />} /> {/* TEMPORAIRE: Sans protection pour config initiale */}
+
+        {/* SMART on FHIR routes */}
+        <Route path="/smart/launch" element={<SMARTLaunch />} />
+        <Route path="/smart/callback" element={<SMARTCallback />} />
+
         <Route path="*" element={<NotFound />} />
       </Routes>
     </PageTransition>
@@ -52,7 +63,7 @@ const App = () => (
         <TooltipProvider>
           <Toaster />
           <Sonner />
-          <BrowserRouter>
+          <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
             <AuthProvider>
               <AnimatedRoutes />
             </AuthProvider>
