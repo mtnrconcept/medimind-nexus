@@ -25,15 +25,16 @@ import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 import {
     Network, ZoomIn, ZoomOut, Maximize2, Loader2, Link2,
-    Circle, Search, RefreshCw, X, Database, Box, Brain
+    Circle, Search, RefreshCw, X, Database, Box, Brain, Globe
 } from 'lucide-react';
 import { Suspense, lazy } from 'react';
 
 // Lazy load 3D component for performance
 const KnowledgeGraph3D = lazy(() => import('./KnowledgeGraph3D'));
-import CategoryTreePanel from './CategoryTreePanel';
+
 import LinkCreationModal from './LinkCreationModal';
 import LinkAnalysisPanel from './LinkAnalysisPanel';
+import KnowledgeGraphNCBISearchModal from './KnowledgeGraphNCBISearchModal';
 
 interface Node {
     id: string;
@@ -122,7 +123,16 @@ const KGNode = ({ data, selected }: NodeProps) => {
     );
 };
 
-const nodeTypes = { kgNode: KGNode };
+const GroupNode = ({ data, style }: any) => (
+    <div
+        style={style}
+        className="text-slate-400 font-bold uppercase tracking-wider text-sm pt-4 text-center w-full h-full pointer-events-none"
+    >
+        {data.label}
+    </div>
+);
+
+
 
 const KnowledgeGraphView = () => {
     const { t } = useAutoTranslation();
@@ -140,7 +150,7 @@ const KnowledgeGraphView = () => {
     // UI state
     const [selectedNodes, setSelectedNodes] = useState<Node[]>([]);
     const [searchQuery, setSearchQuery] = useState('');
-    const [selectedCategoryId, setSelectedCategoryId] = useState<string | null>(null);
+    const [visibleCategoryIds, setVisibleCategoryIds] = useState<string[]>([]);
     const [selectedNodeType, setSelectedNodeType] = useState<string | null>(null);
 
     // Modal state for edge creation
@@ -149,6 +159,7 @@ const KnowledgeGraphView = () => {
         source: null,
         target: null,
     });
+    const [isNCBIModalOpen, setIsNCBIModalOpen] = useState(false);
 
     // 3D view state
     const [view3D, setView3D] = useState(false);
@@ -156,7 +167,10 @@ const KnowledgeGraphView = () => {
 
     // Pagination
     const [currentPage, setCurrentPage] = useState(0);
-    const PAGE_SIZE = 200;
+    const PAGE_SIZE = 500; // Increased page size for multi-category view
+
+    // Memoize nodeTypes to prevent ReactFlow warning
+    const nodeTypes = useMemo(() => ({ kgNode: KGNode, group: GroupNode }), []);
 
     // Load graph data with filters
     const loadGraphData = useCallback(async () => {
@@ -165,35 +179,76 @@ const KnowledgeGraphView = () => {
             // Build query
             let query = supabase.from('cde_nodes').select('*', { count: 'exact' });
 
-            if (selectedCategoryId) {
-                query = query.eq('category_id', selectedCategoryId);
+            if (visibleCategoryIds.length > 0) {
+                // Fetch nodes belonging to ANY visible category
+                query = query.in('category_id', visibleCategoryIds);
+            } else if (searchQuery) {
+                // If search query but no category selected, search globally
+                query = query.ilike('name', `%${searchQuery}%`);
+            } else {
+                // Default: Load random/top nodes if nothing selected
+                // Just fetch first page of nodes
             }
+
             if (selectedNodeType) {
                 query = query.eq('node_type', selectedNodeType);
             }
+            // Search within categories
             if (searchQuery) {
                 query = query.ilike('name', `%${searchQuery}%`);
             }
 
-            query = query.range(currentPage * PAGE_SIZE, (currentPage + 1) * PAGE_SIZE - 1);
+            // Increase limit if multiple categories
+            const limit = Math.max(PAGE_SIZE, visibleCategoryIds.length * 100);
+            query = query.range(currentPage * limit, (currentPage + 1) * limit - 1);
 
             const { data: nodesData, error: nodesError, count } = await query;
 
             if (nodesError) throw nodesError;
 
-            setNodes((nodesData || []) as Node[]);
+            // Sort nodes alphabetically for consistent grid layout
+            const sortedNodes = (nodesData || []).sort((a, b) => a.name.localeCompare(b.name));
+            setNodes(sortedNodes as Node[]);
             setTotalNodeCount(count || 0);
 
-            // Load edges for visible nodes
+            // Load edges for visible nodes (intra-category and inter-category)
             if (nodesData && nodesData.length > 0) {
                 const nodeIds = nodesData.map(n => n.id);
-                const { data: edgesData } = await supabase
-                    .from('cde_edges')
-                    .select('*')
-                    .or(`source_node_id.in.(${nodeIds.join(',')}),target_node_id.in.(${nodeIds.join(',')})`)
-                    .limit(1000);
 
-                setEdges((edgesData || []) as Edge[]);
+                // Fetch edges in chunks to avoid URL length limits
+                const CHUNK_SIZE = 30;
+                const chunks = [];
+                for (let i = 0; i < nodeIds.length; i += CHUNK_SIZE) {
+                    chunks.push(nodeIds.slice(i, i + CHUNK_SIZE));
+                }
+
+                const edgePromises = chunks.map(chunkIds =>
+                    () => supabase
+                        .from('cde_edges')
+                        .select('*')
+                        .or(`source_node_id.in.(${chunkIds.join(',')}),target_node_id.in.(${chunkIds.join(',')})`)
+                );
+
+                // Execute requests with limited concurrency (5 at a time)
+                const CONCURRENCY_LIMIT = 5;
+                const results = [];
+
+                for (let i = 0; i < edgePromises.length; i += CONCURRENCY_LIMIT) {
+                    const batch = edgePromises.slice(i, i + CONCURRENCY_LIMIT).map(p => p());
+                    const batchResults = await Promise.all(batch);
+                    results.push(...batchResults);
+                }
+
+                // Combine and deduplicate edges
+                const allEdges = results.flatMap(r => r.data || []);
+                const uniqueEdgesMap = new Map();
+                allEdges.forEach(edge => {
+                    if (!uniqueEdgesMap.has(edge.id)) {
+                        uniqueEdgesMap.set(edge.id, edge);
+                    }
+                });
+
+                setEdges(Array.from(uniqueEdgesMap.values()) as Edge[]);
             } else {
                 setEdges([]);
             }
@@ -203,7 +258,7 @@ const KnowledgeGraphView = () => {
         } finally {
             setIsLoading(false);
         }
-    }, [selectedCategoryId, selectedNodeType, searchQuery, currentPage, t]);
+    }, [visibleCategoryIds, selectedNodeType, searchQuery, currentPage, t]);
 
     useEffect(() => {
         loadGraphData();
@@ -217,49 +272,132 @@ const KnowledgeGraphView = () => {
             return;
         }
 
-        // Group nodes by type for layout
-        const nodesByType: Record<string, Node[]> = {};
+        // Group nodes by category
+        const nodesByCategory: Record<string, Node[]> = {};
+        // Also keep track of nodes without category
+        const uncategorizedNodes: Node[] = [];
+
         nodes.forEach(node => {
-            if (!nodesByType[node.node_type]) {
-                nodesByType[node.node_type] = [];
+            if (node.category_id && visibleCategoryIds.includes(node.category_id)) {
+                if (!nodesByCategory[node.category_id]) {
+                    nodesByCategory[node.category_id] = [];
+                }
+                nodesByCategory[node.category_id].push(node);
+            } else {
+                uncategorizedNodes.push(node);
             }
-            nodesByType[node.node_type].push(node);
         });
 
-        // Calculate positions
-        const types = Object.keys(nodesByType);
-        const centerX = 400;
-        const centerY = 300;
-        const positions: Record<string, { x: number; y: number }> = {};
+        // Layout constants
+        const COLUMN_WIDTH = 1050; // Width of each category column (5 * 200 + padding)
+        const COLUMN_GAP = 100;   // Gap between columns
+        const NODE_WIDTH = 180;   // Sort of max width of a node
+        const NODE_HEIGHT = 60;   // Approx height
+        const GRID_COLS = 5;      // Nodes per row within a column
+        const GROUP_PADDING = 40; // Padding inside group
 
-        types.forEach((type, typeIndex) => {
-            const typeNodes = nodesByType[type];
-            const typeAngle = (2 * Math.PI * typeIndex) / types.length;
-            const typeRadius = 200;
-            const typeCenterX = centerX + typeRadius * Math.cos(typeAngle) * 0.5;
-            const typeCenterY = centerY + typeRadius * Math.sin(typeAngle) * 0.5;
+        const newRfNodes: RFNode[] = [];
 
-            typeNodes.forEach((node, nodeIndex) => {
-                const nodeAngle = (2 * Math.PI * nodeIndex) / typeNodes.length;
-                const nodeRadius = Math.min(150, 30 + typeNodes.length * 3);
-                positions[node.id] = {
-                    x: typeCenterX + nodeRadius * Math.cos(nodeAngle),
-                    y: typeCenterY + nodeRadius * Math.sin(nodeAngle)
-                };
+        // Helper to create category group node
+        const createGroupNode = (categoryId: string, index: number, height: number) => {
+            // Find category name (we don't have it in nodes effectively, but we can try to find from node prop or just ID)
+            // Ideally we would have category map. For now let's use the ID or a placeholder. 
+            // Better: fetches categories in separate effect and stores in map. 
+            // For this iteration, we use a simple label.
+            return {
+                id: `group-${categoryId}`,
+                type: 'group',
+                position: { x: index * (COLUMN_WIDTH + COLUMN_GAP), y: 0 },
+                style: {
+                    width: COLUMN_WIDTH,
+                    height: height,
+                    backgroundColor: 'rgba(240, 240, 240, 0.2)',
+                    border: '1px dashed #cbd5e1',
+                    borderRadius: '8px',
+                },
+                data: { label: 'Catégorie' }, // We'll update label later if possible
+            };
+        };
+
+        let columnIndex = 0;
+
+        // Process each visible category
+        visibleCategoryIds.forEach(categoryId => {
+            const categoryNodes = nodesByCategory[categoryId] || [];
+            if (categoryNodes.length === 0) return;
+
+            // Sort nodes by name
+            categoryNodes.sort((a, b) => a.name.localeCompare(b.name));
+
+            // Calculate height needed
+            const rows = Math.ceil(categoryNodes.length / GRID_COLS);
+            const groupHeight = rows * (NODE_HEIGHT + 20) + GROUP_PADDING * 2;
+
+            // Create group node
+            newRfNodes.push({
+                id: `group-${categoryId}`,
+                type: 'group',
+
+                position: { x: columnIndex * (COLUMN_WIDTH + COLUMN_GAP), y: -50 },
+                style: {
+                    width: COLUMN_WIDTH,
+                    height: 40,
+                    backgroundColor: 'transparent',
+                    border: 'none',
+                    fontWeight: 'bold',
+                    fontSize: '16px',
+                    textAlign: 'center',
+                    pointerEvents: 'none',
+                },
+                data: { label: `Category ${categoryId.slice(0, 8)}...` }, // Placeholder name
+                draggable: false,
+                selectable: false,
             });
+
+            // Position nodes in grid
+            categoryNodes.forEach((node, idx) => {
+                const col = idx % GRID_COLS;
+                const row = Math.floor(idx / GRID_COLS);
+
+                const x = columnIndex * (COLUMN_WIDTH + COLUMN_GAP) + col * (NODE_WIDTH + 20) + 20;
+                const y = row * (NODE_HEIGHT + 20);
+
+                newRfNodes.push({
+                    id: node.id,
+                    type: 'kgNode',
+                    position: { x, y },
+                    data: {
+                        label: node.name,
+                        nodeType: node.node_type,
+                        originalNode: node,
+                    },
+                });
+            });
+
+            columnIndex++;
         });
 
-        // Create ReactFlow nodes
-        const newRfNodes: RFNode[] = nodes.map(node => ({
-            id: node.id,
-            type: 'kgNode',
-            position: positions[node.id] || { x: 0, y: 0 },
-            data: {
-                label: node.name,
-                nodeType: node.node_type,
-                originalNode: node,
-            },
-        }));
+        // Handle uncategorized nodes (if any selected via search but not in visible categories, shouldn't happen with current logic but for safety)
+        if (uncategorizedNodes.length > 0) {
+            const startX = columnIndex * (COLUMN_WIDTH + COLUMN_GAP);
+            uncategorizedNodes.forEach((node, idx) => {
+                const col = idx % GRID_COLS;
+                const row = Math.floor(idx / GRID_COLS);
+                newRfNodes.push({
+                    id: node.id,
+                    type: 'kgNode',
+                    position: {
+                        x: startX + col * (NODE_WIDTH + 20) + 20,
+                        y: row * (NODE_HEIGHT + 20)
+                    },
+                    data: {
+                        label: node.name,
+                        nodeType: node.node_type,
+                        originalNode: node,
+                    },
+                });
+            });
+        }
 
         // Create ReactFlow edges
         const nodeIdSet = new Set(nodes.map(n => n.id));
@@ -277,7 +415,7 @@ const KnowledgeGraphView = () => {
 
         setRfNodes(newRfNodes);
         setRfEdges(newRfEdges);
-    }, [nodes, edges, setRfNodes, setRfEdges]);
+    }, [nodes, edges, visibleCategoryIds, setRfNodes, setRfEdges]);
 
     // Handle connection (when user drags an edge between nodes)
     const onConnect = useCallback((connection: Connection) => {
@@ -293,9 +431,35 @@ const KnowledgeGraphView = () => {
     }, [nodes]);
 
     // Handle node selection
-    const onNodeClick = useCallback((_: React.MouseEvent, node: RFNode) => {
+    const onNodeClick = useCallback((event: React.MouseEvent, node: RFNode) => {
         const originalNode = node.data.originalNode as Node;
-        setSelectedNodes([originalNode]);
+
+        if (event.ctrlKey || event.metaKey) {
+            setSelectedNodes(prev => {
+                const isAlreadySelected = prev.some(n => n.id === originalNode.id);
+                let newSelection;
+
+                if (isAlreadySelected) {
+                    newSelection = prev.filter(n => n.id !== originalNode.id);
+                } else {
+                    newSelection = [...prev, originalNode];
+                }
+
+                // If we have exactly 2 nodes, open the modal automatically
+                if (newSelection.length === 2) {
+                    // We must do this outside the render cycle ideally, but here it works as it's an event handler
+                    // However, we are setting state inside a state setter which is not ideal for the side effect
+                    // So we'll set the timeout to ensure state is processed or just trigger it 
+                    // Actually, better to just set the values using the derived newSelection
+                    setPendingConnection({ source: newSelection[0], target: newSelection[1] });
+                    setIsLinkModalOpen(true);
+                }
+
+                return newSelection;
+            });
+        } else {
+            setSelectedNodes([originalNode]);
+        }
     }, []);
 
     const handleCreateLink = () => {
@@ -316,8 +480,18 @@ const KnowledgeGraphView = () => {
     };
 
     const handleCategorySelect = (categoryId: string | null) => {
-        setSelectedCategoryId(categoryId);
+        if (categoryId) {
+            setVisibleCategoryIds([categoryId]);
+        } else {
+            setVisibleCategoryIds([]);
+        }
         setCurrentPage(0);
+    };
+
+    const handleCategoryAdd = (categoryId: string) => {
+        if (categoryId && !visibleCategoryIds.includes(categoryId)) {
+            setVisibleCategoryIds(prev => [...prev, categoryId]);
+        }
     };
 
     const handleNodeTypeFilter = (nodeType: string | null) => {
@@ -352,17 +526,8 @@ const KnowledgeGraphView = () => {
 
     return (
         <div className="grid grid-cols-12 gap-4 h-[calc(100vh-280px)]">
-            {/* Left Panel: Category Tree */}
-            <div className="col-span-3">
-                <CategoryTreePanel
-                    onCategorySelect={handleCategorySelect}
-                    selectedCategoryId={selectedCategoryId}
-                    onNodeTypeFilter={handleNodeTypeFilter}
-                />
-            </div>
-
             {/* Center: Graph Canvas */}
-            <div className="col-span-6">
+            <div className="col-span-9">
                 <Card className="h-full bg-white/70 dark:bg-slate-800/70 backdrop-blur border-white/30">
                     <CardHeader className="pb-2">
                         <div className="flex items-center justify-between">
@@ -413,6 +578,18 @@ const KnowledgeGraphView = () => {
                                 >
                                     <Box className="h-4 w-4" />
                                     <span className="ml-1 text-xs">{view3D ? '3D' : '2D'}</span>
+                                </Button>
+
+                                {/* NCBI Search Button */}
+                                <Button
+                                    size="sm"
+                                    variant="outline"
+                                    className="border-blue-500/30 text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/20"
+                                    onClick={() => setIsNCBIModalOpen(true)}
+                                    title={t('Rechercher sur NCBI (Web)')}
+                                >
+                                    <Globe className="h-4 w-4" />
+                                    <span className="ml-1 text-xs hidden sm:inline">NCBI</span>
                                 </Button>
                             </div>
                         </div>
@@ -607,6 +784,16 @@ const KnowledgeGraphView = () => {
                 sourceNode={pendingConnection.source}
                 targetNode={pendingConnection.target}
                 onLinkCreated={handleLinkCreated}
+            />
+
+            {/* NCBI Search Modal */}
+            <KnowledgeGraphNCBISearchModal
+                isOpen={isNCBIModalOpen}
+                onClose={() => setIsNCBIModalOpen(false)}
+                onNodeAdded={() => {
+                    loadGraphData(); // Refresh graph to show new node
+                    toast.success("Graphe mis à jour");
+                }}
             />
         </div>
     );

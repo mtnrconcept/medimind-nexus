@@ -35,29 +35,57 @@ interface DeepResearchResult {
 }
 
 // Fonction pour rechercher sur PubMed
-async function searchPubMed(query: string, maxResults: number = 5): Promise<WebSource[]> {
+// Fonction pour rechercher sur PubMed avec API Key et Abstracts complets
+async function searchPubMed(query: string, maxResults: number = 5, apiKey?: string): Promise<WebSource[]> {
   try {
-    const searchUrl = `https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=pubmed&term=${encodeURIComponent(query)}&retmax=${maxResults}&retmode=json&sort=relevance`;
+    let searchUrl = `https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=pubmed&term=${encodeURIComponent(query)}&retmax=${maxResults}&retmode=json&sort=relevance`;
+    if (apiKey) {
+      searchUrl += `&api_key=${apiKey}`;
+    }
+
     const searchResponse = await fetch(searchUrl);
+    if (!searchResponse.ok) return [];
+
     const searchData = await searchResponse.json();
     const ids = searchData?.esearchresult?.idlist || [];
 
     if (ids.length === 0) return [];
 
-    const fetchUrl = `https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi?db=pubmed&id=${ids.join(",")}&retmode=json`;
+    let fetchUrl = `https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=pubmed&id=${ids.join(",")}&retmode=xml`;
+    if (apiKey) {
+      fetchUrl += `&api_key=${apiKey}`;
+    }
+
     const fetchResponse = await fetch(fetchUrl);
-    const fetchData = await fetchResponse.json();
+    const xmlText = await fetchResponse.text();
 
     const sources: WebSource[] = [];
-    for (const id of ids) {
-      const article = fetchData?.result?.[id];
-      if (article) {
-        sources.push({
-          title: article.title || "Sans titre",
-          url: `https://pubmed.ncbi.nlm.nih.gov/${id}/`,
-          snippet: article.source || ""
-        });
-      }
+    const articles = xmlText.split('</PubmedArticle>');
+
+    for (const articleXml of articles) {
+      if (!articleXml.includes('<PubmedArticle>')) continue;
+
+      const idMatch = articleXml.match(/<PMID[^>]*>(.*?)<\/PMID>/);
+      const id = idMatch ? idMatch[1] : '';
+      if (!id) continue;
+
+      const titleMatch = articleXml.match(/<ArticleTitle>(.*?)<\/ArticleTitle>/);
+      const title = titleMatch ? titleMatch[1] : "Sans titre";
+
+      const abstractMatches = [...articleXml.matchAll(/<AbstractText[^>]*>(.*?)<\/AbstractText>/g)];
+      const abstract = abstractMatches.map(m => m[1]).join(" ");
+
+      const journalMatch = articleXml.match(/<Title>(.*?)<\/Title>/);
+      const journal = journalMatch ? journalMatch[1] : "";
+
+      const yearMatch = articleXml.match(/<Year>(.*?)<\/Year>/);
+      const year = yearMatch ? yearMatch[1] : "";
+
+      sources.push({
+        title: title,
+        url: `https://pubmed.ncbi.nlm.nih.gov/${id}/`,
+        snippet: abstract ? `[${year} - ${journal}] ${abstract}` : `[${year} - ${journal}] Résumé non disponible.`
+      });
     }
     return sources;
   } catch (error) {
@@ -132,13 +160,15 @@ serve(async (req) => {
     const pubmedQuery = `${symptomQuery} diagnosis differential`;
     console.log('Recherche PubMed:', pubmedQuery);
 
-    const pubmedSources = await searchPubMed(pubmedQuery, 10);
+    const ncbiApiKey = Deno.env.get('NCBI_API_KEY');
+
+    const pubmedSources = await searchPubMed(pubmedQuery, 10, ncbiApiKey);
 
     // Recherches supplémentaires par combinaison de symptômes
     const additionalSearches: WebSource[] = [];
     if (symptomNames.length >= 2) {
       const combinedQuery = `${symptomNames.slice(0, 3).join(' ')} syndrome disease`;
-      const combinedSources = await searchPubMed(combinedQuery, 5);
+      const combinedSources = await searchPubMed(combinedQuery, 5, ncbiApiKey);
       additionalSearches.push(...combinedSources);
     }
 

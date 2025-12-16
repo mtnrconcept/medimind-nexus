@@ -17,33 +17,79 @@ interface StreamEvent {
     discovery?: any;
 }
 
-// Function to search PubMed
-async function searchPubMed(query: string, maxResults: number = 10): Promise<any[]> {
+// Function to search PubMed with optional API Key support
+// Function to search PubMed with optional API Key support and Abstract fetching
+async function searchPubMed(query: string, maxResults: number = 10, apiKey?: string): Promise<any[]> {
     try {
-        const searchUrl = `https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=pubmed&term=${encodeURIComponent(query)}&retmax=${maxResults}&retmode=json&sort=relevance`;
+        let searchUrl = `https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=pubmed&term=${encodeURIComponent(query)}&retmax=${maxResults}&retmode=json&sort=relevance`;
+        if (apiKey) {
+            searchUrl += `&api_key=${apiKey}`;
+        }
+
         const searchResponse = await fetch(searchUrl);
+        if (!searchResponse.ok) {
+            console.error(`PubMed search failed: ${searchResponse.status}`);
+            return [];
+        }
+
         const searchData = await searchResponse.json();
         const ids = searchData?.esearchresult?.idlist || [];
 
         if (ids.length === 0) return [];
 
-        const fetchUrl = `https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi?db=pubmed&id=${ids.join(",")}&retmode=json`;
-        const fetchResponse = await fetch(fetchUrl);
-        const fetchData = await fetchResponse.json();
-
-        const sources: any[] = [];
-        for (const id of ids) {
-            const article = fetchData?.result?.[id];
-            if (article) {
-                sources.push({
-                    title: article.title || "Sans titre",
-                    url: `https://pubmed.ncbi.nlm.nih.gov/${id}/`,
-                    authors: article.authors?.slice(0, 3).map((a: any) => a.name).join(", ") || "",
-                    year: article.pubdate?.split(" ")[0] || "",
-                    journal: article.source || ""
-                });
-            }
+        // Use efetch to get full records including ABSTRACTS (XML only)
+        let fetchUrl = `https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=pubmed&id=${ids.join(",")}&retmode=xml`;
+        if (apiKey) {
+            fetchUrl += `&api_key=${apiKey}`;
         }
+
+        const fetchResponse = await fetch(fetchUrl);
+        const xmlText = await fetchResponse.text();
+
+        // Simple XML parsing for Deno Edge (avoiding heavy DOM parsers)
+        const sources: any[] = [];
+
+        // Split by article to process individually
+        const articles = xmlText.split('</PubmedArticle>');
+
+        for (const articleXml of articles) {
+            if (!articleXml.includes('<PubmedArticle>')) continue;
+
+            // Extract ID
+            const idMatch = articleXml.match(/<PMID[^>]*>(.*?)<\/PMID>/);
+            const id = idMatch ? idMatch[1] : '';
+            if (!id || !ids.includes(id)) continue;
+
+            // Extract Title
+            const titleMatch = articleXml.match(/<ArticleTitle>(.*?)<\/ArticleTitle>/);
+            const title = titleMatch ? titleMatch[1] : "Sans titre";
+
+            // Extract Abstract (handle multiple sections)
+            const abstractMatches = [...articleXml.matchAll(/<AbstractText[^>]*>(.*?)<\/AbstractText>/g)];
+            const abstract = abstractMatches.map(m => m[1]).join(" ");
+
+            // Extract Journal
+            const journalMatch = articleXml.match(/<Title>(.*?)<\/Title>/);
+            const journal = journalMatch ? journalMatch[1] : "";
+
+            // Extract Year
+            const yearMatch = articleXml.match(/<Year>(.*?)<\/Year>/);
+            const year = yearMatch ? yearMatch[1] : "";
+
+            // Extract Authors
+            const authorMatches = [...articleXml.matchAll(/<LastName>(.*?)<\/LastName>.*?<Initials>(.*?)<\/Initials>/gs)];
+            const authors = authorMatches.slice(0, 3).map(m => `${m[1]} ${m[2]}`).join(", ");
+
+            sources.push({
+                title: title,
+                url: `https://pubmed.ncbi.nlm.nih.gov/${id}/`,
+                authors: authors,
+                year: year,
+                journal: journal,
+                abstract: abstract || "Résumé non disponible."
+            });
+        }
+
         return sources;
     } catch (error) {
         console.error('PubMed search error:', error);
@@ -448,6 +494,7 @@ serve(async (req) => {
                     // Deduplicate
                     const relatedNodes = allNodes
                         .filter((n, i, arr) => arr.findIndex(x => x.id === n.id) === i);
+                    kgNodesCount = relatedNodes.length;
 
                     // Get all edges for found nodes
                     const nodeIds = relatedNodes.map(n => n.id);
@@ -460,6 +507,7 @@ serve(async (req) => {
                             .limit(500);
                         relatedEdges = edges || [];
                     }
+                    kgEdgesCount = relatedEdges.length;
 
                     // Get target-specific data from source tables
                     let targetData: any = null;
@@ -741,15 +789,19 @@ serve(async (req) => {
                     });
 
                     // Build specialized PubMed queries
+                    // Build specialized PubMed queries
                     const pubmedQueries = [
                         `"${targetName}" AND (drug interaction OR mechanism OR treatment) AND 2023:2024[dp]`,
                         `"${targetName}" AND (novel OR emerging OR discovery) AND 2022:2024[dp]`,
                         `"${targetName}" AND (adverse effect OR side effect OR toxicity)`
                     ];
 
+                    // Get NCBI API Key
+                    const ncbiApiKey = Deno.env.get("NCBI_API_KEY");
+
                     let allPubmedSources: any[] = [];
                     for (const query of pubmedQueries) {
-                        const sources = await searchPubMed(query, 5);
+                        const sources = await searchPubMed(query, 5, ncbiApiKey);
                         allPubmedSources = [...allPubmedSources, ...sources];
                     }
 
@@ -760,6 +812,7 @@ serve(async (req) => {
                         seenUrls.add(s.url);
                         return true;
                     });
+                    pubmedCount = allPubmedSources.length;
 
                     sendEvent(controller, {
                         type: 'step_update',

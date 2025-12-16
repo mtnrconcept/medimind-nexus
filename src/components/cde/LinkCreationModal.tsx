@@ -36,23 +36,159 @@ interface LinkCreationModalProps {
     onLinkCreated?: () => void;
 }
 
-const RELATIONSHIP_TYPES = [
-    { value: 'treats', label: 'traite', description: 'Le source traite la cible' },
-    { value: 'causes', label: 'cause', description: 'Le source cause la cible' },
-    { value: 'contraindicated', label: 'contre-indiqué', description: 'Le source est contre-indiqué avec la cible' },
-    { value: 'interacts_with', label: 'interagit avec', description: 'Interaction entre les deux' },
-    { value: 'increases_risk', label: 'augmente le risque', description: 'Le source augmente le risque de la cible' },
-    { value: 'decreases_risk', label: 'diminue le risque', description: 'Le source diminue le risque de la cible' },
-    { value: 'has_symptom', label: 'présente le symptôme', description: 'La cible est un symptôme du source' },
-    { value: 'metabolized_by', label: 'métabolisé par', description: 'Le source est métabolisé par la cible' },
-    { value: 'contains', label: 'contient', description: 'Le source contient la cible' },
-    { value: 'similar_to', label: 'similaire à', description: 'Le source est similaire à la cible' },
-    { value: 'alternative_to', label: 'alternative à', description: 'Le source est une alternative à la cible' },
-    { value: 'potentiates', label: 'potentialise', description: 'Le source renforce l\'effet de la cible' },
-    { value: 'inhibits', label: 'inhibe', description: 'Le source inhibe la cible' },
-    { value: 'induces', label: 'induit', description: 'Le source induit la cible' },
-    { value: 'associated_with', label: 'associé à', description: 'Association générale' },
+interface RelationshipType {
+    value: string;
+    label: string;
+    description: string;
+    // Valid source -> target type pairs (empty = valid for all)
+    validPairs: Array<{ source: string[]; target: string[] }>;
+}
+
+// Comprehensive relationship types with validity rules
+const RELATIONSHIP_TYPES: RelationshipType[] = [
+    {
+        value: 'treats',
+        label: 'traite',
+        description: 'Le source traite la cible',
+        validPairs: [
+            { source: ['medication', 'substance', 'treatment'], target: ['pathology', 'symptom'] }
+        ]
+    },
+    {
+        value: 'causes',
+        label: 'cause',
+        description: 'Le source cause la cible',
+        validPairs: [
+            { source: ['medication', 'substance', 'pathology'], target: ['symptom', 'pathology'] },
+            { source: ['pathology'], target: ['symptom'] }
+        ]
+    },
+    {
+        value: 'contraindicated',
+        label: 'contre-indiqué avec',
+        description: 'Le source est contre-indiqué avec la cible',
+        validPairs: [
+            { source: ['medication', 'substance'], target: ['pathology', 'medication', 'substance', 'treatment'] },
+            { source: ['treatment'], target: ['pathology', 'medication'] }
+        ]
+    },
+    {
+        value: 'interacts_with',
+        label: 'interagit avec',
+        description: 'Interaction entre les deux',
+        validPairs: [
+            { source: ['medication', 'substance'], target: ['medication', 'substance'] }
+        ]
+    },
+    {
+        value: 'increases_risk',
+        label: 'augmente le risque de',
+        description: 'Le source augmente le risque de la cible',
+        validPairs: [
+            { source: ['medication', 'substance', 'pathology'], target: ['pathology', 'symptom'] }
+        ]
+    },
+    {
+        value: 'decreases_risk',
+        label: 'diminue le risque de',
+        description: 'Le source diminue le risque de la cible',
+        validPairs: [
+            { source: ['medication', 'substance', 'treatment'], target: ['pathology', 'symptom'] }
+        ]
+    },
+    {
+        value: 'has_symptom',
+        label: 'présente le symptôme',
+        description: 'La cible est un symptôme du source',
+        validPairs: [
+            { source: ['pathology'], target: ['symptom'] }
+        ]
+    },
+    {
+        value: 'metabolized_by',
+        label: 'métabolisé par',
+        description: 'Le source est métabolisé par la cible (enzyme)',
+        validPairs: [
+            { source: ['medication', 'substance'], target: ['substance'] }
+        ]
+    },
+    {
+        value: 'contains',
+        label: 'contient',
+        description: 'Le source contient la cible',
+        validPairs: [
+            { source: ['medication'], target: ['substance'] }
+        ]
+    },
+    {
+        value: 'similar_to',
+        label: 'similaire à',
+        description: 'Le source est similaire à la cible',
+        validPairs: [
+            { source: ['medication'], target: ['medication'] },
+            { source: ['substance'], target: ['substance'] },
+            { source: ['pathology'], target: ['pathology'] },
+            { source: ['symptom'], target: ['symptom'] },
+            { source: ['treatment'], target: ['treatment'] }
+        ]
+    },
+    {
+        value: 'alternative_to',
+        label: 'alternative à',
+        description: 'Le source est une alternative à la cible',
+        validPairs: [
+            { source: ['medication'], target: ['medication'] },
+            { source: ['treatment'], target: ['treatment'] },
+            { source: ['substance'], target: ['substance'] }
+        ]
+    },
+    {
+        value: 'potentiates',
+        label: 'potentialise',
+        description: 'Le source renforce l\'effet de la cible',
+        validPairs: [
+            { source: ['medication', 'substance'], target: ['medication', 'substance'] }
+        ]
+    },
+    {
+        value: 'inhibits',
+        label: 'inhibe',
+        description: 'Le source inhibe la cible',
+        validPairs: [
+            { source: ['medication', 'substance'], target: ['substance', 'medication'] }
+        ]
+    },
+    {
+        value: 'induces',
+        label: 'induit',
+        description: 'Le source induit/active la cible',
+        validPairs: [
+            { source: ['medication', 'substance'], target: ['substance'] },
+            { source: ['pathology'], target: ['pathology', 'symptom'] }
+        ]
+    },
+    {
+        value: 'associated_with',
+        label: 'associé à',
+        description: 'Association générale',
+        validPairs: [] // Valid for all combinations
+    },
 ];
+
+// Check if a relationship is valid for given node types
+const isRelationshipValid = (
+    relationship: RelationshipType,
+    sourceType: string,
+    targetType: string
+): boolean => {
+    // Empty validPairs means valid for all
+    if (relationship.validPairs.length === 0) return true;
+
+    return relationship.validPairs.some(pair =>
+        pair.source.includes(sourceType) && pair.target.includes(targetType)
+    );
+};
+
 
 const LinkCreationModal = ({
     isOpen,
@@ -79,10 +215,21 @@ const LinkCreationModal = ({
                 throw new Error('Vous devez être connecté');
             }
 
+            // Get profile ID from auth user ID (profiles.user_id = auth.uid())
+            const { data: profile, error: profileError } = await supabase
+                .from('profiles')
+                .select('id')
+                .eq('user_id', session.user.id)
+                .single();
+
+            if (profileError || !profile) {
+                throw new Error('Profil utilisateur non trouvé. Veuillez vous reconnecter.');
+            }
+
             const { error } = await supabase
                 .from('cde_user_edges')
                 .insert({
-                    user_id: session.user.id,
+                    user_id: profile.id, // Use profiles.id, not auth user id
                     source_node_id: sourceNode.id,
                     target_node_id: targetNode.id,
                     relationship_type: relationshipType,
@@ -149,17 +296,48 @@ const LinkCreationModal = ({
                             <SelectTrigger>
                                 <SelectValue placeholder={t('Sélectionnez un type de relation')} />
                             </SelectTrigger>
-                            <SelectContent>
-                                {RELATIONSHIP_TYPES.map(type => (
-                                    <SelectItem key={type.value} value={type.value}>
-                                        <div>
-                                            <span className="font-medium">{t(type.label)}</span>
-                                            <span className="text-xs text-slate-500 ml-2">
-                                                ({t(type.description)})
-                                            </span>
-                                        </div>
-                                    </SelectItem>
-                                ))}
+                            <SelectContent className="max-h-80">
+                                {/* Sort: valid relationships first, then invalid */}
+                                {[...RELATIONSHIP_TYPES]
+                                    .sort((a, b) => {
+                                        const aValid = isRelationshipValid(a, sourceNode.node_type, targetNode.node_type);
+                                        const bValid = isRelationshipValid(b, sourceNode.node_type, targetNode.node_type);
+                                        if (aValid && !bValid) return -1;
+                                        if (!aValid && bValid) return 1;
+                                        return 0;
+                                    })
+                                    .map(type => {
+                                        const isValid = isRelationshipValid(type, sourceNode.node_type, targetNode.node_type);
+                                        return (
+                                            <SelectItem
+                                                key={type.value}
+                                                value={type.value}
+                                                disabled={!isValid}
+                                                className={!isValid ? 'opacity-50 cursor-not-allowed' : ''}
+                                            >
+                                                <div className="flex items-center gap-2">
+                                                    {isValid ? (
+                                                        <span className="text-green-500 text-xs">✓</span>
+                                                    ) : (
+                                                        <span className="text-red-400 text-xs">✗</span>
+                                                    )}
+                                                    <div>
+                                                        <span className={`font-medium ${!isValid ? 'text-slate-400' : ''}`}>
+                                                            {t(type.label)}
+                                                        </span>
+                                                        <span className={`text-xs ml-2 ${!isValid ? 'text-slate-400' : 'text-slate-500'}`}>
+                                                            ({t(type.description)})
+                                                        </span>
+                                                        {!isValid && (
+                                                            <span className="text-xs text-red-400 block">
+                                                                Non applicable pour {sourceNode.node_type} → {targetNode.node_type}
+                                                            </span>
+                                                        )}
+                                                    </div>
+                                                </div>
+                                            </SelectItem>
+                                        );
+                                    })}
                             </SelectContent>
                         </Select>
                     </div>

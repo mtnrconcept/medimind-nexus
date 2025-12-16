@@ -19,6 +19,7 @@ import DiscoveryCard from '@/components/cde/DiscoveryCard';
 import KnowledgeGraphView from '@/components/cde/KnowledgeGraphView';
 import FocusedResearchPanel from '@/components/cde/FocusedResearchPanel';
 import ResearchHistoryPanel from '@/components/cde/ResearchHistoryPanel';
+import TreatmentTools from '@/components/cde/TreatmentTools';
 
 // Types
 interface DiscoveryCardData {
@@ -441,6 +442,10 @@ const ContinuousDiscovery = () => {
                                 <History className="h-4 w-4" />
                                 {t('Historique')}
                             </TabsTrigger>
+                            <TabsTrigger value="tools" className="gap-2">
+                                <Stethoscope className="h-4 w-4" />
+                                {t('Outils Cliniques')}
+                            </TabsTrigger>
                         </TabsList>
 
                         {activeTab === 'feed' && (
@@ -781,6 +786,11 @@ const ContinuousDiscovery = () => {
                     {/* Research History Tab */}
                     <TabsContent value="history">
                         <ResearchHistoryPanel />
+                    </TabsContent>
+
+                    {/* Treatment Tools Tab */}
+                    <TabsContent value="tools">
+                        <TreatmentTools />
                     </TabsContent>
                 </Tabs>
             </div >

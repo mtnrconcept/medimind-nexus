@@ -82,29 +82,45 @@ interface AnalysisResult {
 
 
 // Fonction pour rechercher sur PubMed
-async function searchPubMed(query: string, maxResults: number = 5): Promise<{ title: string; url: string; abstract: string }[]> {
+// Fonction pour rechercher sur PubMed avec API Key et Abstracts complets
+async function searchPubMed(query: string, maxResults: number = 5, apiKey?: string): Promise<{ title: string; url: string; abstract: string }[]> {
   try {
-    const searchUrl = `https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=pubmed&term=${encodeURIComponent(query)}&retmax=${maxResults}&retmode=json&sort=relevance`;
+    let searchUrl = `https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=pubmed&term=${encodeURIComponent(query)}&retmax=${maxResults}&retmode=json&sort=relevance`;
+    if (apiKey) searchUrl += `&api_key=${apiKey}`;
+
     const searchResponse = await fetch(searchUrl);
     const searchData = await searchResponse.json();
     const ids = searchData?.esearchresult?.idlist || [];
 
     if (ids.length === 0) return [];
 
-    const fetchUrl = `https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi?db=pubmed&id=${ids.join(",")}&retmode=json`;
+    let fetchUrl = `https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=pubmed&id=${ids.join(",")}&retmode=xml`;
+    if (apiKey) fetchUrl += `&api_key=${apiKey}`;
+
     const fetchResponse = await fetch(fetchUrl);
-    const fetchData = await fetchResponse.json();
+    const xmlText = await fetchResponse.text();
 
     const articles: { title: string; url: string; abstract: string }[] = [];
-    for (const id of ids) {
-      const article = fetchData?.result?.[id];
-      if (article) {
-        articles.push({
-          title: article.title || "Sans titre",
-          url: `https://pubmed.ncbi.nlm.nih.gov/${id}/`,
-          abstract: article.elocationid || ""
-        });
-      }
+    const xmlArticles = xmlText.split('</PubmedArticle>');
+
+    for (const articleXml of xmlArticles) {
+      if (!articleXml.includes('<PubmedArticle>')) continue;
+
+      const idMatch = articleXml.match(/<PMID[^>]*>(.*?)<\/PMID>/);
+      const id = idMatch ? idMatch[1] : '';
+      if (!id) continue;
+
+      const titleMatch = articleXml.match(/<ArticleTitle>(.*?)<\/ArticleTitle>/);
+      const title = titleMatch ? titleMatch[1] : "Sans titre";
+
+      const abstractMatches = [...articleXml.matchAll(/<AbstractText[^>]*>(.*?)<\/AbstractText>/g)];
+      const abstract = abstractMatches.map(m => m[1]).join(" ");
+
+      articles.push({
+        title: title,
+        url: `https://pubmed.ncbi.nlm.nih.gov/${id}/`,
+        abstract: abstract || "Résumé non disponible."
+      });
     }
     return articles;
   } catch (error) {
@@ -236,13 +252,16 @@ serve(async (req) => {
   }
 
   try {
-    const { pathologyIds, symptomIds, treatmentIds, medicationIds } = await req.json();
+    const {
+      pathologyIds, symptomIds, treatmentIds, medicationIds,
+      externalPathologies = [], externalSymptoms = [], externalTreatments = [], externalMedications = []
+    } = await req.json();
 
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
     const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
     const supabase = createClient(supabaseUrl, supabaseKey);
 
-    // Récupérer les données sélectionnées (incluant les médicaments)
+    // Récupérer les données sélectionnées (incluant les médicaments) depuis la DB
     const [pathologiesRes, symptomsRes, treatmentsRes, medicationsRes, patientsRes] = await Promise.all([
       pathologyIds?.length > 0
         ? supabase.from('pathologies').select('*').in('id', pathologyIds)
@@ -259,10 +278,11 @@ serve(async (req) => {
       supabase.from('patients').select('*, pathologies(name)')
     ]);
 
-    const pathologies = pathologiesRes.data || [];
-    const symptoms = symptomsRes.data || [];
-    const treatments = treatmentsRes.data || [];
-    const medications = medicationsRes.data || [];
+    // Fusionner données DB et données externes (NCBI)
+    const pathologies = [...(pathologiesRes.data || []), ...externalPathologies];
+    const symptoms = [...(symptomsRes.data || []), ...externalSymptoms];
+    const treatments = [...(treatmentsRes.data || []), ...externalTreatments];
+    const medications = [...(medicationsRes.data || []), ...externalMedications];
     const patients = patientsRes.data || [];
 
     // Préparer la liste des éléments pour la recherche en cache
@@ -347,9 +367,10 @@ serve(async (req) => {
     console.log('Exécution des recherches PubMed:', limitedQueries);
 
     // Exécuter les recherches PubMed en parallèle
+    const ncbiApiKey = Deno.env.get("NCBI_API_KEY");
     const webResearchResults = await Promise.all(
       limitedQueries.map(async (query) => {
-        const articles = await searchPubMed(query, 3);
+        const articles = await searchPubMed(query, 3, ncbiApiKey);
         return {
           query,
           articles

@@ -257,6 +257,83 @@ const CrossDataAnalyzer = ({ patientData }: CrossDataAnalyzerProps) => {
     });
   }, [medications, debouncedSearchMedications, filterMedicationAtc]);
 
+  // Recherche externe NCBI
+  const [isSearchingWeb, setIsSearchingWeb] = useState(false);
+
+  const searchExternalConcepts = async (query: string, type: 'pathology' | 'medication' | 'symptom') => {
+    if (!query || query.length < 3) {
+      toast.error("Veuillez saisir au moins 3 caractères pour la recherche en ligne");
+      return;
+    }
+
+    setIsSearchingWeb(true);
+    try {
+      const { data, error } = await supabase.functions.invoke('search-medical-concepts', {
+        body: { query, type }
+      });
+
+      if (error) throw error;
+
+      if (data?.concepts) {
+        let addedCount = 0;
+
+        if (type === 'pathology') {
+          const newItems: Pathology[] = data.concepts
+            .filter((c: any) => !pathologies.some(p => p.id === c.id || p.name.toLowerCase() === c.name.toLowerCase()))
+            .map((c: any) => ({
+              id: c.id,
+              name: c.name,
+              category: 'NCBI',
+              specialty: 'Importé',
+              severity: 'unknown'
+            }));
+          if (newItems.length > 0) {
+            setPathologies(prev => [...prev, ...newItems]);
+            addedCount = newItems.length;
+          }
+        }
+        else if (type === 'medication') {
+          const newItems: Medication[] = data.concepts
+            .filter((c: any) => !medications.some(m => m.id === c.id || m.name.toLowerCase() === c.name.toLowerCase()))
+            .map((c: any) => ({
+              id: c.id,
+              name: c.name,
+              atc_code: null,
+              substance: c.description || null
+            }));
+          if (newItems.length > 0) {
+            setMedications(prev => [...prev, ...newItems]);
+            addedCount = newItems.length;
+          }
+        }
+        else if (type === 'symptom') {
+          const newItems: Symptom[] = data.concepts
+            .filter((c: any) => !symptoms.some(s => s.id === c.id || s.name.toLowerCase() === c.name.toLowerCase()))
+            .map((c: any) => ({
+              id: c.id,
+              name: c.name,
+              body_system: 'NCBI'
+            }));
+          if (newItems.length > 0) {
+            setSymptoms(prev => [...prev, ...newItems]);
+            addedCount = newItems.length;
+          }
+        }
+
+        if (addedCount > 0) {
+          toast.success(`${addedCount} éléments ajoutés depuis NCBI`);
+        } else {
+          toast.info("Aucun nouvel élément trouvé sur NCBI");
+        }
+      }
+    } catch (err) {
+      console.error('Erreur recherche NCBI:', err);
+      toast.error("Erreur lors de la recherche NCBI");
+    } finally {
+      setIsSearchingWeb(false);
+    }
+  };
+
   useEffect(() => {
     const fetchAllRows = async <T,>(
       table: 'pathologies' | 'symptoms' | 'treatments' | 'medications',
@@ -608,12 +685,31 @@ const CrossDataAnalyzer = ({ patientData }: CrossDataAnalyzerProps) => {
     setResult(null);
 
     try {
+      // Séparer les IDs DB des items externes
+      const dbPathologyIds = selectedPathologies.filter(id => !pathologies.find(p => p.id === id && p.category === 'NCBI'));
+      const extPathologies = selectedPathologies
+        .map(id => pathologies.find(p => p.id === id && p.category === 'NCBI'))
+        .filter(Boolean);
+
+      const dbSymptomIds = selectedSymptoms.filter(id => !symptoms.find(s => s.id === id && s.body_system === 'NCBI'));
+      const extSymptoms = selectedSymptoms
+        .map(id => symptoms.find(s => s.id === id && s.body_system === 'NCBI'))
+        .filter(Boolean);
+
+      const dbMedicationIds = selectedMedications.filter(id => !medications.find(m => m.id === id && !m.atc_code)); // Hack: NCBI meds have null ATC
+      const extMedications = selectedMedications
+        .map(id => medications.find(m => m.id === id && !m.atc_code))
+        .filter(Boolean);
+
       const { data, error: fnError } = await supabase.functions.invoke('cross-data-analyzer', {
         body: {
-          pathologyIds: selectedPathologies,
-          symptomIds: selectedSymptoms,
-          treatmentIds: selectedTreatments,
-          medicationIds: selectedMedications
+          pathologyIds: dbPathologyIds,
+          symptomIds: dbSymptomIds,
+          treatmentIds: selectedTreatments, // Traitements externes pas encore supportés
+          medicationIds: dbMedicationIds,
+          externalPathologies: extPathologies,
+          externalSymptoms: extSymptoms,
+          externalMedications: extMedications
         }
       });
 
@@ -813,22 +909,35 @@ const CrossDataAnalyzer = ({ patientData }: CrossDataAnalyzerProps) => {
                   </div>
 
                   {/* Recherche textuelle */}
-                  <div className="relative">
-                    <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                    <Input
-                      placeholder={t('Rechercher...')}
-                      value={searchPathologies}
-                      onChange={(e) => setSearchPathologies(e.target.value)}
-                      className="pl-8 pr-8 h-8 text-sm"
-                    />
-                    {searchPathologies && (
-                      <button
-                        onClick={() => setSearchPathologies('')}
-                        className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                      >
-                        <X className="h-4 w-4" />
-                      </button>
-                    )}
+                  <div className="relative flex gap-1">
+                    <div className="relative flex-1">
+                      <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                      <Input
+                        placeholder={t('Rechercher...')}
+                        value={searchPathologies}
+                        onChange={(e) => setSearchPathologies(e.target.value)}
+                        className="pl-8 pr-8 h-8 text-sm"
+                        onKeyDown={(e) => e.key === 'Enter' && searchExternalConcepts(searchPathologies, 'pathology')}
+                      />
+                      {searchPathologies && (
+                        <button
+                          onClick={() => setSearchPathologies('')}
+                          className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                        >
+                          <X className="h-4 w-4" />
+                        </button>
+                      )}
+                    </div>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-8 px-2"
+                      title="Rechercher sur NCBI (Web)"
+                      disabled={isSearchingWeb || !searchPathologies}
+                      onClick={() => searchExternalConcepts(searchPathologies, 'pathology')}
+                    >
+                      <Globe className={`h-4 w-4 ${isSearchingWeb ? 'animate-spin' : ''}`} />
+                    </Button>
                   </div>
 
                   {/* Filtres avancés */}
@@ -932,22 +1041,35 @@ const CrossDataAnalyzer = ({ patientData }: CrossDataAnalyzerProps) => {
                   </div>
 
                   {/* Recherche textuelle */}
-                  <div className="relative">
-                    <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                    <Input
-                      placeholder={t('Rechercher...')}
-                      value={searchSymptoms}
-                      onChange={(e) => setSearchSymptoms(e.target.value)}
-                      className="pl-8 pr-8 h-8 text-sm"
-                    />
-                    {searchSymptoms && (
-                      <button
-                        onClick={() => setSearchSymptoms('')}
-                        className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                      >
-                        <X className="h-4 w-4" />
-                      </button>
-                    )}
+                  <div className="relative flex gap-1">
+                    <div className="relative flex-1">
+                      <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                      <Input
+                        placeholder={t('Rechercher...')}
+                        value={searchSymptoms}
+                        onChange={(e) => setSearchSymptoms(e.target.value)}
+                        className="pl-8 pr-8 h-8 text-sm"
+                        onKeyDown={(e) => e.key === 'Enter' && searchExternalConcepts(searchSymptoms, 'symptom')}
+                      />
+                      {searchSymptoms && (
+                        <button
+                          onClick={() => setSearchSymptoms('')}
+                          className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                        >
+                          <X className="h-4 w-4" />
+                        </button>
+                      )}
+                    </div>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-8 px-2"
+                      title="Rechercher sur NCBI (Web)"
+                      disabled={isSearchingWeb || !searchSymptoms}
+                      onClick={() => searchExternalConcepts(searchSymptoms, 'symptom')}
+                    >
+                      <Globe className={`h-4 w-4 ${isSearchingWeb ? 'animate-spin' : ''}`} />
+                    </Button>
                   </div>
 
                   {/* Filtre par système corporel */}
@@ -1118,22 +1240,35 @@ const CrossDataAnalyzer = ({ patientData }: CrossDataAnalyzerProps) => {
                   </div>
 
                   {/* Recherche textuelle */}
-                  <div className="relative">
-                    <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                    <Input
-                      placeholder={t('Nom ou substance...')}
-                      value={searchMedications}
-                      onChange={(e) => setSearchMedications(e.target.value)}
-                      className="pl-8 pr-8 h-8 text-sm"
-                    />
-                    {searchMedications && (
-                      <button
-                        onClick={() => setSearchMedications('')}
-                        className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                      >
-                        <X className="h-4 w-4" />
-                      </button>
-                    )}
+                  <div className="relative flex gap-1">
+                    <div className="relative flex-1">
+                      <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                      <Input
+                        placeholder={t('Nom ou substance...')}
+                        value={searchMedications}
+                        onChange={(e) => setSearchMedications(e.target.value)}
+                        className="pl-8 pr-8 h-8 text-sm"
+                        onKeyDown={(e) => e.key === 'Enter' && searchExternalConcepts(searchMedications, 'medication')}
+                      />
+                      {searchMedications && (
+                        <button
+                          onClick={() => setSearchMedications('')}
+                          className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                        >
+                          <X className="h-4 w-4" />
+                        </button>
+                      )}
+                    </div>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-8 px-2 border-orange-500/20 text-orange-600"
+                      title="Rechercher sur NCBI (Web)"
+                      disabled={isSearchingWeb || !searchMedications}
+                      onClick={() => searchExternalConcepts(searchMedications, 'medication')}
+                    >
+                      <Globe className={`h-4 w-4 ${isSearchingWeb ? 'animate-spin' : ''}`} />
+                    </Button>
                   </div>
 
                   {/* Filtre par groupe ATC */}

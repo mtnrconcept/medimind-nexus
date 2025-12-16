@@ -20,7 +20,8 @@ interface ValidationResult {
 }
 
 // Search PubMed to verify a claim
-async function verifyClaimWithPubMed(claim: string): Promise<{ found: boolean; sources: any[] }> {
+// Search PubMed to verify a claim
+async function verifyClaimWithPubMed(claim: string, apiKey?: string): Promise<{ found: boolean; sources: any[] }> {
     try {
         // Extract key terms from claim
         const searchQuery = claim
@@ -30,7 +31,9 @@ async function verifyClaimWithPubMed(claim: string): Promise<{ found: boolean; s
             .slice(0, 5)
             .join(' AND ');
 
-        const searchUrl = `https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=pubmed&term=${encodeURIComponent(searchQuery)}&retmax=3&retmode=json`;
+        let searchUrl = `https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=pubmed&term=${encodeURIComponent(searchQuery)}&retmax=3&retmode=json`;
+        if (apiKey) searchUrl += `&api_key=${apiKey}`;
+
         const searchResponse = await fetch(searchUrl);
         const searchData = await searchResponse.json();
         const ids = searchData?.esearchresult?.idlist || [];
@@ -39,20 +42,38 @@ async function verifyClaimWithPubMed(claim: string): Promise<{ found: boolean; s
             return { found: false, sources: [] };
         }
 
-        const fetchUrl = `https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi?db=pubmed&id=${ids.join(",")}&retmode=json`;
-        const fetchResponse = await fetch(fetchUrl);
-        const fetchData = await fetchResponse.json();
+        let fetchUrl = `https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=pubmed&id=${ids.join(",")}&retmode=xml`;
+        if (apiKey) fetchUrl += `&api_key=${apiKey}`;
 
-        const sources = ids.map((id: string) => {
-            const article = fetchData?.result?.[id];
-            return article ? {
+        const fetchResponse = await fetch(fetchUrl);
+        const xmlText = await fetchResponse.text();
+        const sources: any[] = [];
+        const articles = xmlText.split('</PubmedArticle>');
+
+        for (const articleXml of articles) {
+            if (!articleXml.includes('<PubmedArticle>')) continue;
+
+            const idMatch = articleXml.match(/<PMID[^>]*>(.*?)<\/PMID>/);
+            const id = idMatch ? idMatch[1] : '';
+            if (!id) continue;
+
+            const titleMatch = articleXml.match(/<ArticleTitle>(.*?)<\/ArticleTitle>/);
+            const title = titleMatch ? titleMatch[1] : "Sans titre";
+
+            const journalMatch = articleXml.match(/<Title>(.*?)<\/Title>/);
+            const journal = journalMatch ? journalMatch[1] : "";
+
+            const yearMatch = articleXml.match(/<Year>(.*?)<\/Year>/);
+            const year = yearMatch ? yearMatch[1] : "";
+
+            sources.push({
                 type: 'pubmed',
-                title: article.title,
+                title: title,
                 url: `https://pubmed.ncbi.nlm.nih.gov/${id}/`,
-                journal: article.source,
-                year: article.pubdate?.split(' ')[0]
-            } : null;
-        }).filter(Boolean);
+                journal: journal,
+                year: year
+            });
+        }
 
         return { found: sources.length > 0, sources };
     } catch (error) {
@@ -216,8 +237,9 @@ serve(async (req) => {
         const aiValidations = await validateWithAI(discovery, CLAUDE_API_KEY);
 
         // Step 2: PubMed verification for each claim
+        const ncbiApiKey = Deno.env.get("NCBI_API_KEY");
         for (const validation of aiValidations) {
-            const pubmedResult = await verifyClaimWithPubMed(validation.claim);
+            const pubmedResult = await verifyClaimWithPubMed(validation.claim, ncbiApiKey);
             if (pubmedResult.found) {
                 validation.verification_sources = [
                     ...validation.verification_sources,
