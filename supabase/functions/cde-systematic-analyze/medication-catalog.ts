@@ -185,10 +185,12 @@ export async function isInteractionDocumented(
         const medAEscaped = escapeForPattern(medA);
         const medBEscaped = escapeForPattern(medB);
 
+        // Schema: drug_interactions has medication_id (FK) and interacting_drug (text)
+        // We search in interacting_drug column which contains the drug name
         const { data, error } = await supabase
             .from('drug_interactions')
             .select('id')
-            .or(`and(medication_name.ilike.%${medAEscaped}%,interacting_drug.ilike.%${medBEscaped}%),and(medication_name.ilike.%${medBEscaped}%,interacting_drug.ilike.%${medAEscaped}%)`)
+            .or(`interacting_drug.ilike.%${medAEscaped}%,interacting_drug.ilike.%${medBEscaped}%`)
             .limit(1);
 
         if (error) {
