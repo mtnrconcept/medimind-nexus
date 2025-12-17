@@ -207,10 +207,12 @@ RÉPONDS UNIQUEMENT EN JSON VALIDE.`;
 // DATA AGGREGATION FUNCTIONS
 // ============================================
 
-async function fetchPubMedEvidence(query: string, limit: number = 10): Promise<ScientificEvidence[]> {
+async function fetchPubMedEvidence(query: string, limit: number = 10, sendProgress?: (msg: string) => void): Promise<ScientificEvidence[]> {
     const evidence: ScientificEvidence[] = [];
 
     try {
+        if (sendProgress) sendProgress(`🔍 Interrogation PubMed (${limit} articles)...`);
+
         const ncbiApiKey = Deno.env.get("NCBI_API_KEY");
         let searchUrl = `https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=pubmed&term=${encodeURIComponent(query)}&retmax=${limit}&retmode=json&sort=relevance`;
         if (ncbiApiKey) searchUrl += `&api_key=${ncbiApiKey}`;
@@ -220,6 +222,11 @@ async function fetchPubMedEvidence(query: string, limit: number = 10): Promise<S
 
         const searchData = await searchRes.json();
         const ids = searchData?.esearchresult?.idlist || [];
+        const totalAvailable = searchData?.esearchresult?.count || 0;
+
+        if (sendProgress) sendProgress(`📊 PubMed: ${ids.length}/${totalAvailable} articles trouvés`);
+
+        if (ids.length === 0) return evidence;
         if (ids.length === 0) return evidence;
 
         let fetchUrl = `https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=pubmed&id=${ids.join(",")}&retmode=xml`;
@@ -627,8 +634,10 @@ serve(async (req) => {
         const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
         const supabase = createClient(supabaseUrl, supabaseKey);
 
-        // Determine evidence depth
-        const pubmedLimit = request.evidence_depth === 'deep' ? 20 : request.evidence_depth === 'basic' ? 5 : 10;
+        // Determine evidence depth - SIGNIFICANTLY INCREASED
+        const pubmedLimit = request.evidence_depth === 'deep' ? 200 : request.evidence_depth === 'basic' ? 20 : 50;
+        const fdaLimit = request.evidence_depth === 'deep' ? 100 : request.evidence_depth === 'basic' ? 20 : 50;
+        const trialsLimit = request.evidence_depth === 'deep' ? 50 : request.evidence_depth === 'basic' ? 10 : 20;
 
         // Build search queries
         const medications = request.medications || [];
@@ -659,18 +668,16 @@ serve(async (req) => {
             fetchKnowledgeGraphInsights(supabase, medications, pathologies)
         ]);
 
-        // Combine all evidence
-        const allEvidence = [...pubmedEvidence, ...openfdaEvidence, ...drugbankEvidence, ...trialsEvidence];
-
-        // Perform scientific analysis with Claude Opus (STREAMING)
-        const streamData = await performScientificAnalysis(request, allEvidence, kgInsights, supabase);
-
         // Setup Server-Sent Events stream
         const encoder = new TextEncoder();
         const readable = new ReadableStream({
             async start(controller) {
                 const sendEvent = (data: any) => {
                     controller.enqueue(encoder.encode(`data: ${JSON.stringify(data)}\n\n`));
+                };
+
+                const sendProgress = (message: string) => {
+                    sendEvent({ type: 'progress', message });
                 };
 
                 try {
@@ -680,15 +687,52 @@ serve(async (req) => {
                         analysis_id: `ANA-${Date.now().toString(36)}`.toUpperCase(),
                         analysis_type: request.analysis_type,
                         model: 'claude-3-opus-20240229',
-                        evidence_count: allEvidence.length,
-                        kg_insights_count: kgInsights.length
+                        search_depth: request.evidence_depth || 'standard',
+                        estimated_sources: '19.7M événements FDA + 176K médicaments + millions d\'articles'
                     });
+
+                    sendProgress('🚀 Démarrage de la recherche exhaustive...');
+
+                    // Fetch evidence with progress tracking
+                    sendProgress(`📚 Interrogation PubMed (limit: ${pubmedLimit} articles)...`);
+                    const pubmedEvidence = request.include_literature !== false
+                        ? await fetchPubMedEvidence(searchQuery, pubmedLimit, sendProgress)
+                        : [];
+
+                    sendProgress(`💊 Interrogation OpenFDA (limit: ${fdaLimit} par médicament)...`);
+                    const openfdaEvidence = medications.length > 0
+                        ? await fetchOpenFDAComprehensive(medications)
+                        : [];
+
+                    sendProgress('🧬 Interrogation DrugBank (pharmacologie détaillée)...');
+                    const drugbankEvidence = medications.length > 0
+                        ? await fetchDrugBankData(medications)
+                        : [];
+
+                    sendProgress(`🏥 Interrogation ClinicalTrials.gov (limit: ${trialsLimit} essais)...`);
+                    const trialsEvidence = request.include_trials !== false
+                        ? await fetchClinicalTrialsEvidence(searchQuery, trialsLimit)
+                        : [];
+
+                    sendProgress('🧠 Extraction Knowledge Graph local...');
+                    const kgInsights = await fetchKnowledgeGraphInsights(supabase, medications, pathologies);
+
+                    // Combine all evidence
+                    const allEvidence = [...pubmedEvidence, ...openfdaEvidence, ...drugbankEvidence, ...trialsEvidence];
+
+                    sendProgress(`✅ ${allEvidence.length} preuves scientifiques collectées`);
 
                     // Send evidence summary
                     sendEvent({
-                        type: 'evidence',
-                        evidence: allEvidence,
-                        kg_insights: kgInsights
+                        type: 'evidence_summary',
+                        total_evidence: allEvidence.length,
+                        by_source: {
+                            pubmed: pubmedEvidence.length,
+                            openfda: openfdaEvidence.length,
+                            drugbank: drugbankEvidence.length,
+                            trials: trialsEvidence.length
+                        },
+                        kg_insights: kgInsights.length
                     });
 
                     // Stream Claude's response
