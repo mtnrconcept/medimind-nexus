@@ -2,6 +2,7 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { getOpenFDAComprehensiveData } from "./openfda-api.ts";
 import { getDrugBankComprehensiveData } from "./drugbank-api.ts";
+import { exhaustiveOpenFDAAdverseEvents, exhaustivePubMedSearch } from "./exhaustive-search.ts";
 
 const corsHeaders = {
     "Access-Control-Allow-Origin": "*",
@@ -42,7 +43,8 @@ interface AnalysisRequest {
     include_literature?: boolean;
     include_trials?: boolean;
     max_pubmed_results?: number;
-    evidence_depth?: 'basic' | 'standard' | 'deep';
+    evidence_depth?: 'basic' | 'standard' | 'deep' | 'exhaustive'; // NEW: exhaustive mode
+    exhaustive_mode?: boolean; // If true, scan ALL available sources with pagination
 }
 
 interface ScientificEvidence {
@@ -635,9 +637,20 @@ serve(async (req) => {
         const supabase = createClient(supabaseUrl, supabaseKey);
 
         // Determine evidence depth - SIGNIFICANTLY INCREASED
-        const pubmedLimit = request.evidence_depth === 'deep' ? 200 : request.evidence_depth === 'basic' ? 20 : 50;
-        const fdaLimit = request.evidence_depth === 'deep' ? 100 : request.evidence_depth === 'basic' ? 20 : 50;
-        const trialsLimit = request.evidence_depth === 'deep' ? 50 : request.evidence_depth === 'basic' ? 10 : 20;
+        // exhaustive mode = scan ALL available sources (millions)
+        const isExhaustive = request.exhaustive_mode || request.evidence_depth === 'exhaustive';
+
+        const pubmedLimit = isExhaustive ? 10000 : // 10K articles in exhaustive
+            request.evidence_depth === 'deep' ? 200 :
+                request.evidence_depth === 'basic' ? 20 : 50;
+
+        const fdaLimit = isExhaustive ? Infinity : // ALL events in exhaustive
+            request.evidence_depth === 'deep' ? 100 :
+                request.evidence_depth === 'basic' ? 20 : 50;
+
+        const trialsLimit = isExhaustive ? 500 :
+            request.evidence_depth === 'deep' ? 50 :
+                request.evidence_depth === 'basic' ? 10 : 20;
 
         // Build search queries
         const medications = request.medications || [];
@@ -734,6 +747,11 @@ serve(async (req) => {
                         },
                         kg_insights: kgInsights.length
                     });
+
+                    sendProgress('🤖 Génération de l\'analyse avec Claude Opus...');
+
+                    // Perform scientific analysis with Claude (get stream)
+                    const streamData = await performScientificAnalysis(request, allEvidence, kgInsights, supabase);
 
                     // Stream Claude's response
                     const reader = streamData.stream.getReader();
