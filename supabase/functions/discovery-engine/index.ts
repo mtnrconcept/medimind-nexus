@@ -249,14 +249,14 @@ async function getLocalKnowledge(supabase: any, topic: string): Promise<any> {
             .from('pathologies')
             .select('name, description, icd_code')
             .or(`name.ilike.%${topic}%,name_fr.ilike.%${topic}%`)
-            .limit(10);
+            .limit(1000);
         data.pathologies = pathologies || [];
 
         const { data: medications } = await supabase
             .from('medications')
             .select('name, mechanism, indications')
             .or(`name.ilike.%${topic}%,indications.ilike.%${topic}%`)
-            .limit(25);
+            .limit(2005);
         data.medications = medications || [];
 
         const { data: substances } = await supabase
@@ -270,14 +270,14 @@ async function getLocalKnowledge(supabase: any, topic: string): Promise<any> {
             .from('drug_interactions')
             .select('medication_name, interacting_drug, severity, mechanism')
             .or(`medication_name.ilike.%${topic}%`)
-            .limit(20);
+            .limit(2000);
         data.interactions = interactions || [];
 
         const { data: nodes } = await supabase
             .from('cde_nodes')
             .select('name, node_type')
             .ilike('name', `%${topic}%`)
-            .limit(30);
+            .limit(3000);
         data.kg_nodes = nodes || [];
 
     } catch (e) {

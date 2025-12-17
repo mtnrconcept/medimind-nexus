@@ -173,24 +173,34 @@ export async function isInteractionDocumented(
     medB: string
 ): Promise<boolean> {
     try {
-        // Escape special characters for PostgreSQL pattern matching
-        // Replace characters that cause parsing issues: ( ) - [ ]
-        const escapeForPattern = (str: string) => {
+        // Aggressive normalization: remove ALL special characters
+        // PostgreSQL ilike pattern will handle fuzzy matching with remaining words
+        const normalizeForSearch = (str: string) => {
             return str
-                .replace(/[()[\]]/g, ' ') // Replace brackets/parens with space
-                .replace(/-/g, ' ')        // Replace dashes with space
-                .replace(/\s+/g, '%');     // Multiple spaces become wildcards
+                .replace(/[()[\]{}<>]/g, ' ')        // Brackets → space
+                .replace(/[-–—]/g, ' ')               // All dashes → space  
+                .replace(/[,;:/\\|]/g, ' ')          // Punctuation → space
+                .replace(/[àáâãäå]/gi, 'a')          // Accents → base char
+                .replace(/[èéêë]/gi, 'e')
+                .replace(/[ìíîï]/gi, 'i')
+                .replace(/[òóôõö]/gi, 'o')
+                .replace(/[ùúûü]/gi, 'u')
+                .replace(/ç/gi, 'c')
+                .replace(/ñ/gi, 'n')
+                .replace(/[^a-z0-9\s]/gi, ' ')       // Any remaining special → space
+                .replace(/\s+/g, ' ')                 // Multiple spaces → single
+                .trim();
         };
 
-        const medAEscaped = escapeForPattern(medA);
-        const medBEscaped = escapeForPattern(medB);
+        const medANorm = normalizeForSearch(medA);
+        const medBNorm = normalizeForSearch(medB);
 
-        // Schema: drug_interactions has medication_id (FK) and interacting_drug (text)
-        // We search in interacting_drug column which contains the drug name
+        // Simple search: just check if either medication name appears
+        // (drug_interactions.interacting_drug is freeform text)
         const { data, error } = await supabase
             .from('drug_interactions')
             .select('id')
-            .or(`interacting_drug.ilike.%${medAEscaped}%,interacting_drug.ilike.%${medBEscaped}%`)
+            .or(`interacting_drug.ilike.%${medANorm}%,interacting_drug.ilike.%${medBNorm}%`)
             .limit(1);
 
         if (error) {
