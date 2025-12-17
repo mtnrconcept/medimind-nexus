@@ -18,6 +18,7 @@ import PatientHealthSynthesis from '../PatientHealthSynthesis';
 import DocumentGallery from '../DocumentGallery';
 import AIAssistant from '../AIAssistant';
 import { MedicalHistoryCard, FamilyHistoryCard, AllergiesCard, MedicationsCard, VaccinationsCard, LifestyleCard, LabResultsCard, ClinicalDataCard, ImagingCard, FunctionalExamsCard, PreventionCard, ConsultationsCard, MentalHealthCard, ReproductiveHealthCard, SocialFactorsCard, DentalCard, CommunicationsCard, MonitoringCard, AgeSpecificCard, GenericDataCard } from './cards';
+import { SideEffectAlertPanel } from '../SideEffectAlertPanel';
 import { ScrollArea } from '@/components/ui/scroll-area';
 
 interface PatientDossierLayoutProps {
@@ -123,6 +124,8 @@ const PatientDossierLayout = ({ patientId, patient, alerts }: PatientDossierLayo
                         emptyText="Aucun document"
                     />
                 );
+            case 'side_effects':
+                return <SideEffectAlertPanel patientId={patientId} />;
             default:
                 return (
                     <div className="py-8 text-center text-muted-foreground">

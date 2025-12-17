@@ -1,0 +1,388 @@
+{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "version": "1.0.0",
+    "name": "MediMind Research Engine",
+    "description": "Configuration du moteur de recherche médicale IA multi-modal",
+    "model": {
+        "provider": "anthropic",
+        "primary": "claude-opus-4-5-20250514",
+        "fallback": "claude-sonnet-4-20250514",
+        "fast": "claude-3-haiku-20240307",
+        "parameters": {
+            "targeted": {
+                "temperature": 0.3,
+                "max_tokens": 8000,
+                "top_p": 0.9
+            },
+            "systematic": {
+                "temperature": 0.2,
+                "max_tokens": 16000,
+                "top_p": 0.95
+            },
+            "live": {
+                "temperature": 0.4,
+                "max_tokens": 12000,
+                "top_p": 0.9,
+                "web_search_enabled": true
+            }
+        }
+    },
+    "capabilities": {
+        "domains": [
+            "pharmacology",
+            "pathophysiology",
+            "drug_interactions",
+            "clinical_trials",
+            "biomarkers",
+            "genetics",
+            "toxicology",
+            "pediatrics",
+            "geriatrics",
+            "nephrology",
+            "cardiology",
+            "oncology",
+            "immunology",
+            "neurology"
+        ],
+        "analysis_types": [
+            "hypothesis_generation",
+            "evidence_synthesis",
+            "risk_assessment",
+            "treatment_optimization",
+            "differential_diagnosis",
+            "drug_repurposing",
+            "biomarker_discovery",
+            "mechanism_elucidation"
+        ]
+    },
+    "data_sources": {
+        "internal": {
+            "knowledge_graph": {
+                "enabled": true,
+                "tables": [
+                    "cde_nodes",
+                    "cde_edges"
+                ],
+                "node_types": [
+                    "pathology",
+                    "medication",
+                    "substance",
+                    "symptom",
+                    "treatment",
+                    "biomarker",
+                    "gene"
+                ],
+                "max_nodes": 5000,
+                "max_edges": 1000
+            },
+            "medical_tables": {
+                "enabled": true,
+                "tables": [
+                    "pathologies",
+                    "medications",
+                    "substances",
+                    "drug_interactions",
+                    "treatments",
+                    "symptoms",
+                    "side_effects"
+                ]
+            }
+        },
+        "external": {
+            "pubmed": {
+                "enabled": true,
+                "max_results": 50,
+                "api_key_env": "NCBI_API_KEY",
+                "filters": {
+                    "date_range_years": 10,
+                    "publication_types": [
+                        "guideline",
+                        "meta-analysis",
+                        "randomized controlled trial",
+                        "systematic review",
+                        "clinical trial"
+                    ]
+                }
+            },
+            "clinical_trials": {
+                "enabled": true,
+                "max_results": 30,
+                "statuses": [
+                    "COMPLETED",
+                    "ACTIVE_NOT_RECRUITING",
+                    "RECRUITING"
+                ]
+            },
+            "openfda": {
+                "enabled": true,
+                "endpoints": [
+                    "drug/event",
+                    "drug/label"
+                ],
+                "max_results": 100
+            },
+            "ema": {
+                "enabled": false,
+                "note": "European Medicines Agency - à implémenter"
+            },
+            "who": {
+                "enabled": false,
+                "note": "WHO essential medicines - à implémenter"
+            }
+        }
+    },
+    "analysis": {
+        "evidence_levels": {
+            "guideline": {
+                "rank": 1,
+                "label": "📋 Guideline/Consensus",
+                "confidence": 0.95
+            },
+            "meta_analysis": {
+                "rank": 2,
+                "label": "📊 Méta-analyse",
+                "confidence": 0.90
+            },
+            "rct": {
+                "rank": 3,
+                "label": "🔬 Essai randomisé (RCT)",
+                "confidence": 0.85
+            },
+            "cohort": {
+                "rank": 4,
+                "label": "👥 Cohorte prospective",
+                "confidence": 0.70
+            },
+            "case_control": {
+                "rank": 5,
+                "label": "📈 Cas-témoins",
+                "confidence": 0.60
+            },
+            "case_series": {
+                "rank": 6,
+                "label": "📝 Série de cas",
+                "confidence": 0.45
+            },
+            "animal": {
+                "rank": 7,
+                "label": "🐭 Études animales",
+                "confidence": 0.35
+            },
+            "in_vitro": {
+                "rank": 8,
+                "label": "🧫 In vitro",
+                "confidence": 0.25
+            },
+            "hypothesis": {
+                "rank": 9,
+                "label": "💡 Hypothèse mécanistique",
+                "confidence": 0.15
+            },
+            "unsourced": {
+                "rank": 10,
+                "label": "⚠️ NON SOURCÉ",
+                "confidence": 0.0
+            }
+        },
+        "clinical_validity": {
+            "validated": "✅ Validé cliniquement (preuves RCT/guideline)",
+            "translational": "⚠️ Translationnel (données précliniques cohérentes)",
+            "speculative": "❌ Spéculatif (chaîne mécanistique sans preuve)"
+        },
+        "scoring": {
+            "novelty": {
+                "min": 0,
+                "max": 100,
+                "thresholds": {
+                    "low": 30,
+                    "medium": 60,
+                    "high": 85
+                }
+            },
+            "plausibility": {
+                "min": 0,
+                "max": 100,
+                "thresholds": {
+                    "low": 40,
+                    "medium": 70,
+                    "high": 90
+                }
+            },
+            "severity": {
+                "min": 1,
+                "max": 10,
+                "thresholds": {
+                    "low": 3,
+                    "medium": 6,
+                    "high": 8
+                }
+            }
+        }
+    },
+    "safety": {
+        "guardrails": {
+            "require_sources": true,
+            "max_unsourced_claims": 0,
+            "require_evidence_level": true,
+            "require_safety_flags": true,
+            "require_specialist_referral": true,
+            "require_disclaimer": true
+        },
+        "red_flags": {
+            "dosage_deviation": {
+                "enabled": true,
+                "description": "Dosages différents de la littérature"
+            },
+            "contraindication_violation": {
+                "enabled": true,
+                "description": "Affirmations contraires aux guidelines"
+            },
+            "drug_interaction_risk": {
+                "enabled": true,
+                "severity_types": [
+                    "critical",
+                    "major",
+                    "moderate"
+                ]
+            },
+            "special_populations": {
+                "enabled": true,
+                "populations": [
+                    "pediatric",
+                    "geriatric",
+                    "pregnant",
+                    "renal_impaired",
+                    "hepatic_impaired"
+                ]
+            }
+        },
+        "disclaimer": {
+            "required": true,
+            "languages": [
+                "fr",
+                "en"
+            ],
+            "content": {
+                "fr": "⚠️ AVERTISSEMENT : Cette analyse est générée par Intelligence Artificielle à des fins de RECHERCHE UNIQUEMENT. Elle NE REMPLACE PAS le jugement clinique d'un professionnel de santé qualifié. Toute décision thérapeutique doit être validée par un médecin.",
+                "en": "⚠️ WARNING: This analysis is generated by Artificial Intelligence for RESEARCH PURPOSES ONLY. It does NOT replace the clinical judgment of a qualified healthcare professional. All therapeutic decisions must be validated by a physician."
+            }
+        }
+    },
+    "output": {
+        "formats": {
+            "discoveries": {
+                "required_fields": [
+                    "claim",
+                    "evidence_level",
+                    "sources",
+                    "clinical_validity",
+                    "confidence_score",
+                    "safety_flags"
+                ],
+                "optional_fields": [
+                    "contraindications",
+                    "dosage_note",
+                    "actionable",
+                    "requires_specialist",
+                    "alternative_sources_searched"
+                ]
+            },
+            "hypothesis": {
+                "required_fields": [
+                    "title",
+                    "statement",
+                    "mechanism",
+                    "evidence_base",
+                    "novelty_score",
+                    "plausibility_score",
+                    "validation_steps"
+                ]
+            },
+            "risk_assessment": {
+                "required_fields": [
+                    "risk_type",
+                    "severity",
+                    "probability",
+                    "affected_populations",
+                    "mitigation_strategies",
+                    "monitoring_parameters"
+                ]
+            }
+        },
+        "localization": {
+            "default_language": "fr",
+            "supported_languages": [
+                "fr",
+                "en",
+                "de"
+            ]
+        }
+    },
+    "modes": {
+        "targeted": {
+            "name": "Recherche Ciblée",
+            "description": "Réponse précise à une question médicale spécifique",
+            "icon": "🎯",
+            "use_cases": [
+                "Interactions médicamenteuses spécifiques",
+                "Dosages pour populations particulières",
+                "Contre-indications spécifiques",
+                "Mécanismes d'action détaillés"
+            ],
+            "max_sources": 20,
+            "depth": "focused"
+        },
+        "systematic": {
+            "name": "Recherche Systématique",
+            "description": "Analyse méthodique complète d'un sujet médical",
+            "icon": "📚",
+            "use_cases": [
+                "Revue complète d'une pathologie",
+                "Évaluation d'un nouveau traitement",
+                "Analyse comparative de thérapies",
+                "État de l'art sur un biomarqueur"
+            ],
+            "max_sources": 100,
+            "depth": "comprehensive"
+        },
+        "live": {
+            "name": "Recherche Live",
+            "description": "Recherche en temps réel avec sources web actualisées",
+            "icon": "🔴",
+            "use_cases": [
+                "Dernières publications sur un sujet",
+                "Essais cliniques en cours",
+                "Alertes de pharmacovigilance récentes",
+                "Nouvelles approbations réglementaires"
+            ],
+            "max_sources": 50,
+            "depth": "current",
+            "web_search": true
+        },
+        "emergency": {
+            "name": "Analyse d'Urgence",
+            "description": "Réponse rapide pour situations critiques",
+            "icon": "🚨",
+            "use_cases": [
+                "Surdosage médicamenteux",
+                "Réaction allergique grave",
+                "Interaction critique identifiée",
+                "Contre-indication majeure découverte"
+            ],
+            "max_sources": 10,
+            "depth": "critical",
+            "priority": "immediate"
+        }
+    },
+    "rate_limits": {
+        "requests_per_minute": 10,
+        "tokens_per_day": 500000,
+        "concurrent_requests": 3
+    },
+    "logging": {
+        "enabled": true,
+        "level": "info",
+        "store_sessions": true,
+        "retention_days": 90
+    }
+}

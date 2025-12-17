@@ -31,10 +31,11 @@ import {
     DialogHeader,
     DialogTitle,
 } from '@/components/ui/dialog';
-import { Plus, Image as ImageIcon, Loader2, MoreVertical, Pencil, Trash2, Calendar, FileText, ExternalLink } from 'lucide-react';
+import { Plus, Image as ImageIcon, Loader2, MoreVertical, Pencil, Trash2, Calendar, FileText, ExternalLink, Upload } from 'lucide-react';
 import { toast } from 'sonner';
 import { format } from 'date-fns';
 import { fr } from 'date-fns/locale';
+import { DocumentUploadDialog } from '@/components/patient/DocumentUploadDialog';
 
 interface ImagingCardProps {
     patientId: string;
@@ -92,6 +93,7 @@ const ImagingCard = ({ patientId }: ImagingCardProps) => {
     const [imaging, setImaging] = useState<Imaging[]>([]);
     const [loading, setLoading] = useState(true);
     const [dialogOpen, setDialogOpen] = useState(false);
+    const [importDialogOpen, setImportDialogOpen] = useState(false); // NEW
     const [editing, setEditing] = useState<Imaging | null>(null);
     const [saving, setSaving] = useState(false);
 
@@ -191,9 +193,15 @@ const ImagingCard = ({ patientId }: ImagingCardProps) => {
         <div className="space-y-4">
             <div className="flex justify-between items-center">
                 <span className="text-sm text-muted-foreground">{imaging.length} examen(s)</span>
-                <Button size="sm" variant="outline" onClick={openAddDialog}>
-                    <Plus className="h-3 w-3 mr-1" />Ajouter
-                </Button>
+                <div className="flex gap-2">
+                    <Button size="sm" variant="outline" onClick={() => setImportDialogOpen(true)} className="gap-2">
+                        <Upload className="h-3 w-3" />
+                        Importer
+                    </Button>
+                    <Button size="sm" variant="outline" onClick={openAddDialog}>
+                        <Plus className="h-3 w-3 mr-1" />Ajouter
+                    </Button>
+                </div>
             </div>
 
             {imaging.length === 0 ? (
@@ -330,6 +338,16 @@ const ImagingCard = ({ patientId }: ImagingCardProps) => {
                     </div>
                 </DialogContent>
             </Dialog>
+
+            <DocumentUploadDialog
+                open={importDialogOpen}
+                onOpenChange={setImportDialogOpen}
+                patientId={patientId}
+                onUploadComplete={() => {
+                    toast.success('Document analysé, rechargement des examens...');
+                    fetchData();
+                }}
+            />
         </div>
     );
 };

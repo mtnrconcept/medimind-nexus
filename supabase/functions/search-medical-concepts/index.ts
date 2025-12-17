@@ -34,11 +34,25 @@ serve(async (req) => {
 
         // Define database based on type
         let db = "mesh";
-        if (type === "pathology") db = "medgen";
-        if (type === "medication") db = "pccompound";
+        let searchQualifier = "";
+
+        if (type === "pathology") {
+            db = "medgen";
+        } else if (type === "medication") {
+            db = "pccompound";
+        } else if (type === "symptom") {
+            db = "mesh";
+            // MeSH tree number C23.888 = Signs and Symptoms category
+            searchQualifier = " AND (signs and symptoms[MeSH Terms] OR symptom[tiab])";
+        }
+
+        // remove accents for broader matching (NCBI is English/ASCII centric)
+        const cleanQuery = query.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+        // add wildcard for autocomplete behavior
+        const searchTerm = `${cleanQuery}*${searchQualifier}`;
 
         // 1. Search (esearch)
-        let searchUrl = `https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=${db}&term=${encodeURIComponent(query)}&retmax=10&retmode=json`;
+        let searchUrl = `https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=${db}&term=${encodeURIComponent(searchTerm)}&retmax=15&retmode=json`;
         if (apiKey) searchUrl += `&api_key=${apiKey}`;
 
         const searchResponse = await fetch(searchUrl);

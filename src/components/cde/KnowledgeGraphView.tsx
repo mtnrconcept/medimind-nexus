@@ -35,6 +35,7 @@ const KnowledgeGraph3D = lazy(() => import('./KnowledgeGraph3D'));
 import LinkCreationModal from './LinkCreationModal';
 import LinkAnalysisPanel from './LinkAnalysisPanel';
 import KnowledgeGraphNCBISearchModal from './KnowledgeGraphNCBISearchModal';
+import { KGCategorySidebar } from './KGCategorySidebar';
 
 interface Node {
     id: string;
@@ -524,10 +525,41 @@ const KnowledgeGraphView = () => {
         return acc;
     }, {} as Record<string, number>);
 
+
+
     return (
         <div className="grid grid-cols-12 gap-4 h-[calc(100vh-280px)]">
+            {/* Left Panel: Categories */}
+            <div className="col-span-2 hidden md:block">
+                <KGCategorySidebar
+                    visibleCategoryIds={visibleCategoryIds}
+                    onToggleCategory={(categoryId) => {
+                        handleCategoryAdd(categoryId); // Reuse add logic which actually toggles if modified or add simple toggle
+                        // Let's refine handleCategoryAdd to be a toggle
+                        setVisibleCategoryIds(prev =>
+                            prev.includes(categoryId)
+                                ? prev.filter(id => id !== categoryId)
+                                : [...prev, categoryId]
+                        );
+                    }}
+                    onNodeSelect={(node) => {
+                        // When selecting a node from sidebar:
+                        // 1. Ensure its category is visible
+                        // 2. Center/Select it in graph? 
+                        // For now just select.
+                        // We need the full node object, but sidebar only has partial.
+                        // Ideally loadGraphData should include it if we add category.
+
+                        // Just set search query to find it?
+                        setSearchQuery(node.name);
+                        // And maybe auto-add category? We don't verify parent cat here easily without data.
+                        // Let's rely on search for now.
+                    }}
+                />
+            </div>
+
             {/* Center: Graph Canvas */}
-            <div className="col-span-9">
+            <div className="col-span-12 md:col-span-7">
                 <Card className="h-full bg-white/70 dark:bg-slate-800/70 backdrop-blur border-white/30">
                     <CardHeader className="pb-2">
                         <div className="flex items-center justify-between">
@@ -543,7 +575,7 @@ const KnowledgeGraphView = () => {
                                 <div className="relative">
                                     <Search className="absolute left-2 top-2 h-4 w-4 text-slate-400" />
                                     <Input
-                                        placeholder={t('Rechercher...')}
+                                        placeholder={t('Rechercher un nœud...')}
                                         value={searchQuery}
                                         onChange={(e) => {
                                             setSearchQuery(e.target.value);
@@ -615,6 +647,7 @@ const KnowledgeGraphView = () => {
                                     variant="ghost"
                                     onClick={() => setSelectedNodes([])}
                                     className="h-7"
+                                    className="h-7"
                                 >
                                     <X className="h-3 w-3" />
                                 </Button>
@@ -650,11 +683,8 @@ const KnowledgeGraphView = () => {
                                 ) : nodes.length === 0 ? (
                                     <div className="flex flex-col items-center justify-center h-full text-slate-500 bg-gradient-to-br from-slate-50 to-slate-100 dark:from-slate-900 dark:to-slate-800">
                                         <Network className="h-12 w-12 mb-4 opacity-50" />
-                                        <p>{t('Knowledge Graph vide')}</p>
-                                        <Button onClick={handleSeedKG} className="mt-4 gap-2">
-                                            <Database className="h-4 w-4" />
-                                            {t('Peupler le graphe')}
-                                        </Button>
+                                        <p>{t('Aucun nœud affiché')}</p>
+                                        <p className="text-xs mt-1">{t('Sélectionnez une rubrique ou effectuez une recherche')}</p>
                                     </div>
                                 ) : (
                                     <ReactFlow
@@ -709,7 +739,8 @@ const KnowledgeGraphView = () => {
             </div>
 
             {/* Right Panel: Details & Links */}
-            <div className="col-span-3 space-y-4">
+            <div className="col-span-12 md:col-span-3 space-y-4">
+                {/* ... (Right panel content preserved) */}
                 {/* Selected Node Details */}
                 {selectedNodes.length > 0 && (
                     <Card className="bg-white/50 dark:bg-slate-900/50">

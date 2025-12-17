@@ -28,22 +28,35 @@ interface NCBIConcept {
 
 export default function KnowledgeGraphNCBISearchModal({ isOpen, onClose, onNodeAdded }: KnowledgeGraphNCBISearchModalProps) {
     const [query, setQuery] = useState('');
+    const [debouncedQuery, setDebouncedQuery] = useState(query);
     const [nodeType, setNodeType] = useState<NodeType>('pathology');
     const [results, setResults] = useState<NCBIConcept[]>([]);
     const [loading, setLoading] = useState(false);
     const [adding, setAdding] = useState<string | null>(null); // ID of node being added
 
-    const handleSearch = async () => {
-        if (!query || query.length < 3) {
-            toast.error("Veuillez saisir au moins 3 caractères");
+    // Debounce query
+    React.useEffect(() => {
+        const timer = setTimeout(() => setDebouncedQuery(query), 500);
+        return () => clearTimeout(timer);
+    }, [query]);
+
+    // Auto-search trigger
+    React.useEffect(() => {
+        if (debouncedQuery.length >= 3) {
+            handleSearch(debouncedQuery);
+        }
+    }, [debouncedQuery, nodeType]);
+
+    const handleSearch = async (searchQuery: string = query) => {
+        if (!searchQuery || searchQuery.length < 3) {
             return;
         }
 
         setLoading(true);
-        setResults([]);
+        // setResults([]); // Optional: Don't clear immediately to avoid flickering
         try {
             const { data, error } = await supabase.functions.invoke('search-medical-concepts', {
-                body: { query, type: nodeType }
+                body: { query: searchQuery, type: nodeType }
             });
 
             if (error) throw error;
@@ -129,13 +142,15 @@ export default function KnowledgeGraphNCBISearchModal({ isOpen, onClose, onNodeA
                             placeholder="Rechercher (ex: Aspirin, Diabetes...)"
                             value={query}
                             onChange={(e) => setQuery(e.target.value)}
-                            onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
-                            className="pl-9"
+                            className="pl-9 pr-8"
                         />
+                        {loading && query.length >= 3 && (
+                            <div className="absolute right-2.5 top-2.5">
+                                <Loader2 className="h-4 w-4 animate-spin text-blue-500" />
+                            </div>
+                        )}
                     </div>
-                    <Button onClick={handleSearch} disabled={loading || !query}>
-                        {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : "Rechercher"}
-                    </Button>
+                    {/* Le bouton "Rechercher" est supprimé car la recherche est automatique */}
                 </div>
 
                 <ScrollArea className="h-[300px] border rounded-md p-4 bg-slate-50 dark:bg-slate-800/50">

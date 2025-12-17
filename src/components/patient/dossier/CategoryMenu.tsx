@@ -27,7 +27,8 @@ import {
     MessageSquare,
     LineChart,
     UserCircle,
-    CalendarCheck
+    CalendarCheck,
+    Zap
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -51,7 +52,8 @@ export type CategoryKey =
     | 'documents'
     | 'communications'
     | 'monitoring'
-    | 'age_specific';
+    | 'age_specific'
+    | 'side_effects';
 
 interface CategoryConfig {
     key: CategoryKey;
@@ -81,6 +83,7 @@ export const CATEGORIES: CategoryConfig[] = [
     { key: 'communications', label: 'Correspondances', icon: <MessageSquare className="h-5 w-5" />, color: 'text-fuchsia-500 bg-fuchsia-500/10 hover:bg-fuchsia-500/20' },
     { key: 'monitoring', label: 'Suivi', icon: <LineChart className="h-5 w-5" />, color: 'text-yellow-500 bg-yellow-500/10 hover:bg-yellow-500/20' },
     { key: 'age_specific', label: 'Spécifique âge', icon: <UserCircle className="h-5 w-5" />, color: 'text-stone-500 bg-stone-500/10 hover:bg-stone-500/20' },
+    { key: 'side_effects', label: 'Alertes IA', icon: <Zap className="h-5 w-5" />, color: 'text-amber-500 bg-amber-500/10 hover:bg-amber-500/20' },
 ];
 
 interface CategoryMenuProps {

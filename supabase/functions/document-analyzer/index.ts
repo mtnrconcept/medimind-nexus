@@ -1049,6 +1049,7 @@ serve(async (req) => {
         }
 
         // Update document
+        // Update document (after extraction)
         if (documentId) {
             await supabase.from('patient_documents').update({
                 extracted_data: extractedData,
@@ -1058,21 +1059,47 @@ serve(async (req) => {
             }).eq('id', documentId);
         }
 
-        // Auto-Integrate
-        let integrationResult = { integrated: [] as string[], errors: [] as string[] };
-        if (patientId && documentId) {
-            integrationResult = await autoIntegrateData(supabase, patientId, documentId, extractedData);
-        }
+        // Initialize Admin Client for RLS bypass during integration
+        const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
+        const adminSupabase = createClient(
+            Deno.env.get('SUPABASE_URL') ?? '',
+            serviceRoleKey ?? '',
+            {
+                auth: {
+                    autoRefreshToken: false,
+                    persistSession: false
+                }
+            }
+        );
 
-        return new Response(JSON.stringify({
-            success: true,
-            extractedData,
+        // Call auto-integrate with Admin Client
+        const integrationResult = await autoIntegrateData(
+            adminSupabase, // Use admin client to bypass RLS on medications/pathologies creation
+            patientId,
             documentId,
-            integrated: integrationResult.integrated,
-            integrationErrors: integrationResult.errors,
-        }), {
-            headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
+            extractedData
+        );
+
+        // Update document status
+        await adminSupabase // Use admin here too to ensure we can update status regardless of ownership quirks, though user should own it.
+            .from('patient_documents')
+            .update({
+                extraction_status: integrationResult.errors.length > 0 ? 'completed_with_errors' : 'completed',
+                extracted_data: extractedData,
+                integrated_at: new Date().toISOString(), // Ensure integrated_at is set
+                integrated_data: { fields: integrationResult.integrated, errors: integrationResult.errors, alerts: extractedData.alerts },
+                auto_classified: true,
+            })
+            .eq('id', documentId);
+
+        return new Response(
+            JSON.stringify({
+                success: true,
+                data: extractedData,
+                integration: integrationResult
+            }),
+            { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
 
     } catch (error: any) {
         console.error("Error:", error);

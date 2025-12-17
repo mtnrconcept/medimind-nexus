@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import AppLayout from '@/components/layout/AppLayout';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -10,7 +10,7 @@ import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { supabase } from '@/integrations/supabase/client';
-import { Search as SearchIcon, Activity, ChevronRight, X, Sparkles, Database, Globe, Filter } from 'lucide-react';
+import { Search as SearchIcon, Activity, ChevronRight, X, Sparkles, Database, Globe, Filter, Loader2 } from 'lucide-react';
 import DeepResearchPanel from '@/components/search/DeepResearchPanel';
 import { COMMON_MEDICAL_SYMPTOMS, BODY_SYSTEMS } from '@/data/medicalSymptoms';
 
@@ -20,6 +20,8 @@ interface Symptom {
   description: string;
   body_system: string;
   isFromDatabase?: boolean;
+  isFromNCBI?: boolean;
+  ncbi_id?: string;
 }
 
 interface PathologyResult {
@@ -44,13 +46,18 @@ const Search = () => {
   const [searchFilter, setSearchFilter] = useState('');
   const [selectedSystem, setSelectedSystem] = useState<string>('all');
 
+  // NCBI Search State
+  const [ncbiSearchQuery, setNcbiSearchQuery] = useState('');
+  const [ncbiResults, setNcbiResults] = useState<Symptom[]>([]);
+  const [ncbiLoading, setNcbiLoading] = useState(false);
+
   useEffect(() => {
     const fetchSymptoms = async () => {
       const { data } = await supabase
         .from('symptoms')
         .select('*')
         .order('name');
-      
+
       if (data) {
         setDbSymptoms(data.map(s => ({ ...s, isFromDatabase: true })));
       }
@@ -59,10 +66,46 @@ const Search = () => {
     fetchSymptoms();
   }, []);
 
+  // Debounced NCBI Search
+  useEffect(() => {
+    if (ncbiSearchQuery.length < 2) {
+      setNcbiResults([]);
+      return;
+    }
+
+    const debounceTimer = setTimeout(async () => {
+      setNcbiLoading(true);
+      try {
+        const { data, error } = await supabase.functions.invoke('search-medical-concepts', {
+          body: { query: ncbiSearchQuery, type: 'symptom' }
+        });
+
+        if (error) throw error;
+
+        const concepts = data?.concepts || [];
+        setNcbiResults(concepts.map((c: any) => ({
+          id: `ncbi-${c.id}`,
+          name: c.name,
+          description: c.description || '',
+          body_system: 'NCBI',
+          isFromDatabase: false,
+          isFromNCBI: true,
+          ncbi_id: c.id
+        })));
+      } catch (err) {
+        console.error('NCBI search error:', err);
+      } finally {
+        setNcbiLoading(false);
+      }
+    }, 400);
+
+    return () => clearTimeout(debounceTimer);
+  }, [ncbiSearchQuery]);
+
   // Combiner symptômes de la base et symptômes médicaux communs
   const allSymptoms = useMemo(() => {
     const dbSymptomNames = new Set(dbSymptoms.map(s => s.name.toLowerCase()));
-    
+
     // Ajouter les symptômes communs qui ne sont pas déjà dans la base
     const additionalSymptoms = COMMON_MEDICAL_SYMPTOMS
       .filter(s => !dbSymptomNames.has(s.name.toLowerCase()))
@@ -83,7 +126,7 @@ const Search = () => {
 
     if (searchFilter) {
       const filter = searchFilter.toLowerCase();
-      filtered = filtered.filter(s => 
+      filtered = filtered.filter(s =>
         s.name.toLowerCase().includes(filter) ||
         s.body_system?.toLowerCase().includes(filter)
       );
@@ -108,7 +151,7 @@ const Search = () => {
 
   const toggleSymptom = (symptom: Symptom) => {
     const isSelected = selectedSymptoms.includes(symptom.id);
-    
+
     if (isSelected) {
       setSelectedSymptoms(prev => prev.filter(id => id !== symptom.id));
       setSelectedSymptomNames(prev => prev.filter(name => name !== symptom.name));
@@ -134,7 +177,7 @@ const Search = () => {
     try {
       // Filtrer seulement les symptômes de la base de données
       const dbSymptomIds = selectedSymptoms.filter(id => !id.startsWith('common-'));
-      
+
       if (dbSymptomIds.length === 0) {
         setResults([]);
         setLoading(false);
@@ -244,21 +287,66 @@ const Search = () => {
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-3">
-                {/* Filtre de recherche */}
+                {/* Filtre de recherche local */}
                 <div className="relative">
                   <Filter className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                   <Input
-                    placeholder="Filtrer les symptômes..."
+                    placeholder="Filtrer les symptômes locaux..."
                     value={searchFilter}
                     onChange={(e) => setSearchFilter(e.target.value)}
                     className="pl-10"
                   />
                 </div>
 
+                {/* NCBI Search Panel */}
+                <div className="p-3 rounded-lg bg-primary/5 border border-primary/20 space-y-2">
+                  <div className="flex items-center gap-2 text-sm font-medium text-primary">
+                    <Globe className="h-4 w-4" />
+                    Recherche NCBI MeSH
+                  </div>
+                  <div className="relative">
+                    <SearchIcon className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                    <Input
+                      placeholder="Rechercher un symptôme (anglais)..."
+                      value={ncbiSearchQuery}
+                      onChange={(e) => setNcbiSearchQuery(e.target.value)}
+                      className="pl-10"
+                    />
+                    {ncbiLoading && (
+                      <Loader2 className="absolute right-3 top-1/2 transform -translate-y-1/2 h-4 w-4 animate-spin text-primary" />
+                    )}
+                  </div>
+                  {ncbiResults.length > 0 && (
+                    <ScrollArea className="h-[120px]">
+                      <div className="space-y-1">
+                        {ncbiResults.map((symptom) => (
+                          <div key={symptom.id} className="flex items-center gap-2 p-1.5 rounded hover:bg-muted/50">
+                            <Checkbox
+                              id={symptom.id}
+                              checked={selectedSymptoms.includes(symptom.id)}
+                              onCheckedChange={() => toggleSymptom(symptom)}
+                            />
+                            <Label
+                              htmlFor={symptom.id}
+                              className="text-sm cursor-pointer leading-relaxed flex items-center gap-1.5 flex-1"
+                            >
+                              {symptom.name}
+                              <Globe className="h-3 w-3 text-primary" />
+                            </Label>
+                          </div>
+                        ))}
+                      </div>
+                    </ScrollArea>
+                  )}
+                  {ncbiSearchQuery.length >= 2 && !ncbiLoading && ncbiResults.length === 0 && (
+                    <p className="text-xs text-muted-foreground text-center py-2">Aucun résultat NCBI</p>
+                  )}
+                </div>
+
                 {/* Filtre par système */}
                 <ScrollArea className="w-full">
                   <div className="flex gap-1 pb-2">
-                    <Badge 
+                    <Badge
                       variant={selectedSystem === 'all' ? 'default' : 'outline'}
                       className="cursor-pointer whitespace-nowrap"
                       onClick={() => setSelectedSystem('all')}
@@ -266,7 +354,7 @@ const Search = () => {
                       Tous
                     </Badge>
                     {BODY_SYSTEMS.map((system) => (
-                      <Badge 
+                      <Badge
                         key={system}
                         variant={selectedSystem === system ? 'default' : 'outline'}
                         className="cursor-pointer whitespace-nowrap"
@@ -313,8 +401,8 @@ const Search = () => {
 
                 {/* Boutons d'action */}
                 <div className="space-y-2 pt-2 border-t">
-                  <Button 
-                    className="w-full" 
+                  <Button
+                    className="w-full"
                     variant="outline"
                     onClick={handleSearch}
                     disabled={dbSelectedSymptomIds.length === 0 || loading}
@@ -330,7 +418,7 @@ const Search = () => {
           {/* Résultats */}
           <div className="lg:col-span-2 space-y-4">
             {/* Deep Research Panel */}
-            <DeepResearchPanel 
+            <DeepResearchPanel
               selectedSymptomIds={dbSelectedSymptomIds}
               selectedSymptomNames={selectedSymptomNames}
             />

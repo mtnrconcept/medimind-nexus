@@ -7,6 +7,7 @@ import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Label } from '@/components/ui/label';
+import { Switch } from '@/components/ui/switch';
 import {
     Command,
     CommandEmpty,
@@ -23,7 +24,7 @@ import {
 import { useAutoTranslation } from '@/contexts/TranslationContext';
 import {
     Crosshair, Search, Play, Square, Loader2, Brain, Sparkles,
-    AlertTriangle, Lightbulb, Baby, ChevronDown, Check, Pill, Stethoscope
+    AlertTriangle, Lightbulb, Baby, ChevronDown, Check, Pill, Stethoscope, Globe
 } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
@@ -33,9 +34,11 @@ import DiscoveryCard from './DiscoveryCard';
 interface TargetOption {
     id: string;
     name: string;
-    type: 'pathology' | 'medication' | 'substance';
+    type: 'pathology' | 'medication' | 'substance' | 'symptom' | 'treatment';
     icdCode?: string;
     atcCode?: string;
+    isExternal?: boolean;
+    description?: string;
 }
 
 interface DiscoveryCardData {
@@ -66,6 +69,7 @@ const FocusedResearchPanel = () => {
     const [isLoadingOptions, setIsLoadingOptions] = useState(false);
     const [comboboxOpen, setComboboxOpen] = useState(false);
     const [customPrompt, setCustomPrompt] = useState('');
+    const [useWebSearch, setUseWebSearch] = useState(true); // Claude web_search mode
 
     // Research state
     const [isResearching, setIsResearching] = useState(false);
@@ -86,17 +90,19 @@ const FocusedResearchPanel = () => {
 
             setIsLoadingOptions(true);
             try {
-                let results: TargetOption[] = [];
+                let localResults: TargetOption[] = [];
+                let externalResults: TargetOption[] = [];
 
+                // 1. Local Search
                 if (targetType === 'pathology') {
                     const { data, error } = await supabase
                         .from('pathologies')
                         .select('id, name, icd_code')
                         .ilike('name', `%${searchQuery}%`)
-                        .limit(20);
+                        .limit(5);
 
                     if (!error && data) {
-                        results = data.map(p => ({
+                        localResults = data.map(p => ({
                             id: p.id,
                             name: p.name,
                             type: 'pathology' as const,
@@ -110,10 +116,10 @@ const FocusedResearchPanel = () => {
                         .select('id, name, properties')
                         .eq('node_type', 'substance')
                         .ilike('name', `%${searchQuery}%`)
-                        .limit(15);
+                        .limit(5);
 
                     if (!substanceError && substanceData) {
-                        results = substanceData.map(s => ({
+                        localResults = substanceData.map(s => ({
                             id: s.id,
                             name: s.name,
                             type: 'substance' as const,
@@ -126,22 +132,61 @@ const FocusedResearchPanel = () => {
                         .from('medications')
                         .select('id, name, atc_code')
                         .ilike('name', `%${searchQuery}%`)
-                        .limit(10);
+                        .limit(5);
 
                     if (!medError && medData) {
-                        results = [
-                            ...results,
-                            ...medData.map(m => ({
-                                id: m.id,
-                                name: m.name,
-                                type: 'medication' as const,
-                                atcCode: m.atc_code
-                            }))
-                        ];
+                        const medResults = medData.map(m => ({
+                            id: m.id,
+                            name: m.name,
+                            type: 'medication' as const,
+                            atcCode: m.atc_code
+                        }));
+                        localResults = [...localResults, ...medResults];
                     }
                 }
 
-                setOptions(results);
+                // 2. External Search (NCBI)
+                // Only trigger if we have a decent query length to avoid spamming
+                if (searchQuery.length >= 3) {
+                    try {
+                        const { data: { session } } = await supabase.auth.getSession();
+                        if (session) {
+                            const response = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/search-medical-concepts`, {
+                                method: 'POST',
+                                headers: {
+                                    'Content-Type': 'application/json',
+                                    'Authorization': `Bearer ${session.access_token}`,
+                                    'apikey': import.meta.env.VITE_SUPABASE_ANON_KEY,
+                                },
+                                body: JSON.stringify({
+                                    query: searchQuery,
+                                    type: targetType // 'pathology' or 'medication'
+                                })
+                            });
+
+                            if (response.ok) {
+                                const data = await response.json();
+                                if (data.concepts) {
+                                    externalResults = data.concepts
+                                        // Filter out duplicates (already in local results)
+                                        .filter((c: any) => !localResults.some(l => l.name.toLowerCase() === c.name.toLowerCase()))
+                                        .slice(0, 10) // Limit external suggestions
+                                        .map((c: any) => ({
+                                            id: `external_${c.id}`, // Temporary ID
+                                            name: c.name,
+                                            type: targetType, // Map to current selection type
+                                            isExternal: true,
+                                            description: c.description
+                                        }));
+                                }
+                            }
+                        }
+                    } catch (extErr) {
+                        console.error('External search error:', extErr);
+                    }
+                }
+
+                setOptions([...localResults, ...externalResults]);
             } catch (err) {
                 console.error('Error loading options:', err);
             } finally {
@@ -195,7 +240,12 @@ const FocusedResearchPanel = () => {
                 s.id === 1 ? { ...s, status: 'running' as const, timestamp: new Date() } : s
             ));
 
-            const response = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/focused-research`, {
+            // Choose endpoint based on mode
+            const endpoint = useWebSearch
+                ? `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/discovery-search`
+                : `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/focused-research`;
+
+            const response = await fetch(endpoint, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
@@ -204,7 +254,7 @@ const FocusedResearchPanel = () => {
                 },
                 body: JSON.stringify({
                     targetType: selectedTarget.type,
-                    targetId: selectedTarget.id,
+                    targetId: selectedTarget.isExternal ? null : selectedTarget.id, // Only pass ID if local
                     targetName: selectedTarget.name,
                     customPrompt: customPrompt.trim() || undefined,
                 }),
@@ -421,6 +471,12 @@ const FocusedResearchPanel = () => {
                                                                 {option.icdCode || option.atcCode}
                                                             </Badge>
                                                         )}
+                                                        {option.isExternal && (
+                                                            <Badge variant="secondary" className="ml-auto flex items-center gap-1 text-[10px] bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300">
+                                                                <Globe className="h-3 w-3" />
+                                                                NCBI
+                                                            </Badge>
+                                                        )}
                                                     </div>
                                                 </CommandItem>
                                             ))}
@@ -447,6 +503,26 @@ const FocusedResearchPanel = () => {
                         <p className="text-xs text-slate-500">
                             {t('Orientez la recherche avec une question précise. Le modèle Claude Opus 4.5 analysera selon vos critères.')}
                         </p>
+                    </div>
+
+                    {/* Web Search Toggle */}
+                    <div className="flex items-center justify-between p-3 rounded-lg bg-gradient-to-r from-blue-500/10 to-cyan-500/10 border border-blue-200/30 dark:border-blue-500/20">
+                        <div className="flex items-center gap-3">
+                            <Globe className="h-5 w-5 text-blue-500" />
+                            <div>
+                                <Label htmlFor="web-search" className="text-sm font-medium cursor-pointer">
+                                    {t('Claude Web Search (Beta)')}
+                                </Label>
+                                <p className="text-xs text-muted-foreground">
+                                    {t('Recherche live PubMed + scoring de plausibilité (0-100)')}
+                                </p>
+                            </div>
+                        </div>
+                        <Switch
+                            id="web-search"
+                            checked={useWebSearch}
+                            onCheckedChange={setUseWebSearch}
+                        />
                     </div>
 
                     {/* Launch button */}

@@ -46,12 +46,14 @@ interface Pathology {
   category: string | null;
   specialty: string | null;
   severity: string | null;
+  isExternal?: boolean;
 }
 
 interface Symptom {
   id: string;
   name: string;
   body_system: string | null;
+  isExternal?: boolean;
 }
 
 interface Treatment {
@@ -66,6 +68,7 @@ interface Medication {
   name: string;
   atc_code: string | null;
   substance: string | null;
+  isExternal?: boolean;
 }
 
 interface WebSource {
@@ -169,6 +172,25 @@ const CrossDataAnalyzer = ({ patientData }: CrossDataAnalyzerProps) => {
     return () => clearTimeout(timer);
   }, [searchMedications]);
 
+  // Triggers automatiques pour la recherche externe (Smart Autocomplete)
+  useEffect(() => {
+    if (debouncedSearchPathologies.length >= 3) {
+      searchExternalConcepts(debouncedSearchPathologies, 'pathology', true);
+    }
+  }, [debouncedSearchPathologies]);
+
+  useEffect(() => {
+    if (debouncedSearchSymptoms.length >= 3) {
+      searchExternalConcepts(debouncedSearchSymptoms, 'symptom', true);
+    }
+  }, [debouncedSearchSymptoms]);
+
+  useEffect(() => {
+    if (debouncedSearchMedications.length >= 3) {
+      searchExternalConcepts(debouncedSearchMedications, 'medication', true);
+    }
+  }, [debouncedSearchMedications]);
+
   // Options de filtres extraites des données
   const pathologyCategories = useMemo(() => {
     const cats = new Set<string>();
@@ -260,11 +282,16 @@ const CrossDataAnalyzer = ({ patientData }: CrossDataAnalyzerProps) => {
   // Recherche externe NCBI
   const [isSearchingWeb, setIsSearchingWeb] = useState(false);
 
-  const searchExternalConcepts = async (query: string, type: 'pathology' | 'medication' | 'symptom') => {
+  const searchExternalConcepts = async (query: string, type: 'pathology' | 'medication' | 'symptom', isAuto = false) => {
     if (!query || query.length < 3) {
-      toast.error("Veuillez saisir au moins 3 caractères pour la recherche en ligne");
+      if (!isAuto) toast.error("Veuillez saisir au moins 3 caractères pour la recherche en ligne");
       return;
     }
+
+    // Avoid searching if we already have the exact match to prevent spam
+    if (type === 'pathology' && pathologies.some(p => p.name.toLowerCase() === query.toLowerCase())) return;
+    if (type === 'symptom' && symptoms.some(s => s.name.toLowerCase() === query.toLowerCase())) return;
+    if (type === 'medication' && medications.some(m => m.name.toLowerCase() === query.toLowerCase())) return;
 
     setIsSearchingWeb(true);
     try {
@@ -285,7 +312,8 @@ const CrossDataAnalyzer = ({ patientData }: CrossDataAnalyzerProps) => {
               name: c.name,
               category: 'NCBI',
               specialty: 'Importé',
-              severity: 'unknown'
+              severity: 'unknown',
+              isExternal: true
             }));
           if (newItems.length > 0) {
             setPathologies(prev => [...prev, ...newItems]);
@@ -299,7 +327,8 @@ const CrossDataAnalyzer = ({ patientData }: CrossDataAnalyzerProps) => {
               id: c.id,
               name: c.name,
               atc_code: null,
-              substance: c.description || null
+              substance: c.description || null,
+              isExternal: true
             }));
           if (newItems.length > 0) {
             setMedications(prev => [...prev, ...newItems]);
@@ -312,7 +341,8 @@ const CrossDataAnalyzer = ({ patientData }: CrossDataAnalyzerProps) => {
             .map((c: any) => ({
               id: c.id,
               name: c.name,
-              body_system: 'NCBI'
+              body_system: 'NCBI',
+              isExternal: true
             }));
           if (newItems.length > 0) {
             setSymptoms(prev => [...prev, ...newItems]);
@@ -320,15 +350,15 @@ const CrossDataAnalyzer = ({ patientData }: CrossDataAnalyzerProps) => {
           }
         }
 
-        if (addedCount > 0) {
+        if (addedCount > 0 && !isAuto) {
           toast.success(`${addedCount} éléments ajoutés depuis NCBI`);
-        } else {
+        } else if (!isAuto) {
           toast.info("Aucun nouvel élément trouvé sur NCBI");
         }
       }
     } catch (err) {
       console.error('Erreur recherche NCBI:', err);
-      toast.error("Erreur lors de la recherche NCBI");
+      if (!isAuto) toast.error("Erreur lors de la recherche NCBI");
     } finally {
       setIsSearchingWeb(false);
     }
@@ -917,27 +947,24 @@ const CrossDataAnalyzer = ({ patientData }: CrossDataAnalyzerProps) => {
                         value={searchPathologies}
                         onChange={(e) => setSearchPathologies(e.target.value)}
                         className="pl-8 pr-8 h-8 text-sm"
+                        className="pl-8 pr-8 h-8 text-sm"
                         onKeyDown={(e) => e.key === 'Enter' && searchExternalConcepts(searchPathologies, 'pathology')}
                       />
+                      {isSearchingWeb && searchPathologies.length >= 3 && (
+                        <div className="absolute right-8 top-1/2 -translate-y-1/2">
+                          <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />
+                        </div>
+                      )}
                       {searchPathologies && (
                         <button
                           onClick={() => setSearchPathologies('')}
                           className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
                         >
+
                           <X className="h-4 w-4" />
                         </button>
                       )}
                     </div>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="h-8 px-2"
-                      title="Rechercher sur NCBI (Web)"
-                      disabled={isSearchingWeb || !searchPathologies}
-                      onClick={() => searchExternalConcepts(searchPathologies, 'pathology')}
-                    >
-                      <Globe className={`h-4 w-4 ${isSearchingWeb ? 'animate-spin' : ''}`} />
-                    </Button>
                   </div>
 
                   {/* Filtres avancés */}
@@ -1016,10 +1043,16 @@ const CrossDataAnalyzer = ({ patientData }: CrossDataAnalyzerProps) => {
                             />
                             <label
                               htmlFor={`pathology-${p.id}`}
-                              className="text-sm cursor-pointer truncate flex-1"
+                              className="text-sm cursor-pointer truncate flex-1 flex items-center gap-2"
                               title={p.name}
                             >
                               {p.name}
+                              {p.isExternal && (
+                                <Badge variant="secondary" className="h-4 px-1 text-[10px] bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 flex items-center gap-0.5">
+                                  <Globe className="h-2.5 w-2.5" />
+                                  NCBI
+                                </Badge>
+                              )}
                             </label>
                           </div>
                         )}
@@ -1049,27 +1082,24 @@ const CrossDataAnalyzer = ({ patientData }: CrossDataAnalyzerProps) => {
                         value={searchSymptoms}
                         onChange={(e) => setSearchSymptoms(e.target.value)}
                         className="pl-8 pr-8 h-8 text-sm"
+                        className="pl-8 pr-8 h-8 text-sm"
                         onKeyDown={(e) => e.key === 'Enter' && searchExternalConcepts(searchSymptoms, 'symptom')}
                       />
+                      {isSearchingWeb && searchSymptoms.length >= 3 && (
+                        <div className="absolute right-8 top-1/2 -translate-y-1/2">
+                          <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />
+                        </div>
+                      )}
                       {searchSymptoms && (
                         <button
                           onClick={() => setSearchSymptoms('')}
                           className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
                         >
+
                           <X className="h-4 w-4" />
                         </button>
                       )}
                     </div>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="h-8 px-2"
-                      title="Rechercher sur NCBI (Web)"
-                      disabled={isSearchingWeb || !searchSymptoms}
-                      onClick={() => searchExternalConcepts(searchSymptoms, 'symptom')}
-                    >
-                      <Globe className={`h-4 w-4 ${isSearchingWeb ? 'animate-spin' : ''}`} />
-                    </Button>
                   </div>
 
                   {/* Filtre par système corporel */}
@@ -1122,10 +1152,16 @@ const CrossDataAnalyzer = ({ patientData }: CrossDataAnalyzerProps) => {
                             />
                             <label
                               htmlFor={`symptom-${s.id}`}
-                              className="text-sm cursor-pointer truncate flex-1"
+                              className="text-sm cursor-pointer truncate flex-1 flex items-center gap-2"
                               title={s.name}
                             >
                               {s.name}
+                              {s.isExternal && (
+                                <Badge variant="secondary" className="h-4 px-1 text-[10px] bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 flex items-center gap-0.5">
+                                  <Globe className="h-2.5 w-2.5" />
+                                  NCBI
+                                </Badge>
+                              )}
                             </label>
                           </div>
                         )}
@@ -1250,25 +1286,21 @@ const CrossDataAnalyzer = ({ patientData }: CrossDataAnalyzerProps) => {
                         className="pl-8 pr-8 h-8 text-sm"
                         onKeyDown={(e) => e.key === 'Enter' && searchExternalConcepts(searchMedications, 'medication')}
                       />
+                      {isSearchingWeb && searchMedications.length >= 3 && (
+                        <div className="absolute right-8 top-1/2 -translate-y-1/2">
+                          <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />
+                        </div>
+                      )}
                       {searchMedications && (
                         <button
                           onClick={() => setSearchMedications('')}
                           className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
                         >
+
                           <X className="h-4 w-4" />
                         </button>
                       )}
                     </div>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="h-8 px-2 border-orange-500/20 text-orange-600"
-                      title="Rechercher sur NCBI (Web)"
-                      disabled={isSearchingWeb || !searchMedications}
-                      onClick={() => searchExternalConcepts(searchMedications, 'medication')}
-                    >
-                      <Globe className={`h-4 w-4 ${isSearchingWeb ? 'animate-spin' : ''}`} />
-                    </Button>
                   </div>
 
                   {/* Filtre par groupe ATC */}
@@ -1328,6 +1360,12 @@ const CrossDataAnalyzer = ({ patientData }: CrossDataAnalyzerProps) => {
                             >
                               {m.name}
                               {m.atc_code && <span className="text-xs text-muted-foreground ml-1">[{m.atc_code}]</span>}
+                              {m.isExternal && (
+                                <Badge variant="secondary" className="h-4 px-1 text-[10px] bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 flex items-center gap-0.5 ml-1">
+                                  <Globe className="h-2.5 w-2.5" />
+                                  NCBI
+                                </Badge>
+                              )}
                             </label>
                           </div>
                         )}

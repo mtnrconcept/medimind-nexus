@@ -3,18 +3,19 @@
 -- Solution: Create profiles automatically for existing auth users
 
 -- 1. Ensure profiles table has an entry for all auth users
-INSERT INTO profiles (id)
-SELECT id FROM auth.users
+-- 1. Ensure profiles table has an entry for all auth users
+INSERT INTO profiles (id, user_id)
+SELECT id, id FROM auth.users
 WHERE id NOT IN (SELECT id FROM profiles)
-ON CONFLICT (id) DO NOTHING;
+ON CONFLICT DO NOTHING;
 
 -- 2. Create a trigger to auto-create profiles for new users
 CREATE OR REPLACE FUNCTION create_profile_for_user()
 RETURNS TRIGGER AS $$
 BEGIN
-    INSERT INTO profiles (id)
-    VALUES (NEW.id)
-    ON CONFLICT (id) DO NOTHING;
+    INSERT INTO profiles (id, user_id)
+    VALUES (NEW.id, NEW.id)
+    ON CONFLICT DO NOTHING;
     RETURN NEW;
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;

@@ -97,6 +97,39 @@ async function searchPubMed(query: string, maxResults: number = 10, apiKey?: str
     }
 }
 
+// Helper to translate query using Claude
+async function translateQuery(query: string, apiKey: string): Promise<string> {
+    try {
+        const response = await fetch("https://api.anthropic.com/v1/messages", {
+            method: "POST",
+            headers: {
+                "x-api-key": apiKey,
+                "anthropic-version": "2023-06-01",
+                "content-type": "application/json",
+            },
+            body: JSON.stringify({
+                model: "claude-3-haiku-20240307",
+                max_tokens: 100,
+                messages: [
+                    {
+                        role: "user",
+                        content: `Translate the following medical term or query from French to English. Return ONLY the English translation, no other text. If it is already English or a universal scientific term, return it as is.\n\nQuery: "${query}"`
+                    }
+                ]
+            }),
+        });
+
+        if (!response.ok) return query;
+
+        const data = await response.json();
+        const translation = data.content[0].text.trim().replace(/"/g, '');
+        return translation;
+    } catch (e) {
+        console.error("Translation error:", e);
+        return query;
+    }
+}
+
 // Medical knowledge: standard treatments and contraindications for pathologies
 const MEDICAL_KNOWLEDGE: Record<string, { treatments: string[], contraindications: string[], comorbidities: string[] }> = {
     'syndrome néphrotique': {
@@ -789,11 +822,19 @@ serve(async (req) => {
                     });
 
                     // Build specialized PubMed queries
-                    // Build specialized PubMed queries
+                    const englishTargetName = await translateQuery(targetName, CLAUDE_API_KEY);
+                    console.log(`Translated "${targetName}" to "${englishTargetName}" for PubMed`);
+
+                    // Create wildcard versions for broad "contains" search (prefix expansion)
+                    // We remove quotes to allow PubMed Automatic Term Mapping (ATM)
+                    // We add * to allow prefix matching (e.g. "nephr" -> "nephrotic")
+
+                    const termClause = `(${targetName} OR "${targetName}" OR ${targetName}* OR ${englishTargetName} OR "${englishTargetName}" OR ${englishTargetName}*)`;
+
                     const pubmedQueries = [
-                        `"${targetName}" AND (drug interaction OR mechanism OR treatment) AND 2023:2024[dp]`,
-                        `"${targetName}" AND (novel OR emerging OR discovery) AND 2022:2024[dp]`,
-                        `"${targetName}" AND (adverse effect OR side effect OR toxicity)`
+                        `${termClause} AND (drug interaction OR mechanism OR treatment OR therapy) AND 2023:2024[dp]`,
+                        `${termClause} AND (novel OR emerging OR discovery OR breakthrough) AND 2022:2024[dp]`,
+                        `${termClause} AND (adverse effect OR side effect OR toxicity OR contraindication)`
                     ];
 
                     // Get NCBI API Key

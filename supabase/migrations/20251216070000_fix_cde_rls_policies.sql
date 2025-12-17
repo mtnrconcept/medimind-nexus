@@ -54,18 +54,24 @@ CREATE POLICY "Service role full access to focused_research_sessions" ON "public
 ALTER TABLE "public"."cde_nodes" ENABLE ROW LEVEL SECURITY;
 
 -- Allow reading all nodes
+-- Allow reading all nodes
+DROP POLICY IF EXISTS "Enable read access for all users" ON "public"."cde_nodes";
 CREATE POLICY "Enable read access for all users" ON "public"."cde_nodes"
 AS PERMISSIVE FOR SELECT
 TO public
 USING (true);
 
 -- Allow authenticated users to insert new nodes (e.g. from NCBI search)
+-- Allow authenticated users to insert new nodes (e.g. from NCBI search)
+DROP POLICY IF EXISTS "Enable insert access for authenticated users" ON "public"."cde_nodes";
 CREATE POLICY "Enable insert access for authenticated users" ON "public"."cde_nodes"
 AS PERMISSIVE FOR INSERT
 TO authenticated
 WITH CHECK (true);
 
 -- Allow authenticated users to update nodes (if needed, e.g. adding properties)
+-- Allow authenticated users to update nodes (if needed, e.g. adding properties)
+DROP POLICY IF EXISTS "Enable update access for authenticated users" ON "public"."cde_nodes";
 CREATE POLICY "Enable update access for authenticated users" ON "public"."cde_nodes"
 AS PERMISSIVE FOR UPDATE
 TO authenticated
@@ -78,17 +84,28 @@ WITH CHECK (true);
 ALTER TABLE "public"."cde_user_edges" ENABLE ROW LEVEL SECURITY;
 
 -- Allow users to manage their own edges
+-- Allow users to manage their own edges
+DROP POLICY IF EXISTS "Users can manage their own edges" ON "public"."cde_user_edges";
 CREATE POLICY "Users can manage their own edges" ON "public"."cde_user_edges"
 AS PERMISSIVE FOR ALL
 TO authenticated
-USING (auth.uid() = user_id)
-WITH CHECK (auth.uid() = user_id);
+USING (
+  user_id = auth.uid() 
+  OR 
+  user_id IN (SELECT id FROM profiles WHERE user_id = auth.uid())
+)
+WITH CHECK (
+  user_id = auth.uid() 
+  OR 
+  user_id IN (SELECT id FROM profiles WHERE user_id = auth.uid())
+);
 
 -- 3. Policies for cde_edges (Global edges)
 -- Generally read-only for users, but maybe we want to allow contribution later. 
 -- For now, read-only for public/authenticated is usually enough, but let's ensure it's readable.
 ALTER TABLE "public"."cde_edges" ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS "Enable read access for all users" ON "public"."cde_edges";
 CREATE POLICY "Enable read access for all users" ON "public"."cde_edges"
 AS PERMISSIVE FOR SELECT
 TO public

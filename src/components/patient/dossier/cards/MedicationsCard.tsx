@@ -35,10 +35,11 @@ import {
     DialogHeader,
     DialogTitle,
 } from '@/components/ui/dialog';
-import { Plus, Pill, Loader2, MoreVertical, Pencil, Trash2, Clock, Calendar, AlertCircle, CheckCircle } from 'lucide-react';
+import { Plus, Pill, Loader2, MoreVertical, Pencil, Trash2, Clock, Calendar, AlertCircle, CheckCircle, Upload } from 'lucide-react';
 import { toast } from 'sonner';
 import { format } from 'date-fns';
 import { fr } from 'date-fns/locale';
+import { DocumentUploadDialog } from '@/components/patient/DocumentUploadDialog';
 
 interface MedicationsCardProps {
     patientId: string;
@@ -92,6 +93,7 @@ const MedicationsCard = ({ patientId }: MedicationsCardProps) => {
     const [editingMed, setEditingMed] = useState<Medication | null>(null);
     const [saving, setSaving] = useState(false);
     const [activeTab, setActiveTab] = useState('active');
+    const [importDialogOpen, setImportDialogOpen] = useState(false);
 
     // Database medications for autocomplete
     const [medicationOptions, setMedicationOptions] = useState<SelectOption[]>([]);
@@ -369,9 +371,15 @@ const MedicationsCard = ({ patientId }: MedicationsCardProps) => {
         <div className="space-y-4">
             <div className="flex justify-between items-center">
                 <span className="text-sm text-muted-foreground">{activeMeds.length} traitement(s) actif(s)</span>
-                <Button size="sm" variant="outline" onClick={openAddDialog}>
-                    <Plus className="h-3 w-3 mr-1" />Ajouter
-                </Button>
+                <div className="flex gap-2">
+                    <Button size="sm" variant="outline" onClick={() => setImportDialogOpen(true)} className="gap-2">
+                        <Upload className="h-3 w-3" />
+                        Importer
+                    </Button>
+                    <Button size="sm" variant="outline" onClick={openAddDialog}>
+                        <Plus className="h-3 w-3 mr-1" />Ajouter
+                    </Button>
+                </div>
             </div>
 
             <Tabs value={activeTab} onValueChange={setActiveTab}>
@@ -513,6 +521,16 @@ const MedicationsCard = ({ patientId }: MedicationsCardProps) => {
                     </div>
                 </DialogContent>
             </Dialog>
+
+            <DocumentUploadDialog
+                open={importDialogOpen}
+                onOpenChange={setImportDialogOpen}
+                patientId={patientId}
+                onUploadComplete={() => {
+                    toast.success('Document analysé, rechargement des traitements...');
+                    fetchData();
+                }}
+            />
         </div>
     );
 };

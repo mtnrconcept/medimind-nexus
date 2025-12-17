@@ -215,21 +215,10 @@ const LinkCreationModal = ({
                 throw new Error('Vous devez être connecté');
             }
 
-            // Get profile ID from auth user ID (profiles.user_id = auth.uid())
-            const { data: profile, error: profileError } = await supabase
-                .from('profiles')
-                .select('id')
-                .eq('user_id', session.user.id)
-                .single();
-
-            if (profileError || !profile) {
-                throw new Error('Profil utilisateur non trouvé. Veuillez vous reconnecter.');
-            }
-
             const { error } = await supabase
                 .from('cde_user_edges')
                 .insert({
-                    user_id: profile.id, // Use profiles.id, not auth user id
+                    user_id: session.user.id, // Correct: References auth.users(id)
                     source_node_id: sourceNode.id,
                     target_node_id: targetNode.id,
                     relationship_type: relationshipType,
