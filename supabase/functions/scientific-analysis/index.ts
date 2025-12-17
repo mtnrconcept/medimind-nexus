@@ -1,5 +1,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { getOpenFDAComprehensiveData } from "./openfda-api.ts";
+import { getDrugBankComprehensiveData } from "./drugbank-api.ts";
 
 const corsHeaders = {
     "Access-Control-Allow-Origin": "*",
@@ -266,42 +268,122 @@ async function fetchPubMedEvidence(query: string, limit: number = 10): Promise<S
     return evidence;
 }
 
-async function fetchOpenFDAEvents(drugName: string): Promise<ScientificEvidence[]> {
+// Replace basic OpenFDA with comprehensive version
+async function fetchOpenFDAComprehensive(drugNames: string[]): Promise<ScientificEvidence[]> {
     const evidence: ScientificEvidence[] = [];
 
-    try {
-        const url = `https://api.fda.gov/drug/event.json?search=patient.drug.medicinalproduct:"${encodeURIComponent(drugName)}"&limit=10`;
-        const res = await fetch(url);
-        if (!res.ok) return evidence;
+    for (const drugName of drugNames.slice(0, 3)) { // Limit to first 3 to avoid API overload
+        try {
+            const fdaData = await getOpenFDAComprehensiveData(drugName);
 
-        const data = await res.json();
-        const totalEvents = data?.meta?.results?.total || 0;
+            // Add drug label information
+            for (const drug of fdaData.drugs.slice(0, 2)) {
+                const warnings = Array.isArray(drug.warnings) ? drug.warnings.join(' ') : '';
+                const interactions = Array.isArray(drug.drug_interactions) ? drug.drug_interactions.join(' ') : '';
 
-        if (totalEvents > 0) {
-            // Aggregate reactions
-            const reactions = new Map<string, number>();
-            for (const event of data.results || []) {
-                for (const reaction of event.patient?.reaction || []) {
-                    const r = reaction.reactionmeddrapt;
-                    if (r) reactions.set(r, (reactions.get(r) || 0) + 1);
-                }
+                evidence.push({
+                    source: 'openfda_label',
+                    title: `${drug.brand_name || drug.generic_name} - FDA Label`,
+                    summary: `Warnings: ${warnings.substring(0, 300)}... Interactions: ${interactions.substring(0, 200)}`,
+                    relevance_score: 0.85,
+                    evidence_level: 'expert_opinion'
+                });
             }
 
-            const topReactions = [...reactions.entries()]
-                .sort((a, b) => b[1] - a[1])
-                .slice(0, 5)
-                .map(([r, c]) => `${r} (n=${c})`);
+            // Add adverse events
+            if (fdaData.totalAdverseEvents > 0) {
+                const reactions = new Map<string, number>();
+                for (const event of fdaData.adverseEvents.slice(0, 20)) {
+                    for (const reaction of event.reactions) {
+                        reactions.set(reaction, (reactions.get(reaction) || 0) + 1);
+                    }
+                }
 
-            evidence.push({
-                source: 'openfda',
-                title: `Pharmacovigilance: ${drugName} (${totalEvents} événements)`,
-                summary: `Réactions les plus fréquentes: ${topReactions.join(', ')}`,
-                relevance_score: 0.7,
-                evidence_level: 'cohort'
-            });
+                const topReactions = [...reactions.entries()]
+                    .sort((a, b) => b[1] - a[1])
+                    .slice(0, 8)
+                    .map(([r, c]) => `${r} (n=${c})`);
+
+                evidence.push({
+                    source: 'openfda_faers',
+                    title: `Pharmacovigilance FDA: ${drugName} (${fdaData.totalAdverseEvents} events)`,
+                    summary: `Top adverse reactions: ${topReactions.join(', ')}`,
+                    relevance_score: 0.75,
+                    evidence_level: 'cohort'
+                });
+            }
+        } catch (e) {
+            console.error(`OpenFDA comprehensive fetch error for ${drugName}:`, e);
         }
-    } catch (e) {
-        console.error("OpenFDA fetch error:", e);
+    }
+
+    return evidence;
+}
+
+// Add DrugBank integration
+async function fetchDrugBankData(drugNames: string[]): Promise<ScientificEvidence[]> {
+    const evidence: ScientificEvidence[] = [];
+    const drugbankApiKey = Deno.env.get("DRUGBANK_API_KEY");
+
+    if (!drugbankApiKey) {
+        console.warn('DrugBank API key not configured');
+        return evidence;
+    }
+
+    for (const drugName of drugNames.slice(0, 2)) { // Limit to 2 drugs
+        try {
+            const dbData = await getDrugBankComprehensiveData(drugName, drugbankApiKey);
+
+            if (dbData.found && dbData.detailed) {
+                const drug = dbData.detailed;
+
+                // Mechanism of action
+                if (drug.mechanism_of_action) {
+                    evidence.push({
+                        source: 'drugbank_mechanism',
+                        title: `${drug.name} - Mechanism of Action`,
+                        summary: drug.mechanism_of_action.substring(0, 500),
+                        relevance_score: 0.9,
+                        evidence_level: 'expert_opinion'
+                    });
+                }
+
+                // Drug-drug interactions
+                if (drug.interactions && drug.interactions.length > 0) {
+                    const interactionsSummary = drug.interactions
+                        .slice(0, 10)
+                        .map(i => `${i.name}: ${i.description.substring(0, 80)}`)
+                        .join(' | ');
+
+                    evidence.push({
+                        source: 'drugbank_interactions',
+                        title: `${drug.name} - Known Interactions (${drug.interactions.length} total)`,
+                        summary: interactionsSummary,
+                        relevance_score: 0.95,
+                        evidence_level: 'expert_opinion'
+                    });
+                }
+
+                // Pharmacokinetics
+                const pkInfo = [
+                    drug.half_life ? `Half-life: ${drug.half_life}` : '',
+                    drug.metabolism ? `Metabolism: ${drug.metabolism.substring(0, 200)}` : '',
+                    drug.protein_binding ? `Protein binding: ${drug.protein_binding}` : ''
+                ].filter(Boolean).join('. ');
+
+                if (pkInfo) {
+                    evidence.push({
+                        source: 'drugbank_pk',
+                        title: `${drug.name} - Pharmacokinetics`,
+                        summary: pkInfo,
+                        relevance_score: 0.85,
+                        evidence_level: 'expert_opinion'
+                    });
+                }
+            }
+        } catch (e) {
+            console.error(`DrugBank fetch error for ${drugName}:`, e);
+        }
     }
 
     return evidence;
@@ -494,7 +576,7 @@ async function performScientificAnalysis(
 
     userPrompt += `\n# INSTRUCTIONS\n\nEffectue une analyse scientifique approfondie selon le type demandé (${request.analysis_type}). Génère des hypothèses falsifiables avec scores de plausibilité. Cite toutes les sources. Réponds en JSON.`;
 
-    // Call Claude Opus
+    // Call Claude Opus with STREAMING
     const claudeResponse = await fetch("https://api.anthropic.com/v1/messages", {
         method: "POST",
         headers: {
@@ -503,9 +585,10 @@ async function performScientificAnalysis(
             "anthropic-version": "2023-06-01"
         },
         body: JSON.stringify({
-            model: "claude-3-opus-20240229", // Claude Opus for maximum capability
+            model: "claude-3-opus-20240229",
             max_tokens: 8000,
-            temperature: 0.2, // Low temperature for scientific rigor
+            temperature: 0.2,
+            stream: true, // ENABLE STREAMING
             system: SYSTEM_PROMPT,
             messages: [
                 { role: "user", content: userPrompt }
@@ -519,60 +602,13 @@ async function performScientificAnalysis(
         throw new Error(`Claude API error: ${claudeResponse.status}`);
     }
 
-    const claudeData = await claudeResponse.json();
-    let textContent = "";
-    for (const block of claudeData.content || []) {
-        if (block.type === "text") {
-            textContent += block.text;
-        }
-    }
-
-    // Parse JSON response
-    let parsedAnalysis: any = {};
-    try {
-        const jsonMatch = textContent.match(/\{[\s\S]*\}/);
-        if (jsonMatch) {
-            parsedAnalysis = JSON.parse(jsonMatch[0]);
-        }
-    } catch (e) {
-        console.error("JSON parse error:", e);
-        parsedAnalysis = { raw_response: textContent };
-    }
-
-    // Calculate tokens used
-    const tokensUsed = claudeData.usage?.input_tokens + claudeData.usage?.output_tokens || 0;
-
-    // Build response
-    const response: AnalysisResponse = {
-        analysis_id: `ANA-${Date.now().toString(36)}-${Math.random().toString(36).substr(2, 4)}`.toUpperCase(),
-        generated_at: new Date().toISOString(),
-        analysis_type: request.analysis_type,
-        model_used: "claude-3-opus-20240229",
-
-        executive_summary: parsedAnalysis.executive_summary || "Analyse non disponible",
-        detailed_analysis: parsedAnalysis.detailed_analysis || "",
-
-        hypotheses: parsedAnalysis.hypotheses || [],
-        recommendations: parsedAnalysis.recommendations || [],
-        risk_factors: parsedAnalysis.risk_factors || [],
-
-        evidence_base: evidence,
-        knowledge_graph_insights: kgInsights,
-
-        confidence_level: parsedAnalysis.confidence_level || 0.5,
-        limitations: parsedAnalysis.limitations || [],
-        areas_of_uncertainty: parsedAnalysis.areas_of_uncertainty || [],
-
-        sources_consulted: [
-            'PubMed/MEDLINE',
-            'OpenFDA FAERS',
-            'ClinicalTrials.gov',
-            'Knowledge Graph (CYP450, Causal Rules)'
-        ],
-        tokens_used: tokensUsed
+    // Return streaming response (will be handled by caller)
+    return {
+        stream: claudeResponse.body,
+        userPrompt,
+        evidence,
+        kgInsights
     };
-
-    return response;
 }
 
 // ============================================
@@ -614,22 +650,109 @@ serve(async (req) => {
             searchQuery = 'drug interactions clinical pharmacology';
         }
 
-        // Fetch evidence from all sources in parallel
-        const [pubmedEvidence, openfdaEvidence, trialsEvidence, kgInsights] = await Promise.all([
+        // Fetch evidence from ALL sources in parallel (including DrugBank)
+        const [pubmedEvidence, openfdaEvidence, drugbankEvidence, trialsEvidence, kgInsights] = await Promise.all([
             request.include_literature !== false ? fetchPubMedEvidence(searchQuery, pubmedLimit) : [],
-            medications.length > 0 ? fetchOpenFDAEvents(medications[0]) : [],
+            medications.length > 0 ? fetchOpenFDAComprehensive(medications) : [],
+            medications.length > 0 ? fetchDrugBankData(medications) : [],
             request.include_trials !== false ? fetchClinicalTrialsEvidence(searchQuery, 5) : [],
             fetchKnowledgeGraphInsights(supabase, medications, pathologies)
         ]);
 
         // Combine all evidence
-        const allEvidence = [...pubmedEvidence, ...openfdaEvidence, ...trialsEvidence];
+        const allEvidence = [...pubmedEvidence, ...openfdaEvidence, ...drugbankEvidence, ...trialsEvidence];
 
-        // Perform scientific analysis with Claude Opus
-        const analysis = await performScientificAnalysis(request, allEvidence, kgInsights, supabase);
+        // Perform scientific analysis with Claude Opus (STREAMING)
+        const streamData = await performScientificAnalysis(request, allEvidence, kgInsights, supabase);
 
-        return new Response(JSON.stringify(analysis), {
-            headers: { ...corsHeaders, "Content-Type": "application/json" }
+        // Setup Server-Sent Events stream
+        const encoder = new TextEncoder();
+        const readable = new ReadableStream({
+            async start(controller) {
+                const sendEvent = (data: any) => {
+                    controller.enqueue(encoder.encode(`data: ${JSON.stringify(data)}\n\n`));
+                };
+
+                try {
+                    // Send initial metadata
+                    sendEvent({
+                        type: 'metadata',
+                        analysis_id: `ANA-${Date.now().toString(36)}`.toUpperCase(),
+                        analysis_type: request.analysis_type,
+                        model: 'claude-3-opus-20240229',
+                        evidence_count: allEvidence.length,
+                        kg_insights_count: kgInsights.length
+                    });
+
+                    // Send evidence summary
+                    sendEvent({
+                        type: 'evidence',
+                        evidence: allEvidence,
+                        kg_insights: kgInsights
+                    });
+
+                    // Stream Claude's response
+                    const reader = streamData.stream.getReader();
+                    const decoder = new TextDecoder();
+                    let buffer = '';
+
+                    while (true) {
+                        const { done, value } = await reader.read();
+                        if (done) break;
+
+                        buffer += decoder.decode(value, { stream: true });
+                        const lines = buffer.split('\n');
+                        buffer = lines.pop() || '';
+
+                        for (const line of lines) {
+                            if (line.startsWith('data: ')) {
+                                const data = line.slice(6);
+                                if (data === '[DONE]') continue;
+
+                                try {
+                                    const parsed = JSON.parse(data);
+
+                                    // Send text deltas to client in real-time
+                                    if (parsed.type === 'content_block_delta') {
+                                        const text = parsed.delta?.text;
+                                        if (text) {
+                                            sendEvent({
+                                                type: 'text_delta',
+                                                content: text
+                                            });
+                                        }
+                                    }
+
+                                    // Handle message completion
+                                    if (parsed.type === 'message_stop') {
+                                        sendEvent({ type: 'done' });
+                                    }
+                                } catch (e) {
+                                    // Ignore parse errors for streaming chunks
+                                }
+                            }
+                        }
+                    }
+
+                    controller.close();
+                } catch (error) {
+                    console.error('Streaming error:', error);
+                    sendEvent({
+                        type: 'error',
+                        message: String(error)
+                    });
+                    controller.close();
+                }
+            }
+        });
+
+        return new Response(readable, {
+            headers: {
+                ...corsHeaders,
+                "Content-Type": "text/event-stream",
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive"
+            }
         });
 
     } catch (error) {
