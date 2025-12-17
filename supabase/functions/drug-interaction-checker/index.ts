@@ -30,7 +30,7 @@ interface DrugInteraction {
     severity: 'minor' | 'moderate' | 'major' | 'contraindicated';
     description: string;
     mechanism?: string;
-    source: 'rxnorm' | 'knowledge_graph' | 'openfda';
+    source: 'rxnorm' | 'knowledge_graph' | 'openfda' | 'drugbank';
     evidence_level?: string;
     clinical_action: string;
     pmid?: string[];

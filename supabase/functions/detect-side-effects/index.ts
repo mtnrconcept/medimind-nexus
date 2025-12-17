@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { getOpenFDAComprehensiveData } from "./openfda-api.ts";
 
 const corsHeaders = {
     "Access-Control-Allow-Origin": "*",
@@ -54,6 +55,53 @@ const BIOMARKER_CONFIG: Record<string, { category: string; highConcern: string[]
     'Glycémie': { category: 'metabolic', highConcern: ['corticosteroids', 'antipsychotics'] },
     'CK': { category: 'muscle', highConcern: ['statins', 'fibrates', 'colchicine'] },
 };
+
+// ============================================
+// OPENFDA FAERS DATA FETCHING
+// ============================================
+
+async function fetchOpenFDAAdverseEvents(medications: PatientMedication[]): Promise<Record<string, any>> {
+    const fdaDataByMed: Record<string, any> = {};
+
+    try {
+        for (const med of medications.slice(0, 5)) { // Limit to 5 most important meds
+            const fdaData = await getOpenFDAComprehensiveData(med.medication_name);
+
+            if (fdaData.totalAdverseEvents > 0) {
+                // Aggregate reactions by frequency
+                const reactionCounts = new Map<string, number>();
+
+                for (const event of fdaData.adverseEvents) {
+                    for (const reaction of event.reactions) {
+                        reactionCounts.set(reaction, (reactionCounts.get(reaction) || 0) + 1);
+                    }
+                }
+
+                const topReactions = [...reactionCounts.entries()]
+                    .sort((a, b) => b[1] - a[1])
+                    .slice(0, 15) // Top 15 reactions
+                    .map(([reaction, count]) => ({
+                        reaction,
+                        count,
+                        frequency: ((count / fdaData.totalAdverseEvents) * 100).toFixed(2) + '%'
+                    }));
+
+                fdaDataByMed[med.medication_name] = {
+                    totalEvents: fdaData.totalAdverseEvents,
+                    topReactions,
+                    seriousEvents: fdaData.adverseEvents.filter(e => e.serious).length
+                };
+            }
+
+            // Rate limiting
+            await new Promise(resolve => setTimeout(resolve, 200));
+        }
+    } catch (error) {
+        console.error('OpenFDA FAERS fetch error:', error);
+    }
+
+    return fdaDataByMed;
+}
 
 serve(async (req) => {
     if (req.method === "OPTIONS") {
@@ -164,16 +212,28 @@ serve(async (req) => {
             );
         }
 
-        // 4. Call Claude for correlation analysis
+        // 4. Fetch OpenFDA FAERS data for context
+        console.log('Fetching OpenFDA FAERS data...');
+        const fdaData = await fetchOpenFDAAdverseEvents(patientMeds);
+        const fdaSummary = Object.entries(fdaData)
+            .map(([med, data]: [string, any]) =>
+                `- ${med}: ${data.totalEvents} événements FDA (${data.seriousEvents} graves)\n  Top réactions: ${data.topReactions.slice(0, 5).map((r: any) => `${r.reaction} (${r.frequency})`).join(', ')}`
+            )
+            .join('\n');
+
+        // 5. Call Claude for correlation analysis
         const claudeApiKey = Deno.env.get("ANTHROPIC_API_KEY");
         if (!claudeApiKey) {
             throw new Error("ANTHROPIC_API_KEY not configured");
         }
 
-        const analysisPrompt = `Tu es un pharmacologue clinicien expert en pharmacovigilance. Analyse ces données patient pour détecter des effets secondaires médicamenteux potentiels.
+        const analysisPrompt = `Tu es un pharmacologue clinicien expert en pharmacovigilance avec accès à la base FDA FAERS (19.7M d'événements indésirables). Analyse ces données patient pour détecter des effets secondaires médicamenteux potentiels.
 
 ## Médicaments du patient:
 ${patientMeds.map(m => `- ${m.medication_name} (depuis ${m.start_date}, ${m.is_active ? 'actif' : 'arrêté'})`).join('\n')}
+
+## Données OpenFDA FAERS (MONDIAL - 19.7M événements):
+${fdaSummary || 'Aucune donnée disponible'}
 
 ## Tendances biologiques suspectes:
 ${suspiciousTrends.map(t => `- ${t.name} (${t.category}): ${t.baselineValue} → ${t.currentValue} ${t.unit} (${t.changePercent > 0 ? '+' : ''}${t.changePercent.toFixed(1)}%)
