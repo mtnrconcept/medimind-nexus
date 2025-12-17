@@ -34,11 +34,13 @@ import {
   LayoutGrid,
   ChevronDown,
   ChevronUp,
+  Database,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { VideoLoader } from './VideoLoader';
 import { RelationshipMatrix } from './RelationshipMatrix';
 import { RiskNetworkGraph } from './RiskNetworkGraph';
+import useMedicalStats from '@/hooks/useMedicalStats';
 
 interface Pathology {
   id: string;
@@ -145,6 +147,9 @@ const CrossDataAnalyzer = ({ patientData }: CrossDataAnalyzerProps) => {
 
   // Hook de traduction automatique
   const { t } = useAutoTranslation();
+
+  // NEW: Statistiques médicales globales (21M+)
+  const { stats: medicalStats } = useMedicalStats();
 
   // Debounce search terms
   const [debouncedSearchPathologies, setDebouncedSearchPathologies] = useState(searchPathologies);
@@ -416,7 +421,10 @@ const CrossDataAnalyzer = ({ patientData }: CrossDataAnalyzerProps) => {
       setMedications(medicationsData);
       setLoading(false);
 
-      console.log(`Chargé: ${pathologiesData.length} pathologies, ${symptomsData.length} symptômes, ${treatmentsData.length} traitements, ${medicationsData.length} médicaments`);
+      setMedications(medicationsData);
+      setLoading(false);
+
+      // Les stats réelles sont gérées par useMedicalStats
     };
 
     fetchData();
@@ -874,10 +882,16 @@ const CrossDataAnalyzer = ({ patientData }: CrossDataAnalyzerProps) => {
                 <Brain className="h-5 w-5 text-primary" />
                 {t('Analyse IA Cross-Data')}
               </CardTitle>
-              <CardDescription className="flex items-center gap-2 mt-1">
+              <div className="flex items-center gap-2 mt-1 text-sm text-muted-foreground">
                 <Globe className="h-4 w-4" />
                 {t('Analyse les liens de causalité en croisant vos données patients et la littérature médicale')} (PubMed)
-              </CardDescription>
+                {medicalStats && (
+                  <Badge variant="outline" className="ml-2 bg-blue-50 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300 border-blue-200 dark:border-blue-800">
+                    <Database className="h-3 w-3 mr-1" />
+                    {(medicalStats.total / 1000000).toFixed(1)}M+ données médicales
+                  </Badge>
+                )}
+              </div>
             </div>
             {/* Boutons de mode de vue */}
             <div className="flex gap-1 p-1 bg-muted rounded-lg">
@@ -902,10 +916,29 @@ const CrossDataAnalyzer = ({ patientData }: CrossDataAnalyzerProps) => {
             </div>
           </div>
           <div className="flex gap-2 text-xs text-muted-foreground mt-2 flex-wrap">
-            <Badge variant="outline">{pathologies.length} {t('pathologies')}</Badge>
-            <Badge variant="outline">{symptoms.length} {t('symptômes')}</Badge>
-            <Badge variant="outline">{treatments.length} {t('traitements')}</Badge>
-            <Badge variant="outline" className="bg-orange-500/10 border-orange-500/30">{medications.length} {t('médicaments')}</Badge>
+            {medicalStats ? (
+              <>
+                <Badge variant="outline" className="bg-blue-500/10 text-blue-700 dark:text-blue-300 border-blue-500/30" title="Source: CMS.gov (ICD-10)">
+                  {(medicalStats.diagnoses.count / 1000).toFixed(1)}k Diagnostics
+                </Badge>
+                <Badge variant="outline" className="bg-red-500/10 text-red-700 dark:text-red-300 border-red-500/30" title="Source: OpenFDA">
+                  {(medicalStats.adverseEvents.count / 1000000).toFixed(1)}M Événements Indés.
+                </Badge>
+                <Badge variant="outline" className="bg-orange-500/10 text-orange-700 dark:text-orange-300 border-orange-500/30" title="Source: FDA + DrugBank">
+                  {(medicalStats.medications.count / 1000).toFixed(0)}k+ Médicaments
+                </Badge>
+                <Badge variant="outline" title="Source: DrugBank 6.0" className="bg-purple-500/10 text-purple-700 dark:text-purple-300 border-purple-500/30">
+                  {(medicalStats.interactions.count / 1000000).toFixed(1)}M+ Interactions
+                </Badge>
+              </>
+            ) : (
+              <>
+                <Badge variant="outline">{pathologies.length} {t('pathologies')}</Badge>
+                <Badge variant="outline">{symptoms.length} {t('symptômes')}</Badge>
+                <Badge variant="outline">{treatments.length} {t('traitements')}</Badge>
+                <Badge variant="outline" className="bg-orange-500/10 border-orange-500/30">{medications.length} {t('médicaments')}</Badge>
+              </>
+            )}
           </div>
         </CardHeader>
         <CardContent className="space-y-6">
@@ -934,7 +967,7 @@ const CrossDataAnalyzer = ({ patientData }: CrossDataAnalyzerProps) => {
                       Pathologies ({selectedPathologies.length})
                     </div>
                     <span className="text-xs text-muted-foreground">
-                      {filteredPathologies.length}/{pathologies.length}
+                      {filteredPathologies.length} / {medicalStats?.diagnoses?.count ? (medicalStats.diagnoses.count / 1000).toFixed(1) + 'k' : pathologies.length}
                     </span>
                   </div>
 
@@ -947,7 +980,7 @@ const CrossDataAnalyzer = ({ patientData }: CrossDataAnalyzerProps) => {
                         value={searchPathologies}
                         onChange={(e) => setSearchPathologies(e.target.value)}
                         className="pl-8 pr-8 h-8 text-sm"
-                        className="pl-8 pr-8 h-8 text-sm"
+
                         onKeyDown={(e) => e.key === 'Enter' && searchExternalConcepts(searchPathologies, 'pathology')}
                       />
                       {isSearchingWeb && searchPathologies.length >= 3 && (
@@ -960,10 +993,21 @@ const CrossDataAnalyzer = ({ patientData }: CrossDataAnalyzerProps) => {
                           onClick={() => setSearchPathologies('')}
                           className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
                         >
-
                           <X className="h-4 w-4" />
                         </button>
                       )}
+
+                      {/* Global Search Trigger in Input */}
+                      <Button
+                        size="icon"
+                        variant="ghost"
+                        className="absolute right-8 top-1/2 -translate-y-1/2 h-6 w-6 text-muted-foreground hover:text-blue-500"
+                        title="Rechercher dans la base mondiale (ICD-10 + PubMed)"
+                        onClick={() => searchExternalConcepts(searchPathologies, 'pathology')}
+                        disabled={searchPathologies.length < 3}
+                      >
+                        <Globe className="h-4 w-4" />
+                      </Button>
                     </div>
                   </div>
 
@@ -1029,7 +1073,23 @@ const CrossDataAnalyzer = ({ patientData }: CrossDataAnalyzerProps) => {
 
                   <div className="h-40 border rounded-md">
                     {filteredPathologies.length === 0 ? (
-                      <p className="text-sm text-muted-foreground text-center py-4">Aucun résultat</p>
+                      <>
+                        <p className="text-sm text-muted-foreground text-center py-4">Aucun résultat</p>
+
+                        {/* Global Search Button in Empty State */}
+                        <div className="p-2 flex justify-center">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => searchExternalConcepts(searchPathologies, 'pathology')}
+                            disabled={searchPathologies.length < 3}
+                            className="w-full border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100 dark:bg-blue-900/20 dark:border-blue-800 dark:text-blue-300"
+                          >
+                            <Globe className="h-3 w-3 mr-2" />
+                            Rechercher "{searchPathologies || '...'}" dans la base mondiale
+                          </Button>
+                        </div>
+                      </>
                     ) : (
                       <Virtuoso
                         style={{ height: '100%' }}
@@ -1069,7 +1129,7 @@ const CrossDataAnalyzer = ({ patientData }: CrossDataAnalyzerProps) => {
                       {t('Symptômes')} ({selectedSymptoms.length})
                     </div>
                     <span className="text-xs text-muted-foreground">
-                      {filteredSymptoms.length}/{symptoms.length}
+                      {filteredSymptoms.length} / {medicalStats?.adverseEvents?.count ? (medicalStats.adverseEvents.count / 1000000).toFixed(1) + 'M' : symptoms.length}
                     </span>
                   </div>
 
@@ -1082,7 +1142,7 @@ const CrossDataAnalyzer = ({ patientData }: CrossDataAnalyzerProps) => {
                         value={searchSymptoms}
                         onChange={(e) => setSearchSymptoms(e.target.value)}
                         className="pl-8 pr-8 h-8 text-sm"
-                        className="pl-8 pr-8 h-8 text-sm"
+
                         onKeyDown={(e) => e.key === 'Enter' && searchExternalConcepts(searchSymptoms, 'symptom')}
                       />
                       {isSearchingWeb && searchSymptoms.length >= 3 && (
@@ -1095,12 +1155,25 @@ const CrossDataAnalyzer = ({ patientData }: CrossDataAnalyzerProps) => {
                           onClick={() => setSearchSymptoms('')}
                           className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
                         >
-
                           <X className="h-4 w-4" />
                         </button>
                       )}
+
+                      {/* Global Search Trigger in Input */}
+                      <Button
+                        size="icon"
+                        variant="ghost"
+                        className="absolute right-8 top-1/2 -translate-y-1/2 h-6 w-6 text-muted-foreground hover:text-blue-500"
+                        title="Rechercher dans la base mondiale (OpenFDA)"
+                        onClick={() => searchExternalConcepts(searchSymptoms, 'symptom')}
+                        disabled={searchSymptoms.length < 3}
+                      >
+                        <Globe className="h-4 w-4" />
+                      </Button>
                     </div>
                   </div>
+
+
 
                   {/* Filtre par système corporel */}
                   <Select value={filterSymptomBodySystem} onValueChange={setFilterSymptomBodySystem}>
@@ -1138,7 +1211,23 @@ const CrossDataAnalyzer = ({ patientData }: CrossDataAnalyzerProps) => {
 
                   <div className="h-40 border rounded-md">
                     {filteredSymptoms.length === 0 ? (
-                      <p className="text-sm text-muted-foreground text-center py-4">{t('Aucun résultat')}</p>
+                      <>
+                        <p className="text-sm text-muted-foreground text-center py-4">{t('Aucun résultat')}</p>
+
+                        {/* Global Search Button in Empty State */}
+                        <div className="p-2 flex justify-center">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => searchExternalConcepts(searchSymptoms, 'symptom')}
+                            disabled={searchSymptoms.length < 3}
+                            className="w-full border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100 dark:bg-blue-900/20 dark:border-blue-800 dark:text-blue-300"
+                          >
+                            <Globe className="h-3 w-3 mr-2" />
+                            Rechercher "{searchSymptoms || '...'}" sur OpenFDA
+                          </Button>
+                        </div>
+                      </>
                     ) : (
                       <Virtuoso
                         style={{ height: '100%' }}
@@ -1271,7 +1360,7 @@ const CrossDataAnalyzer = ({ patientData }: CrossDataAnalyzerProps) => {
                       {t('Médicaments')} ({selectedMedications.length})
                     </div>
                     <span className="text-xs text-muted-foreground">
-                      {filteredMedications.length}/{medications.length}
+                      {filteredMedications.length} / {medicalStats?.medications?.count ? (medicalStats.medications.count / 1000).toFixed(0) + 'k' : medications.length}
                     </span>
                   </div>
 
@@ -1296,10 +1385,21 @@ const CrossDataAnalyzer = ({ patientData }: CrossDataAnalyzerProps) => {
                           onClick={() => setSearchMedications('')}
                           className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
                         >
-
                           <X className="h-4 w-4" />
                         </button>
                       )}
+
+                      {/* Global Search Trigger in Input */}
+                      <Button
+                        size="icon"
+                        variant="ghost"
+                        className="absolute right-8 top-1/2 -translate-y-1/2 h-6 w-6 text-muted-foreground hover:text-blue-500"
+                        title="Rechercher dans la base mondiale (DrugBank)"
+                        onClick={() => searchExternalConcepts(searchMedications, 'medication')}
+                        disabled={searchMedications.length < 3}
+                      >
+                        <Globe className="h-4 w-4" />
+                      </Button>
                     </div>
                   </div>
 
@@ -1339,9 +1439,25 @@ const CrossDataAnalyzer = ({ patientData }: CrossDataAnalyzerProps) => {
 
                   <div className="h-40 border rounded-md">
                     {filteredMedications.length === 0 ? (
-                      <p className="text-sm text-muted-foreground text-center py-4">
-                        {medications.length === 0 ? t('Scrapez Compendium.ch pour ajouter des médicaments') : t('Aucun résultat')}
-                      </p>
+                      <>
+                        <p className="text-sm text-muted-foreground text-center py-4">
+                          {medications.length === 0 ? t('Scrapez Compendium.ch pour ajouter des médicaments') : t('Aucun résultat')}
+                        </p>
+
+                        {/* Global Search Button in Empty State */}
+                        <div className="p-2 flex justify-center">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => searchExternalConcepts(searchMedications, 'medication')}
+                            disabled={searchMedications.length < 3}
+                            className="w-full border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100 dark:bg-blue-900/20 dark:border-blue-800 dark:text-blue-300"
+                          >
+                            <Globe className="h-3 w-3 mr-2" />
+                            Rechercher "{searchMedications || '...'}" sur DrugBank
+                          </Button>
+                        </div>
+                      </>
                     ) : (
                       <Virtuoso
                         style={{ height: '100%' }}
@@ -1372,11 +1488,11 @@ const CrossDataAnalyzer = ({ patientData }: CrossDataAnalyzerProps) => {
                       />
                     )}
                   </div>
-                </div>
-              </div>
+                </div >
+              </div >
 
               {/* Bouton d'analyse */}
-              <div className="flex items-center justify-between">
+              < div className="flex items-center justify-between" >
                 <p className="text-sm text-muted-foreground">
                   {getTotalSelected()} {t('élément(s) sélectionné(s)')} • {t('Recherche web incluse')}
                 </p>
@@ -1396,120 +1512,124 @@ const CrossDataAnalyzer = ({ patientData }: CrossDataAnalyzerProps) => {
                     </>
                   )}
                 </Button>
-              </div>
+              </div >
 
               {/* Erreur */}
-              {error && (
-                <div className="flex items-center gap-2 p-4 bg-destructive/10 border border-destructive/30 rounded-lg">
-                  <AlertTriangle className="h-5 w-5 text-destructive" />
-                  <p className="text-sm text-destructive">{error}</p>
-                </div>
-              )}
+              {
+                error && (
+                  <div className="flex items-center gap-2 p-4 bg-destructive/10 border border-destructive/30 rounded-lg">
+                    <AlertTriangle className="h-5 w-5 text-destructive" />
+                    <p className="text-sm text-destructive">{error}</p>
+                  </div>
+                )
+              }
 
               {/* Résultats */}
-              {result && (
-                <div className="space-y-6 pt-4 border-t">
-                  {/* Résumé */}
-                  <div className="p-4 bg-muted/50 rounded-lg">
-                    <h4 className="font-medium mb-2">Résumé de l'analyse</h4>
-                    <p className="text-sm text-muted-foreground">{result.summary}</p>
+              {
+                result && (
+                  <div className="space-y-6 pt-4 border-t">
+                    {/* Résumé */}
+                    <div className="p-4 bg-muted/50 rounded-lg">
+                      <h4 className="font-medium mb-2">Résumé de l'analyse</h4>
+                      <p className="text-sm text-muted-foreground">{result.summary}</p>
+                    </div>
+
+                    {/* Liens de causalité */}
+                    {result.causalLinks && result.causalLinks.length > 0 && (
+                      <div className="space-y-3">
+                        <h4 className="font-medium flex items-center gap-2">
+                          <Link2 className="h-4 w-4" />
+                          Liens de causalité détectés
+                        </h4>
+                        <div className="space-y-3">
+                          {result.causalLinks.map((link, index) => (
+                            <CausalLinkCard key={index} link={link} />
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Recherche web */}
+                    {result.webResearch && result.webResearch.length > 0 && (
+                      <div className="space-y-3">
+                        <h4 className="font-medium flex items-center gap-2 text-blue-600 dark:text-blue-400">
+                          <BookOpen className="h-4 w-4" />
+                          Recherche scientifique (PubMed)
+                        </h4>
+                        <div className="space-y-3">
+                          {result.webResearch.map((research, index) => (
+                            <div key={index} className="p-3 border rounded-lg bg-muted/30">
+                              <p className="text-sm font-medium mb-2">Recherche : "{research.query}"</p>
+                              {research.findings && research.findings.length > 0 && (
+                                <ul className="space-y-1 mb-2">
+                                  {research.findings.map((finding, fIndex) => (
+                                    <li key={fIndex} className="text-sm text-muted-foreground flex items-start gap-2">
+                                      <CheckCircle2 className="h-4 w-4 text-green-500 mt-0.5 flex-shrink-0" />
+                                      {finding}
+                                    </li>
+                                  ))}
+                                </ul>
+                              )}
+                              {research.sources && research.sources.length > 0 && (
+                                <div className="flex flex-wrap gap-2">
+                                  {research.sources.map((source, sIndex) => (
+                                    <a
+                                      key={sIndex}
+                                      href={source.url}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      className="inline-flex items-center gap-1 text-xs text-primary hover:underline"
+                                    >
+                                      <ExternalLink className="h-3 w-3" />
+                                      {source.title.slice(0, 50)}...
+                                    </a>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Avertissements */}
+                    {result.warnings && result.warnings.length > 0 && (
+                      <div className="space-y-2">
+                        <h4 className="font-medium flex items-center gap-2 text-yellow-600 dark:text-yellow-400">
+                          <AlertTriangle className="h-4 w-4" />
+                          Avertissements
+                        </h4>
+                        <ul className="space-y-1">
+                          {result.warnings.map((warning, index) => (
+                            <li key={index} className="text-sm text-muted-foreground flex items-start gap-2">
+                              <XCircle className="h-4 w-4 text-yellow-500 mt-0.5 flex-shrink-0" />
+                              {warning}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+
+                    {/* Recommandations */}
+                    {result.recommendations && result.recommendations.length > 0 && (
+                      <div className="space-y-2">
+                        <h4 className="font-medium flex items-center gap-2 text-green-600 dark:text-green-400">
+                          <CheckCircle2 className="h-4 w-4" />
+                          Recommandations
+                        </h4>
+                        <ul className="space-y-1">
+                          {result.recommendations.map((rec, index) => (
+                            <li key={index} className="text-sm text-muted-foreground flex items-start gap-2">
+                              <HelpCircle className="h-4 w-4 text-primary mt-0.5 flex-shrink-0" />
+                              {rec}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
                   </div>
-
-                  {/* Liens de causalité */}
-                  {result.causalLinks && result.causalLinks.length > 0 && (
-                    <div className="space-y-3">
-                      <h4 className="font-medium flex items-center gap-2">
-                        <Link2 className="h-4 w-4" />
-                        Liens de causalité détectés
-                      </h4>
-                      <div className="space-y-3">
-                        {result.causalLinks.map((link, index) => (
-                          <CausalLinkCard key={index} link={link} />
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Recherche web */}
-                  {result.webResearch && result.webResearch.length > 0 && (
-                    <div className="space-y-3">
-                      <h4 className="font-medium flex items-center gap-2 text-blue-600 dark:text-blue-400">
-                        <BookOpen className="h-4 w-4" />
-                        Recherche scientifique (PubMed)
-                      </h4>
-                      <div className="space-y-3">
-                        {result.webResearch.map((research, index) => (
-                          <div key={index} className="p-3 border rounded-lg bg-muted/30">
-                            <p className="text-sm font-medium mb-2">Recherche : "{research.query}"</p>
-                            {research.findings && research.findings.length > 0 && (
-                              <ul className="space-y-1 mb-2">
-                                {research.findings.map((finding, fIndex) => (
-                                  <li key={fIndex} className="text-sm text-muted-foreground flex items-start gap-2">
-                                    <CheckCircle2 className="h-4 w-4 text-green-500 mt-0.5 flex-shrink-0" />
-                                    {finding}
-                                  </li>
-                                ))}
-                              </ul>
-                            )}
-                            {research.sources && research.sources.length > 0 && (
-                              <div className="flex flex-wrap gap-2">
-                                {research.sources.map((source, sIndex) => (
-                                  <a
-                                    key={sIndex}
-                                    href={source.url}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                    className="inline-flex items-center gap-1 text-xs text-primary hover:underline"
-                                  >
-                                    <ExternalLink className="h-3 w-3" />
-                                    {source.title.slice(0, 50)}...
-                                  </a>
-                                ))}
-                              </div>
-                            )}
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Avertissements */}
-                  {result.warnings && result.warnings.length > 0 && (
-                    <div className="space-y-2">
-                      <h4 className="font-medium flex items-center gap-2 text-yellow-600 dark:text-yellow-400">
-                        <AlertTriangle className="h-4 w-4" />
-                        Avertissements
-                      </h4>
-                      <ul className="space-y-1">
-                        {result.warnings.map((warning, index) => (
-                          <li key={index} className="text-sm text-muted-foreground flex items-start gap-2">
-                            <XCircle className="h-4 w-4 text-yellow-500 mt-0.5 flex-shrink-0" />
-                            {warning}
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
-                  )}
-
-                  {/* Recommandations */}
-                  {result.recommendations && result.recommendations.length > 0 && (
-                    <div className="space-y-2">
-                      <h4 className="font-medium flex items-center gap-2 text-green-600 dark:text-green-400">
-                        <CheckCircle2 className="h-4 w-4" />
-                        Recommandations
-                      </h4>
-                      <ul className="space-y-1">
-                        {result.recommendations.map((rec, index) => (
-                          <li key={index} className="text-sm text-muted-foreground flex items-start gap-2">
-                            <HelpCircle className="h-4 w-4 text-primary mt-0.5 flex-shrink-0" />
-                            {rec}
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
-                  )}
-                </div>
-              )}
+                )
+              }
 
               {/* Matrice des Relations */}
               <RelationshipMatrix
@@ -1525,9 +1645,9 @@ const CrossDataAnalyzer = ({ patientData }: CrossDataAnalyzerProps) => {
               />
             </>
           )}
-        </CardContent>
-      </Card>
-    </div>
+        </CardContent >
+      </Card >
+    </div >
   );
 };
 

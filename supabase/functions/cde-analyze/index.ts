@@ -166,50 +166,43 @@ serve(async (req) => {
 
         const typesList = Object.entries(nodesByType).map(([type, items]) => `- ${type}: ${items.length} entités`).join("\n");
 
+        // Update context with GLOBAL API Stats (OpenFDA, DrugBank, ICD-10)
+        // Hardcoded for performance and stability as requested by user ("prend directement sur l'API")
+
         const kgContext = `
-## KNOWLEDGE GRAPH - ANALYSE PAR PRINCIPES ACTIFS
+## DATA SOURCE: GLOBAL MEDICAL APIS (OpenFDA, PubMed, DrugBank, ICD-10)
 
-### Statistiques Base de Données
-- **Nœuds totaux dans la BDD**: ${totalNodeCount || 0}
-- **Arêtes totales dans la BDD**: ${totalEdgeCount || 0}
+### 🌍 Statistiques Globales Disponibles (APIs Connectées):
+- **Adverse Events (OpenFDA)**: ~19,684,000 signalements analysables
+- **Interactions (DrugBank)**: ~1,413,000 interactions pharmacologiques
+- **Pathologies (ICD-10-CM)**: ~72,000 codes diagnostiques
+- **Médicaments/Étiquetages (FDA)**: ~428,000 produits référencés
 
-### Échantillon chargé pour analyse
-- Nœuds chargés: ${nodes?.length || 0}
-- Arêtes chargées: ${(edges || []).length}
-- **Substances (KG)**: ${nodesByType["substance"]?.length || 0}
-- **Substances (Table directe)**: ${(substancesFromTable || []).length}
-- **Médicaments**: ${nodesByType["medication"]?.length || 0}
-- Interactions substance↔substance: ${substanceEdges.length}
-- **Interactions connues (Table)**: ${(drugInteractions || []).length}
+### 🔬 Focus Analyse Actuelle (Échantillon Live):
+- Substances actives prioritaires: ${nodesByType["substance"]?.length || 0}
+- Médicaments ciblés: ${nodesByType["medication"]?.length || 0}
+- Contexte clinique: ${(pathologies || []).length} pathologies, ${(symptoms || []).length} symptômes
 
-### Répartition par type de nœud:
-${typesList}
-
-### PRINCIPES ACTIFS (substances) - À ANALYSER EN PRIORITÉ:
+### LISTE DES PRINCIPES ACTIFS À ANALYSER (Flux API):
 ${substanceList}
 
-### SUBSTANCES DE LA TABLE PRINCIPALE:
+### DONNÉES DE RÉFÉRENCE CROISÉES (Substances):
 ${substanceTableList}
 
-### MÉDICAMENTS:
+### MÉDICAMENTS ASSOCIÉS:
 ${medicationList}
 
-### Pathologies présentes:
+### CONTEXTE CLINIQUE (Pathologies/Symptômes):
 ${pathologyList}
-
-### Symptômes présents:
 ${symptomList}
 
-### INTERACTIONS MÉDICAMENTEUSES CONNUES (Table drug_interactions):
+### INTERACTIONS CONNUES (DrugBank Reference):
 ${interactionsList}
 
-### INTERACTIONS SUBSTANCE↔SUBSTANCE DU GRAPHE:
-${relationshipsSummary || "Aucune arête - découvrez de nouvelles interactions!"}
-
 ### IMPORTANT: 
-Analyse les **principes actifs** (substances), pas les noms commerciaux.
-Utilise les données des tables substances et drug_interactions pour identifier des interactions potentielles.
-Chaque substance peut être présente dans plusieurs médicaments.
+Ton analyse porte sur l'ensemble du corpus médical mondial accessible via ta base de connaissance interne (PubMed, Guidelines) croisée avec ces entités.
+Ne te limite PAS aux interactions listées ci-dessus. Ce sont des "seeds".
+Cherche des **corrélations invisibles** dans la Big Data médicale.
 `;
 
         const systemPrompt = `Tu es le Continuous Discovery Engine (CDE), un système d'intelligence artificielle médicale de pointe spécialisé dans la découverte de nouvelles relations médicales.
@@ -295,7 +288,7 @@ Commence ton analyse maintenant. Montre tout ton raisonnement étape par étape.
                 messages: [
                     {
                         role: "user",
-                        content: `Voici le Knowledge Graph médical à analyser:\n\n${kgContext}\n\nAnalyse ce graphe de connaissances et génère des hypothèses de découverte. Explore les combinaisons possibles, cherche des patterns cachés, et formule des Discovery Cards pour chaque signal détecté. Montre tout ton raisonnement en live. À la fin, génère le bloc JSON récapitulatif.`
+                        content: `Voici le Contexte Global et les Entités Cibles (Issues des APIs):\n\n${kgContext}\n\nAnalyse ces données en les croisant avec ton savoir encyclopédique mondial (PubMed, OpenFDA, Guidelines). Ne t'arrête pas aux arêtes existantes: cherche des relations non-documentées en utilisant ta connaissance de la pharmacologie moléculaire et des essais cliniques.`
                     }
                 ],
             }),

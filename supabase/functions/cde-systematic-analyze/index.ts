@@ -234,7 +234,7 @@ Analyse chaque paire et retourne un JSON:
                 },
                 body: JSON.stringify({
                     model: "claude-sonnet-4-20250514", // Sonnet for faster + cheaper batch analysis
-                    max_tokens: 4000,
+                    max_tokens: 40000,
                     system: systemPrompt,
                     messages: [{ role: "user", content: userPrompt }],
                 }),
@@ -352,6 +352,43 @@ Analyse chaque paire et retourne un JSON:
                 })
                 .eq("id", run_id);
 
+            // Build research steps for UI display
+            const researchSteps = [
+                {
+                    step: 1,
+                    title: "Identification de l'entité principale",
+                    description: `Analyse de [${entityA.node_type.toUpperCase()}] ${entityA.name}`,
+                    details: entityA.properties || {}
+                },
+                {
+                    step: 2,
+                    title: "Sélection des entités à tester",
+                    description: `${remainingEntities.length} entités restantes à analyser (${skippedCount} déjà analysées)`,
+                    entities: remainingEntities.slice(0, 25).map((e: any) => ({
+                        name: e.name,
+                        type: e.node_type
+                    }))
+                },
+                {
+                    step: 3,
+                    title: "Envoi au modèle Claude",
+                    description: "Analyse pharmacologique et toxicologique des interactions potentielles",
+                    prompt_preview: userPrompt.substring(0, 500) + "..."
+                },
+                {
+                    step: 4,
+                    title: "Analyse des résultats",
+                    description: `${pairs.length} paires analysées, ${discoveriesCount} nouvelles découvertes`,
+                    discoveries: pairs.filter((p: any) => !p.is_documented && p.discovery_type !== "aucun").map((p: any) => ({
+                        entity: p.entity_b_name || p.substance_b_name,
+                        type: p.discovery_type,
+                        severity: p.severity,
+                        mechanism: p.mechanism,
+                        plausibility: p.plausibility_score
+                    }))
+                }
+            ];
+
             return new Response(JSON.stringify({
                 success: true,
                 substance_analyzed: entityA.name,
@@ -360,7 +397,21 @@ Analyse chaque paire et retourne un JSON:
                 discoveries_count: discoveriesCount,
                 synthesis: analysisResult.synthesis || "",
                 next_index: substance_index + 1,
-                remaining: allEntities.length - substance_index - 1
+                remaining: allEntities.length - substance_index - 1,
+                // NEW: Research workflow details for UI
+                research_steps: researchSteps,
+                prompt_used: userPrompt,
+                entities_tested: remainingEntities.slice(0, 25).map((e: any) => e.name),
+                full_analysis: pairs.map((p: any) => ({
+                    entity_b: p.entity_b_name || p.substance_b_name,
+                    documented: p.is_documented,
+                    discovery_type: p.discovery_type,
+                    severity: p.severity,
+                    mechanism: p.mechanism,
+                    reasoning: p.reasoning,
+                    recommendation: p.recommendation,
+                    plausibility: p.plausibility_score
+                }))
             }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
         }
 

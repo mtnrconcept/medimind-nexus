@@ -11,7 +11,7 @@ import { useAutoTranslation } from '@/contexts/TranslationContext';
 import {
     Brain, Zap, Network, AlertTriangle, CheckCircle2,
     XCircle, Clock, TrendingUp, Filter, RefreshCw, Loader2,
-    Lightbulb, ChevronRight, Activity, Play, Square, Sparkles, Database, FlaskConical, Pause, Crosshair, History, Search, Pill, Beaker, Stethoscope
+    Lightbulb, ChevronRight, Activity, Play, Square, Sparkles, Database, FlaskConical, Pause, Crosshair, History, Search, Pill, Beaker, Stethoscope, BookOpen
 } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
@@ -20,6 +20,9 @@ import KnowledgeGraphView from '@/components/cde/KnowledgeGraphView';
 import FocusedResearchPanel from '@/components/cde/FocusedResearchPanel';
 import ResearchHistoryPanel from '@/components/cde/ResearchHistoryPanel';
 import TreatmentTools from '@/components/cde/TreatmentTools';
+import DiscoveryEnginePanel from '@/components/cde/DiscoveryEnginePanel';
+import NeuralNetworkGraph from '@/components/cde/NeuralNetworkGraph';
+import useMedicalStats from '@/hooks/useMedicalStats';
 
 // Types
 interface DiscoveryCardData {
@@ -62,11 +65,19 @@ const ContinuousDiscovery = () => {
     const abortControllerRef = useRef<AbortController | null>(null);
     const outputRef = useRef<HTMLDivElement>(null);
 
+    // NEW: Medical Stats from APIs (OpenFDA, ICD-10, DrugBank)
+    const { stats: medicalStats, loading: statsLoading } = useMedicalStats();
+
     // Systematic analysis state
     const [systematicRun, setSystematicRun] = useState<any>(null);
     const [isSystematicRunning, setIsSystematicRunning] = useState(false);
     const [systematicProgress, setSystematicProgress] = useState('');
     const [systematicDiscoveries, setSystematicDiscoveries] = useState<any[]>([]);
+    // NEW: Research workflow details
+    const [researchSteps, setResearchSteps] = useState<any[]>([]);
+    const [currentPrompt, setCurrentPrompt] = useState('');
+    const [currentAnalysis, setCurrentAnalysis] = useState<any[]>([]);
+    const [showResearchDetails, setShowResearchDetails] = useState(true);
 
     // Load discoveries and stats
     const loadData = async () => {
@@ -355,60 +366,75 @@ const ContinuousDiscovery = () => {
                     </div>
                 </div>
 
-                {/* Stats Cards */}
+                {/* Medical Stats Cards (API Integration) */}
                 <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
                     <Card className="bg-white/60 dark:bg-slate-800/60 backdrop-blur border-white/20">
                         <CardContent className="p-4 flex items-center gap-3">
-                            <div className="p-2 rounded-lg bg-violet-100 dark:bg-violet-900">
-                                <Network className="h-5 w-5 text-violet-600" />
+                            <div className="p-2 rounded-lg bg-red-100 dark:bg-red-900">
+                                <AlertTriangle className="h-5 w-5 text-red-600" />
                             </div>
                             <div>
-                                <p className="text-xs text-slate-500">{t('Nœuds KG')}</p>
-                                <p className="text-xl font-bold">{kgStats?.total_nodes || 0}</p>
+                                <p className="text-xs text-slate-500">{t('Événements Indésirables')}</p>
+                                <p className="text-xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-red-600 to-orange-600">
+                                    {medicalStats ? (medicalStats.adverseEvents.count / 1000000).toFixed(1) + 'M' : '...'}
+                                </p>
+                                <p className="text-[10px] text-slate-400">OpenFDA</p>
                             </div>
                         </CardContent>
                     </Card>
                     <Card className="bg-white/60 dark:bg-slate-800/60 backdrop-blur border-white/20">
                         <CardContent className="p-4 flex items-center gap-3">
-                            <div className="p-2 rounded-lg bg-purple-100 dark:bg-purple-900">
-                                <Activity className="h-5 w-5 text-purple-600" />
+                            <div className="p-2 rounded-lg bg-blue-100 dark:bg-blue-900">
+                                <Pill className="h-5 w-5 text-blue-600" />
                             </div>
                             <div>
-                                <p className="text-xs text-slate-500">{t('Arêtes KG')}</p>
-                                <p className="text-xl font-bold">{kgStats?.total_edges || 0}</p>
+                                <p className="text-xs text-slate-500">{t('Médicaments')}</p>
+                                <p className="text-xl font-bold">
+                                    {medicalStats ? (medicalStats.medications.count / 1000).toFixed(0) + 'K+' : '...'}
+                                </p>
+                                <p className="text-[10px] text-slate-400">FDA + DrugBank</p>
+                            </div>
+                        </CardContent>
+                    </Card>
+                    <Card className="bg-white/60 dark:bg-slate-800/60 backdrop-blur border-white/20">
+                        <CardContent className="p-4 flex items-center gap-3">
+                            <div className="p-2 rounded-lg bg-emerald-100 dark:bg-emerald-900">
+                                <Stethoscope className="h-5 w-5 text-emerald-600" />
+                            </div>
+                            <div>
+                                <p className="text-xs text-slate-500">{t('Diagnostics (ICD-10)')}</p>
+                                <p className="text-xl font-bold">
+                                    {medicalStats ? (medicalStats.diagnoses.count / 1000).toFixed(1) + 'K' : '...'}
+                                </p>
+                                <p className="text-[10px] text-slate-400">CMS.gov</p>
                             </div>
                         </CardContent>
                     </Card>
                     <Card className="bg-white/60 dark:bg-slate-800/60 backdrop-blur border-white/20">
                         <CardContent className="p-4 flex items-center gap-3">
                             <div className="p-2 rounded-lg bg-amber-100 dark:bg-amber-900">
-                                <Lightbulb className="h-5 w-5 text-amber-600" />
+                                <Activity className="h-5 w-5 text-amber-600" />
                             </div>
                             <div>
-                                <p className="text-xs text-slate-500">{t('Signaux bruts')}</p>
-                                <p className="text-xl font-bold">{statusCounts.raw_signal}</p>
+                                <p className="text-xs text-slate-500">{t('Interactions Connues')}</p>
+                                <p className="text-xl font-bold">
+                                    {medicalStats ? (medicalStats.interactions.count / 1000000).toFixed(1) + 'M+' : '...'}
+                                </p>
+                                <p className="text-[10px] text-slate-400">DrugBank 6.0</p>
                             </div>
                         </CardContent>
                     </Card>
                     <Card className="bg-white/60 dark:bg-slate-800/60 backdrop-blur border-white/20">
                         <CardContent className="p-4 flex items-center gap-3">
-                            <div className="p-2 rounded-lg bg-green-100 dark:bg-green-900">
-                                <CheckCircle2 className="h-5 w-5 text-green-600" />
+                            <div className="p-2 rounded-lg bg-violet-100 dark:bg-violet-900">
+                                <Database className="h-5 w-5 text-violet-600" />
                             </div>
                             <div>
-                                <p className="text-xs text-slate-500">{t('Confirmés')}</p>
-                                <p className="text-xl font-bold">{statusCounts.confirmed}</p>
-                            </div>
-                        </CardContent>
-                    </Card>
-                    <Card className="bg-white/60 dark:bg-slate-800/60 backdrop-blur border-white/20">
-                        <CardContent className="p-4 flex items-center gap-3">
-                            <div className="p-2 rounded-lg bg-red-100 dark:bg-red-900">
-                                <XCircle className="h-5 w-5 text-red-600" />
-                            </div>
-                            <div>
-                                <p className="text-xs text-slate-500">{t('Réfutés')}</p>
-                                <p className="text-xl font-bold">{statusCounts.refuted}</p>
+                                <p className="text-xs text-slate-500">{t('Total Données')}</p>
+                                <p className="text-xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-violet-600 to-purple-600">
+                                    ~{medicalStats ? (medicalStats.total / 1000000).toFixed(1) + 'M' : '...'}
+                                </p>
+                                <p className="text-[10px] text-slate-400">Multi-sources</p>
                             </div>
                         </CardContent>
                     </Card>
@@ -445,6 +471,10 @@ const ContinuousDiscovery = () => {
                             <TabsTrigger value="tools" className="gap-2">
                                 <Stethoscope className="h-4 w-4" />
                                 {t('Outils Cliniques')}
+                            </TabsTrigger>
+                            <TabsTrigger value="discovery" className="gap-2 bg-gradient-to-r from-violet-500/10 to-purple-500/10">
+                                <Sparkles className="h-4 w-4" />
+                                {t('Moteur de Découverte')}
                             </TabsTrigger>
                         </TabsList>
 
@@ -646,7 +676,7 @@ const ContinuousDiscovery = () => {
                     </TabsContent>
 
                     <TabsContent value="graph">
-                        <KnowledgeGraphView />
+                        <NeuralNetworkGraph />
                     </TabsContent>
 
                     {/* Systematic Analysis Tab */}
@@ -704,13 +734,53 @@ const ContinuousDiscovery = () => {
                                                                 break;
                                                             }
 
+                                                            // REAL-TIME LOGS - Afficher chaque étape immédiatement
+                                                            const addLog = (step: string, detail: string, type: 'info' | 'query' | 'ai' | 'result' = 'info') => {
+                                                                setResearchSteps(prev => [...prev, {
+                                                                    timestamp: new Date().toLocaleTimeString(),
+                                                                    step,
+                                                                    detail,
+                                                                    type
+                                                                }]);
+                                                            };
+
+                                                            // Log: Substance en cours
+                                                            addLog('🔬 Analyse', `Substance: ${analyzeData.substance_analyzed} (${analyzeData.entity_type})`, 'info');
+
+                                                            // Log: Entités testées
+                                                            if (analyzeData.entities_tested && analyzeData.entities_tested.length > 0) {
+                                                                addLog('📊 Base de données', `Interrogation de ${analyzeData.entities_tested.length} entités: ${analyzeData.entities_tested.slice(0, 5).join(', ')}...`, 'query');
+                                                            }
+
+                                                            // Log: Prompt envoyé
+                                                            if (analyzeData.prompt_used) {
+                                                                addLog('🤖 Envoi à Claude', `Prompt de ${analyzeData.prompt_used.length} caractères envoyé au modèle IA`, 'ai');
+                                                                setCurrentPrompt(analyzeData.prompt_used);
+                                                            }
+
+                                                            // Log: Résultats
+                                                            if (analyzeData.full_analysis && analyzeData.full_analysis.length > 0) {
+                                                                const discoveries = analyzeData.full_analysis.filter((a: any) => !a.documented && a.discovery_type !== 'aucun');
+                                                                addLog('✨ Résultats', `${analyzeData.pairs_count} paires analysées, ${discoveries.length} nouvelles découvertes`, 'result');
+
+                                                                // Log chaque découverte importante
+                                                                discoveries.forEach((d: any) => {
+                                                                    addLog(`⚡ Découverte`, `${d.entity_b}: ${d.discovery_type} (${d.severity}) - ${d.mechanism || d.reasoning || 'mécanisme à explorer'}`, 'result');
+                                                                });
+
+                                                                setCurrentAnalysis(analyzeData.full_analysis);
+                                                            }
+
                                                             setSystematicProgress(`${i + 1}/${startData.total_substances}: ${analyzeData.substance_analyzed} (${analyzeData.discoveries_count} découvertes)`);
 
                                                             if (analyzeData.synthesis) {
                                                                 setSystematicDiscoveries(prev => [...prev, {
                                                                     substance: analyzeData.substance_analyzed,
                                                                     discoveries: analyzeData.discoveries_count,
-                                                                    synthesis: analyzeData.synthesis
+                                                                    synthesis: analyzeData.synthesis,
+                                                                    research_steps: analyzeData.research_steps,
+                                                                    full_analysis: analyzeData.full_analysis,
+                                                                    entities_tested: analyzeData.entities_tested
                                                                 }]);
                                                             }
                                                         }
@@ -753,6 +823,68 @@ const ContinuousDiscovery = () => {
                                     )}
                                 </div>
 
+                                {/* NEW: Research Workflow Details Panel */}
+                                {(isSystematicRunning || researchSteps.length > 0) && (
+                                    <div className="border border-violet-200 dark:border-violet-800 rounded-lg overflow-hidden">
+                                        <button
+                                            onClick={() => setShowResearchDetails(!showResearchDetails)}
+                                            className="w-full p-3 bg-violet-50 dark:bg-violet-900/30 flex items-center justify-between hover:bg-violet-100 dark:hover:bg-violet-900/50 transition-colors"
+                                        >
+                                            <span className="font-semibold flex items-center gap-2 text-violet-700 dark:text-violet-300">
+                                                <Brain className="h-4 w-4" />
+                                                🔬 Travail de Recherche du Modèle IA
+                                            </span>
+                                            <ChevronRight className={`h-4 w-4 transition-transform ${showResearchDetails ? 'rotate-90' : ''}`} />
+                                        </button>
+
+                                        {showResearchDetails && (
+                                            <div className="p-4 space-y-4 bg-slate-900 max-h-[500px] overflow-hidden">
+                                                {/* Console-style real-time logs */}
+                                                <div className="space-y-1">
+                                                    <div className="flex items-center justify-between mb-2">
+                                                        <h4 className="text-sm font-semibold text-green-400 flex items-center gap-2">
+                                                            <Activity className="h-4 w-4 animate-pulse" />
+                                                            Console de Recherche IA - Temps Réel
+                                                        </h4>
+                                                        <Badge variant="outline" className="text-xs text-green-400 border-green-400">
+                                                            {researchSteps.length} logs
+                                                        </Badge>
+                                                    </div>
+                                                    <ScrollArea className="h-[350px] border border-slate-700 rounded bg-black/50 p-2 font-mono text-xs">
+                                                        <div className="space-y-1">
+                                                            {researchSteps.length === 0 && isSystematicRunning && (
+                                                                <div className="text-yellow-400 animate-pulse">
+                                                                    ⏳ En attente des premières données...
+                                                                </div>
+                                                            )}
+                                                            {researchSteps.map((log, idx) => (
+                                                                <div
+                                                                    key={idx}
+                                                                    className={`py-1 px-2 rounded ${log.type === 'query' ? 'bg-blue-900/30 text-blue-300' :
+                                                                        log.type === 'ai' ? 'bg-purple-900/30 text-purple-300' :
+                                                                            log.type === 'result' ? 'bg-green-900/30 text-green-300' :
+                                                                                'bg-slate-800/50 text-slate-300'
+                                                                        }`}
+                                                                >
+                                                                    <span className="text-slate-500">[{log.timestamp}]</span>{' '}
+                                                                    <span className={`font-semibold ${log.type === 'query' ? 'text-blue-400' :
+                                                                        log.type === 'ai' ? 'text-purple-400' :
+                                                                            log.type === 'result' ? 'text-green-400' :
+                                                                                'text-yellow-400'
+                                                                        }`}>
+                                                                        {log.step}
+                                                                    </span>{' '}
+                                                                    <span className="text-slate-200">{log.detail}</span>
+                                                                </div>
+                                                            ))}
+                                                        </div>
+                                                    </ScrollArea>
+                                                </div>
+                                            </div>
+                                        )}
+                                    </div>
+                                )}
+
                                 {systematicDiscoveries.length > 0 && (
                                     <div className="space-y-3">
                                         <h3 className="font-semibold flex items-center gap-2">
@@ -791,6 +923,11 @@ const ContinuousDiscovery = () => {
                     {/* Treatment Tools Tab */}
                     <TabsContent value="tools">
                         <TreatmentTools />
+                    </TabsContent>
+
+                    {/* Discovery Engine Tab - Génération d'hypothèses thérapeutiques innovantes */}
+                    <TabsContent value="discovery">
+                        <DiscoveryEnginePanel />
                     </TabsContent>
                 </Tabs>
             </div >

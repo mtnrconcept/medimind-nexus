@@ -99,6 +99,8 @@ const MedicationsCard = ({ patientId }: MedicationsCardProps) => {
     const [medicationOptions, setMedicationOptions] = useState<SelectOption[]>([]);
     const [medicationsLoading, setMedicationsLoading] = useState(false);
 
+    const [customMedName, setCustomMedName] = useState('');
+
     const [formData, setFormData] = useState({
         medication_name: '',
         dosage: '',
@@ -151,6 +153,43 @@ const MedicationsCard = ({ patientId }: MedicationsCardProps) => {
         }
     };
 
+    // Global Search Handler
+    const handleMedicationSearch = async (query: string) => {
+        if (query.length < 3) return;
+
+        try {
+            // Call Edge Function
+            const { data, error } = await supabase.functions.invoke('search-medical-concepts', {
+                body: { query, type: 'medication' }
+            });
+
+            if (error) throw error;
+
+            if (data?.results) {
+                const globalOptions: SelectOption[] = data.results.map((r: any) => ({
+                    value: r.id || `glb-${Math.random().toString(36).substr(2, 9)}`,
+                    label: r.name,
+                    description: r.source === 'drugbank' ? 'DrugBank Global' : 'OpenFDA Global',
+                    category: 'Monde'
+                }));
+
+                // Merge with existing options avoiding duplicates
+                setMedicationOptions(prev => {
+                    const existingIds = new Set(prev.map(p => p.value));
+                    const newUnique = globalOptions.filter(g => !existingIds.has(g.value));
+                    // Keep original options but append new ones
+                    return [...prev, ...newUnique];
+                });
+
+                if (globalOptions.length > 0) {
+                    toast.success(`${globalOptions.length} résultats globaux ajoutés`);
+                }
+            }
+        } catch (err) {
+            console.error('Global med search error:', err);
+        }
+    };
+
     const fetchData = async () => {
         setLoading(true);
         const { data, error } = await supabase
@@ -194,8 +233,14 @@ const MedicationsCard = ({ patientId }: MedicationsCardProps) => {
 
     const openEditDialog = (med: Medication) => {
         setEditingMed(med);
+
+        // Check if medication is in loaded options, if not trigger custom/manual mode logic
+        // or strictly rely on ID if we believe options cover it. 
+        // For safety, if ID matches an option, use it. Else use custom mode to show name.
+        const isKnownOption = medicationOptions.some(o => o.value === med.medication_id);
+
         setFormData({
-            medication_name: med.medication_name || med.medication_id, // Fallback to ID if no name
+            medication_name: isKnownOption ? med.medication_id : '__custom__',
             dosage: med.dosage || '',
             frequency: med.frequency || 'once_daily',
             route: med.route || 'oral',
@@ -205,42 +250,78 @@ const MedicationsCard = ({ patientId }: MedicationsCardProps) => {
             notes: med.notes || '',
             is_active: med.is_active,
         });
+
+        if (!isKnownOption) {
+            setCustomMedName(med.medication_name || '');
+        } else {
+            setCustomMedName('');
+        }
+
         setDialogOpen(true);
     };
 
     const handleSave = async () => {
-        if (!formData.medication_name.trim()) {
-            toast.error('Veuillez saisir un médicament');
-            return;
-        }
-
         setSaving(true);
         try {
             let medId = formData.medication_name;
-            const isCustom = !medicationOptions.some(o => o.value === medId && o.value !== '__custom__');
+            let finalMedName = '';
 
-            // If it's a custom name (not a UUID from options), handle it
-            if (isCustom) {
-                const cleanName = medId.trim();
-                // Check if exists first (exact match case-insensitive)
+            // 1. Handle Custom Entry
+            if (medId === '__custom__') {
+                if (!customMedName.trim()) {
+                    toast.error('Veuillez saisir le nom du médicament');
+                    setSaving(false);
+                    return;
+                }
+                finalMedName = customMedName.trim();
+
+                // Find or Create Custom Medication
                 const { data: existing } = await supabase
                     .from('medications')
                     .select('id')
-                    .ilike('name', cleanName)
+                    .ilike('name', finalMedName)
                     .maybeSingle();
 
                 if (existing) {
                     medId = existing.id;
                 } else {
-                    // Create new medication
                     const { data: newMed, error: createError } = await supabase
                         .from('medications')
-                        .insert({ name: cleanName })
+                        .insert({ name: finalMedName, origin: 'custom' })
                         .select('id')
                         .single();
-
                     if (createError) throw createError;
                     medId = newMed.id;
+                }
+            }
+            // 2. Handle Selection (Global or Local)
+            else {
+                const selectedOption = medicationOptions.find(o => o.value === medId);
+
+                if (selectedOption && selectedOption.category === 'Monde') {
+                    // Import Global Option -> Local DB
+                    // Check if exists by name first to avoid duplicates
+                    const { data: existing } = await supabase
+                        .from('medications')
+                        .select('id')
+                        .ilike('name', selectedOption.label)
+                        .maybeSingle();
+
+                    if (existing) {
+                        medId = existing.id;
+                    } else {
+                        const { data: newMed, error: createError } = await supabase
+                            .from('medications')
+                            .insert({
+                                name: selectedOption.label,
+                                composition: selectedOption.description,
+                                origin: 'external_search'
+                            })
+                            .select('id')
+                            .single();
+                        if (createError) throw createError;
+                        medId = newMed.id;
+                    }
                 }
             }
 
@@ -270,6 +351,7 @@ const MedicationsCard = ({ patientId }: MedicationsCardProps) => {
                 toast.success('Traitement ajouté');
             }
             setDialogOpen(false);
+            setCustomMedName(''); // Reset
             fetchData();
         } catch (error: any) {
             console.error('Save error:', error);
@@ -424,17 +506,19 @@ const MedicationsCard = ({ patientId }: MedicationsCardProps) => {
                                 value={formData.medication_name}
                                 onValueChange={(value) => {
                                     setFormData({ ...formData, medication_name: value });
-                                    // Auto-fill dosage if possible/available in future
+                                    if (value !== '__custom__') setCustomMedName('');
                                 }}
+                                onSearch={handleMedicationSearch}
                                 placeholder="Rechercher un médicament..."
-                                searchPlaceholder="Tapez pour rechercher..."
+                                searchPlaceholder="Tapez min. 3 lettres pour chercher..."
                                 loading={medicationsLoading}
                             />
                             {formData.medication_name === '__custom__' && (
                                 <Input
                                     placeholder="Nom du médicament..."
                                     className="mt-2"
-                                    onChange={(e) => setFormData({ ...formData, medication_name: e.target.value })}
+                                    value={customMedName}
+                                    onChange={(e) => setCustomMedName(e.target.value)}
                                     autoFocus
                                 />
                             )}

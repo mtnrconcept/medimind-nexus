@@ -33,31 +33,8 @@ export interface SelectOption {
     label: string;
     description?: string;
     category?: string;
-}
-
-interface SearchableSelectProps {
-    options: SelectOption[];
-    value?: string;
-    onValueChange: (value: string) => void;
-    placeholder?: string;
-    searchPlaceholder?: string;
-    emptyMessage?: string;
-    loading?: boolean;
-    disabled?: boolean;
-    className?: string;
-}
-
-interface SearchableMultiSelectProps {
-    options: SelectOption[];
-    values: string[];
-    onValuesChange: (values: string[]) => void;
-    placeholder?: string;
-    searchPlaceholder?: string;
-    emptyMessage?: string;
-    loading?: boolean;
-    disabled?: boolean;
-    maxDisplay?: number;
-    className?: string;
+    onSearch?: (term: string) => void;
+    externalSearch?: boolean;
 }
 
 // Single Select Component
@@ -71,11 +48,14 @@ export function SearchableSelect({
     loading = false,
     disabled = false,
     className,
+    onSearch,
+    externalSearch = false,
 }: SearchableSelectProps) {
     const [open, setOpen] = React.useState(false);
     const [search, setSearch] = React.useState("");
 
     const filteredOptions = React.useMemo(() => {
+        if (externalSearch) return options; // Return all options provided by parent
         if (!search) return options.slice(0, 100); // Limit initial display
         const searchLower = search.toLowerCase();
         return options
@@ -86,7 +66,7 @@ export function SearchableSelect({
                     option.category?.toLowerCase().includes(searchLower)
             )
             .slice(0, 100);
-    }, [options, search]);
+    }, [options, search, externalSearch]);
 
     const selectedOption = options.find((opt) => opt.value === value);
 

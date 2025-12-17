@@ -2,6 +2,8 @@ import { useRef, useMemo, useState, useEffect, useCallback } from 'react';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { OrbitControls, Html, Line } from '@react-three/drei';
 import * as THREE from 'three';
+import { InteractionDialog } from './InteractionDialog';
+import { Microscope, ShieldCheck, Activity } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 
 // Node interface
@@ -360,6 +362,7 @@ interface NodeInfoPanelProps {
     onRemoveNode: (nodeId: string) => void;
     onClearSelection: () => void;
     onAnalyzeLink: () => void;
+    onShowInteractions: () => void;
     isAnalyzing: boolean;
     analysisResult: LinkAnalysisResult | null;
 }
@@ -376,6 +379,7 @@ function NodeInfoPanel({
     onRemoveNode,
     onClearSelection,
     onAnalyzeLink,
+    onShowInteractions,
     isAnalyzing,
     analysisResult
 }: NodeInfoPanelProps) {
@@ -443,6 +447,22 @@ function NodeInfoPanel({
                     </div>
                 ))}
             </div>
+
+            {/* Actions for single selection */}
+            {selectedNodes.length === 1 && (
+                <div className="border-t border-gray-700 pt-3">
+                    <button
+                        onClick={onShowInteractions}
+                        className="w-full flex items-center justify-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-lg font-medium transition-colors"
+                    >
+                        <Activity className="h-4 w-4" />
+                        Voir les interactions
+                    </button>
+                    <p className="text-xs text-gray-400 mt-2 text-center">
+                        Explorez les interactions et combinaisons sûres
+                    </p>
+                </div>
+            )}
 
             {/* Link analysis section */}
             {selectedNodes.length >= 2 && (
@@ -515,6 +535,9 @@ export default function KnowledgeGraph3D() {
     // Link analysis state
     const [isAnalyzing, setIsAnalyzing] = useState(false);
     const [analysisResult, setAnalysisResult] = useState<LinkAnalysisResult | null>(null);
+
+    // Interaction dialog state
+    const [isInteractionDialogOpen, setIsInteractionDialogOpen] = useState(false);
 
     const cubeSize = CUBE_SIZE;
 
@@ -630,8 +653,8 @@ export default function KnowledgeGraph3D() {
             // Call the focused-research function for analysis
             const response = await supabase.functions.invoke('focused-research', {
                 body: {
-                    query: `Analyze the therapeutic relationship between: ${nodeNames.join(', ')}. 
-                           Classify as: beneficial, contraindicated, danger, neutral, or unknown.
+                    query: `Analyze the therapeutic relationship between: ${nodeNames.join(', ')}.
+Classify as: beneficial, contraindicated, danger, neutral, or unknown.
                            Provide confidence level and recommendations.`,
                     context: {
                         nodes: selectedNodes.map(n => ({ name: n.name, type: n.node_type, properties: n.properties })),
@@ -708,8 +731,15 @@ export default function KnowledgeGraph3D() {
                 onRemoveNode={handleRemoveNode}
                 onClearSelection={handleClearSelection}
                 onAnalyzeLink={handleAnalyzeLink}
+                onShowInteractions={() => setIsInteractionDialogOpen(true)}
                 isAnalyzing={isAnalyzing}
                 analysisResult={analysisResult}
+            />
+
+            <InteractionDialog
+                open={isInteractionDialogOpen}
+                onOpenChange={setIsInteractionDialogOpen}
+                node={selectedNodes.length === 1 ? selectedNodes[0] : null}
             />
 
             {/* 3D Canvas */}
