@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { buildMedicationCatalog, isInteractionDocumented } from "./medication-catalog.ts";
 
 const corsHeaders = {
     "Access-Control-Allow-Origin": "*",
@@ -42,8 +43,8 @@ serve(async (req) => {
         // ACTION: START - Create a new analysis run
         // ============================================
         if (action === "start") {
-            // Get ONLY SUBSTANCES to analyze (composition-based)
-            const { data: substances, error: subError } = await supabase
+            // Get local substances from Knowledge Graph
+            const { data: localSubstances, error: subError } = await supabase
                 .from("cde_nodes")
                 .select("id, name, node_type, properties")
                 .eq("node_type", "substance")
@@ -51,7 +52,21 @@ serve(async (req) => {
 
             if (subError) throw subError;
 
-            const entities = substances || [];
+            console.log(`Local substances: ${(localSubstances || []).length}`);
+
+            // BUILD COMPREHENSIVE MEDICATION CATALOG
+            // This includes: Local DB (~1K) + OpenFDA (~100K+) + DrugBank (~76K)
+            const drugbankApiKey = Deno.env.get("DRUGBANK_API_KEY");
+
+            console.log(`Building comprehensive medication catalog...`);
+            const comprehensiveCatalog = await buildMedicationCatalog(
+                localSubstances || [],
+                drugbankApiKey
+            );
+
+            console.log(`✅ Catalog built: ${comprehensiveCatalog.length} total medications`);
+
+            const entities = comprehensiveCatalog;
 
             if (entities.length < 2) {
                 return new Response(JSON.stringify({
@@ -113,14 +128,20 @@ serve(async (req) => {
                 }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
             }
 
-            // Get ONLY SUBSTANCES (same as START)
-            const { data: allEntities, error: entError } = await supabase
+            // Rebuild comprehensive catalog (same as START)
+            const { data: localSubstances } = await supabase
                 .from("cde_nodes")
                 .select("id, name, node_type, properties")
                 .eq("node_type", "substance")
                 .order("name");
 
-            if (entError || !allEntities) throw entError;
+            const drugbankApiKey = Deno.env.get("DRUGBANK_API_KEY");
+            const allEntities = await buildMedicationCatalog(
+                localSubstances || [],
+                drugbankApiKey
+            );
+
+            console.log(`Catalog rebuilt: ${allEntities.length} medications`);
 
             const entityA = allEntities[substance_index];
             if (!entityA) {
@@ -164,8 +185,33 @@ serve(async (req) => {
                 return !analyzedSet.has(pairKey);
             });
 
-            const skippedCount = originalCount - remainingEntities.length;
-            console.log(`${entityA.name}: ${skippedCount} paires déjà analysées, ${remainingEntities.length} restantes`);
+            let analyticallyCachedCount = originalCount - remainingEntities.length;
+
+            // ============================================
+            // FILTER: Remove pairs already in drug_interactions (DOCUMENTED)
+            // ============================================
+            const filteredEntities = [];
+            let documentedCount = 0;
+
+            for (const entity of remainingEntities) {
+                const isDocumented = await isInteractionDocumented(
+                    supabase,
+                    entityA.name,
+                    entity.name
+                );
+
+                if (isDocumented) {
+                    documentedCount++;
+                    console.log(`⏭️  Skipping documented: ${entityA.name} ↔ ${entity.name}`);
+                } else {
+                    filteredEntities.push(entity);
+                }
+            }
+
+            remainingEntities = filteredEntities;
+            const totalSkipped = analyticallyCachedCount + documentedCount;
+
+            console.log(`${entityA.name}: ${analyticallyCachedCount} cached + ${documentedCount} documented = ${totalSkipped} skipped, ${remainingEntities.length} novel pairs to test`);
 
             if (remainingEntities.length === 0) {
                 // All pairs already analyzed, move to next
@@ -363,7 +409,7 @@ Analyse chaque paire et retourne un JSON:
                 {
                     step: 2,
                     title: "Sélection des entités à tester",
-                    description: `${remainingEntities.length} entités restantes à analyser (${skippedCount} déjà analysées)`,
+                    description: `${remainingEntities.length} entités restantes à analyser (${totalSkipped} déjà analysées ou documentées)`,
                     entities: remainingEntities.slice(0, 25).map((e: any) => ({
                         name: e.name,
                         type: e.node_type
