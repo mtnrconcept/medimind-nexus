@@ -173,10 +173,22 @@ export async function isInteractionDocumented(
     medB: string
 ): Promise<boolean> {
     try {
+        // Escape special characters for PostgreSQL pattern matching
+        // Replace characters that cause parsing issues: ( ) - [ ]
+        const escapeForPattern = (str: string) => {
+            return str
+                .replace(/[()[\]]/g, ' ') // Replace brackets/parens with space
+                .replace(/-/g, ' ')        // Replace dashes with space
+                .replace(/\s+/g, '%');     // Multiple spaces become wildcards
+        };
+
+        const medAEscaped = escapeForPattern(medA);
+        const medBEscaped = escapeForPattern(medB);
+
         const { data, error } = await supabase
             .from('drug_interactions')
             .select('id')
-            .or(`and(medication_name.ilike.%${medA}%,interacting_drug.ilike.%${medB}%),and(medication_name.ilike.%${medB}%,interacting_drug.ilike.%${medA}%)`)
+            .or(`and(medication_name.ilike.%${medAEscaped}%,interacting_drug.ilike.%${medBEscaped}%),and(medication_name.ilike.%${medBEscaped}%,interacting_drug.ilike.%${medAEscaped}%)`)
             .limit(1);
 
         if (error) {
