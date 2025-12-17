@@ -1,4 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import { getOpenFDAComprehensiveData } from "./openfda-api.ts";
+import { getDrugBankComprehensiveData } from "./drugbank-api.ts";
 
 const corsHeaders = {
     "Access-Control-Allow-Origin": "*",
@@ -125,6 +127,107 @@ async function checkRxNormInteractions(medications: string[]): Promise<DrugInter
 }
 
 // ============================================
+// DRUGBANK INTERACTION CHECK
+// ============================================
+
+async function checkDrugBankInteractions(medications: string[]): Promise<DrugInteraction[]> {
+    const interactions: DrugInteraction[] = [];
+    const drugbankApiKey = Deno.env.get("DRUGBANK_API_KEY");
+
+    if (!drugbankApiKey || medications.length < 2) return interactions;
+
+    try {
+        // For each medication, get its DrugBank interactions
+        for (const medName of medications.slice(0, 3)) { // Limit to avoid API overload
+            const dbData = await getDrugBankComprehensiveData(medName, drugbankApiKey);
+
+            if (dbData.found && dbData.detailed && dbData.detailed.interactions) {
+                for (const interaction of dbData.detailed.interactions) {
+                    // Check if the interacting drug is in our list
+                    const interactsWith = medications.find(m =>
+                        interaction.name.toLowerCase().includes(m.toLowerCase()) ||
+                        m.toLowerCase().includes(interaction.name.toLowerCase())
+                    );
+
+                    if (interactsWith && interactsWith !== medName) {
+                        interactions.push({
+                            drug_a: medName,
+                            drug_b: interactsWith,
+                            severity: 'major', // DrugBank typically lists significant interactions
+                            description: interaction.description || 'Interaction documentée',
+                            mechanism: interaction.description,
+                            source: 'drugbank' as const,
+                            evidence_level: 'DOCUMENTATION PHARMACOLOGIQUE',
+                            clinical_action: 'Consultation recommandée - interaction pharmacologique établie'
+                        });
+                    }
+                }
+            }
+
+            // Rate limiting
+            await new Promise(resolve => setTimeout(resolve, 300));
+        }
+    } catch (error) {
+        console.error('DrugBank interaction check error:', error);
+    }
+
+    return interactions;
+}
+
+// ============================================
+// ENHANCED OPENFDA LABEL CHECK
+// ============================================
+
+async function checkOpenFDALabels(medications: string[]): Promise<DrugInteraction[]> {
+    const interactions: DrugInteraction[] = [];
+
+    if (medications.length < 2) return interactions;
+
+    try {
+        for (const medName of medications.slice(0, 3)) {
+            const fdaData = await getOpenFDAComprehensiveData(medName);
+
+            for (const drug of fdaData.drugs) {
+                const interactionText = Array.isArray(drug.drug_interactions)
+                    ? drug.drug_interactions.join(' ')
+                    : '';
+
+                if (!interactionText) continue;
+
+                // Search for mentions of other medications in interaction text
+                for (const otherMed of medications) {
+                    if (otherMed === medName) continue;
+
+                    if (interactionText.toLowerCase().includes(otherMed.toLowerCase())) {
+                        // Extract relevant sentence
+                        const sentences = interactionText.split(/[.!?]/);
+                        const relevantSentence = sentences.find(s =>
+                            s.toLowerCase().includes(otherMed.toLowerCase())
+                        ) || interactionText.substring(0, 300);
+
+                        interactions.push({
+                            drug_a: medName,
+                            drug_b: otherMed,
+                            severity: 'major',
+                            description: `FDA Label: ${relevantSentence.trim()}`,
+                            source: 'openfda' as const,
+                            evidence_level: 'FDA LABEL OFFICIEL',
+                            clinical_action: 'Consulter la monographie complète du médicament'
+                        });
+                    }
+                }
+            }
+
+            await new Promise(resolve => setTimeout(resolve, 200));
+        }
+    } catch (error) {
+        console.error('OpenFDA label check error:', error);
+    }
+
+    return interactions;
+}
+
+// ============================================
 // OPENFDA CO-PRESCRIPTION ANALYSIS
 // ============================================
 
@@ -214,12 +317,14 @@ serve(async (req) => {
             recommendations: []
         };
 
-        // Parallel checks
+        // Parallel checks from ALL sources
         const promises: Promise<DrugInteraction[]>[] = [
-            checkRxNormInteractions(request.medications)
+            checkRxNormInteractions(request.medications),
+            checkDrugBankInteractions(request.medications),
+            checkOpenFDALabels(request.medications)
         ];
 
-        if (request.include_openfda) {
+        if (request.include_openfda !== false) { // Enabled by default now
             promises.push(checkOpenFDACorrelation(request.medications));
         }
 
