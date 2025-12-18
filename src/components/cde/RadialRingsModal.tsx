@@ -1,16 +1,10 @@
 // ============================================
-// RADIAL RINGS 3D MODAL - FLUID ANIMATION
+// RADIAL RINGS 2D MODAL - D3.js FLUID ANIMATION
 // ============================================
-// Animated 3D visualization with progressive ring-by-ring animation
-// 1. Pathology appears at center
-// 2. Links grow outward from center
-// 3. Nodes appear as links reach them
-// 4. Repeat for each ring
+// SVG-based 2D visualization with progressive ring-by-ring animation
+// Works without WebGL!
 
-import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
-import { Canvas, useFrame, useThree } from '@react-three/fiber';
-import { OrbitControls, Html, Line } from '@react-three/drei';
-import * as THREE from 'three';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { X, Play, Pause, RotateCcw, Sparkles, Loader2 } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 
@@ -84,369 +78,15 @@ const LANE_COLORS: Record<string, string> = {
 };
 
 // ============================================
-// ANIMATION TIMING (in seconds)
+// ANIMATION TIMING (in ms)
 // ============================================
 
 const TIMING = {
-    CENTER_NODE_APPEAR: 0.5,      // When center node appears
-    RING_INTERVAL: 1.5,           // Time between each ring
-    LINK_GROW_DURATION: 0.8,      // How long a link takes to grow
-    NODE_APPEAR_DURATION: 0.3,    // How long a node takes to appear
-    LINK_START_BEFORE_NODE: 0.3,  // Links start growing before node appears
+    CENTER_NODE_APPEAR: 500,
+    RING_INTERVAL: 1500,
+    LINK_GROW_DURATION: 800,
+    NODE_APPEAR_DURATION: 300,
 };
-
-// ============================================
-// GLOWING NODE COMPONENT
-// ============================================
-
-interface GlowingNodeProps {
-    node: RingNode;
-    position: THREE.Vector3;
-    animationTime: number;
-    isSelected: boolean;
-    onClick: () => void;
-}
-
-function GlowingNode({ node, position, animationTime, isSelected, onClick }: GlowingNodeProps) {
-    const meshRef = useRef<THREE.Mesh>(null);
-    const glowRef = useRef<THREE.Mesh>(null);
-
-    const color = useMemo(() => LANE_COLORS[node.lane] || RING_COLORS[node.ring] || '#94a3b8', [node]);
-
-    // Calculate when this node should appear based on its ring
-    const appearTime = TIMING.CENTER_NODE_APPEAR + node.ring * TIMING.RING_INTERVAL;
-    const progress = Math.max(0, Math.min(1, (animationTime - appearTime) / TIMING.NODE_APPEAR_DURATION));
-
-    // Size based on proximity score
-    const baseSize = 0.15 + node.proximity_score * 0.1;
-    const size = baseSize * progress;
-
-    // Breathing animation when fully visible
-    useFrame((state) => {
-        if (!meshRef.current || progress < 1) return;
-
-        // Gentle breathing
-        const breathe = 1 + Math.sin(state.clock.elapsedTime * 2 + node.ring) * 0.05;
-        meshRef.current.scale.setScalar(baseSize * breathe * (isSelected ? 1.5 : 1));
-
-        // Glow pulse
-        if (glowRef.current) {
-            const glowPulse = 0.3 + Math.sin(state.clock.elapsedTime * 3) * 0.1;
-            (glowRef.current.material as THREE.MeshBasicMaterial).opacity = glowPulse;
-        }
-    });
-
-    if (progress <= 0) return null;
-
-    return (
-        <group position={position}>
-            {/* Main node sphere */}
-            <mesh ref={meshRef} onClick={onClick} scale={size}>
-                <sphereGeometry args={[1, 32, 32]} />
-                <meshStandardMaterial
-                    color={color}
-                    emissive={color}
-                    emissiveIntensity={isSelected ? 0.8 : 0.4}
-                    metalness={0.3}
-                    roughness={0.4}
-                />
-            </mesh>
-
-            {/* Outer glow */}
-            <mesh ref={glowRef} scale={size * 1.5}>
-                <sphereGeometry args={[1, 16, 16]} />
-                <meshBasicMaterial
-                    color={color}
-                    transparent
-                    opacity={0.2}
-                    side={THREE.BackSide}
-                />
-            </mesh>
-
-            {/* Label */}
-            {(isSelected || node.ring === 0) && progress >= 1 && (
-                <Html position={[0, size + 0.3, 0]} center>
-                    <div className="bg-black/90 text-white px-3 py-1.5 rounded-lg text-xs whitespace-nowrap shadow-xl border border-white/20">
-                        <span style={{ color }}>{node.ring === 0 ? '🎯 ' : ''}</span>
-                        {node.name}
-                    </div>
-                </Html>
-            )}
-        </group>
-    );
-}
-
-// ============================================
-// GROWING EDGE COMPONENT
-// ============================================
-
-interface GrowingEdgeProps {
-    start: THREE.Vector3;
-    end: THREE.Vector3;
-    sourceRing: number;
-    targetRing: number;
-    animationTime: number;
-    hasKillCriteria: boolean;
-    evidenceGrade: string;
-}
-
-function GrowingEdge({ start, end, sourceRing, targetRing, animationTime, hasKillCriteria, evidenceGrade }: GrowingEdgeProps) {
-    const [pulseOffset, setPulseOffset] = useState(0);
-
-    // Edge starts growing when source ring appears, completes as target ring appears
-    const sourceAppearTime = TIMING.CENTER_NODE_APPEAR + sourceRing * TIMING.RING_INTERVAL;
-    const edgeStartTime = sourceAppearTime + TIMING.LINK_START_BEFORE_NODE;
-    const edgeEndTime = edgeStartTime + TIMING.LINK_GROW_DURATION;
-
-    const progress = Math.max(0, Math.min(1, (animationTime - edgeStartTime) / TIMING.LINK_GROW_DURATION));
-
-    // Color based on evidence and kill criteria
-    const color = hasKillCriteria ? '#ef4444' :
-        evidenceGrade === 'A' ? '#22c55e' :
-            evidenceGrade === 'B' ? '#3b82f6' :
-                evidenceGrade === 'C' ? '#f59e0b' : '#6b7280';
-
-    // Animate pulse along the line
-    useFrame((state) => {
-        if (progress >= 1) {
-            setPulseOffset((state.clock.elapsedTime * 0.5) % 1);
-        }
-    });
-
-    // Calculate current endpoint based on progress
-    const currentEnd = useMemo(() => {
-        return new THREE.Vector3().lerpVectors(start, end, progress);
-    }, [start, end, progress]);
-
-    // Pulse particle position
-    const pulsePos = useMemo(() => {
-        return new THREE.Vector3().lerpVectors(start, end, pulseOffset);
-    }, [start, end, pulseOffset]);
-
-    if (progress <= 0) return null;
-
-    return (
-        <group>
-            {/* Main line */}
-            <Line
-                points={[start, currentEnd]}
-                color={color}
-                lineWidth={hasKillCriteria ? 3 : 1.5}
-                transparent
-                opacity={0.7}
-            />
-
-            {/* Traveling pulse particle */}
-            {progress >= 1 && (
-                <mesh position={pulsePos}>
-                    <sphereGeometry args={[0.04, 8, 8]} />
-                    <meshBasicMaterial
-                        color={color}
-                        transparent
-                        opacity={0.9}
-                    />
-                </mesh>
-            )}
-
-            {/* Glow trail effect at growing tip */}
-            {progress > 0 && progress < 1 && (
-                <mesh position={currentEnd}>
-                    <sphereGeometry args={[0.08, 8, 8]} />
-                    <meshBasicMaterial
-                        color={color}
-                        transparent
-                        opacity={0.6}
-                    />
-                </mesh>
-            )}
-        </group>
-    );
-}
-
-// ============================================
-// RING CIRCLE COMPONENT
-// ============================================
-
-interface RingCircleProps {
-    ring: number;
-    radius: number;
-    animationTime: number;
-}
-
-function RingCircle({ ring, radius, animationTime }: RingCircleProps) {
-    const appearTime = TIMING.CENTER_NODE_APPEAR + ring * TIMING.RING_INTERVAL - 0.3;
-    const progress = Math.max(0, Math.min(1, (animationTime - appearTime) / 0.5));
-
-    const points = useMemo(() => {
-        const pts: THREE.Vector3[] = [];
-        for (let i = 0; i <= 64; i++) {
-            const angle = (i / 64) * Math.PI * 2;
-            pts.push(new THREE.Vector3(Math.cos(angle) * radius, 0, Math.sin(angle) * radius));
-        }
-        return pts;
-    }, [radius]);
-
-    if (progress <= 0 || radius === 0) return null;
-
-    return (
-        <Line
-            points={points}
-            color={RING_COLORS[ring]}
-            lineWidth={2}
-            transparent
-            opacity={progress * 0.3}
-            dashed
-            dashSize={0.3}
-            gapSize={0.15}
-        />
-    );
-}
-
-// ============================================
-// RADIAL SCENE COMPONENT
-// ============================================
-
-interface RadialSceneProps {
-    data: RadialRingsData;
-    animationTime: number;
-    selectedNodeId: string | null;
-    onNodeSelect: (nodeId: string | null) => void;
-}
-
-function RadialScene({ data, animationTime, selectedNodeId, onNodeSelect }: RadialSceneProps) {
-    // Calculate positions for nodes in radial layout
-    const { nodePositions, maxRing, nodeMap } = useMemo(() => {
-        const positions = new Map<string, THREE.Vector3>();
-        const nodesByRing = new Map<number, RingNode[]>();
-        const nodeMap = new Map<string, RingNode>();
-        let maxRing = 0;
-
-        // Group nodes by ring
-        for (const node of data.knowledge_graph.nodes) {
-            nodeMap.set(node.id, node);
-            if (!nodesByRing.has(node.ring)) {
-                nodesByRing.set(node.ring, []);
-            }
-            nodesByRing.get(node.ring)!.push(node);
-            maxRing = Math.max(maxRing, node.ring);
-        }
-
-        // Calculate positions in concentric circles
-        for (const [ring, nodes] of nodesByRing.entries()) {
-            const radius = ring === 0 ? 0 : ring * 3; // More spacing between rings
-            const angleStep = (Math.PI * 2) / Math.max(nodes.length, 1);
-
-            nodes.forEach((node, i) => {
-                const angle = angleStep * i - Math.PI / 2; // Start from top
-                const jitter = (Math.random() - 0.5) * 0.2;
-                const x = Math.cos(angle) * (radius + jitter);
-                const z = Math.sin(angle) * (radius + jitter);
-                const y = (Math.random() - 0.5) * 0.3;
-
-                positions.set(node.id, new THREE.Vector3(x, y, z));
-            });
-        }
-
-        return { nodePositions: positions, maxRing, nodeMap };
-    }, [data]);
-
-    // Identify kill criteria edges
-    const edgesWithKillCriteria = useMemo(() => {
-        const killCriteriaIds = new Set<string>();
-
-        for (const signal of data.micro_signals) {
-            if (signal.confidence < 0.3 || signal.kill_criteria) {
-                for (const edge of data.knowledge_graph.edges) {
-                    if (edge.translation_gap || edge.evidence_grade === 'D') {
-                        killCriteriaIds.add(edge.id);
-                    }
-                }
-            }
-        }
-
-        return killCriteriaIds;
-    }, [data]);
-
-    return (
-        <>
-            {/* Lighting */}
-            <ambientLight intensity={0.4} />
-            <pointLight position={[10, 10, 10]} intensity={1.2} color="#ffffff" />
-            <pointLight position={[-10, -5, -10]} intensity={0.6} color="#8b5cf6" />
-            <pointLight position={[0, 10, 0]} intensity={0.4} color="#22c55e" />
-
-            {/* Background */}
-            <color attach="background" args={['#030712']} />
-
-            {/* Fog for depth */}
-            <fog attach="fog" args={['#030712', 15, 35]} />
-
-            {/* Ring circles (visual guides) */}
-            {Array.from({ length: maxRing + 1 }).map((_, ring) => (
-                <RingCircle
-                    key={`ring-${ring}`}
-                    ring={ring}
-                    radius={ring * 3}
-                    animationTime={animationTime}
-                />
-            ))}
-
-            {/* Edges - rendered first so they're behind nodes */}
-            {data.knowledge_graph.edges.map((edge) => {
-                const startPos = nodePositions.get(edge.source);
-                const endPos = nodePositions.get(edge.target);
-                const sourceNode = nodeMap.get(edge.source);
-                const targetNode = nodeMap.get(edge.target);
-
-                if (!startPos || !endPos || !sourceNode || !targetNode) return null;
-
-                return (
-                    <GrowingEdge
-                        key={edge.id}
-                        start={startPos}
-                        end={endPos}
-                        sourceRing={sourceNode.ring}
-                        targetRing={targetNode.ring}
-                        animationTime={animationTime}
-                        hasKillCriteria={edgesWithKillCriteria.has(edge.id)}
-                        evidenceGrade={edge.evidence_grade}
-                    />
-                );
-            })}
-
-            {/* Nodes */}
-            {data.knowledge_graph.nodes.map((node) => {
-                const position = nodePositions.get(node.id);
-                if (!position) return null;
-
-                return (
-                    <GlowingNode
-                        key={node.id}
-                        node={node}
-                        position={position}
-                        animationTime={animationTime}
-                        isSelected={selectedNodeId === node.id}
-                        onClick={() => onNodeSelect(selectedNodeId === node.id ? null : node.id)}
-                    />
-                );
-            })}
-
-            {/* Camera controls */}
-            <OrbitControls
-                enableDamping
-                dampingFactor={0.05}
-                rotateSpeed={0.5}
-                zoomSpeed={0.8}
-                minDistance={5}
-                maxDistance={25}
-                autoRotate={!selectedNodeId}
-                autoRotateSpeed={0.3}
-                maxPolarAngle={Math.PI * 0.7}
-                minPolarAngle={Math.PI * 0.2}
-            />
-        </>
-    );
-}
 
 // ============================================
 // SIGNAL PANEL COMPONENT
@@ -493,6 +133,301 @@ function SignalPanel({ signals, onSignalClick }: SignalPanelProps) {
 }
 
 // ============================================
+// RADIAL 2D VISUALIZATION
+// ============================================
+
+interface Radial2DVisualizationProps {
+    data: RadialRingsData;
+    animationTime: number;
+    selectedNodeId: string | null;
+    onNodeSelect: (id: string | null) => void;
+}
+
+function Radial2DVisualization({ data, animationTime, selectedNodeId, onNodeSelect }: Radial2DVisualizationProps) {
+    const containerRef = useRef<HTMLDivElement>(null);
+    const [dimensions, setDimensions] = useState({ width: 800, height: 600 });
+    const [hoveredNode, setHoveredNode] = useState<string | null>(null);
+
+    // Calculate center
+    const cx = dimensions.width / 2;
+    const cy = dimensions.height / 2;
+    const ringRadius = Math.min(dimensions.width, dimensions.height) / 2.5 / 5;
+
+    // Update dimensions on resize
+    useEffect(() => {
+        const updateDimensions = () => {
+            if (containerRef.current) {
+                const { width, height } = containerRef.current.getBoundingClientRect();
+                setDimensions({ width, height: height - 100 });
+            }
+        };
+        updateDimensions();
+        window.addEventListener('resize', updateDimensions);
+        return () => window.removeEventListener('resize', updateDimensions);
+    }, []);
+
+    // Calculate node positions
+    const nodePositions = new Map<string, { x: number; y: number }>();
+    const nodesByRing = new Map<number, RingNode[]>();
+    const nodeMap = new Map<string, RingNode>();
+
+    for (const node of data.knowledge_graph.nodes) {
+        nodeMap.set(node.id, node);
+        if (!nodesByRing.has(node.ring)) {
+            nodesByRing.set(node.ring, []);
+        }
+        nodesByRing.get(node.ring)!.push(node);
+    }
+
+    for (const [ring, nodes] of nodesByRing.entries()) {
+        const radius = ring === 0 ? 0 : ring * ringRadius;
+        const angleStep = (Math.PI * 2) / Math.max(nodes.length, 1);
+
+        nodes.forEach((node, i) => {
+            const angle = angleStep * i - Math.PI / 2;
+            const x = cx + Math.cos(angle) * radius;
+            const y = cy + Math.sin(angle) * radius;
+            nodePositions.set(node.id, { x, y });
+        });
+    }
+
+    // Identify kill criteria edges
+    const killCriteriaEdges = new Set<string>();
+    for (const signal of data.micro_signals) {
+        if (signal.confidence < 0.3 || signal.kill_criteria) {
+            for (const edge of data.knowledge_graph.edges) {
+                if (edge.translation_gap || edge.evidence_grade === 'D') {
+                    killCriteriaEdges.add(edge.id);
+                }
+            }
+        }
+    }
+
+    return (
+        <div ref={containerRef} className="absolute inset-0 overflow-hidden bg-gradient-to-br from-gray-900 via-slate-900 to-gray-900">
+            <svg width={dimensions.width} height={dimensions.height} className="w-full h-full">
+                {/* Background circles */}
+                {[1, 2, 3, 4].map(ring => {
+                    const appearTime = TIMING.CENTER_NODE_APPEAR + ring * TIMING.RING_INTERVAL - 300;
+                    const opacity = Math.min(1, Math.max(0, (animationTime - appearTime) / 500)) * 0.2;
+
+                    return (
+                        <circle
+                            key={`ring-circle-${ring}`}
+                            cx={cx}
+                            cy={cy}
+                            r={ring * ringRadius}
+                            fill="none"
+                            stroke={RING_COLORS[ring]}
+                            strokeWidth={2}
+                            strokeDasharray="10 5"
+                            opacity={opacity}
+                            style={{ transition: 'opacity 0.5s ease-out' }}
+                        />
+                    );
+                })}
+
+                {/* Edges */}
+                {data.knowledge_graph.edges.map(edge => {
+                    const startPos = nodePositions.get(edge.source);
+                    const endPos = nodePositions.get(edge.target);
+                    const sourceNode = nodeMap.get(edge.source);
+                    const targetNode = nodeMap.get(edge.target);
+
+                    if (!startPos || !endPos || !sourceNode || !targetNode) return null;
+
+                    const sourceAppearTime = TIMING.CENTER_NODE_APPEAR + sourceNode.ring * TIMING.RING_INTERVAL;
+                    const edgeStartTime = sourceAppearTime + 200;
+                    const progress = Math.max(0, Math.min(1, (animationTime - edgeStartTime) / TIMING.LINK_GROW_DURATION));
+
+                    if (progress <= 0) return null;
+
+                    const hasKill = killCriteriaEdges.has(edge.id);
+                    const color = hasKill ? '#ef4444' :
+                        edge.evidence_grade === 'A' ? '#22c55e' :
+                            edge.evidence_grade === 'B' ? '#3b82f6' :
+                                edge.evidence_grade === 'C' ? '#f59e0b' : '#6b7280';
+
+                    // Interpolate end point
+                    const currentX = startPos.x + (endPos.x - startPos.x) * progress;
+                    const currentY = startPos.y + (endPos.y - startPos.y) * progress;
+
+                    return (
+                        <g key={edge.id}>
+                            {/* Glow effect */}
+                            <line
+                                x1={startPos.x}
+                                y1={startPos.y}
+                                x2={currentX}
+                                y2={currentY}
+                                stroke={color}
+                                strokeWidth={hasKill ? 6 : 4}
+                                opacity={0.3}
+                                style={{ filter: 'blur(3px)' }}
+                            />
+                            {/* Main line */}
+                            <line
+                                x1={startPos.x}
+                                y1={startPos.y}
+                                x2={currentX}
+                                y2={currentY}
+                                stroke={color}
+                                strokeWidth={hasKill ? 2 : 1}
+                                opacity={0.8}
+                            />
+                            {/* Growing tip */}
+                            {progress < 1 && (
+                                <circle
+                                    cx={currentX}
+                                    cy={currentY}
+                                    r={4}
+                                    fill={color}
+                                    opacity={0.9}
+                                >
+                                    <animate
+                                        attributeName="r"
+                                        values="4;6;4"
+                                        dur="0.5s"
+                                        repeatCount="indefinite"
+                                    />
+                                </circle>
+                            )}
+                        </g>
+                    );
+                })}
+
+                {/* Nodes */}
+                {data.knowledge_graph.nodes.map(node => {
+                    const pos = nodePositions.get(node.id);
+                    if (!pos) return null;
+
+                    const appearTime = TIMING.CENTER_NODE_APPEAR + node.ring * TIMING.RING_INTERVAL;
+                    const progress = Math.max(0, Math.min(1, (animationTime - appearTime) / TIMING.NODE_APPEAR_DURATION));
+
+                    if (progress <= 0) return null;
+
+                    const color = LANE_COLORS[node.lane] || RING_COLORS[node.ring] || '#94a3b8';
+                    const baseRadius = 8 + node.proximity_score * 10;
+                    const radius = baseRadius * progress;
+                    const isSelected = selectedNodeId === node.id;
+                    const isHovered = hoveredNode === node.id;
+
+                    return (
+                        <g
+                            key={node.id}
+                            style={{ cursor: 'pointer' }}
+                            onClick={() => onNodeSelect(isSelected ? null : node.id)}
+                            onMouseEnter={() => setHoveredNode(node.id)}
+                            onMouseLeave={() => setHoveredNode(null)}
+                        >
+                            {/* Outer glow */}
+                            <circle
+                                cx={pos.x}
+                                cy={pos.y}
+                                r={radius * 1.8}
+                                fill={color}
+                                opacity={0.15}
+                                style={{ filter: 'blur(8px)' }}
+                            />
+                            {/* Pulse ring for center node */}
+                            {node.ring === 0 && progress >= 1 && (
+                                <circle
+                                    cx={pos.x}
+                                    cy={pos.y}
+                                    r={radius}
+                                    fill="none"
+                                    stroke={color}
+                                    strokeWidth={2}
+                                    opacity={0.5}
+                                >
+                                    <animate
+                                        attributeName="r"
+                                        values={`${radius};${radius * 2};${radius}`}
+                                        dur="2s"
+                                        repeatCount="indefinite"
+                                    />
+                                    <animate
+                                        attributeName="opacity"
+                                        values="0.5;0;0.5"
+                                        dur="2s"
+                                        repeatCount="indefinite"
+                                    />
+                                </circle>
+                            )}
+                            {/* Main node */}
+                            <circle
+                                cx={pos.x}
+                                cy={pos.y}
+                                r={radius * (isSelected ? 1.3 : isHovered ? 1.1 : 1)}
+                                fill={color}
+                                stroke="white"
+                                strokeWidth={isSelected ? 3 : 1}
+                                opacity={0.9}
+                                style={{ transition: 'r 0.2s ease-out' }}
+                            />
+                            {/* Inner highlight */}
+                            <circle
+                                cx={pos.x - radius * 0.3}
+                                cy={pos.y - radius * 0.3}
+                                r={radius * 0.3}
+                                fill="white"
+                                opacity={0.3}
+                            />
+                            {/* Label */}
+                            {(isSelected || isHovered || node.ring === 0) && progress >= 1 && (
+                                <g>
+                                    <rect
+                                        x={pos.x - node.name.length * 3.5 - 8}
+                                        y={pos.y + radius + 8}
+                                        width={node.name.length * 7 + 16}
+                                        height={22}
+                                        rx={4}
+                                        fill="rgba(0,0,0,0.9)"
+                                        stroke={color}
+                                        strokeWidth={1}
+                                    />
+                                    <text
+                                        x={pos.x}
+                                        y={pos.y + radius + 23}
+                                        textAnchor="middle"
+                                        fill="white"
+                                        fontSize={11}
+                                        fontWeight={node.ring === 0 ? 'bold' : 'normal'}
+                                    >
+                                        {node.ring === 0 ? '🎯 ' : ''}{node.name.substring(0, 25)}
+                                        {node.name.length > 25 ? '...' : ''}
+                                    </text>
+                                </g>
+                            )}
+                        </g>
+                    );
+                })}
+
+                {/* Ring labels */}
+                {['Centre', 'Ring 1', 'Ring 2', 'Ring 3', 'Ring 4'].map((label, ring) => {
+                    if (ring === 0) return null;
+                    const appearTime = TIMING.CENTER_NODE_APPEAR + ring * TIMING.RING_INTERVAL;
+                    const opacity = Math.min(1, Math.max(0, (animationTime - appearTime) / 500)) * 0.5;
+
+                    return (
+                        <text
+                            key={`label-${ring}`}
+                            x={cx + ring * ringRadius}
+                            y={cy - 10}
+                            fill={RING_COLORS[ring]}
+                            fontSize={10}
+                            opacity={opacity}
+                        >
+                            {label}
+                        </text>
+                    );
+                })}
+            </svg>
+        </div>
+    );
+}
+
+// ============================================
 // MAIN MODAL COMPONENT
 // ============================================
 
@@ -526,7 +461,6 @@ export default function RadialRingsModal({
             fetchRadialRings();
         }
 
-        // Cleanup on close
         return () => {
             if (animationRef.current) {
                 cancelAnimationFrame(animationRef.current);
@@ -543,7 +477,7 @@ export default function RadialRingsModal({
                 startTimeRef.current = timestamp;
             }
 
-            const elapsed = (timestamp - startTimeRef.current) / 1000;
+            const elapsed = timestamp - startTimeRef.current;
             setAnimationTime(elapsed);
 
             animationRef.current = requestAnimationFrame(animate);
@@ -599,8 +533,6 @@ export default function RadialRingsModal({
 
     if (!isOpen) return null;
 
-    const showCanvas = !isLoading && !error && data;
-
     return (
         <div className="fixed inset-0 z-50 flex items-center justify-center">
             {/* Backdrop */}
@@ -616,6 +548,7 @@ export default function RadialRingsModal({
                     <div className="bg-gray-900/95 rounded-xl border border-gray-700/50 p-4 backdrop-blur-sm">
                         <h2 className="text-xl font-bold text-white flex items-center gap-2">
                             <span className="text-2xl">🎯</span> Radial Discovery
+                            <span className="text-xs bg-green-600 px-2 py-0.5 rounded ml-2">2D Mode</span>
                         </h2>
                         <p className="text-purple-400 text-sm mt-1 font-medium">
                             {pathology}
@@ -712,27 +645,14 @@ export default function RadialRingsModal({
                     </div>
                 )}
 
-                {/* 3D Canvas */}
-                {showCanvas && (
-                    <Canvas
-                        camera={{ position: [0, 12, 18], fov: 55 }}
-                        gl={{
-                            antialias: true,
-                            alpha: false,
-                            powerPreference: 'high-performance',
-                            stencil: false,
-                            depth: true
-                        }}
-                        className="absolute inset-0"
-                        dpr={[1, 2]}
-                    >
-                        <RadialScene
-                            data={data}
-                            animationTime={animationTime}
-                            selectedNodeId={selectedNodeId}
-                            onNodeSelect={setSelectedNodeId}
-                        />
-                    </Canvas>
+                {/* 2D Visualization */}
+                {!isLoading && !error && data && (
+                    <Radial2DVisualization
+                        data={data}
+                        animationTime={animationTime}
+                        selectedNodeId={selectedNodeId}
+                        onNodeSelect={setSelectedNodeId}
+                    />
                 )}
 
                 {/* Background when no content */}
