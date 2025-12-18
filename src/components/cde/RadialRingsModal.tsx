@@ -90,6 +90,178 @@ const TIMING = {
 };
 
 // ============================================
+// WEBGL CHECK
+// ============================================
+
+function isWebGLAvailable(): boolean {
+    try {
+        const canvas = document.createElement('canvas');
+        const gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
+        return !!gl;
+    } catch {
+        return false;
+    }
+}
+
+// ============================================
+// 2D SVG FALLBACK VISUALIZATION
+// ============================================
+
+interface SVGFallbackProps {
+    data: RadialRingsData;
+    animationTime: number;
+    onEdgeClick: (edge: RingEdge, source: RingNode, target: RingNode) => void;
+}
+
+function SVGFallback({ data, animationTime, onEdgeClick }: SVGFallbackProps) {
+    const svgSize = 600;
+    const center = svgSize / 2;
+    const ringRadius = 80;
+
+    // Calculate node positions
+    const nodePositions = useMemo(() => {
+        const positions = new Map<string, { x: number; y: number }>();
+        const nodesByRing = new Map<number, RingNode[]>();
+
+        for (const node of data.knowledge_graph.nodes) {
+            if (!nodesByRing.has(node.ring)) nodesByRing.set(node.ring, []);
+            nodesByRing.get(node.ring)!.push(node);
+        }
+
+        for (const [ring, nodes] of nodesByRing.entries()) {
+            const radius = ring === 0 ? 0 : ring * ringRadius;
+            const angleStep = (Math.PI * 2) / Math.max(nodes.length, 1);
+            nodes.forEach((node, i) => {
+                const angle = angleStep * i - Math.PI / 2;
+                positions.set(node.id, {
+                    x: center + Math.cos(angle) * radius,
+                    y: center + Math.sin(angle) * radius
+                });
+            });
+        }
+        return positions;
+    }, [data, center, ringRadius]);
+
+    const nodeMap = useMemo(() => {
+        const map = new Map<string, RingNode>();
+        data.knowledge_graph.nodes.forEach(n => map.set(n.id, n));
+        return map;
+    }, [data]);
+
+    const maxRing = Math.max(...data.knowledge_graph.nodes.map(n => n.ring));
+
+    const getNodeVisible = (ring: number) => {
+        const appearTime = TIMING.CENTER_APPEAR + ring * TIMING.RING_INTERVAL;
+        return animationTime >= appearTime;
+    };
+
+    const getEdgeProgress = (sourceRing: number) => {
+        const startTime = TIMING.CENTER_APPEAR + sourceRing * TIMING.RING_INTERVAL + 0.2;
+        return Math.max(0, Math.min(1, (animationTime - startTime) / TIMING.LINK_DURATION));
+    };
+
+    return (
+        <div className="absolute inset-0 flex items-center justify-center bg-gray-900">
+            <svg width={svgSize} height={svgSize} className="overflow-visible">
+                {/* Ring guides */}
+                {Array.from({ length: maxRing + 1 }).map((_, ring) => (
+                    ring > 0 && (
+                        <circle
+                            key={`ring-${ring}`}
+                            cx={center}
+                            cy={center}
+                            r={ring * ringRadius}
+                            fill="none"
+                            stroke={RING_COLORS[ring]}
+                            strokeWidth="1"
+                            strokeDasharray="8 4"
+                            opacity={0.3}
+                        />
+                    )
+                ))}
+
+                {/* Edges */}
+                {data.knowledge_graph.edges.map((edge) => {
+                    const startPos = nodePositions.get(edge.source);
+                    const endPos = nodePositions.get(edge.target);
+                    const sourceNode = nodeMap.get(edge.source);
+                    const targetNode = nodeMap.get(edge.target);
+
+                    if (!startPos || !endPos || !sourceNode || !targetNode) return null;
+
+                    const progress = getEdgeProgress(sourceNode.ring);
+                    if (progress <= 0) return null;
+
+                    const currentEnd = {
+                        x: startPos.x + (endPos.x - startPos.x) * Math.min(1, progress),
+                        y: startPos.y + (endPos.y - startPos.y) * Math.min(1, progress)
+                    };
+
+                    const color = edge.evidence_grade === 'A' ? '#22c55e' :
+                        edge.evidence_grade === 'B' ? '#3b82f6' :
+                            edge.evidence_grade === 'C' ? '#f59e0b' : '#6b7280';
+
+                    return (
+                        <g key={edge.id}>
+                            {/* Glow */}
+                            <line
+                                x1={startPos.x} y1={startPos.y}
+                                x2={currentEnd.x} y2={currentEnd.y}
+                                stroke={color}
+                                strokeWidth="4"
+                                opacity="0.3"
+                            />
+                            {/* Main line */}
+                            <line
+                                x1={startPos.x} y1={startPos.y}
+                                x2={currentEnd.x} y2={currentEnd.y}
+                                stroke={color}
+                                strokeWidth="2"
+                                className="cursor-pointer hover:opacity-80"
+                                onClick={() => onEdgeClick(edge, sourceNode, targetNode)}
+                            />
+                        </g>
+                    );
+                })}
+
+                {/* Nodes */}
+                {data.knowledge_graph.nodes.map((node) => {
+                    const pos = nodePositions.get(node.id);
+                    if (!pos || !getNodeVisible(node.ring)) return null;
+
+                    const color = LANE_COLORS[node.lane] || RING_COLORS[node.ring] || '#94a3b8';
+                    const size = 10 + node.proximity_score * 8;
+
+                    return (
+                        <g key={node.id}>
+                            {/* Outer glow */}
+                            <circle cx={pos.x} cy={pos.y} r={size * 2} fill={color} opacity="0.15" />
+                            {/* Inner glow */}
+                            <circle cx={pos.x} cy={pos.y} r={size * 1.4} fill={color} opacity="0.3" />
+                            {/* Main */}
+                            <circle cx={pos.x} cy={pos.y} r={size} fill={color} />
+                            {/* Highlight */}
+                            <circle cx={pos.x - size * 0.25} cy={pos.y - size * 0.25} r={size * 0.25} fill="white" opacity="0.4" />
+                            {/* Label for center */}
+                            {node.ring === 0 && (
+                                <text x={pos.x} y={pos.y + size + 16} textAnchor="middle" fill="white" fontSize="11" fontWeight="bold">
+                                    🎯 {node.name.substring(0, 20)}
+                                </text>
+                            )}
+                        </g>
+                    );
+                })}
+            </svg>
+
+            <div className="absolute bottom-8 text-center text-gray-400 text-sm">
+                <p>Mode 2D (WebGL non disponible)</p>
+                <p className="text-xs mt-1">💡 Cliquez sur les liens pour les analyser</p>
+            </div>
+        </div>
+    );
+}
+
+// ============================================
 // ENHANCED GLOWING NODE (smooth with shadows)
 // ============================================
 
@@ -431,9 +603,9 @@ Fournis:
                     {/* Edge metadata */}
                     <div className="flex gap-3 mt-3">
                         <span className={`px-2 py-1 rounded text-xs ${edge.evidence_grade === 'A' ? 'bg-green-900/50 text-green-400 border border-green-500/30' :
-                                edge.evidence_grade === 'B' ? 'bg-blue-900/50 text-blue-400 border border-blue-500/30' :
-                                    edge.evidence_grade === 'C' ? 'bg-orange-900/50 text-orange-400 border border-orange-500/30' :
-                                        'bg-gray-800 text-gray-400 border border-gray-600'
+                            edge.evidence_grade === 'B' ? 'bg-blue-900/50 text-blue-400 border border-blue-500/30' :
+                                edge.evidence_grade === 'C' ? 'bg-orange-900/50 text-orange-400 border border-orange-500/30' :
+                                    'bg-gray-800 text-gray-400 border border-gray-600'
                             }`}>
                             Grade {edge.evidence_grade}
                         </span>
@@ -609,8 +781,8 @@ function SignalPanel({ signals }: { signals: MicroSignal[] }) {
                         <div
                             key={signal.id}
                             className={`flex-shrink-0 p-2 rounded-lg border text-xs ${signal.confidence > 0.5
-                                    ? 'border-green-500/50 bg-green-900/30'
-                                    : 'border-red-500/50 bg-red-900/30'
+                                ? 'border-green-500/50 bg-green-900/30'
+                                : 'border-red-500/50 bg-red-900/30'
                                 }`}
                         >
                             <div className="font-medium truncate max-w-[120px] text-white">{signal.observation}</div>
@@ -657,6 +829,12 @@ export default function RadialRingsModal({
 
     const animationRef = useRef<number>();
     const startTimeRef = useRef<number>(0);
+    const [webglAvailable, setWebglAvailable] = useState<boolean | null>(null);
+
+    // Check WebGL on mount
+    useEffect(() => {
+        setWebglAvailable(isWebGLAvailable());
+    }, []);
 
     useEffect(() => {
         if (isOpen && pathology) fetchData();
@@ -780,8 +958,8 @@ export default function RadialRingsModal({
                     </div>
                 )}
 
-                {/* 3D Canvas */}
-                {!isLoading && !error && data && (
+                {/* 3D Canvas (only if WebGL available) */}
+                {!isLoading && !error && data && webglAvailable === true && (
                     <Canvas
                         camera={{ position: [0, 18, 12], fov: 55 }}
                         gl={{ antialias: true, alpha: false, powerPreference: 'high-performance' }}
@@ -796,6 +974,15 @@ export default function RadialRingsModal({
                             onEdgeSelect={handleEdgeSelect}
                         />
                     </Canvas>
+                )}
+
+                {/* 2D SVG Fallback (when WebGL unavailable) */}
+                {!isLoading && !error && data && webglAvailable === false && (
+                    <SVGFallback
+                        data={data}
+                        animationTime={animationTime}
+                        onEdgeClick={handleEdgeSelect}
+                    />
                 )}
 
                 {/* Signals */}
