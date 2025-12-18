@@ -98,8 +98,26 @@ Réponds en JSON: { "hypotheses": [{"title": "...", "probability": X, "rationale
         });
 
         if (!response.ok) {
-            console.error("Claude API error:", await response.text());
-            throw new Error("Claude API failed");
+            const errorText = await response.text();
+            console.error("[RADIAL-RINGS] Claude API error:", response.status, errorText);
+            // Don't throw - just log and continue to fallback
+            console.log("[RADIAL-RINGS] Using fallback hypothesis generation (no Claude)");
+            return microSignals.map((signal, i) => ({
+                id: `hyp_${i + 1}`,
+                title: signal.observation,
+                description: signal.testable_hypothesis,
+                mechanism_chain: signal.mechanism_path,
+                involved_nodes: [],
+                involved_edges: signal.supporting_edges,
+                probability: Math.round(signal.confidence * 100),
+                evidence_grade: signal.triangulation_score >= 3 ? 'C' : 'D' as any,
+                translation_gap: true,
+                validation_test: signal.falsification_test,
+                if_validated: `Poursuivre études sur ${signal.entity}`,
+                if_refuted: `Exclure ${signal.entity} comme facteur`,
+                micro_signal_id: signal.id,
+                counter_hypotheses: counterHypotheses.get(signal.id) || []
+            }));
         }
 
         const data = await response.json();
@@ -127,7 +145,8 @@ Réponds en JSON: { "hypotheses": [{"title": "...", "probability": X, "rationale
             }));
         }
     } catch (error) {
-        console.error("Hypothesis generation error:", error);
+        console.error("[RADIAL-RINGS] Hypothesis generation error:", error);
+        // Continue to fallback below
     }
 
     // Fallback
