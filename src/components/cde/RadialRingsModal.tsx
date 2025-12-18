@@ -180,11 +180,41 @@ function SVGFallback({ data, animationTime, onEdgeClick }: SVGFallbackProps) {
     // Node selection state
     const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
 
-    // Handle zoom with mouse wheel
-    const handleWheel = useCallback((e: React.WheelEvent) => {
-        e.preventDefault();
-        const delta = e.deltaY > 0 ? 0.9 : 1.1;
-        setZoom(z => Math.min(3, Math.max(0.5, z * delta)));
+    // Animation state
+    const [animationProgress, setAnimationProgress] = useState(0);
+
+    // Entry animation effect
+    useEffect(() => {
+        setAnimationProgress(0);
+        const startTime = Date.now();
+        const duration = 2500; // 2.5 seconds for full animation
+
+        const animate = () => {
+            const elapsed = Date.now() - startTime;
+            const progress = Math.min(1, elapsed / duration);
+            setAnimationProgress(progress);
+
+            if (progress < 1) {
+                requestAnimationFrame(animate);
+            }
+        };
+
+        requestAnimationFrame(animate);
+    }, [data]);
+
+    // Handle zoom with wheel - use native event listener for passive: false
+    useEffect(() => {
+        const container = containerRef.current;
+        if (!container) return;
+
+        const handleWheelNative = (e: WheelEvent) => {
+            e.preventDefault();
+            const delta = e.deltaY > 0 ? 0.9 : 1.1;
+            setZoom(z => Math.min(3, Math.max(0.5, z * delta)));
+        };
+
+        container.addEventListener('wheel', handleWheelNative, { passive: false });
+        return () => container.removeEventListener('wheel', handleWheelNative);
     }, []);
 
     // Handle pan with mouse drag
@@ -359,7 +389,6 @@ function SVGFallback({ data, animationTime, onEdgeClick }: SVGFallbackProps) {
         <div
             ref={containerRef}
             className="absolute inset-0 flex items-center justify-center bg-gray-900 overflow-hidden cursor-grab"
-            onWheel={handleWheel}
             onMouseDown={handleMouseDown}
             onMouseMove={handleMouseMove}
             onMouseUp={handleMouseUp}
@@ -375,22 +404,31 @@ function SVGFallback({ data, animationTime, onEdgeClick }: SVGFallbackProps) {
                     transition: isPanning ? 'none' : 'transform 0.1s ease-out'
                 }}
             >
-                {/* Ring guides */}
-                {Array.from({ length: maxRing + 1 }).map((_, ring) => (
-                    ring > 0 && (
+                {/* Ring guides with staggered animation */}
+                {Array.from({ length: maxRing + 1 }).map((_, ring) => {
+                    if (ring === 0) return null;
+                    // Each ring appears after the previous one
+                    const ringAppearTime = ring * 0.15; // 15% of animation per ring
+                    const ringProgress = Math.max(0, Math.min(1, (animationProgress - ringAppearTime) / 0.2));
+                    const scale = 0.5 + ringProgress * 0.5; // Scale from 0.5 to 1
+
+                    return (
                         <circle
                             key={`ring-${ring}`}
                             cx={center}
                             cy={center}
-                            r={ring * ringRadius}
+                            r={ring * ringRadius * scale}
                             fill="none"
                             stroke={RING_COLORS[ring]}
                             strokeWidth="1"
                             strokeDasharray="8 4"
-                            opacity={0.3}
+                            opacity={0.3 * ringProgress}
+                            style={{
+                                transition: 'opacity 0.3s ease-out'
+                            }}
                         />
-                    )
-                ))}
+                    );
+                })}
 
                 {/* All possible edges (complete graph - data loaded on click) */}
                 {(() => {
@@ -492,6 +530,13 @@ function SVGFallback({ data, animationTime, onEdgeClick }: SVGFallbackProps) {
                     const pos = nodePositions.get(node.id);
                     if (!pos || !getNodeVisible(node.ring)) return null;
 
+                    // Calculate node animation based on ring
+                    const nodeAppearTime = 0.2 + node.ring * 0.15; // Start after rings, stagger by ring
+                    const nodeProgress = Math.max(0, Math.min(1, (animationProgress - nodeAppearTime) / 0.15));
+
+                    // Don't render if not visible yet
+                    if (nodeProgress <= 0) return null;
+
                     const baseColor = LANE_COLORS[node.lane] || RING_COLORS[node.ring] || '#94a3b8';
                     // Reduce size for ring 1 nodes to prevent overlap
                     const ringScale = node.ring === 1 ? 0.6 : 1;
@@ -515,9 +560,12 @@ function SVGFallback({ data, animationTime, onEdgeClick }: SVGFallbackProps) {
                         color = baseColor;
                     }
 
-                    const glowOpacity = isSelected ? 0.5 : (isHighlighted ? 0.4 : (isDimmed ? 0.03 : 0.15));
-                    const mainOpacity = isDimmed ? 0.2 : 1;
-                    const nodeSize = isSelected ? size * 1.5 : (isHighlighted ? size * 1.2 : size);
+                    // Apply pop animation effect
+                    const popScale = nodeProgress < 1 ? 0.8 + 0.4 * Math.sin(nodeProgress * Math.PI * 0.5) : 1;
+
+                    const glowOpacity = (isSelected ? 0.5 : (isHighlighted ? 0.4 : (isDimmed ? 0.03 : 0.15))) * nodeProgress;
+                    const mainOpacity = (isDimmed ? 0.2 : 1) * nodeProgress;
+                    const nodeSize = (isSelected ? size * 1.5 : (isHighlighted ? size * 1.2 : size)) * popScale;
 
                     return (
                         <g
@@ -917,7 +965,7 @@ function LinkExplanationModal({ isOpen, onClose, edge, sourceNode, targetNode, p
                 setIsLoading(false);
 
                 // Increment hit count in background (fire and forget)
-                supabase.rpc('increment_link_cache_hit' as any, { cache_id: (cached as any).id }).then(() => { }).catch(() => { });
+                supabase.rpc('increment_link_cache_hit' as any, { cache_id: (cached as any).id }).then(() => { }, () => { });
                 return;
             }
 
