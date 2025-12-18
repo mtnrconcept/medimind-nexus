@@ -170,6 +170,38 @@ function SVGFallback({ data, animationTime, onEdgeClick }: SVGFallbackProps) {
     const center = svgSize / 2;
     const ringRadius = 80;
 
+    // Zoom and pan state
+    const [zoom, setZoom] = useState(1);
+    const [pan, setPan] = useState({ x: 0, y: 0 });
+    const [isPanning, setIsPanning] = useState(false);
+    const [panStart, setPanStart] = useState({ x: 0, y: 0 });
+    const containerRef = useRef<HTMLDivElement>(null);
+
+    // Handle zoom with mouse wheel
+    const handleWheel = useCallback((e: React.WheelEvent) => {
+        e.preventDefault();
+        const delta = e.deltaY > 0 ? 0.9 : 1.1;
+        setZoom(z => Math.min(3, Math.max(0.5, z * delta)));
+    }, []);
+
+    // Handle pan with mouse drag
+    const handleMouseDown = useCallback((e: React.MouseEvent) => {
+        if (e.button === 0) { // Left click
+            setIsPanning(true);
+            setPanStart({ x: e.clientX - pan.x, y: e.clientY - pan.y });
+        }
+    }, [pan]);
+
+    const handleMouseMove = useCallback((e: React.MouseEvent) => {
+        if (isPanning) {
+            setPan({ x: e.clientX - panStart.x, y: e.clientY - panStart.y });
+        }
+    }, [isPanning, panStart]);
+
+    const handleMouseUp = useCallback(() => {
+        setIsPanning(false);
+    }, []);
+
     // Calculate node positions
     const nodePositions = useMemo(() => {
         const positions = new Map<string, { x: number; y: number }>();
@@ -213,8 +245,25 @@ function SVGFallback({ data, animationTime, onEdgeClick }: SVGFallbackProps) {
     };
 
     return (
-        <div className="absolute inset-0 flex items-center justify-center bg-gray-900">
-            <svg width={svgSize} height={svgSize} className="overflow-visible">
+        <div
+            ref={containerRef}
+            className="absolute inset-0 flex items-center justify-center bg-gray-900 overflow-hidden cursor-grab"
+            onWheel={handleWheel}
+            onMouseDown={handleMouseDown}
+            onMouseMove={handleMouseMove}
+            onMouseUp={handleMouseUp}
+            onMouseLeave={handleMouseUp}
+            style={{ cursor: isPanning ? 'grabbing' : 'grab' }}
+        >
+            <svg
+                width={svgSize}
+                height={svgSize}
+                className="overflow-visible"
+                style={{
+                    transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
+                    transition: isPanning ? 'none' : 'transform 0.1s ease-out'
+                }}
+            >
                 {/* Ring guides */}
                 {Array.from({ length: maxRing + 1 }).map((_, ring) => (
                     ring > 0 && (
@@ -270,7 +319,7 @@ function SVGFallback({ data, animationTime, onEdgeClick }: SVGFallbackProps) {
                                 stroke={color}
                                 strokeWidth="2"
                                 className="cursor-pointer hover:opacity-80"
-                                onClick={() => onEdgeClick(edge, sourceNode, targetNode)}
+                                onClick={(e) => { e.stopPropagation(); onEdgeClick(edge, sourceNode, targetNode); }}
                             />
                         </g>
                     );
@@ -305,9 +354,31 @@ function SVGFallback({ data, animationTime, onEdgeClick }: SVGFallbackProps) {
                 })}
             </svg>
 
-            <div className="absolute bottom-8 text-center text-gray-400 text-sm">
-                <p>Mode 2D (WebGL non disponible)</p>
-                <p className="text-xs mt-1">💡 Cliquez sur les liens pour les analyser</p>
+            {/* Zoom controls */}
+            <div className="absolute bottom-8 left-4 flex gap-2">
+                <button
+                    onClick={() => setZoom(z => Math.min(3, z * 1.2))}
+                    className="bg-gray-800 hover:bg-gray-700 text-white px-3 py-1 rounded text-sm"
+                >
+                    +
+                </button>
+                <button
+                    onClick={() => setZoom(z => Math.max(0.5, z / 1.2))}
+                    className="bg-gray-800 hover:bg-gray-700 text-white px-3 py-1 rounded text-sm"
+                >
+                    -
+                </button>
+                <button
+                    onClick={() => { setZoom(1); setPan({ x: 0, y: 0 }); }}
+                    className="bg-gray-800 hover:bg-gray-700 text-white px-3 py-1 rounded text-sm"
+                >
+                    Reset
+                </button>
+                <span className="text-gray-500 text-xs ml-2 self-center">{Math.round(zoom * 100)}%</span>
+            </div>
+
+            <div className="absolute bottom-8 right-4 text-center text-gray-400 text-sm">
+                <p>💡 Molette: zoom | Glisser: déplacer | Clic lien: analyser</p>
             </div>
         </div>
     );
@@ -576,6 +647,7 @@ interface LinkModalProps {
 function LinkExplanationModal({ isOpen, onClose, edge, sourceNode, targetNode, pathology }: LinkModalProps) {
     const [explanation, setExplanation] = useState<string>('');
     const [isLoading, setIsLoading] = useState(false);
+    const [fromCache, setFromCache] = useState(false);
 
     useEffect(() => {
         if (isOpen && edge && sourceNode && targetNode) {
@@ -588,8 +660,33 @@ function LinkExplanationModal({ isOpen, onClose, edge, sourceNode, targetNode, p
 
         setIsLoading(true);
         setExplanation('');
+        setFromCache(false);
+
+        // Normalize node names for consistent cache lookup (alphabetical order)
+        const [normSource, normTarget] = [sourceNode.name, targetNode.name].sort();
 
         try {
+            // Step 1: Check cache first
+            const { data: cached, error: cacheError } = await supabase
+                .from('link_explanations_cache')
+                .select('id, explanation')
+                .eq('source_name', normSource)
+                .eq('target_name', normTarget)
+                .eq('pathology', pathology)
+                .maybeSingle();
+
+            if (cached && !cacheError) {
+                // Cache hit! Use cached explanation
+                setExplanation(cached.explanation);
+                setFromCache(true);
+                setIsLoading(false);
+
+                // Increment hit count in background
+                supabase.rpc('increment_link_cache_hit', { cache_id: cached.id }).catch(console.error);
+                return;
+            }
+
+            // Step 2: Cache miss - call AI
             const response = await supabase.functions.invoke('causal-reasoning', {
                 body: {
                     query: `Explique en détail le lien entre "${sourceNode.name}" et "${targetNode.name}" dans le contexte de la pathologie "${pathology}". 
@@ -614,7 +711,23 @@ Fournis:
             });
 
             if (response.error) throw response.error;
-            setExplanation(response.data?.analysis || response.data?.explanation || 'Analyse non disponible.');
+            const aiExplanation = response.data?.analysis || response.data?.explanation || 'Analyse non disponible.';
+            setExplanation(aiExplanation);
+
+            // Step 3: Save to cache for future use
+            await supabase
+                .from('link_explanations_cache')
+                .upsert({
+                    source_name: normSource,
+                    target_name: normTarget,
+                    pathology: pathology,
+                    relationship: edge.relationship,
+                    evidence_grade: edge.evidence_grade,
+                    explanation: aiExplanation
+                }, {
+                    onConflict: 'source_name,target_name,pathology'
+                })
+                .catch(console.error); // Don't fail if cache save fails
 
         } catch (err) {
             console.error('Link explanation error:', err);
@@ -667,6 +780,11 @@ Fournis:
                         {edge.translation_gap && (
                             <span className="px-2 py-1 bg-red-900/50 text-red-400 border border-red-500/30 rounded text-xs">
                                 Gap de translation
+                            </span>
+                        )}
+                        {fromCache && (
+                            <span className="px-2 py-1 bg-cyan-900/50 text-cyan-400 border border-cyan-500/30 rounded text-xs ml-auto">
+                                ⚡ Cache
                             </span>
                         )}
                     </div>
