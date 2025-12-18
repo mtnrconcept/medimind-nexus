@@ -496,8 +496,8 @@ function SignalPanel({ signals, onSignalClick }: SignalPanelProps) {
                             key={signal.id}
                             onClick={() => onSignalClick(signal.id)}
                             className={`flex-shrink-0 p-2 rounded-lg border text-left text-xs transition-colors ${signal.confidence > 0.5
-                                    ? 'border-green-500/50 bg-green-900/30 hover:bg-green-900/50'
-                                    : 'border-red-500/50 bg-red-900/30 hover:bg-red-900/50'
+                                ? 'border-green-500/50 bg-green-900/30 hover:bg-green-900/50'
+                                : 'border-red-500/50 bg-red-900/30 hover:bg-red-900/50'
                                 }`}
                         >
                             <div className="font-medium truncate max-w-[150px]">{signal.observation}</div>
@@ -527,6 +527,59 @@ interface RadialRingsModalProps {
     context?: Record<string, any>;
 }
 
+// Check if WebGL is available
+function isWebGLAvailable(): boolean {
+    try {
+        const canvas = document.createElement('canvas');
+        const gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
+        return !!gl;
+    } catch {
+        return false;
+    }
+}
+
+// 2D Fallback visualization
+function FallbackVisualization({ data }: { data: RadialRingsData }) {
+    if (!data?.knowledge_graph) return null;
+
+    return (
+        <div className="absolute inset-0 flex items-center justify-center bg-gray-900 overflow-auto p-8">
+            <div className="max-w-4xl w-full">
+                <div className="text-center mb-6">
+                    <p className="text-yellow-400 text-sm mb-2">⚠️ WebGL non disponible - Vue 2D</p>
+                </div>
+                {/* Ring 0-4 display */}
+                {[0, 1, 2, 3, 4].map(ring => {
+                    const ringNodes = data.knowledge_graph.nodes.filter(n => n.ring === ring);
+                    if (ringNodes.length === 0) return null;
+                    return (
+                        <div key={ring} className="mb-4">
+                            <h4 className="text-sm font-bold mb-2" style={{ color: RING_COLORS[ring] }}>
+                                Ring {ring}: {['Pathologie', 'Traitements', 'Effets', 'Étiologie', 'Frontières'][ring]}
+                            </h4>
+                            <div className="flex flex-wrap gap-2">
+                                {ringNodes.map(node => (
+                                    <div
+                                        key={node.id}
+                                        className="px-2 py-1 rounded text-xs"
+                                        style={{
+                                            backgroundColor: `${LANE_COLORS[node.lane] || RING_COLORS[ring]}20`,
+                                            color: LANE_COLORS[node.lane] || RING_COLORS[ring],
+                                            border: `1px solid ${LANE_COLORS[node.lane] || RING_COLORS[ring]}40`
+                                        }}
+                                    >
+                                        {node.name}
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    );
+                })}
+            </div>
+        </div>
+    );
+}
+
 export default function RadialRingsModal({
     isOpen,
     onClose,
@@ -539,11 +592,25 @@ export default function RadialRingsModal({
     const [error, setError] = useState<string | null>(null);
     const [isAnimating, setIsAnimating] = useState(true);
     const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
+    const [webglAvailable, setWebglAvailable] = useState<boolean | null>(null);
+    const [canvasKey, setCanvasKey] = useState(0); // Force remount on error
+
+    // Check WebGL availability on mount
+    useEffect(() => {
+        setWebglAvailable(isWebGLAvailable());
+    }, []);
 
     // Fetch data when modal opens
     useEffect(() => {
         if (isOpen && pathology) {
             fetchRadialRings();
+        }
+        // Reset state when modal closes
+        if (!isOpen) {
+            setData(null);
+            setError(null);
+            setIsLoading(false);
+            setSelectedNodeId(null);
         }
     }, [isOpen, pathology]);
 
@@ -567,6 +634,7 @@ export default function RadialRingsModal({
 
             setData(response.data);
             setIsAnimating(true);
+            setCanvasKey(prev => prev + 1); // Force fresh Canvas mount
 
         } catch (err) {
             console.error('Radial rings error:', err);
@@ -582,18 +650,27 @@ export default function RadialRingsModal({
     };
 
     const handleSignalClick = (signalId: string) => {
-        // Find nodes related to this signal and highlight them
         console.log('Signal clicked:', signalId);
     };
 
+    const handleClose = useCallback(() => {
+        // Reset all state before closing to ensure clean unmount
+        setData(null);
+        setSelectedNodeId(null);
+        onClose();
+    }, [onClose]);
+
+    // Don't render anything if modal is closed
     if (!isOpen) return null;
+
+    const showCanvas = !isLoading && !error && data && webglAvailable;
 
     return (
         <div className="fixed inset-0 z-50 flex items-center justify-center">
             {/* Backdrop */}
             <div
                 className="absolute inset-0 bg-black/90 backdrop-blur-sm"
-                onClick={onClose}
+                onClick={handleClose}
             />
 
             {/* Modal content */}
@@ -638,7 +715,7 @@ export default function RadialRingsModal({
                             {isAnimating ? <Pause className="w-5 h-5" /> : <Play className="w-5 h-5" />}
                         </button>
                         <button
-                            onClick={onClose}
+                            onClick={handleClose}
                             className="bg-red-600 hover:bg-red-700 text-white p-2 rounded-lg transition-colors"
                         >
                             <X className="w-5 h-5" />
@@ -667,7 +744,7 @@ export default function RadialRingsModal({
 
                 {/* Loading state */}
                 {isLoading && (
-                    <div className="absolute inset-0 flex items-center justify-center z-30">
+                    <div className="absolute inset-0 flex items-center justify-center z-30 bg-gray-900">
                         <div className="bg-gray-900/95 rounded-lg border border-gray-700 p-8 text-center">
                             <div className="animate-spin w-16 h-16 border-4 border-purple-500 border-t-transparent rounded-full mx-auto mb-4" />
                             <p className="text-white text-lg">Construction des anneaux...</p>
@@ -678,7 +755,7 @@ export default function RadialRingsModal({
 
                 {/* Error state */}
                 {error && (
-                    <div className="absolute inset-0 flex items-center justify-center z-30">
+                    <div className="absolute inset-0 flex items-center justify-center z-30 bg-gray-900">
                         <div className="bg-red-900/50 border border-red-500 rounded-lg p-8 text-center max-w-md">
                             <p className="text-red-400 text-lg">Erreur</p>
                             <p className="text-gray-300 text-sm mt-2">{error}</p>
@@ -692,19 +769,40 @@ export default function RadialRingsModal({
                     </div>
                 )}
 
-                {/* 3D Canvas */}
-                <Canvas
-                    camera={{ position: [0, 8, 15], fov: 60 }}
-                    gl={{ antialias: true, alpha: true }}
-                    className="absolute inset-0"
-                >
-                    <RadialScene
-                        data={data}
-                        isAnimating={isAnimating}
-                        selectedNodeId={selectedNodeId}
-                        onNodeSelect={setSelectedNodeId}
-                    />
-                </Canvas>
+                {/* 3D Canvas - ONLY render when ready */}
+                {showCanvas && (
+                    <Canvas
+                        key={canvasKey}
+                        camera={{ position: [0, 8, 15], fov: 60 }}
+                        gl={{
+                            antialias: true,
+                            alpha: true,
+                            powerPreference: 'high-performance',
+                            failIfMajorPerformanceCaveat: false
+                        }}
+                        className="absolute inset-0"
+                        onCreated={({ gl }) => {
+                            gl.setClearColor('#030712', 1);
+                        }}
+                    >
+                        <RadialScene
+                            data={data}
+                            isAnimating={isAnimating}
+                            selectedNodeId={selectedNodeId}
+                            onNodeSelect={setSelectedNodeId}
+                        />
+                    </Canvas>
+                )}
+
+                {/* 2D Fallback when WebGL is not available */}
+                {!isLoading && !error && data && !webglAvailable && (
+                    <FallbackVisualization data={data} />
+                )}
+
+                {/* Background when no content */}
+                {!isLoading && !error && !data && (
+                    <div className="absolute inset-0 bg-gray-900" />
+                )}
 
                 {/* Micro-signals panel */}
                 {data && (
@@ -717,3 +815,4 @@ export default function RadialRingsModal({
         </div>
     );
 }
+
