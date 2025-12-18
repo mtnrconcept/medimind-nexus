@@ -90,14 +90,66 @@ const TIMING = {
 };
 
 // ============================================
-// WEBGL CHECK
+// WEBGL CHECK (comprehensive - tests shader compilation)
 // ============================================
 
 function isWebGLAvailable(): boolean {
     try {
         const canvas = document.createElement('canvas');
         const gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
-        return !!gl;
+        if (!gl) return false;
+
+        // Test if shaders can actually compile
+        const webgl = gl as WebGLRenderingContext;
+
+        // Create a simple vertex shader
+        const vertShader = webgl.createShader(webgl.VERTEX_SHADER);
+        if (!vertShader) return false;
+
+        webgl.shaderSource(vertShader, 'attribute vec4 p;void main(){gl_Position=p;}');
+        webgl.compileShader(vertShader);
+
+        if (!webgl.getShaderParameter(vertShader, webgl.COMPILE_STATUS)) {
+            webgl.deleteShader(vertShader);
+            return false;
+        }
+
+        // Create a simple fragment shader
+        const fragShader = webgl.createShader(webgl.FRAGMENT_SHADER);
+        if (!fragShader) {
+            webgl.deleteShader(vertShader);
+            return false;
+        }
+
+        webgl.shaderSource(fragShader, 'precision mediump float;void main(){gl_FragColor=vec4(1.0);}');
+        webgl.compileShader(fragShader);
+
+        if (!webgl.getShaderParameter(fragShader, webgl.COMPILE_STATUS)) {
+            webgl.deleteShader(vertShader);
+            webgl.deleteShader(fragShader);
+            return false;
+        }
+
+        // Create and link program
+        const program = webgl.createProgram();
+        if (!program) {
+            webgl.deleteShader(vertShader);
+            webgl.deleteShader(fragShader);
+            return false;
+        }
+
+        webgl.attachShader(program, vertShader);
+        webgl.attachShader(program, fragShader);
+        webgl.linkProgram(program);
+
+        const success = webgl.getProgramParameter(program, webgl.LINK_STATUS);
+
+        // Cleanup
+        webgl.deleteProgram(program);
+        webgl.deleteShader(vertShader);
+        webgl.deleteShader(fragShader);
+
+        return !!success;
     } catch {
         return false;
     }
