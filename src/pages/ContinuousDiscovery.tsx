@@ -22,6 +22,7 @@ import ResearchHistoryPanel from '@/components/cde/ResearchHistoryPanel';
 import TreatmentTools from '@/components/cde/TreatmentTools';
 import DiscoveryEnginePanel from '@/components/cde/DiscoveryEnginePanel';
 import NeuralNetworkGraph from '@/components/cde/NeuralNetworkGraph';
+import RadialRingsModal from '@/components/cde/RadialRingsModal';
 import useMedicalStats from '@/hooks/useMedicalStats';
 
 // Types
@@ -78,6 +79,9 @@ const ContinuousDiscovery = () => {
     const [currentPrompt, setCurrentPrompt] = useState('');
     const [currentAnalysis, setCurrentAnalysis] = useState<any[]>([]);
     const [showResearchDetails, setShowResearchDetails] = useState(true);
+    // Radial rings state
+    const [isRadialModalOpen, setIsRadialModalOpen] = useState(false);
+    const [radialQuery, setRadialQuery] = useState('');
 
     // Load discoveries and stats
     const loadData = async () => {
@@ -475,6 +479,10 @@ const ContinuousDiscovery = () => {
                             <TabsTrigger value="discovery" className="gap-2 bg-gradient-to-r from-violet-500/10 to-purple-500/10">
                                 <Sparkles className="h-4 w-4" />
                                 {t('Moteur de Découverte')}
+                            </TabsTrigger>
+                            <TabsTrigger value="radial" className="gap-2 bg-gradient-to-r from-purple-500/10 to-pink-500/10">
+                                <Sparkles className="h-4 w-4" />
+                                {t('Radial 3D')}
                             </TabsTrigger>
                         </TabsList>
 
@@ -925,12 +933,62 @@ const ContinuousDiscovery = () => {
                         <TreatmentTools />
                     </TabsContent>
 
+
                     {/* Discovery Engine Tab - Génération d'hypothèses thérapeutiques innovantes */}
                     <TabsContent value="discovery">
                         <DiscoveryEnginePanel />
                     </TabsContent>
+
+                    {/* Radial Rings 3D Tab */}
+                    <TabsContent value="radial" className="space-y-4">
+                        <Card className="bg-white/70 dark:bg-slate-800/70 backdrop-blur border-white/30">
+                            <CardHeader>
+                                <CardTitle className="flex items-center gap-2">
+                                    <Sparkles className="h-5 w-5 text-purple-600" />
+                                    {t('Radial Rings Discovery Engine')}
+                                </CardTitle>
+                            </CardHeader>
+                            <CardContent className="space-y-4">
+                                <p className="text-sm text-muted-foreground">
+                                    {t('Visualisation 3D des connexions médicales en anneaux concentriques. Détection de micro-signaux triangulés avec contre-hypothèses anti-biais.')}
+                                </p>
+                                <div className="flex gap-4">
+                                    <Input
+                                        placeholder={t('Ex: Syndrome néphrotique pédiatrique')}
+                                        value={radialQuery}
+                                        onChange={(e) => setRadialQuery(e.target.value)}
+                                        className="flex-1"
+                                    />
+                                    <Button
+                                        onClick={() => setIsRadialModalOpen(true)}
+                                        disabled={!radialQuery.trim()}
+                                        className="gap-2 bg-gradient-to-r from-purple-500 to-pink-600 hover:from-purple-600 hover:to-pink-700"
+                                    >
+                                        <Sparkles className="h-4 w-4" />
+                                        {t('Lancer Radial 3D')}
+                                    </Button>
+                                </div>
+                                <div className="grid grid-cols-5 gap-2 text-xs text-center">
+                                    <div className="p-2 rounded bg-red-500/20 text-red-600">Ring 0: Pathologie</div>
+                                    <div className="p-2 rounded bg-green-500/20 text-green-600">Ring 1: Traitements</div>
+                                    <div className="p-2 rounded bg-orange-500/20 text-orange-600">Ring 2: Effets</div>
+                                    <div className="p-2 rounded bg-purple-500/20 text-purple-600">Ring 3: Étiologie</div>
+                                    <div className="p-2 rounded bg-cyan-500/20 text-cyan-600">Ring 4: Frontières</div>
+                                </div>
+                            </CardContent>
+                        </Card>
+                    </TabsContent>
                 </Tabs>
-            </div >
+
+                {/* Radial Rings 3D Modal */}
+                <RadialRingsModal
+                    isOpen={isRadialModalOpen}
+                    onClose={() => setIsRadialModalOpen(false)}
+                    pathology={radialQuery.trim()}
+                    mode="ETIOLOGY"
+                />
+            </div>
+
 
             <style>{`
         @keyframes blob {
