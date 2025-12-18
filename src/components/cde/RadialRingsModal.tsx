@@ -177,6 +177,9 @@ function SVGFallback({ data, animationTime, onEdgeClick }: SVGFallbackProps) {
     const [panStart, setPanStart] = useState({ x: 0, y: 0 });
     const containerRef = useRef<HTMLDivElement>(null);
 
+    // Node selection state
+    const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
+
     // Handle zoom with mouse wheel
     const handleWheel = useCallback((e: React.WheelEvent) => {
         e.preventDefault();
@@ -186,7 +189,7 @@ function SVGFallback({ data, animationTime, onEdgeClick }: SVGFallbackProps) {
 
     // Handle pan with mouse drag
     const handleMouseDown = useCallback((e: React.MouseEvent) => {
-        if (e.button === 0) { // Left click
+        if (e.button === 0 && !e.ctrlKey) { // Left click without Ctrl
             setIsPanning(true);
             setPanStart({ x: e.clientX - pan.x, y: e.clientY - pan.y });
         }
@@ -234,15 +237,46 @@ function SVGFallback({ data, animationTime, onEdgeClick }: SVGFallbackProps) {
 
     const maxRing = Math.max(...data.knowledge_graph.nodes.map(n => n.ring));
 
+    // Calculate highlighted nodes based on selection
+    const highlightedNodeIds = useMemo(() => {
+        if (!selectedNodeId) return new Set<string>();
+        // All nodes are connected in complete graph, so all are highlighted
+        const ids = new Set<string>();
+        data.knowledge_graph.nodes.forEach(n => {
+            if (n.id !== selectedNodeId) ids.add(n.id);
+        });
+        return ids;
+    }, [selectedNodeId, data]);
+
     const getNodeVisible = (ring: number) => {
         const appearTime = TIMING.CENTER_APPEAR + ring * TIMING.RING_INTERVAL;
         return animationTime >= appearTime;
     };
 
-    const getEdgeProgress = (sourceRing: number) => {
-        const startTime = TIMING.CENTER_APPEAR + sourceRing * TIMING.RING_INTERVAL + 0.2;
-        return Math.max(0, Math.min(1, (animationTime - startTime) / TIMING.LINK_DURATION));
-    };
+    // Handle node click
+    const handleNodeClick = useCallback((node: RingNode, e: React.MouseEvent) => {
+        e.stopPropagation();
+
+        if (e.ctrlKey && selectedNodeId && highlightedNodeIds.has(node.id)) {
+            // Ctrl+click on highlighted node → open AI explanation
+            const selectedNode = nodeMap.get(selectedNodeId);
+            if (selectedNode) {
+                const syntheticEdge: RingEdge = {
+                    id: `${selectedNodeId}-${node.id}`,
+                    source: selectedNodeId,
+                    target: node.id,
+                    relationship: 'analyse demandée',
+                    evidence_grade: 'D',
+                    translation_gap: false,
+                    weight: 0.5
+                };
+                onEdgeClick(syntheticEdge, selectedNode, node);
+            }
+        } else {
+            // Regular click → select/deselect node
+            setSelectedNodeId(prev => prev === node.id ? null : node.id);
+        }
+    }, [selectedNodeId, highlightedNodeIds, nodeMap, onEdgeClick]);
 
     return (
         <div
@@ -295,6 +329,11 @@ function SVGFallback({ data, animationTime, onEdgeClick }: SVGFallbackProps) {
 
                             if (!posA || !posB) continue;
 
+                            // Check if this edge is connected to selected node
+                            const isConnectedToSelected = selectedNodeId
+                                ? (nodeA.id === selectedNodeId || nodeB.id === selectedNodeId)
+                                : false;
+
                             // Check if there's a predefined edge for styling
                             const existingEdge = data.knowledge_graph.edges.find(
                                 e => (e.source === nodeA.id && e.target === nodeB.id) ||
@@ -302,13 +341,23 @@ function SVGFallback({ data, animationTime, onEdgeClick }: SVGFallbackProps) {
                             );
 
                             // Determine color based on existing edge or default
-                            const color = existingEdge?.evidence_grade === 'A' ? '#22c55e' :
+                            let color = existingEdge?.evidence_grade === 'A' ? '#22c55e' :
                                 existingEdge?.evidence_grade === 'B' ? '#3b82f6' :
                                     existingEdge?.evidence_grade === 'C' ? '#f59e0b' :
-                                        existingEdge ? '#6b7280' : '#374151'; // Gray for new connections
+                                        existingEdge ? '#6b7280' : '#374151';
 
-                            const opacity = existingEdge ? 0.6 : 0.2;
-                            const strokeWidth = existingEdge ? 2 : 1;
+                            // Highlight color when connected to selected node
+                            if (isConnectedToSelected) {
+                                color = '#a855f7'; // Purple for highlighted connections
+                            }
+
+                            // Opacity based on selection state
+                            let opacity = existingEdge ? 0.6 : 0.2;
+                            if (selectedNodeId) {
+                                opacity = isConnectedToSelected ? 1 : 0.1; // Dim non-connected
+                            }
+
+                            const strokeWidth = isConnectedToSelected ? 3 : (existingEdge ? 2 : 1);
 
                             // Create synthetic edge for click handler
                             const syntheticEdge: RingEdge = existingEdge || {
@@ -323,14 +372,14 @@ function SVGFallback({ data, animationTime, onEdgeClick }: SVGFallbackProps) {
 
                             allEdges.push(
                                 <g key={`edge-${nodeA.id}-${nodeB.id}`}>
-                                    {/* Glow for predefined edges */}
-                                    {existingEdge && (
+                                    {/* Glow for highlighted edges */}
+                                    {isConnectedToSelected && (
                                         <line
                                             x1={posA.x} y1={posA.y}
                                             x2={posB.x} y2={posB.y}
                                             stroke={color}
-                                            strokeWidth="4"
-                                            opacity="0.2"
+                                            strokeWidth="6"
+                                            opacity="0.3"
                                         />
                                     )}
                                     {/* Main line */}
@@ -341,7 +390,7 @@ function SVGFallback({ data, animationTime, onEdgeClick }: SVGFallbackProps) {
                                         strokeWidth={strokeWidth}
                                         opacity={opacity}
                                         className="cursor-pointer hover:opacity-100"
-                                        style={{ transition: 'opacity 0.2s' }}
+                                        style={{ transition: 'all 0.2s' }}
                                         onClick={(e) => {
                                             e.stopPropagation();
                                             onEdgeClick(syntheticEdge, nodeA, nodeB);
@@ -360,23 +409,73 @@ function SVGFallback({ data, animationTime, onEdgeClick }: SVGFallbackProps) {
                     const pos = nodePositions.get(node.id);
                     if (!pos || !getNodeVisible(node.ring)) return null;
 
-                    const color = LANE_COLORS[node.lane] || RING_COLORS[node.ring] || '#94a3b8';
+                    const baseColor = LANE_COLORS[node.lane] || RING_COLORS[node.ring] || '#94a3b8';
                     const size = 10 + node.proximity_score * 8;
 
+                    // Determine node state
+                    const isSelected = node.id === selectedNodeId;
+                    const isHighlighted = highlightedNodeIds.has(node.id);
+                    const isDimmed = selectedNodeId && !isSelected && !isHighlighted;
+
+                    // Adjust color and opacity based on state
+                    const color = isSelected ? '#a855f7' : (isHighlighted ? '#c084fc' : baseColor);
+                    const glowOpacity = isSelected ? 0.4 : (isHighlighted ? 0.25 : (isDimmed ? 0.05 : 0.15));
+                    const mainOpacity = isDimmed ? 0.3 : 1;
+                    const nodeSize = isSelected ? size * 1.3 : (isHighlighted ? size * 1.1 : size);
+
                     return (
-                        <g key={node.id}>
+                        <g
+                            key={node.id}
+                            onClick={(e) => handleNodeClick(node, e)}
+                            className="cursor-pointer"
+                            style={{ transition: 'all 0.2s' }}
+                        >
+                            {/* Selection ring for selected node */}
+                            {isSelected && (
+                                <circle
+                                    cx={pos.x} cy={pos.y} r={nodeSize * 2.5}
+                                    fill="none"
+                                    stroke="#a855f7"
+                                    strokeWidth="2"
+                                    strokeDasharray="4 2"
+                                    opacity="0.6"
+                                />
+                            )}
                             {/* Outer glow */}
-                            <circle cx={pos.x} cy={pos.y} r={size * 2} fill={color} opacity="0.15" />
+                            <circle cx={pos.x} cy={pos.y} r={nodeSize * 2} fill={color} opacity={glowOpacity} />
                             {/* Inner glow */}
-                            <circle cx={pos.x} cy={pos.y} r={size * 1.4} fill={color} opacity="0.3" />
+                            <circle cx={pos.x} cy={pos.y} r={nodeSize * 1.4} fill={color} opacity={glowOpacity * 2} />
                             {/* Main */}
-                            <circle cx={pos.x} cy={pos.y} r={size} fill={color} />
+                            <circle cx={pos.x} cy={pos.y} r={nodeSize} fill={color} opacity={mainOpacity} />
                             {/* Highlight */}
-                            <circle cx={pos.x - size * 0.25} cy={pos.y - size * 0.25} r={size * 0.25} fill="white" opacity="0.4" />
-                            {/* Label for center */}
-                            {node.ring === 0 && (
-                                <text x={pos.x} y={pos.y + size + 16} textAnchor="middle" fill="white" fontSize="11" fontWeight="bold">
-                                    🎯 {node.name.substring(0, 20)}
+                            <circle cx={pos.x - nodeSize * 0.25} cy={pos.y - nodeSize * 0.25} r={nodeSize * 0.25} fill="white" opacity={mainOpacity * 0.4} />
+
+                            {/* Label for selected/center nodes */}
+                            {(node.ring === 0 || isSelected) && (
+                                <text
+                                    x={pos.x}
+                                    y={pos.y + nodeSize + 16}
+                                    textAnchor="middle"
+                                    fill={isSelected ? '#a855f7' : 'white'}
+                                    fontSize="11"
+                                    fontWeight="bold"
+                                    style={{ pointerEvents: 'none' }}
+                                >
+                                    {isSelected ? '🔍' : '🎯'} {node.name.substring(0, 25)}
+                                </text>
+                            )}
+
+                            {/* Ctrl hint for highlighted nodes */}
+                            {isHighlighted && selectedNodeId && (
+                                <text
+                                    x={pos.x}
+                                    y={pos.y + nodeSize + 14}
+                                    textAnchor="middle"
+                                    fill="#c084fc"
+                                    fontSize="8"
+                                    style={{ pointerEvents: 'none' }}
+                                >
+                                    Ctrl+clic
                                 </text>
                             )}
                         </g>
@@ -407,8 +506,9 @@ function SVGFallback({ data, animationTime, onEdgeClick }: SVGFallbackProps) {
                 <span className="text-gray-500 text-xs ml-2 self-center">{Math.round(zoom * 100)}%</span>
             </div>
 
-            <div className="absolute bottom-8 right-4 text-center text-gray-400 text-sm">
-                <p>💡 Molette: zoom | Glisser: déplacer | Clic lien: analyser</p>
+            <div className="absolute bottom-8 right-4 text-right text-gray-400 text-sm">
+                <p>🔍 Clic nœud: sélectionner | Ctrl+clic: analyser le lien</p>
+                <p className="text-xs mt-1">Molette: zoom | Glisser: déplacer</p>
             </div>
         </div>
     );
