@@ -237,16 +237,80 @@ function SVGFallback({ data, animationTime, onEdgeClick }: SVGFallbackProps) {
 
     const maxRing = Math.max(...data.knowledge_graph.nodes.map(n => n.ring));
 
-    // Calculate highlighted nodes based on selection
+    // Determine relationship type and color for edges
+    const getRelationshipColor = (relationship: string, evidenceGrade: string): { color: string; type: 'positive' | 'danger' | 'contraindication' | 'warning' | 'neutral' } => {
+        const rel = relationship.toLowerCase();
+
+        // Positive/Beneficial relationships
+        if (rel.includes('traite') || rel.includes('améliore') || rel.includes('bénéfique') ||
+            rel.includes('thérapeutique') || rel.includes('efficace') || rel.includes('protège') ||
+            rel.includes('prévient') || rel.includes('réduit') || rel.includes('soulage') ||
+            rel.includes('positive') || rel.includes('synergie')) {
+            return { color: '#22c55e', type: 'positive' }; // Green
+        }
+
+        // Danger/Severe interaction
+        if (rel.includes('danger') || rel.includes('toxique') || rel.includes('mortel') ||
+            rel.includes('grave') || rel.includes('sévère') || rel.includes('fatal') ||
+            rel.includes('aggrave') || evidenceGrade === 'A' && rel.includes('risque')) {
+            return { color: '#ef4444', type: 'danger' }; // Red
+        }
+
+        // Contraindication
+        if (rel.includes('contre-indic') || rel.includes('interdit') || rel.includes('éviter') ||
+            rel.includes('incompatible') || rel.includes('ne pas') || rel.includes('exclu')) {
+            return { color: '#f97316', type: 'contraindication' }; // Orange
+        }
+
+        // Warning/Slight risk
+        if (rel.includes('précaution') || rel.includes('prudence') || rel.includes('surveiller') ||
+            rel.includes('attention') || rel.includes('modéré') || rel.includes('possible') ||
+            rel.includes('risque') || rel.includes('interaction')) {
+            return { color: '#eab308', type: 'warning' }; // Yellow
+        }
+
+        // Neutral/Unknown - use evidence grade for color
+        if (evidenceGrade === 'A') return { color: '#22c55e', type: 'positive' };
+        if (evidenceGrade === 'B') return { color: '#3b82f6', type: 'neutral' };
+        if (evidenceGrade === 'C') return { color: '#eab308', type: 'warning' };
+        return { color: '#6b7280', type: 'neutral' }; // Gray
+    };
+
+    // Calculate highlighted nodes with their colors based on selection
+    const connectionColors = useMemo(() => {
+        const colors = new Map<string, { color: string; type: string }>();
+        if (!selectedNodeId) return colors;
+
+        // Check all edges for connections to the selected node
+        data.knowledge_graph.edges.forEach(edge => {
+            let targetId: string | null = null;
+
+            if (edge.source === selectedNodeId) {
+                targetId = edge.target;
+            } else if (edge.target === selectedNodeId) {
+                targetId = edge.source;
+            }
+
+            if (targetId) {
+                const relationColor = getRelationshipColor(edge.relationship, edge.evidence_grade);
+                colors.set(targetId, relationColor);
+            }
+        });
+
+        // For nodes without explicit edges (in complete graph), assign neutral
+        data.knowledge_graph.nodes.forEach(n => {
+            if (n.id !== selectedNodeId && !colors.has(n.id)) {
+                colors.set(n.id, { color: '#6b7280', type: 'neutral' });
+            }
+        });
+
+        return colors;
+    }, [selectedNodeId, data]);
+
     const highlightedNodeIds = useMemo(() => {
         if (!selectedNodeId) return new Set<string>();
-        // All nodes are connected in complete graph, so all are highlighted
-        const ids = new Set<string>();
-        data.knowledge_graph.nodes.forEach(n => {
-            if (n.id !== selectedNodeId) ids.add(n.id);
-        });
-        return ids;
-    }, [selectedNodeId, data]);
+        return new Set(connectionColors.keys());
+    }, [selectedNodeId, connectionColors]);
 
     const getNodeVisible = (ring: number) => {
         const appearTime = TIMING.CENTER_APPEAR + ring * TIMING.RING_INTERVAL;
@@ -334,30 +398,36 @@ function SVGFallback({ data, animationTime, onEdgeClick }: SVGFallbackProps) {
                                 ? (nodeA.id === selectedNodeId || nodeB.id === selectedNodeId)
                                 : false;
 
+                            // Determine which node is NOT the selected one (for color lookup)
+                            const otherNodeId = nodeA.id === selectedNodeId ? nodeB.id :
+                                nodeB.id === selectedNodeId ? nodeA.id : null;
+
                             // Check if there's a predefined edge for styling
                             const existingEdge = data.knowledge_graph.edges.find(
                                 e => (e.source === nodeA.id && e.target === nodeB.id) ||
                                     (e.source === nodeB.id && e.target === nodeA.id)
                             );
 
-                            // Determine color based on existing edge or default
-                            let color = existingEdge?.evidence_grade === 'A' ? '#22c55e' :
-                                existingEdge?.evidence_grade === 'B' ? '#3b82f6' :
-                                    existingEdge?.evidence_grade === 'C' ? '#f59e0b' :
-                                        existingEdge ? '#6b7280' : '#374151';
-
-                            // Highlight color when connected to selected node
-                            if (isConnectedToSelected) {
-                                color = '#a855f7'; // Purple for highlighted connections
+                            // Determine color based on relationship type when selected
+                            let color: string;
+                            if (isConnectedToSelected && otherNodeId) {
+                                const connectionColor = connectionColors.get(otherNodeId);
+                                color = connectionColor?.color || '#6b7280';
+                            } else if (existingEdge) {
+                                color = existingEdge.evidence_grade === 'A' ? '#22c55e' :
+                                    existingEdge.evidence_grade === 'B' ? '#3b82f6' :
+                                        existingEdge.evidence_grade === 'C' ? '#f59e0b' : '#6b7280';
+                            } else {
+                                color = '#374151';
                             }
 
                             // Opacity based on selection state
-                            let opacity = existingEdge ? 0.6 : 0.2;
+                            let opacity = existingEdge ? 0.6 : 0.15;
                             if (selectedNodeId) {
-                                opacity = isConnectedToSelected ? 1 : 0.1; // Dim non-connected
+                                opacity = isConnectedToSelected ? 1 : 0.05; // Dim non-connected more
                             }
 
-                            const strokeWidth = isConnectedToSelected ? 3 : (existingEdge ? 2 : 1);
+                            const strokeWidth = isConnectedToSelected ? 4 : (existingEdge ? 2 : 1);
 
                             // Create synthetic edge for click handler
                             const syntheticEdge: RingEdge = existingEdge || {
@@ -417,18 +487,29 @@ function SVGFallback({ data, animationTime, onEdgeClick }: SVGFallbackProps) {
                     const isHighlighted = highlightedNodeIds.has(node.id);
                     const isDimmed = selectedNodeId && !isSelected && !isHighlighted;
 
-                    // Adjust color and opacity based on state
-                    const color = isSelected ? '#a855f7' : (isHighlighted ? '#c084fc' : baseColor);
-                    const glowOpacity = isSelected ? 0.4 : (isHighlighted ? 0.25 : (isDimmed ? 0.05 : 0.15));
-                    const mainOpacity = isDimmed ? 0.3 : 1;
-                    const nodeSize = isSelected ? size * 1.3 : (isHighlighted ? size * 1.1 : size);
+                    // Get relationship-based color from connectionColors
+                    const connectionColor = connectionColors.get(node.id);
+
+                    // Determine node color based on state and relationship
+                    let color: string;
+                    if (isSelected) {
+                        color = '#a855f7'; // Purple for selected
+                    } else if (isHighlighted && connectionColor) {
+                        color = connectionColor.color; // Use relationship color
+                    } else {
+                        color = baseColor;
+                    }
+
+                    const glowOpacity = isSelected ? 0.5 : (isHighlighted ? 0.4 : (isDimmed ? 0.03 : 0.15));
+                    const mainOpacity = isDimmed ? 0.2 : 1;
+                    const nodeSize = isSelected ? size * 1.5 : (isHighlighted ? size * 1.2 : size);
 
                     return (
                         <g
                             key={node.id}
                             onClick={(e) => handleNodeClick(node, e)}
                             className="cursor-pointer"
-                            style={{ transition: 'all 0.2s' }}
+                            style={{ transition: 'all 0.3s ease-out' }}
                         >
                             {/* Selection ring for selected node */}
                             {isSelected && (
@@ -436,10 +517,18 @@ function SVGFallback({ data, animationTime, onEdgeClick }: SVGFallbackProps) {
                                     cx={pos.x} cy={pos.y} r={nodeSize * 2.5}
                                     fill="none"
                                     stroke="#a855f7"
-                                    strokeWidth="2"
-                                    strokeDasharray="4 2"
-                                    opacity="0.6"
-                                />
+                                    strokeWidth="3"
+                                    strokeDasharray="6 3"
+                                    opacity="0.8"
+                                >
+                                    <animate attributeName="stroke-dashoffset" values="0;18" dur="1s" repeatCount="indefinite" />
+                                </circle>
+                            )}
+                            {/* Pulsing glow for highlighted danger nodes */}
+                            {isHighlighted && connectionColor?.type === 'danger' && (
+                                <circle cx={pos.x} cy={pos.y} r={nodeSize * 2.5} fill="#ef4444" opacity="0.3">
+                                    <animate attributeName="opacity" values="0.3;0.1;0.3" dur="1s" repeatCount="indefinite" />
+                                </circle>
                             )}
                             {/* Outer glow */}
                             <circle cx={pos.x} cy={pos.y} r={nodeSize * 2} fill={color} opacity={glowOpacity} />
