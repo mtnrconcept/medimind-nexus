@@ -321,26 +321,39 @@ function SVGFallback({ data, animationTime, onEdgeClick }: SVGFallbackProps) {
     const handleNodeClick = useCallback((node: RingNode, e: React.MouseEvent) => {
         e.stopPropagation();
 
-        if (e.ctrlKey && selectedNodeId && highlightedNodeIds.has(node.id)) {
-            // Ctrl+click on highlighted node → open AI explanation
+        // If clicking on a highlighted node (when another node is selected) → trigger AI analysis
+        if (selectedNodeId && selectedNodeId !== node.id && highlightedNodeIds.has(node.id)) {
             const selectedNode = nodeMap.get(selectedNodeId);
             if (selectedNode) {
-                const syntheticEdge: RingEdge = {
+                // Get the relationship info from connectionColors
+                const connectionColor = connectionColors.get(node.id);
+
+                // Find existing edge for relationship details
+                const existingEdge = data.knowledge_graph.edges.find(
+                    edge => (edge.source === selectedNodeId && edge.target === node.id) ||
+                        (edge.source === node.id && edge.target === selectedNodeId)
+                );
+
+                const syntheticEdge: RingEdge = existingEdge || {
                     id: `${selectedNodeId}-${node.id}`,
                     source: selectedNodeId,
                     target: node.id,
-                    relationship: 'analyse demandée',
-                    evidence_grade: 'D',
-                    translation_gap: false,
-                    weight: 0.5
+                    relationship: connectionColor?.type === 'positive' ? 'relation bénéfique' :
+                        connectionColor?.type === 'danger' ? 'relation dangereuse' :
+                            connectionColor?.type === 'contraindication' ? 'contre-indication' :
+                                connectionColor?.type === 'warning' ? 'précaution' : 'analyse demandée',
+                    evidence_grade: existingEdge?.evidence_grade || 'D',
+                    translation_gap: existingEdge?.translation_gap || false,
+                    weight: existingEdge?.weight || 0.5
                 };
+
                 onEdgeClick(syntheticEdge, selectedNode, node);
             }
         } else {
             // Regular click → select/deselect node
             setSelectedNodeId(prev => prev === node.id ? null : node.id);
         }
-    }, [selectedNodeId, highlightedNodeIds, nodeMap, onEdgeClick]);
+    }, [selectedNodeId, highlightedNodeIds, nodeMap, connectionColors, data, onEdgeClick]);
 
     return (
         <div
@@ -554,17 +567,18 @@ function SVGFallback({ data, animationTime, onEdgeClick }: SVGFallbackProps) {
                                 </text>
                             )}
 
-                            {/* Ctrl hint for highlighted nodes */}
+                            {/* Click hint for highlighted nodes */}
                             {isHighlighted && selectedNodeId && (
                                 <text
                                     x={pos.x}
                                     y={pos.y + nodeSize + 14}
                                     textAnchor="middle"
-                                    fill="#c084fc"
-                                    fontSize="8"
+                                    fill={connectionColors.get(node.id)?.color || '#c084fc'}
+                                    fontSize="9"
+                                    fontWeight="bold"
                                     style={{ pointerEvents: 'none' }}
                                 >
-                                    Ctrl+clic
+                                    ▶ Cliquer
                                 </text>
                             )}
                         </g>
@@ -596,8 +610,8 @@ function SVGFallback({ data, animationTime, onEdgeClick }: SVGFallbackProps) {
             </div>
 
             <div className="absolute bottom-8 right-4 text-right text-gray-400 text-sm">
-                <p>🔍 Clic nœud: sélectionner | Ctrl+clic: analyser le lien</p>
-                <p className="text-xs mt-1">Molette: zoom | Glisser: déplacer</p>
+                <p>🎯 1er clic: sélectionner | 2ème clic: analyser le lien IA</p>
+                <p className="text-xs mt-1">🟢 Bénéfique | 🔴 Danger | 🟠 Contre-indiqué | 🟡 Précaution</p>
             </div>
         </div>
     );
