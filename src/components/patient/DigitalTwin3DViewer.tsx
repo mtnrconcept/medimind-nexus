@@ -575,6 +575,48 @@ const Scene = ({
   );
 };
 
+// Check if WebGL is available
+function isWebGLAvailable(): boolean {
+  try {
+    const canvas = document.createElement('canvas');
+    const gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
+    return !!gl;
+  } catch {
+    return false;
+  }
+}
+
+// 2D Fallback Component when WebGL is unavailable
+const Fallback2DViewer = ({ alerts }: { alerts: PatientAlert[] }) => (
+  <div className="h-full flex flex-col items-center justify-center bg-gradient-to-b from-muted/50 to-muted p-6 text-center">
+    <div className="text-6xl mb-4">🧬</div>
+    <h3 className="text-lg font-semibold mb-2">Visualisation 3D non disponible</h3>
+    <p className="text-sm text-muted-foreground mb-4 max-w-sm">
+      WebGL est désactivé ou non supporté par votre navigateur.
+      Le jumeau numérique 3D ne peut pas être affiché.
+    </p>
+    <div className="text-xs text-muted-foreground mb-4">
+      💡 Essayez Chrome, Firefox ou Edge avec WebGL activé
+    </div>
+    {alerts.length > 0 && (
+      <div className="mt-4 p-4 border rounded-lg bg-destructive/10 max-w-md">
+        <div className="text-sm font-medium mb-2 flex items-center justify-center gap-2">
+          <AlertTriangle className="h-4 w-4 text-destructive" />
+          {alerts.length} alerte(s) patient
+        </div>
+        <div className="space-y-1">
+          {alerts.slice(0, 3).map((alert, idx) => (
+            <div key={idx} className="text-xs text-left flex gap-2">
+              <span className={alert.level === 'CRITICAL' ? 'text-destructive' : 'text-yellow-500'}>●</span>
+              <span>{alert.title}{alert.organ && ` (${alert.organ})`}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+    )}
+  </div>
+);
+
 const DigitalTwin3DViewer: React.FC<DigitalTwin3DViewerProps> = ({
   alerts = [],
   pathologyName
@@ -586,6 +628,12 @@ const DigitalTwin3DViewer: React.FC<DigitalTwin3DViewerProps> = ({
   const [showSearchPanel, setShowSearchPanel] = useState(false);
   const [showMarkers, setShowMarkers] = useState(true);
   const [contextLost, setContextLost] = useState(false);
+  const [webglAvailable, setWebglAvailable] = useState<boolean | null>(null);
+
+  // Check WebGL availability on mount
+  useEffect(() => {
+    setWebglAvailable(isWebGLAvailable());
+  }, []);
 
   // Anatomy selection state
   const [selectedPart, setSelectedPart] = useState<AnatomyPart | null>(null);
@@ -713,38 +761,46 @@ const DigitalTwin3DViewer: React.FC<DigitalTwin3DViewerProps> = ({
         <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">
           {/* 3D Viewer */}
           <div className={`${showSearchPanel ? 'lg:col-span-2' : 'lg:col-span-3'} h-[500px] bg-gradient-to-b from-muted/50 to-muted rounded-lg overflow-hidden relative`}>
-            <Canvas
-              camera={{ position: [0, 0, 2.5], fov: 50 }}
-              gl={{ antialias: true, powerPreference: 'high-performance' }}
-              onCreated={({ gl }) => {
-                gl.domElement.addEventListener('webglcontextlost', (e) => {
-                  e.preventDefault();
-                  setContextLost(true);
-                  console.warn('WebGL Context Lost');
-                });
-                gl.domElement.addEventListener('webglcontextrestored', () => {
-                  setContextLost(false);
-                  console.log('WebGL Context Restored');
-                });
-              }}
-            >
-              <Suspense fallback={<LoadingIndicator />}>
-                <Scene
-                  layers={layers}
-                  alerts={alerts}
-                  scanProgress={scanProgress}
-                  cameraPosition={cameraPosition}
-                  zoomTarget={zoomTarget}
-                  controlsRef={controlsRef}
-                  visibleCategories={visibleCategories}
-                  selectedPart={selectedPart}
-                  hoveredPart={hoveredPart}
-                  onSelectPart={handleSelectPart}
-                  onHoverPart={handleHoverPart}
-                  showMarkers={showMarkers}
-                />
-              </Suspense>
-            </Canvas>
+            {/* Show 2D fallback when WebGL is unavailable */}
+            {webglAvailable === false && (
+              <Fallback2DViewer alerts={alerts} />
+            )}
+
+            {/* WebGL Canvas - only render when WebGL is available */}
+            {webglAvailable === true && (
+              <Canvas
+                camera={{ position: [0, 0, 2.5], fov: 50 }}
+                gl={{ antialias: true, powerPreference: 'high-performance' }}
+                onCreated={({ gl }) => {
+                  gl.domElement.addEventListener('webglcontextlost', (e) => {
+                    e.preventDefault();
+                    setContextLost(true);
+                    console.warn('WebGL Context Lost');
+                  });
+                  gl.domElement.addEventListener('webglcontextrestored', () => {
+                    setContextLost(false);
+                    console.log('WebGL Context Restored');
+                  });
+                }}
+              >
+                <Suspense fallback={<LoadingIndicator />}>
+                  <Scene
+                    layers={layers}
+                    alerts={alerts}
+                    scanProgress={scanProgress}
+                    cameraPosition={cameraPosition}
+                    zoomTarget={zoomTarget}
+                    controlsRef={controlsRef}
+                    visibleCategories={visibleCategories}
+                    selectedPart={selectedPart}
+                    hoveredPart={hoveredPart}
+                    onSelectPart={handleSelectPart}
+                    onHoverPart={handleHoverPart}
+                    showMarkers={showMarkers}
+                  />
+                </Suspense>
+              </Canvas>
+            )}
 
             {/* View preset buttons */}
             <div className="absolute bottom-4 left-4 flex gap-2">
