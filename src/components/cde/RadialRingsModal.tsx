@@ -1258,26 +1258,8 @@ export default function RadialRingsModal({
                     </div>
                 )}
 
-                {/* 3D Canvas (only if WebGL available) */}
-                {!isLoading && !error && data && webglAvailable === true && (
-                    <Canvas
-                        camera={{ position: [0, 18, 12], fov: 55 }}
-                        gl={{ antialias: true, alpha: false, powerPreference: 'high-performance' }}
-                        dpr={[1, 1.5]}
-                    >
-                        <RadialScene
-                            data={data}
-                            animationTime={animationTime}
-                            selectedNodeId={selectedNodeId}
-                            selectedEdgeId={selectedEdge?.id || null}
-                            onNodeSelect={setSelectedNodeId}
-                            onEdgeSelect={handleEdgeSelect}
-                        />
-                    </Canvas>
-                )}
-
-                {/* 2D SVG Fallback (when WebGL unavailable) */}
-                {!isLoading && !error && data && webglAvailable === false && (
+                {/* 2D SVG Visualization (always used - faster than WebGL) */}
+                {!isLoading && !error && data && (
                     <SVGFallback
                         data={data}
                         animationTime={animationTime}
