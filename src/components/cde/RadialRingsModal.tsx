@@ -1,10 +1,13 @@
 // ============================================
-// RADIAL RINGS 2D MODAL - D3.js FLUID ANIMATION
+// RADIAL RINGS 3D MODAL - WebGL FLUID ANIMATION
 // ============================================
-// SVG-based 2D visualization with progressive ring-by-ring animation
-// Works without WebGL!
+// 3D visualization with progressive ring-by-ring animation
+// Same design as 2D version but with 3D navigation
 
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import { Canvas, useFrame, useThree } from '@react-three/fiber';
+import { OrbitControls, Html, Line } from '@react-three/drei';
+import * as THREE from 'three';
 import { X, Play, Pause, RotateCcw, Sparkles, Loader2 } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 
@@ -52,7 +55,7 @@ interface RadialRingsData {
 }
 
 // ============================================
-// RING COLORS
+// RING COLORS (EXACT SAME AS 2D VERSION)
 // ============================================
 
 const RING_COLORS: Record<number, string> = {
@@ -78,7 +81,7 @@ const LANE_COLORS: Record<string, string> = {
 };
 
 // ============================================
-// ANIMATION TIMING (in ms)
+// ANIMATION TIMING (EXACT SAME AS 2D VERSION - in ms)
 // ============================================
 
 const TIMING = {
@@ -87,6 +90,409 @@ const TIMING = {
     LINK_GROW_DURATION: 800,
     NODE_APPEAR_DURATION: 300,
 };
+
+// Check if WebGL is available
+function isWebGLAvailable(): boolean {
+    try {
+        const canvas = document.createElement('canvas');
+        const gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
+        return !!gl;
+    } catch {
+        return false;
+    }
+}
+
+// ============================================
+// 3D GLOWING NODE COMPONENT
+// ============================================
+
+interface GlowingNode3DProps {
+    node: RingNode;
+    position: THREE.Vector3;
+    animationTime: number;
+    isSelected: boolean;
+    isHovered: boolean;
+    onClick: () => void;
+    onHover: (hovered: boolean) => void;
+}
+
+function GlowingNode3D({ node, position, animationTime, isSelected, isHovered, onClick, onHover }: GlowingNode3DProps) {
+    const meshRef = useRef<THREE.Mesh>(null);
+    const glowRef = useRef<THREE.Mesh>(null);
+    const pulseRef = useRef<THREE.Mesh>(null);
+
+    const color = useMemo(() => LANE_COLORS[node.lane] || RING_COLORS[node.ring] || '#94a3b8', [node]);
+
+    // Calculate when this node should appear based on its ring (convert ms to seconds)
+    const appearTime = (TIMING.CENTER_NODE_APPEAR + node.ring * TIMING.RING_INTERVAL) / 1000;
+    const progress = Math.max(0, Math.min(1, (animationTime - appearTime) / (TIMING.NODE_APPEAR_DURATION / 1000)));
+
+    // Size based on proximity score
+    const baseSize = 0.12 + node.proximity_score * 0.08;
+    const size = baseSize * progress;
+
+    useFrame((state) => {
+        if (!meshRef.current || progress < 1) return;
+
+        // Gentle breathing animation (same as 2D version)
+        const breathe = 1 + Math.sin(state.clock.elapsedTime * 2 + node.ring) * 0.05;
+        meshRef.current.scale.setScalar(baseSize * breathe * (isSelected ? 1.3 : isHovered ? 1.1 : 1));
+
+        // Glow pulse
+        if (glowRef.current) {
+            const glowPulse = 0.25 + Math.sin(state.clock.elapsedTime * 3) * 0.1;
+            (glowRef.current.material as THREE.MeshBasicMaterial).opacity = glowPulse;
+        }
+
+        // Pulse ring for center node (like 2D animate elements)
+        if (pulseRef.current && node.ring === 0) {
+            const pulseScale = 1 + (state.clock.elapsedTime % 2) / 2;
+            pulseRef.current.scale.setScalar(pulseScale);
+            (pulseRef.current.material as THREE.MeshBasicMaterial).opacity = 0.5 - (pulseScale - 1) * 0.5;
+        }
+    });
+
+    if (progress <= 0) return null;
+
+    return (
+        <group position={position}>
+            {/* Outer glow (like 2D filter: blur effect) */}
+            <mesh ref={glowRef} scale={size * 1.8}>
+                <sphereGeometry args={[1, 16, 16]} />
+                <meshBasicMaterial
+                    color={color}
+                    transparent
+                    opacity={0.15}
+                    side={THREE.BackSide}
+                />
+            </mesh>
+
+            {/* Pulse ring for center node */}
+            {node.ring === 0 && progress >= 1 && (
+                <mesh ref={pulseRef} rotation={[Math.PI / 2, 0, 0]}>
+                    <ringGeometry args={[size, size * 1.1, 32]} />
+                    <meshBasicMaterial
+                        color={color}
+                        transparent
+                        opacity={0.5}
+                        side={THREE.DoubleSide}
+                    />
+                </mesh>
+            )}
+
+            {/* Main node sphere */}
+            <mesh
+                ref={meshRef}
+                onClick={onClick}
+                onPointerOver={() => onHover(true)}
+                onPointerOut={() => onHover(false)}
+                scale={size}
+            >
+                <sphereGeometry args={[1, 32, 32]} />
+                <meshStandardMaterial
+                    color={color}
+                    emissive={color}
+                    emissiveIntensity={isSelected ? 0.6 : 0.3}
+                    metalness={0.2}
+                    roughness={0.5}
+                />
+            </mesh>
+
+            {/* Inner highlight (like 2D white highlight) */}
+            <mesh position={[-size * 0.3, size * 0.3, size * 0.3]} scale={size * 0.3}>
+                <sphereGeometry args={[1, 8, 8]} />
+                <meshBasicMaterial color="white" transparent opacity={0.3} />
+            </mesh>
+
+            {/* Label */}
+            {(isSelected || isHovered || node.ring === 0) && progress >= 1 && (
+                <Html position={[0, size + 0.15, 0]} center>
+                    <div
+                        className="px-3 py-1.5 rounded-lg text-xs whitespace-nowrap shadow-xl pointer-events-none"
+                        style={{
+                            backgroundColor: 'rgba(0,0,0,0.9)',
+                            border: `1px solid ${color}`,
+                            color: 'white'
+                        }}
+                    >
+                        {node.ring === 0 && <span>🎯 </span>}
+                        {node.name.substring(0, 30)}{node.name.length > 30 ? '...' : ''}
+                    </div>
+                </Html>
+            )}
+        </group>
+    );
+}
+
+// ============================================
+// 3D GROWING EDGE COMPONENT
+// ============================================
+
+interface GrowingEdge3DProps {
+    start: THREE.Vector3;
+    end: THREE.Vector3;
+    sourceRing: number;
+    animationTime: number;
+    hasKillCriteria: boolean;
+    evidenceGrade: string;
+}
+
+function GrowingEdge3D({ start, end, sourceRing, animationTime, hasKillCriteria, evidenceGrade }: GrowingEdge3DProps) {
+    const pulseRef = useRef<THREE.Mesh>(null);
+    const tipRef = useRef<THREE.Mesh>(null);
+
+    // Edge starts growing when source ring appears (convert ms to seconds)
+    const sourceAppearTime = (TIMING.CENTER_NODE_APPEAR + sourceRing * TIMING.RING_INTERVAL + 200) / 1000;
+    const progress = Math.max(0, Math.min(1, (animationTime - sourceAppearTime) / (TIMING.LINK_GROW_DURATION / 1000)));
+
+    // Color based on evidence and kill criteria (same as 2D)
+    const color = hasKillCriteria ? '#ef4444' :
+        evidenceGrade === 'A' ? '#22c55e' :
+            evidenceGrade === 'B' ? '#3b82f6' :
+                evidenceGrade === 'C' ? '#f59e0b' : '#6b7280';
+
+    // Calculate current endpoint based on progress
+    const currentEnd = useMemo(() => {
+        return new THREE.Vector3().lerpVectors(start, end, progress);
+    }, [start, end, progress]);
+
+    // Animate traveling pulse
+    useFrame((state) => {
+        if (progress < 1 || !pulseRef.current) return;
+
+        const pulseProgress = (state.clock.elapsedTime * 0.5) % 1;
+        const pulsePos = new THREE.Vector3().lerpVectors(start, end, pulseProgress);
+        pulseRef.current.position.copy(pulsePos);
+    });
+
+    if (progress <= 0) return null;
+
+    return (
+        <group>
+            {/* Glow effect (blur simulation) */}
+            <Line
+                points={[start, currentEnd]}
+                color={color}
+                lineWidth={hasKillCriteria ? 6 : 4}
+                transparent
+                opacity={0.3}
+            />
+
+            {/* Main line */}
+            <Line
+                points={[start, currentEnd]}
+                color={color}
+                lineWidth={hasKillCriteria ? 2 : 1}
+                transparent
+                opacity={0.8}
+            />
+
+            {/* Growing tip (while animating) */}
+            {progress > 0 && progress < 1 && (
+                <mesh ref={tipRef} position={currentEnd}>
+                    <sphereGeometry args={[0.04, 8, 8]} />
+                    <meshBasicMaterial color={color} transparent opacity={0.9} />
+                </mesh>
+            )}
+
+            {/* Traveling pulse particle (after complete) */}
+            {progress >= 1 && (
+                <mesh ref={pulseRef}>
+                    <sphereGeometry args={[0.03, 8, 8]} />
+                    <meshBasicMaterial color={color} transparent opacity={0.8} />
+                </mesh>
+            )}
+        </group>
+    );
+}
+
+// ============================================
+// 3D RING CIRCLE COMPONENT
+// ============================================
+
+interface RingCircle3DProps {
+    ring: number;
+    radius: number;
+    animationTime: number;
+}
+
+function RingCircle3D({ ring, radius, animationTime }: RingCircle3DProps) {
+    const appearTime = (TIMING.CENTER_NODE_APPEAR + ring * TIMING.RING_INTERVAL - 300) / 1000;
+    const progress = Math.max(0, Math.min(1, (animationTime - appearTime) / 0.5));
+
+    const points = useMemo(() => {
+        const pts: THREE.Vector3[] = [];
+        const segments = 64;
+        for (let i = 0; i <= segments; i++) {
+            const angle = (i / segments) * Math.PI * 2;
+            pts.push(new THREE.Vector3(Math.cos(angle) * radius, 0, Math.sin(angle) * radius));
+        }
+        return pts;
+    }, [radius]);
+
+    if (progress <= 0 || radius === 0) return null;
+
+    return (
+        <Line
+            points={points}
+            color={RING_COLORS[ring]}
+            lineWidth={2}
+            transparent
+            opacity={progress * 0.3}
+            dashed
+            dashSize={0.3}
+            gapSize={0.15}
+        />
+    );
+}
+
+// ============================================
+// MAIN 3D SCENE COMPONENT
+// ============================================
+
+interface Radial3DSceneProps {
+    data: RadialRingsData;
+    animationTime: number;
+    selectedNodeId: string | null;
+    hoveredNodeId: string | null;
+    onNodeSelect: (nodeId: string | null) => void;
+    onNodeHover: (nodeId: string | null) => void;
+}
+
+function Radial3DScene({ data, animationTime, selectedNodeId, hoveredNodeId, onNodeSelect, onNodeHover }: Radial3DSceneProps) {
+    const ringRadius = 3; // Distance between rings
+
+    // Calculate node positions in 3D radial layout
+    const { nodePositions, maxRing, nodeMap } = useMemo(() => {
+        const positions = new Map<string, THREE.Vector3>();
+        const nodesByRing = new Map<number, RingNode[]>();
+        const nodeMap = new Map<string, RingNode>();
+        let maxRing = 0;
+
+        // Group nodes by ring
+        for (const node of data.knowledge_graph.nodes) {
+            nodeMap.set(node.id, node);
+            if (!nodesByRing.has(node.ring)) {
+                nodesByRing.set(node.ring, []);
+            }
+            nodesByRing.get(node.ring)!.push(node);
+            maxRing = Math.max(maxRing, node.ring);
+        }
+
+        // Calculate positions in concentric circles
+        for (const [ring, nodes] of nodesByRing.entries()) {
+            const radius = ring === 0 ? 0 : ring * ringRadius;
+            const angleStep = (Math.PI * 2) / Math.max(nodes.length, 1);
+
+            nodes.forEach((node, i) => {
+                const angle = angleStep * i - Math.PI / 2; // Start from top
+                const jitter = (Math.random() - 0.5) * 0.2;
+                const x = Math.cos(angle) * (radius + jitter);
+                const z = Math.sin(angle) * (radius + jitter);
+                const y = (Math.random() - 0.5) * 0.3; // Slight Y variation for 3D effect
+
+                positions.set(node.id, new THREE.Vector3(x, y, z));
+            });
+        }
+
+        return { nodePositions: positions, maxRing, nodeMap };
+    }, [data]);
+
+    // Identify kill criteria edges
+    const killCriteriaEdges = useMemo(() => {
+        const killSet = new Set<string>();
+        for (const signal of data.micro_signals) {
+            if (signal.confidence < 0.3 || signal.kill_criteria) {
+                for (const edge of data.knowledge_graph.edges) {
+                    if (edge.translation_gap || edge.evidence_grade === 'D') {
+                        killSet.add(edge.id);
+                    }
+                }
+            }
+        }
+        return killSet;
+    }, [data]);
+
+    return (
+        <>
+            {/* Lighting */}
+            <ambientLight intensity={0.5} />
+            <pointLight position={[10, 10, 10]} intensity={1} color="#ffffff" />
+            <pointLight position={[-10, -5, -10]} intensity={0.5} color="#8b5cf6" />
+            <pointLight position={[0, 10, 0]} intensity={0.3} color="#22c55e" />
+
+            {/* Background */}
+            <color attach="background" args={['#0a0a0f']} />
+
+            {/* Fog for depth */}
+            <fog attach="fog" args={['#0a0a0f', 15, 40]} />
+
+            {/* Ring circles (visual guides) */}
+            {Array.from({ length: maxRing + 1 }).map((_, ring) => (
+                <RingCircle3D
+                    key={`ring-${ring}`}
+                    ring={ring}
+                    radius={ring * ringRadius}
+                    animationTime={animationTime}
+                />
+            ))}
+
+            {/* Edges */}
+            {data.knowledge_graph.edges.map((edge) => {
+                const startPos = nodePositions.get(edge.source);
+                const endPos = nodePositions.get(edge.target);
+                const sourceNode = nodeMap.get(edge.source);
+
+                if (!startPos || !endPos || !sourceNode) return null;
+
+                return (
+                    <GrowingEdge3D
+                        key={edge.id}
+                        start={startPos}
+                        end={endPos}
+                        sourceRing={sourceNode.ring}
+                        animationTime={animationTime}
+                        hasKillCriteria={killCriteriaEdges.has(edge.id)}
+                        evidenceGrade={edge.evidence_grade}
+                    />
+                );
+            })}
+
+            {/* Nodes */}
+            {data.knowledge_graph.nodes.map((node) => {
+                const position = nodePositions.get(node.id);
+                if (!position) return null;
+
+                return (
+                    <GlowingNode3D
+                        key={node.id}
+                        node={node}
+                        position={position}
+                        animationTime={animationTime}
+                        isSelected={selectedNodeId === node.id}
+                        isHovered={hoveredNodeId === node.id}
+                        onClick={() => onNodeSelect(selectedNodeId === node.id ? null : node.id)}
+                        onHover={(hovered) => onNodeHover(hovered ? node.id : null)}
+                    />
+                );
+            })}
+
+            {/* Camera controls - ALLOWS NAVIGATION THROUGH NODES */}
+            <OrbitControls
+                enableDamping
+                dampingFactor={0.05}
+                rotateSpeed={0.5}
+                zoomSpeed={0.8}
+                minDistance={2}  // Can get close to nodes
+                maxDistance={30}
+                autoRotate={!selectedNodeId}
+                autoRotateSpeed={0.2}
+                maxPolarAngle={Math.PI * 0.85}
+                minPolarAngle={Math.PI * 0.15}
+            />
+        </>
+    );
+}
 
 // ============================================
 // SIGNAL PANEL COMPONENT
@@ -102,7 +508,7 @@ function SignalPanel({ signals, onSignalClick }: SignalPanelProps) {
 
     return (
         <div className="absolute bottom-4 left-4 right-4 z-20">
-            <div className="bg-gray-900/95 rounded-lg border border-gray-700 p-3">
+            <div className="bg-gray-900/95 rounded-lg border border-gray-700 p-3 backdrop-blur-sm">
                 <h4 className="text-sm font-bold text-purple-400 mb-2 flex items-center gap-2">
                     <Sparkles className="w-4 h-4" />
                     Micro-Signaux Détectés ({signals.length})
@@ -113,11 +519,11 @@ function SignalPanel({ signals, onSignalClick }: SignalPanelProps) {
                             key={signal.id}
                             onClick={() => onSignalClick(signal.id)}
                             className={`flex-shrink-0 p-2 rounded-lg border text-left text-xs transition-all hover:scale-105 ${signal.confidence > 0.5
-                                ? 'border-green-500/50 bg-green-900/30 hover:bg-green-900/50'
-                                : 'border-red-500/50 bg-red-900/30 hover:bg-red-900/50'
+                                    ? 'border-green-500/50 bg-green-900/30 hover:bg-green-900/50'
+                                    : 'border-red-500/50 bg-red-900/30 hover:bg-red-900/50'
                                 }`}
                         >
-                            <div className="font-medium truncate max-w-[150px]">{signal.observation}</div>
+                            <div className="font-medium truncate max-w-[150px] text-white">{signal.observation}</div>
                             <div className="flex items-center gap-2 mt-1 text-gray-400">
                                 <span>Triangulation: {signal.triangulation_score}/4</span>
                                 <span className={signal.confidence > 0.5 ? 'text-green-400' : 'text-red-400'}>
@@ -133,296 +539,24 @@ function SignalPanel({ signals, onSignalClick }: SignalPanelProps) {
 }
 
 // ============================================
-// RADIAL 2D VISUALIZATION
+// 2D FALLBACK (when WebGL unavailable)
 // ============================================
 
-interface Radial2DVisualizationProps {
-    data: RadialRingsData;
-    animationTime: number;
-    selectedNodeId: string | null;
-    onNodeSelect: (id: string | null) => void;
-}
-
-function Radial2DVisualization({ data, animationTime, selectedNodeId, onNodeSelect }: Radial2DVisualizationProps) {
-    const containerRef = useRef<HTMLDivElement>(null);
-    const [dimensions, setDimensions] = useState({ width: 800, height: 600 });
-    const [hoveredNode, setHoveredNode] = useState<string | null>(null);
-
-    // Calculate center
-    const cx = dimensions.width / 2;
-    const cy = dimensions.height / 2;
-    const ringRadius = Math.min(dimensions.width, dimensions.height) / 2.5 / 5;
-
-    // Update dimensions on resize
-    useEffect(() => {
-        const updateDimensions = () => {
-            if (containerRef.current) {
-                const { width, height } = containerRef.current.getBoundingClientRect();
-                setDimensions({ width, height: height - 100 });
-            }
-        };
-        updateDimensions();
-        window.addEventListener('resize', updateDimensions);
-        return () => window.removeEventListener('resize', updateDimensions);
-    }, []);
-
-    // Calculate node positions
-    const nodePositions = new Map<string, { x: number; y: number }>();
-    const nodesByRing = new Map<number, RingNode[]>();
-    const nodeMap = new Map<string, RingNode>();
-
-    for (const node of data.knowledge_graph.nodes) {
-        nodeMap.set(node.id, node);
-        if (!nodesByRing.has(node.ring)) {
-            nodesByRing.set(node.ring, []);
-        }
-        nodesByRing.get(node.ring)!.push(node);
-    }
-
-    for (const [ring, nodes] of nodesByRing.entries()) {
-        const radius = ring === 0 ? 0 : ring * ringRadius;
-        const angleStep = (Math.PI * 2) / Math.max(nodes.length, 1);
-
-        nodes.forEach((node, i) => {
-            const angle = angleStep * i - Math.PI / 2;
-            const x = cx + Math.cos(angle) * radius;
-            const y = cy + Math.sin(angle) * radius;
-            nodePositions.set(node.id, { x, y });
-        });
-    }
-
-    // Identify kill criteria edges
-    const killCriteriaEdges = new Set<string>();
-    for (const signal of data.micro_signals) {
-        if (signal.confidence < 0.3 || signal.kill_criteria) {
-            for (const edge of data.knowledge_graph.edges) {
-                if (edge.translation_gap || edge.evidence_grade === 'D') {
-                    killCriteriaEdges.add(edge.id);
-                }
-            }
-        }
-    }
-
+function Fallback2D({ data }: { data: RadialRingsData }) {
     return (
-        <div ref={containerRef} className="absolute inset-0 overflow-hidden bg-gradient-to-br from-gray-900 via-slate-900 to-gray-900">
-            <svg width={dimensions.width} height={dimensions.height} className="w-full h-full">
-                {/* Background circles */}
-                {[1, 2, 3, 4].map(ring => {
-                    const appearTime = TIMING.CENTER_NODE_APPEAR + ring * TIMING.RING_INTERVAL - 300;
-                    const opacity = Math.min(1, Math.max(0, (animationTime - appearTime) / 500)) * 0.2;
-
-                    return (
-                        <circle
-                            key={`ring-circle-${ring}`}
-                            cx={cx}
-                            cy={cy}
-                            r={ring * ringRadius}
-                            fill="none"
-                            stroke={RING_COLORS[ring]}
-                            strokeWidth={2}
-                            strokeDasharray="10 5"
-                            opacity={opacity}
-                            style={{ transition: 'opacity 0.5s ease-out' }}
-                        />
-                    );
-                })}
-
-                {/* Edges */}
-                {data.knowledge_graph.edges.map(edge => {
-                    const startPos = nodePositions.get(edge.source);
-                    const endPos = nodePositions.get(edge.target);
-                    const sourceNode = nodeMap.get(edge.source);
-                    const targetNode = nodeMap.get(edge.target);
-
-                    if (!startPos || !endPos || !sourceNode || !targetNode) return null;
-
-                    const sourceAppearTime = TIMING.CENTER_NODE_APPEAR + sourceNode.ring * TIMING.RING_INTERVAL;
-                    const edgeStartTime = sourceAppearTime + 200;
-                    const progress = Math.max(0, Math.min(1, (animationTime - edgeStartTime) / TIMING.LINK_GROW_DURATION));
-
-                    if (progress <= 0) return null;
-
-                    const hasKill = killCriteriaEdges.has(edge.id);
-                    const color = hasKill ? '#ef4444' :
-                        edge.evidence_grade === 'A' ? '#22c55e' :
-                            edge.evidence_grade === 'B' ? '#3b82f6' :
-                                edge.evidence_grade === 'C' ? '#f59e0b' : '#6b7280';
-
-                    // Interpolate end point
-                    const currentX = startPos.x + (endPos.x - startPos.x) * progress;
-                    const currentY = startPos.y + (endPos.y - startPos.y) * progress;
-
-                    return (
-                        <g key={edge.id}>
-                            {/* Glow effect */}
-                            <line
-                                x1={startPos.x}
-                                y1={startPos.y}
-                                x2={currentX}
-                                y2={currentY}
-                                stroke={color}
-                                strokeWidth={hasKill ? 6 : 4}
-                                opacity={0.3}
-                                style={{ filter: 'blur(3px)' }}
-                            />
-                            {/* Main line */}
-                            <line
-                                x1={startPos.x}
-                                y1={startPos.y}
-                                x2={currentX}
-                                y2={currentY}
-                                stroke={color}
-                                strokeWidth={hasKill ? 2 : 1}
-                                opacity={0.8}
-                            />
-                            {/* Growing tip */}
-                            {progress < 1 && (
-                                <circle
-                                    cx={currentX}
-                                    cy={currentY}
-                                    r={4}
-                                    fill={color}
-                                    opacity={0.9}
-                                >
-                                    <animate
-                                        attributeName="r"
-                                        values="4;6;4"
-                                        dur="0.5s"
-                                        repeatCount="indefinite"
-                                    />
-                                </circle>
-                            )}
-                        </g>
-                    );
-                })}
-
-                {/* Nodes */}
-                {data.knowledge_graph.nodes.map(node => {
-                    const pos = nodePositions.get(node.id);
-                    if (!pos) return null;
-
-                    const appearTime = TIMING.CENTER_NODE_APPEAR + node.ring * TIMING.RING_INTERVAL;
-                    const progress = Math.max(0, Math.min(1, (animationTime - appearTime) / TIMING.NODE_APPEAR_DURATION));
-
-                    if (progress <= 0) return null;
-
-                    const color = LANE_COLORS[node.lane] || RING_COLORS[node.ring] || '#94a3b8';
-                    const baseRadius = 8 + node.proximity_score * 10;
-                    const radius = baseRadius * progress;
-                    const isSelected = selectedNodeId === node.id;
-                    const isHovered = hoveredNode === node.id;
-
-                    return (
-                        <g
-                            key={node.id}
-                            style={{ cursor: 'pointer' }}
-                            onClick={() => onNodeSelect(isSelected ? null : node.id)}
-                            onMouseEnter={() => setHoveredNode(node.id)}
-                            onMouseLeave={() => setHoveredNode(null)}
-                        >
-                            {/* Outer glow */}
-                            <circle
-                                cx={pos.x}
-                                cy={pos.y}
-                                r={radius * 1.8}
-                                fill={color}
-                                opacity={0.15}
-                                style={{ filter: 'blur(8px)' }}
-                            />
-                            {/* Pulse ring for center node */}
-                            {node.ring === 0 && progress >= 1 && (
-                                <circle
-                                    cx={pos.x}
-                                    cy={pos.y}
-                                    r={radius}
-                                    fill="none"
-                                    stroke={color}
-                                    strokeWidth={2}
-                                    opacity={0.5}
-                                >
-                                    <animate
-                                        attributeName="r"
-                                        values={`${radius};${radius * 2};${radius}`}
-                                        dur="2s"
-                                        repeatCount="indefinite"
-                                    />
-                                    <animate
-                                        attributeName="opacity"
-                                        values="0.5;0;0.5"
-                                        dur="2s"
-                                        repeatCount="indefinite"
-                                    />
-                                </circle>
-                            )}
-                            {/* Main node */}
-                            <circle
-                                cx={pos.x}
-                                cy={pos.y}
-                                r={radius * (isSelected ? 1.3 : isHovered ? 1.1 : 1)}
-                                fill={color}
-                                stroke="white"
-                                strokeWidth={isSelected ? 3 : 1}
-                                opacity={0.9}
-                                style={{ transition: 'r 0.2s ease-out' }}
-                            />
-                            {/* Inner highlight */}
-                            <circle
-                                cx={pos.x - radius * 0.3}
-                                cy={pos.y - radius * 0.3}
-                                r={radius * 0.3}
-                                fill="white"
-                                opacity={0.3}
-                            />
-                            {/* Label */}
-                            {(isSelected || isHovered || node.ring === 0) && progress >= 1 && (
-                                <g>
-                                    <rect
-                                        x={pos.x - node.name.length * 3.5 - 8}
-                                        y={pos.y + radius + 8}
-                                        width={node.name.length * 7 + 16}
-                                        height={22}
-                                        rx={4}
-                                        fill="rgba(0,0,0,0.9)"
-                                        stroke={color}
-                                        strokeWidth={1}
-                                    />
-                                    <text
-                                        x={pos.x}
-                                        y={pos.y + radius + 23}
-                                        textAnchor="middle"
-                                        fill="white"
-                                        fontSize={11}
-                                        fontWeight={node.ring === 0 ? 'bold' : 'normal'}
-                                    >
-                                        {node.ring === 0 ? '🎯 ' : ''}{node.name.substring(0, 25)}
-                                        {node.name.length > 25 ? '...' : ''}
-                                    </text>
-                                </g>
-                            )}
-                        </g>
-                    );
-                })}
-
-                {/* Ring labels */}
-                {['Centre', 'Ring 1', 'Ring 2', 'Ring 3', 'Ring 4'].map((label, ring) => {
-                    if (ring === 0) return null;
-                    const appearTime = TIMING.CENTER_NODE_APPEAR + ring * TIMING.RING_INTERVAL;
-                    const opacity = Math.min(1, Math.max(0, (animationTime - appearTime) / 500)) * 0.5;
-
-                    return (
-                        <text
-                            key={`label-${ring}`}
-                            x={cx + ring * ringRadius}
-                            y={cy - 10}
-                            fill={RING_COLORS[ring]}
-                            fontSize={10}
-                            opacity={opacity}
-                        >
-                            {label}
-                        </text>
-                    );
-                })}
-            </svg>
+        <div className="absolute inset-0 flex items-center justify-center bg-gray-900">
+            <div className="text-center p-8">
+                <div className="text-6xl mb-4">🔬</div>
+                <h3 className="text-xl font-bold text-white mb-2">WebGL non disponible</h3>
+                <p className="text-gray-400 mb-4">
+                    La visualisation 3D nécessite WebGL activé.
+                </p>
+                <div className="text-sm text-gray-500">
+                    Nœuds: {data.knowledge_graph.nodes.length} |
+                    Liens: {data.knowledge_graph.edges.length} |
+                    Signaux: {data.micro_signals.length}
+                </div>
+            </div>
         </div>
     );
 }
@@ -452,8 +586,15 @@ export default function RadialRingsModal({
     const [animationTime, setAnimationTime] = useState(0);
     const [isPaused, setIsPaused] = useState(false);
     const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
+    const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null);
+    const [webglAvailable, setWebglAvailable] = useState<boolean | null>(null);
     const animationRef = useRef<number>();
     const startTimeRef = useRef<number>(0);
+
+    // Check WebGL on mount
+    useEffect(() => {
+        setWebglAvailable(isWebGLAvailable());
+    }, []);
 
     // Fetch data when modal opens
     useEffect(() => {
@@ -468,7 +609,7 @@ export default function RadialRingsModal({
         };
     }, [isOpen, pathology]);
 
-    // Animation loop
+    // Animation loop (time in SECONDS for three.js)
     useEffect(() => {
         if (!data || isPaused || !isOpen) return;
 
@@ -477,7 +618,7 @@ export default function RadialRingsModal({
                 startTimeRef.current = timestamp;
             }
 
-            const elapsed = timestamp - startTimeRef.current;
+            const elapsed = (timestamp - startTimeRef.current) / 1000; // Convert to seconds
             setAnimationTime(elapsed);
 
             animationRef.current = requestAnimationFrame(animate);
@@ -528,10 +669,13 @@ export default function RadialRingsModal({
         setData(null);
         setAnimationTime(0);
         setSelectedNodeId(null);
+        setHoveredNodeId(null);
         onClose();
     }, [onClose]);
 
     if (!isOpen) return null;
+
+    const showCanvas = !isLoading && !error && data && webglAvailable;
 
     return (
         <div className="fixed inset-0 z-50 flex items-center justify-center">
@@ -547,8 +691,7 @@ export default function RadialRingsModal({
                 <div className="absolute top-4 left-4 right-4 z-20 flex justify-between items-start">
                     <div className="bg-gray-900/95 rounded-xl border border-gray-700/50 p-4 backdrop-blur-sm">
                         <h2 className="text-xl font-bold text-white flex items-center gap-2">
-                            <span className="text-2xl">🎯</span> Radial Discovery
-                            <span className="text-xs bg-green-600 px-2 py-0.5 rounded ml-2">2D Mode</span>
+                            <span className="text-2xl">🎯</span> Radial Discovery 3D
                         </h2>
                         <p className="text-purple-400 text-sm mt-1 font-medium">
                             {pathology}
@@ -566,6 +709,9 @@ export default function RadialRingsModal({
                                 </span>
                             </div>
                         )}
+                        <div className="text-xs text-gray-500 mt-2">
+                            🖱️ Clic + glisser pour pivoter | Molette pour zoomer | Clic droit pour déplacer
+                        </div>
                     </div>
 
                     <div className="flex gap-2">
@@ -573,6 +719,7 @@ export default function RadialRingsModal({
                             onClick={handleReplay}
                             className="bg-gray-800/90 hover:bg-gray-700 text-white p-2.5 rounded-lg transition-all hover:scale-105"
                             title="Rejouer l'animation"
+                            aria-label="Rejouer l'animation"
                         >
                             <RotateCcw className="w-5 h-5" />
                         </button>
@@ -580,6 +727,7 @@ export default function RadialRingsModal({
                             onClick={() => setIsPaused(!isPaused)}
                             className="bg-gray-800/90 hover:bg-gray-700 text-white p-2.5 rounded-lg transition-all hover:scale-105"
                             title={isPaused ? 'Reprendre' : 'Pause'}
+                            aria-label={isPaused ? 'Reprendre' : 'Pause'}
                         >
                             {isPaused ? <Play className="w-5 h-5" /> : <Pause className="w-5 h-5" />}
                         </button>
@@ -595,7 +743,7 @@ export default function RadialRingsModal({
                 </div>
 
                 {/* Legend */}
-                <div className="absolute top-24 right-4 z-20 bg-gray-900/95 rounded-xl border border-gray-700/50 p-3 backdrop-blur-sm">
+                <div className="absolute top-28 right-4 z-20 bg-gray-900/95 rounded-xl border border-gray-700/50 p-3 backdrop-blur-sm">
                     <h4 className="text-xs font-bold text-gray-400 mb-2">ANNEAUX</h4>
                     <div className="space-y-1.5 text-xs">
                         {['Centre', 'Traitements', 'Effets', 'Étiologie', 'Frontières'].map((label, i) => (
@@ -625,7 +773,7 @@ export default function RadialRingsModal({
                     <div className="absolute inset-0 flex items-center justify-center z-30 bg-gray-900">
                         <div className="text-center">
                             <Loader2 className="w-16 h-16 text-purple-500 animate-spin mx-auto mb-4" />
-                            <p className="text-white text-lg font-medium">Construction du graphe...</p>
+                            <p className="text-white text-lg font-medium">Construction du graphe 3D...</p>
                             <p className="text-gray-400 text-sm mt-2">Interrogation OpenFDA, ClinicalTrials...</p>
                         </div>
                     </div>
@@ -647,14 +795,34 @@ export default function RadialRingsModal({
                     </div>
                 )}
 
-                {/* 2D Visualization */}
-                {!isLoading && !error && data && (
-                    <Radial2DVisualization
-                        data={data}
-                        animationTime={animationTime}
-                        selectedNodeId={selectedNodeId}
-                        onNodeSelect={setSelectedNodeId}
-                    />
+                {/* 3D Canvas */}
+                {showCanvas && (
+                    <Canvas
+                        camera={{ position: [0, 10, 15], fov: 55 }}
+                        gl={{
+                            antialias: true,
+                            alpha: false,
+                            powerPreference: 'high-performance',
+                            stencil: false,
+                            depth: true
+                        }}
+                        className="absolute inset-0"
+                        dpr={[1, 2]}
+                    >
+                        <Radial3DScene
+                            data={data}
+                            animationTime={animationTime}
+                            selectedNodeId={selectedNodeId}
+                            hoveredNodeId={hoveredNodeId}
+                            onNodeSelect={setSelectedNodeId}
+                            onNodeHover={setHoveredNodeId}
+                        />
+                    </Canvas>
+                )}
+
+                {/* 2D Fallback when WebGL unavailable */}
+                {!isLoading && !error && data && !webglAvailable && (
+                    <Fallback2D data={data} />
                 )}
 
                 {/* Background when no content */}
