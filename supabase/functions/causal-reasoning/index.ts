@@ -82,38 +82,60 @@ async function generateLinkExplanationWithClaude(
     context: CausalQuery['context'],
     claudeApiKey: string
 ): Promise<string> {
-    const systemPrompt = `Tu es un expert médical clinicien spécialisé dans l'analyse des liens causaux en médecine.
-Tu dois expliquer de manière détaillée et accessible le lien entre deux concepts médicaux.
+    const systemPrompt = `Tu es un expert médical clinicien senior spécialisé dans la synthèse des connaissances médicales.
+Ta mission est de produire une SYNTHÈSE COMPLÈTE et ACTIONNABLE de la relation entre deux concepts médicaux dans le contexte d'une pathologie donnée.
 
 Règles:
-- Utilise un langage scientifique précis mais accessible
-- Structure ta réponse avec des sections claires
-- Cite les mécanismes biologiques quand pertinent
-- Mentionne les implications cliniques pratiques
-- Indique les niveaux de preuve quand possible
-- Reste factuel et basé sur des données scientifiques
+- Produis une synthèse de qualité professionnelle pour un médecin
+- Explique les mécanismes biologiques et physiopathologiques
+- Cite des preuves cliniques avec niveaux d'évidence (ECR, méta-analyses, études observationnelles)
+- Fournis des recommandations pratiques pour la prise en charge
+- Identifie les opportunités thérapeutiques et les risques
+- Mentionne les interactions médicamenteuses potentielles si pertinent
+- Reste factuel et basé sur des données scientifiques actuelles
 
-Format de réponse:
-**Mécanisme biologique**
-[Explication du mécanisme]
+Format de réponse OBLIGATOIRE:
 
-**Preuves cliniques**
-[Études et preuves disponibles]
+**🔬 Synthèse de la relation**
+[Résumé en 2-3 phrases de la relation entre les deux concepts]
 
-**Implications thérapeutiques**
-[Ce que cela signifie pour le traitement]
+**📊 Mécanisme physiopathologique**
+[Explication détaillée du mécanisme biologique/moléculaire]
 
-**Limitations et incertitudes**
-[Ce qu'on ne sait pas encore]`;
+**📚 Preuves cliniques**
+- [Étude/Méta-analyse avec niveau de preuve]
+- [Données épidémiologiques si disponibles]
+- [Résultats d'essais cliniques pertinents]
 
-    const userPrompt = `${query}
+**💊 Implications pour le traitement**
+- [Recommandation thérapeutique 1]
+- [Recommandation thérapeutique 2]
+- [Ajustements posologiques si nécessaire]
 
-Contexte:
-- Nœud source: ${context?.sourceNode || 'Non spécifié'}
-- Nœud cible: ${context?.targetNode || 'Non spécifié'}
-- Pathologie: ${context?.pathology || 'Non spécifiée'}
-- Type de relation: ${context?.relationship || 'Non spécifié'}
-- Grade d'évidence: ${context?.evidence_grade || 'Non spécifié'}`;
+**⚠️ Points de vigilance**
+- [Risques ou contre-indications]
+- [Effets indésirables à surveiller]
+- [Populations à risque]
+
+**🎯 Recommandations pratiques**
+[Actions concrètes pour le clinicien face à cette association]
+
+**📖 Lacunes des connaissances**
+[Ce qui reste à explorer ou confirmer scientifiquement]`;
+
+    const userPrompt = `Génère une SYNTHÈSE MÉDICALE COMPLÈTE sur la relation entre:
+
+**Concept 1:** ${context?.sourceNode || 'Non spécifié'}
+**Concept 2:** ${context?.targetNode || 'Non spécifié'}
+
+**Contexte pathologique:** ${context?.pathology || 'Non spécifié'}
+**Type de relation identifiée:** ${context?.relationship || 'À déterminer'}
+**Grade d'évidence initial:** ${context?.evidence_grade || 'À évaluer'}
+
+${query}
+
+Produis une synthèse exhaustive et médicalement rigoureuse de cette relation.`;
+
 
     try {
         const response = await fetch('https://api.anthropic.com/v1/messages', {
