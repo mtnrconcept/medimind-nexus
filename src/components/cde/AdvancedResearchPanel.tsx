@@ -12,11 +12,12 @@ import {
     Crosshair, BookOpen, Radio, Play, Square, Loader2, Brain,
     AlertTriangle, Lightbulb, FileText, Shield, Activity,
     Clock, Beaker, TrendingUp, ChevronDown, ChevronUp,
-    ExternalLink, CheckCircle2, XCircle, AlertCircle
+    ExternalLink, CheckCircle2, XCircle, AlertCircle, Sparkles
 } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 import { useAutoTranslation } from '@/contexts/TranslationContext';
+import RadialRingsModal from './RadialRingsModal';
 
 interface ResearchStep {
     id: number;
@@ -59,7 +60,7 @@ interface SafetyAlert {
     severity: string;
 }
 
-type ResearchMode = 'targeted' | 'systematic' | 'live';
+type ResearchMode = 'targeted' | 'systematic' | 'live' | 'radial';
 
 const AdvancedResearchPanel = () => {
     const { t } = useAutoTranslation();
@@ -83,6 +84,7 @@ const AdvancedResearchPanel = () => {
     const [sources, setSources] = useState<{ type: string, count: number }[]>([]);
 
     const [showRawOutput, setShowRawOutput] = useState(false);
+    const [isRadialModalOpen, setIsRadialModalOpen] = useState(false);
     const abortControllerRef = useRef<AbortController | null>(null);
     const outputRef = useRef<HTMLDivElement>(null);
 
@@ -116,6 +118,16 @@ const AdvancedResearchPanel = () => {
             borderColor: 'border-red-500/30',
             endpoint: 'live-research',
             placeholder: 'Ex: empagliflozine syndrome néphrotique - dernières publications et essais cliniques'
+        },
+        radial: {
+            icon: Sparkles,
+            title: 'Radial Rings',
+            description: 'Découverte 3D par anneaux concentriques',
+            color: 'text-purple-500',
+            bgColor: 'bg-purple-500/10',
+            borderColor: 'border-purple-500/30',
+            endpoint: 'radial-rings-engine',
+            placeholder: 'Ex: Syndrome néphrotique pédiatrique - recherche de micro-signaux étiologiques'
         }
     };
 
@@ -307,7 +319,7 @@ const AdvancedResearchPanel = () => {
                 </CardHeader>
                 <CardContent>
                     <Tabs value={mode} onValueChange={(v) => setMode(v as ResearchMode)} className="w-full">
-                        <TabsList className="grid w-full grid-cols-3">
+                        <TabsList className="grid w-full grid-cols-4">
                             <TabsTrigger value="targeted" className="flex items-center gap-2">
                                 <Crosshair className="h-4 w-4" />
                                 <span className="hidden sm:inline">{t('Ciblée')}</span>
@@ -319,6 +331,10 @@ const AdvancedResearchPanel = () => {
                             <TabsTrigger value="live" className="flex items-center gap-2">
                                 <Radio className="h-4 w-4" />
                                 <span className="hidden sm:inline">{t('Live')}</span>
+                            </TabsTrigger>
+                            <TabsTrigger value="radial" className="flex items-center gap-2">
+                                <Sparkles className="h-4 w-4" />
+                                <span className="hidden sm:inline">{t('Radial 3D')}</span>
                             </TabsTrigger>
                         </TabsList>
 
@@ -385,26 +401,37 @@ const AdvancedResearchPanel = () => {
                     )}
 
                     {/* Launch Button */}
-                    <Button
-                        onClick={handleStartResearch}
-                        disabled={!query.trim() && !isResearching}
-                        className={`w-full gap-2 ${isResearching
-                            ? 'bg-red-500 hover:bg-red-600'
-                            : 'bg-gradient-to-r from-violet-500 to-purple-600 hover:from-violet-600 hover:to-purple-700'
-                            }`}
-                    >
-                        {isResearching ? (
-                            <>
-                                <Square className="h-4 w-4" />
-                                {t('Arrêter')}
-                            </>
-                        ) : (
-                            <>
-                                <Play className="h-4 w-4" />
-                                {t('Lancer la recherche')}
-                            </>
-                        )}
-                    </Button>
+                    {mode === 'radial' ? (
+                        <Button
+                            onClick={() => setIsRadialModalOpen(true)}
+                            disabled={!query.trim()}
+                            className="w-full gap-2 bg-gradient-to-r from-purple-500 to-pink-600 hover:from-purple-600 hover:to-pink-700"
+                        >
+                            <Sparkles className="h-4 w-4" />
+                            {t('Lancer Radial Rings 3D')}
+                        </Button>
+                    ) : (
+                        <Button
+                            onClick={handleStartResearch}
+                            disabled={!query.trim() && !isResearching}
+                            className={`w-full gap-2 ${isResearching
+                                ? 'bg-red-500 hover:bg-red-600'
+                                : 'bg-gradient-to-r from-violet-500 to-purple-600 hover:from-violet-600 hover:to-purple-700'
+                                }`}
+                        >
+                            {isResearching ? (
+                                <>
+                                    <Square className="h-4 w-4" />
+                                    {t('Arrêter')}
+                                </>
+                            ) : (
+                                <>
+                                    <Play className="h-4 w-4" />
+                                    {t('Lancer la recherche')}
+                                </>
+                            )}
+                        </Button>
+                    )}
                 </CardContent>
             </Card>
 
@@ -641,6 +668,14 @@ const AdvancedResearchPanel = () => {
                     </div>
                 </div>
             </div>
+
+            {/* Radial Rings 3D Modal */}
+            <RadialRingsModal
+                isOpen={isRadialModalOpen}
+                onClose={() => setIsRadialModalOpen(false)}
+                pathology={query.trim()}
+                mode="ETIOLOGY"
+            />
         </div>
     );
 };
