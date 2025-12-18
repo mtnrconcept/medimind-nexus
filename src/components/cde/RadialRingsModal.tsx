@@ -281,49 +281,79 @@ function SVGFallback({ data, animationTime, onEdgeClick }: SVGFallbackProps) {
                     )
                 ))}
 
-                {/* Edges */}
-                {data.knowledge_graph.edges.map((edge) => {
-                    const startPos = nodePositions.get(edge.source);
-                    const endPos = nodePositions.get(edge.target);
-                    const sourceNode = nodeMap.get(edge.source);
-                    const targetNode = nodeMap.get(edge.target);
+                {/* All possible edges (complete graph - data loaded on click) */}
+                {(() => {
+                    const visibleNodes = data.knowledge_graph.nodes.filter(n => getNodeVisible(n.ring));
+                    const allEdges: JSX.Element[] = [];
 
-                    if (!startPos || !endPos || !sourceNode || !targetNode) return null;
+                    for (let i = 0; i < visibleNodes.length; i++) {
+                        for (let j = i + 1; j < visibleNodes.length; j++) {
+                            const nodeA = visibleNodes[i];
+                            const nodeB = visibleNodes[j];
+                            const posA = nodePositions.get(nodeA.id);
+                            const posB = nodePositions.get(nodeB.id);
 
-                    const progress = getEdgeProgress(sourceNode.ring);
-                    if (progress <= 0) return null;
+                            if (!posA || !posB) continue;
 
-                    const currentEnd = {
-                        x: startPos.x + (endPos.x - startPos.x) * Math.min(1, progress),
-                        y: startPos.y + (endPos.y - startPos.y) * Math.min(1, progress)
-                    };
+                            // Check if there's a predefined edge for styling
+                            const existingEdge = data.knowledge_graph.edges.find(
+                                e => (e.source === nodeA.id && e.target === nodeB.id) ||
+                                    (e.source === nodeB.id && e.target === nodeA.id)
+                            );
 
-                    const color = edge.evidence_grade === 'A' ? '#22c55e' :
-                        edge.evidence_grade === 'B' ? '#3b82f6' :
-                            edge.evidence_grade === 'C' ? '#f59e0b' : '#6b7280';
+                            // Determine color based on existing edge or default
+                            const color = existingEdge?.evidence_grade === 'A' ? '#22c55e' :
+                                existingEdge?.evidence_grade === 'B' ? '#3b82f6' :
+                                    existingEdge?.evidence_grade === 'C' ? '#f59e0b' :
+                                        existingEdge ? '#6b7280' : '#374151'; // Gray for new connections
 
-                    return (
-                        <g key={edge.id}>
-                            {/* Glow */}
-                            <line
-                                x1={startPos.x} y1={startPos.y}
-                                x2={currentEnd.x} y2={currentEnd.y}
-                                stroke={color}
-                                strokeWidth="4"
-                                opacity="0.3"
-                            />
-                            {/* Main line */}
-                            <line
-                                x1={startPos.x} y1={startPos.y}
-                                x2={currentEnd.x} y2={currentEnd.y}
-                                stroke={color}
-                                strokeWidth="2"
-                                className="cursor-pointer hover:opacity-80"
-                                onClick={(e) => { e.stopPropagation(); onEdgeClick(edge, sourceNode, targetNode); }}
-                            />
-                        </g>
-                    );
-                })}
+                            const opacity = existingEdge ? 0.6 : 0.2;
+                            const strokeWidth = existingEdge ? 2 : 1;
+
+                            // Create synthetic edge for click handler
+                            const syntheticEdge: RingEdge = existingEdge || {
+                                id: `${nodeA.id}-${nodeB.id}`,
+                                source: nodeA.id,
+                                target: nodeB.id,
+                                relationship: 'connexion potentielle',
+                                evidence_grade: 'D',
+                                translation_gap: false,
+                                weight: 0.5
+                            };
+
+                            allEdges.push(
+                                <g key={`edge-${nodeA.id}-${nodeB.id}`}>
+                                    {/* Glow for predefined edges */}
+                                    {existingEdge && (
+                                        <line
+                                            x1={posA.x} y1={posA.y}
+                                            x2={posB.x} y2={posB.y}
+                                            stroke={color}
+                                            strokeWidth="4"
+                                            opacity="0.2"
+                                        />
+                                    )}
+                                    {/* Main line */}
+                                    <line
+                                        x1={posA.x} y1={posA.y}
+                                        x2={posB.x} y2={posB.y}
+                                        stroke={color}
+                                        strokeWidth={strokeWidth}
+                                        opacity={opacity}
+                                        className="cursor-pointer hover:opacity-100"
+                                        style={{ transition: 'opacity 0.2s' }}
+                                        onClick={(e) => {
+                                            e.stopPropagation();
+                                            onEdgeClick(syntheticEdge, nodeA, nodeB);
+                                        }}
+                                    />
+                                </g>
+                            );
+                        }
+                    }
+
+                    return allEdges;
+                })()}
 
                 {/* Nodes */}
                 {data.knowledge_graph.nodes.map((node) => {
