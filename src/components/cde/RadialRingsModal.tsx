@@ -493,7 +493,9 @@ function SVGFallback({ data, animationTime, onEdgeClick }: SVGFallbackProps) {
                     if (!pos || !getNodeVisible(node.ring)) return null;
 
                     const baseColor = LANE_COLORS[node.lane] || RING_COLORS[node.ring] || '#94a3b8';
-                    const size = 10 + node.proximity_score * 8;
+                    // Reduce size for ring 1 nodes to prevent overlap
+                    const ringScale = node.ring === 1 ? 0.6 : 1;
+                    const size = (8 + node.proximity_score * 6) * ringScale;
 
                     // Determine node state
                     const isSelected = node.id === selectedNodeId;
@@ -901,7 +903,7 @@ function LinkExplanationModal({ isOpen, onClose, edge, sourceNode, targetNode, p
         try {
             // Step 1: Check cache first
             const { data: cached, error: cacheError } = await supabase
-                .from('link_explanations_cache')
+                .from('link_explanations_cache' as any)
                 .select('id, explanation')
                 .eq('source_name', normSource)
                 .eq('target_name', normTarget)
@@ -910,12 +912,12 @@ function LinkExplanationModal({ isOpen, onClose, edge, sourceNode, targetNode, p
 
             if (cached && !cacheError) {
                 // Cache hit! Use cached explanation
-                setExplanation(cached.explanation);
+                setExplanation((cached as any).explanation);
                 setFromCache(true);
                 setIsLoading(false);
 
-                // Increment hit count in background
-                supabase.rpc('increment_link_cache_hit', { cache_id: cached.id }).catch(console.error);
+                // Increment hit count in background (fire and forget)
+                supabase.rpc('increment_link_cache_hit' as any, { cache_id: (cached as any).id }).then(() => { }).catch(() => { });
                 return;
             }
 
@@ -947,9 +949,9 @@ Fournis:
             const aiExplanation = response.data?.analysis || response.data?.explanation || 'Analyse non disponible.';
             setExplanation(aiExplanation);
 
-            // Step 3: Save to cache for future use
-            await supabase
-                .from('link_explanations_cache')
+            // Step 3: Save to cache for future use (fire and forget)
+            supabase
+                .from('link_explanations_cache' as any)
                 .upsert({
                     source_name: normSource,
                     target_name: normTarget,
@@ -960,7 +962,10 @@ Fournis:
                 }, {
                     onConflict: 'source_name,target_name,pathology'
                 })
-                .catch(console.error); // Don't fail if cache save fails
+                .then(
+                    () => console.log('Cache saved successfully'),
+                    () => console.log('Cache save skipped')
+                );
 
         } catch (err) {
             console.error('Link explanation error:', err);
