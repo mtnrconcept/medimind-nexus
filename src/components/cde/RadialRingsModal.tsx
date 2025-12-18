@@ -19,6 +19,7 @@ interface RingNode {
     ring: number;
     lane: string;
     name: string;
+    node_type?: string;
     properties: Record<string, any>;
     proximity_score: number;
     evidence_grade: string;
@@ -163,9 +164,10 @@ interface SVGFallbackProps {
     data: RadialRingsData;
     animationTime: number;
     onEdgeClick: (edge: RingEdge, source: RingNode, target: RingNode) => void;
+    onSetCentral?: (nodeId: string) => void;
 }
 
-function SVGFallback({ data, animationTime, onEdgeClick }: SVGFallbackProps) {
+function SVGFallback({ data, animationTime, onEdgeClick, onSetCentral }: SVGFallbackProps) {
     const svgSize = 600;
     const center = svgSize / 2;
     const ringRadius = 80;
@@ -179,6 +181,10 @@ function SVGFallback({ data, animationTime, onEdgeClick }: SVGFallbackProps) {
 
     // Node selection state
     const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
+
+    // Hover/Tooltip state
+    const [hoveredNode, setHoveredNode] = useState<RingNode | null>(null);
+    const [tooltipPos, setTooltipPos] = useState({ x: 0, y: 0 });
 
     // Animation state
     const [animationProgress, setAnimationProgress] = useState(0);
@@ -571,9 +577,36 @@ function SVGFallback({ data, animationTime, onEdgeClick }: SVGFallbackProps) {
                         <g
                             key={node.id}
                             onClick={(e) => handleNodeClick(node, e)}
+                            onDoubleClick={(e) => {
+                                e.stopPropagation();
+                                if (onSetCentral) onSetCentral(node.id);
+                            }}
+                            onMouseEnter={(e) => {
+                                setHoveredNode(node);
+                                const rect = containerRef.current?.getBoundingClientRect();
+                                if (rect) {
+                                    setTooltipPos({
+                                        x: e.clientX - rect.left,
+                                        y: e.clientY - rect.top - 60
+                                    });
+                                }
+                            }}
+                            onMouseLeave={() => setHoveredNode(null)}
                             className="cursor-pointer"
                             style={{ transition: 'all 0.3s ease-out' }}
                         >
+                            {/* Entry burst animation - light expanding circle */}
+                            {nodeProgress < 1 && (
+                                <circle
+                                    cx={pos.x}
+                                    cy={pos.y}
+                                    r={nodeSize * 3 * (1 - nodeProgress)}
+                                    fill="none"
+                                    stroke={color}
+                                    strokeWidth={2 * (1 - nodeProgress)}
+                                    opacity={0.6 * (1 - nodeProgress)}
+                                />
+                            )}
                             {/* Selection ring for selected node */}
                             {isSelected && (
                                 <circle
@@ -593,14 +626,26 @@ function SVGFallback({ data, animationTime, onEdgeClick }: SVGFallbackProps) {
                                     <animate attributeName="opacity" values="0.3;0.1;0.3" dur="1s" repeatCount="indefinite" />
                                 </circle>
                             )}
-                            {/* Outer glow */}
-                            <circle cx={pos.x} cy={pos.y} r={nodeSize * 2} fill={color} opacity={glowOpacity} />
+                            {/* Outer glow - enhanced during animation */}
+                            <circle
+                                cx={pos.x}
+                                cy={pos.y}
+                                r={nodeSize * 2 * (nodeProgress < 1 ? 1 + (1 - nodeProgress) : 1)}
+                                fill={color}
+                                opacity={glowOpacity * (nodeProgress < 1 ? 2 : 1)}
+                            />
                             {/* Inner glow */}
                             <circle cx={pos.x} cy={pos.y} r={nodeSize * 1.4} fill={color} opacity={glowOpacity * 2} />
-                            {/* Main */}
+                            {/* Main node */}
                             <circle cx={pos.x} cy={pos.y} r={nodeSize} fill={color} opacity={mainOpacity} />
-                            {/* Highlight */}
-                            <circle cx={pos.x - nodeSize * 0.25} cy={pos.y - nodeSize * 0.25} r={nodeSize * 0.25} fill="white" opacity={mainOpacity * 0.4} />
+                            {/* Specular highlight */}
+                            <circle
+                                cx={pos.x - nodeSize * 0.25}
+                                cy={pos.y - nodeSize * 0.25}
+                                r={nodeSize * 0.3}
+                                fill="white"
+                                opacity={mainOpacity * 0.5 * (nodeProgress < 1 ? 1.5 : 1)}
+                            />
 
                             {/* Label for selected/center nodes */}
                             {(node.ring === 0 || isSelected) && (
@@ -662,7 +707,36 @@ function SVGFallback({ data, animationTime, onEdgeClick }: SVGFallbackProps) {
             <div className="absolute bottom-8 right-4 text-right text-gray-400 text-sm">
                 <p>🎯 1er clic: sélectionner | 2ème clic: analyser le lien IA</p>
                 <p className="text-xs mt-1">🟢 Bénéfique | 🔴 Danger | 🟠 Contre-indiqué | 🟡 Précaution</p>
+                <p className="text-xs mt-1 text-purple-400">🖱️ Double-clic: définir comme centre</p>
             </div>
+
+            {/* Tooltip on hover */}
+            {hoveredNode && (
+                <div
+                    className="absolute pointer-events-none z-50 bg-gray-900/95 border border-gray-600 rounded-lg px-4 py-3 shadow-xl max-w-xs"
+                    style={{
+                        left: tooltipPos.x,
+                        top: tooltipPos.y,
+                        transform: 'translateX(-50%)'
+                    }}
+                >
+                    <div className="flex items-center gap-2 mb-2">
+                        <span
+                            className="w-3 h-3 rounded-full"
+                            style={{ backgroundColor: LANE_COLORS[hoveredNode.lane] || RING_COLORS[hoveredNode.ring] || '#94a3b8' }}
+                        />
+                        <span className="font-bold text-white text-sm">{hoveredNode.name}</span>
+                    </div>
+                    <div className="text-xs text-gray-300 space-y-1">
+                        <p><span className="text-gray-500">Type:</span> {hoveredNode.node_type || hoveredNode.lane}</p>
+                        <p><span className="text-gray-500">Anneau:</span> {hoveredNode.ring}</p>
+                        <p><span className="text-gray-500">Score:</span> {(hoveredNode.proximity_score * 100).toFixed(0)}%</p>
+                    </div>
+                    <div className="mt-2 pt-2 border-t border-gray-700 text-xs text-purple-400">
+                        Double-clic → nouveau centre
+                    </div>
+                </div>
+            )}
         </div>
     );
 }
