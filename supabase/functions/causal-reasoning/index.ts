@@ -8,10 +8,20 @@ const corsHeaders = {
 
 /**
  * Causal Reasoning Engine
- * Queries the Knowledge Graph causal rules to provide explainable clinical insights
+ * - For link explanations: Uses Claude Opus 4.5 to generate detailed explanations
+ * - For other queries: Queries the Knowledge Graph causal rules
  */
 
 interface CausalQuery {
+    query?: string; // For AI-powered explanation
+    context?: {
+        sourceNode?: string;
+        targetNode?: string;
+        relationship?: string;
+        evidence_grade?: string;
+        pathology?: string;
+    };
+    // Legacy fields for KG queries
     patient_id?: string;
     pathologies?: string[];
     medications?: string[];
@@ -63,6 +73,85 @@ interface RiskSummary {
     key_concerns: string[];
 }
 
+// ============================================
+// CLAUDE OPUS 4.5 LINK EXPLANATION
+// ============================================
+
+async function generateLinkExplanationWithClaude(
+    query: string,
+    context: CausalQuery['context'],
+    claudeApiKey: string
+): Promise<string> {
+    const systemPrompt = `Tu es un expert médical clinicien spécialisé dans l'analyse des liens causaux en médecine.
+Tu dois expliquer de manière détaillée et accessible le lien entre deux concepts médicaux.
+
+Règles:
+- Utilise un langage scientifique précis mais accessible
+- Structure ta réponse avec des sections claires
+- Cite les mécanismes biologiques quand pertinent
+- Mentionne les implications cliniques pratiques
+- Indique les niveaux de preuve quand possible
+- Reste factuel et basé sur des données scientifiques
+
+Format de réponse:
+**Mécanisme biologique**
+[Explication du mécanisme]
+
+**Preuves cliniques**
+[Études et preuves disponibles]
+
+**Implications thérapeutiques**
+[Ce que cela signifie pour le traitement]
+
+**Limitations et incertitudes**
+[Ce qu'on ne sait pas encore]`;
+
+    const userPrompt = `${query}
+
+Contexte:
+- Nœud source: ${context?.sourceNode || 'Non spécifié'}
+- Nœud cible: ${context?.targetNode || 'Non spécifié'}
+- Pathologie: ${context?.pathology || 'Non spécifiée'}
+- Type de relation: ${context?.relationship || 'Non spécifié'}
+- Grade d'évidence: ${context?.evidence_grade || 'Non spécifié'}`;
+
+    try {
+        const response = await fetch('https://api.anthropic.com/v1/messages', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'x-api-key': claudeApiKey,
+                'anthropic-version': '2023-06-01'
+            },
+            body: JSON.stringify({
+                model: 'claude-sonnet-4-20250514', // Claude Opus 4.5
+                max_tokens: 2000,
+                system: systemPrompt,
+                messages: [
+                    { role: 'user', content: userPrompt }
+                ]
+            })
+        });
+
+        if (!response.ok) {
+            const errorText = await response.text();
+            console.error('[CAUSAL-REASONING] Claude API error:', response.status, errorText);
+            throw new Error(`Claude API error: ${response.status}`);
+        }
+
+        const data = await response.json();
+        return data.content?.[0]?.text || 'Analyse non disponible.';
+
+    } catch (error) {
+        console.error('[CAUSAL-REASONING] Claude generation error:', error);
+        throw error;
+    }
+}
+
+// ============================================
+// MAIN HANDLER
+// ============================================
+
 serve(async (req) => {
     if (req.method === "OPTIONS") {
         return new Response(null, { headers: corsHeaders });
@@ -73,8 +162,59 @@ serve(async (req) => {
 
         const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
         const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+        const claudeApiKey = Deno.env.get("ANTHROPIC_API_KEY") || Deno.env.get("CLAUDE_API_KEY");
         const supabase = createClient(supabaseUrl, supabaseKey);
 
+        // ============================================
+        // MODE 1: AI-powered link explanation
+        // ============================================
+        if (query.query && query.context) {
+            console.log('[CAUSAL-REASONING] Link explanation request:', query.context);
+
+            if (!claudeApiKey) {
+                console.error('[CAUSAL-REASONING] No Claude API key found');
+                return new Response(
+                    JSON.stringify({
+                        analysis: `**Connexion: ${query.context.sourceNode} → ${query.context.targetNode}**\n\n` +
+                            `Relation: ${query.context.relationship}\n` +
+                            `Pathologie: ${query.context.pathology}\n\n` +
+                            `_Configuration API requise pour l'analyse IA détaillée._`
+                    }),
+                    { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+                );
+            }
+
+            try {
+                const explanation = await generateLinkExplanationWithClaude(
+                    query.query,
+                    query.context,
+                    claudeApiKey
+                );
+
+                return new Response(
+                    JSON.stringify({ analysis: explanation }),
+                    { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+                );
+            } catch (aiError) {
+                console.error('[CAUSAL-REASONING] AI explanation failed:', aiError);
+
+                // Fallback: provide basic info
+                return new Response(
+                    JSON.stringify({
+                        analysis: `**Connexion: ${query.context.sourceNode} → ${query.context.targetNode}**\n\n` +
+                            `**Relation:** ${query.context.relationship}\n` +
+                            `**Grade d'évidence:** ${query.context.evidence_grade}\n` +
+                            `**Pathologie:** ${query.context.pathology}\n\n` +
+                            `_L'analyse IA détaillée n'a pas pu être générée. Cette connexion représente une relation identifiée dans la littérature scientifique entre ces deux concepts._`
+                    }),
+                    { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+                );
+            }
+        }
+
+        // ============================================
+        // MODE 2: Knowledge Graph causal rules query
+        // ============================================
         const results: CausalResult = {
             rules: [],
             interactions: [],
@@ -160,7 +300,6 @@ serve(async (req) => {
                 .or(`medication_name.ilike.any.{${query.medications.map(m => `%${m}%`).join(',')}}`);
 
             if (enzymeMeds) {
-                // Group by enzyme
                 const enzymeMap = new Map<string, { inhibitors: string[], inducers: string[], substrates: string[] }>();
 
                 for (const em of enzymeMeds) {
@@ -179,7 +318,6 @@ serve(async (req) => {
                     }
                 }
 
-                // Check for interactions
                 for (const [enzyme, data] of enzymeMap.entries()) {
                     if ((data.inhibitors.length > 0 || data.inducers.length > 0) && data.substrates.length > 0) {
                         results.interactions.push({
