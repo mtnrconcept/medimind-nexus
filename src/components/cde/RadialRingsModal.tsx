@@ -189,12 +189,10 @@ function GlowingNode3D({ node, position, animationTime, isSelected, isHovered, o
                 scale={size}
             >
                 <sphereGeometry args={[1, 32, 32]} />
-                <meshStandardMaterial
+                <meshBasicMaterial
                     color={color}
-                    emissive={color}
-                    emissiveIntensity={isSelected ? 0.6 : 0.3}
-                    metalness={0.2}
-                    roughness={0.5}
+                    transparent
+                    opacity={isSelected ? 1 : 0.9}
                 />
             </mesh>
 
@@ -415,17 +413,8 @@ function Radial3DScene({ data, animationTime, selectedNodeId, hoveredNodeId, onN
 
     return (
         <>
-            {/* Lighting */}
-            <ambientLight intensity={0.5} />
-            <pointLight position={[10, 10, 10]} intensity={1} color="#ffffff" />
-            <pointLight position={[-10, -5, -10]} intensity={0.5} color="#8b5cf6" />
-            <pointLight position={[0, 10, 0]} intensity={0.3} color="#22c55e" />
-
-            {/* Background */}
+            {/* Background only - no lights needed with MeshBasicMaterial */}
             <color attach="background" args={['#0a0a0f']} />
-
-            {/* Fog for depth */}
-            <fog attach="fog" args={['#0a0a0f', 15, 40]} />
 
             {/* Ring circles (visual guides) */}
             {Array.from({ length: maxRing + 1 }).map((_, ring) => (
@@ -519,8 +508,8 @@ function SignalPanel({ signals, onSignalClick }: SignalPanelProps) {
                             key={signal.id}
                             onClick={() => onSignalClick(signal.id)}
                             className={`flex-shrink-0 p-2 rounded-lg border text-left text-xs transition-all hover:scale-105 ${signal.confidence > 0.5
-                                    ? 'border-green-500/50 bg-green-900/30 hover:bg-green-900/50'
-                                    : 'border-red-500/50 bg-red-900/30 hover:bg-red-900/50'
+                                ? 'border-green-500/50 bg-green-900/30 hover:bg-green-900/50'
+                                : 'border-red-500/50 bg-red-900/30 hover:bg-red-900/50'
                                 }`}
                         >
                             <div className="font-medium truncate max-w-[150px] text-white">{signal.observation}</div>
