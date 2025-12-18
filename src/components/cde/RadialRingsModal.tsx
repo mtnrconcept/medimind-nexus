@@ -113,8 +113,8 @@ function SignalPanel({ signals, onSignalClick }: SignalPanelProps) {
                             key={signal.id}
                             onClick={() => onSignalClick(signal.id)}
                             className={`flex-shrink-0 p-2 rounded-lg border text-left text-xs transition-all hover:scale-105 ${signal.confidence > 0.5
-                                    ? 'border-green-500/50 bg-green-900/30 hover:bg-green-900/50'
-                                    : 'border-red-500/50 bg-red-900/30 hover:bg-red-900/50'
+                                ? 'border-green-500/50 bg-green-900/30 hover:bg-green-900/50'
+                                : 'border-red-500/50 bg-red-900/30 hover:bg-red-900/50'
                                 }`}
                         >
                             <div className="font-medium truncate max-w-[150px]">{signal.observation}</div>
@@ -586,6 +586,8 @@ export default function RadialRingsModal({
                         <button
                             onClick={handleClose}
                             className="bg-red-600/90 hover:bg-red-500 text-white p-2.5 rounded-lg transition-all hover:scale-105"
+                            title="Fermer"
+                            aria-label="Fermer la visualisation"
                         >
                             <X className="w-5 h-5" />
                         </button>
