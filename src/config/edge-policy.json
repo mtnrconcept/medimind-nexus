@@ -1,0 +1,201 @@
+{
+    "edge_policy_version": "mm-1.0",
+    "description": "Policy defining allowed edge types between node types to prevent incoherent graphs",
+    "allowed_edges": [
+        {
+            "from": "DRUG",
+            "to": "PATHOLOGY",
+            "types": [
+                "TREATS",
+                "MANAGED_BY",
+                "INDICATED_IF",
+                "CONTRAINDICATED_IF",
+                "PREVENTS"
+            ]
+        },
+        {
+            "from": "DRUG",
+            "to": "DRUG",
+            "types": [
+                "INTERACTS_WITH",
+                "CONFLICTS_WITH",
+                "ASSOCIATED_WITH"
+            ]
+        },
+        {
+            "from": "DRUG",
+            "to": "COMPLICATION",
+            "types": [
+                "CAUSES",
+                "RISK_INCREASED_BY",
+                "COMPLICATES"
+            ]
+        },
+        {
+            "from": "DRUG",
+            "to": "SYMPTOM",
+            "types": [
+                "TREATS",
+                "CAUSES",
+                "IMPROVED_BY"
+            ]
+        },
+        {
+            "from": "DRUG",
+            "to": "LAB",
+            "types": [
+                "MONITOR_WITH",
+                "TARGETS"
+            ]
+        },
+        {
+            "from": "SYMPTOM",
+            "to": "PATHOLOGY",
+            "types": [
+                "ASSOCIATED_WITH",
+                "LEADS_TO"
+            ]
+        },
+        {
+            "from": "COMPLICATION",
+            "to": "PATHOLOGY",
+            "types": [
+                "COMPLICATES",
+                "LEADS_TO",
+                "ASSOCIATED_WITH"
+            ]
+        },
+        {
+            "from": "LAB",
+            "to": "PATHOLOGY",
+            "types": [
+                "DIAGNOSED_BY",
+                "BIOMARKER_OF",
+                "MONITOR_WITH"
+            ]
+        },
+        {
+            "from": "LAB",
+            "to": "COMPLICATION",
+            "types": [
+                "BIOMARKER_OF",
+                "MONITOR_WITH"
+            ]
+        },
+        {
+            "from": "GUIDELINE",
+            "to": "DRUG",
+            "types": [
+                "ASSOCIATED_WITH",
+                "INDICATED_IF",
+                "CONTRAINDICATED_IF"
+            ]
+        },
+        {
+            "from": "GUIDELINE",
+            "to": "PATHOLOGY",
+            "types": [
+                "ASSOCIATED_WITH",
+                "MANAGED_BY"
+            ]
+        },
+        {
+            "from": "EVIDENCE",
+            "to": "*",
+            "types": [
+                "ASSOCIATED_WITH"
+            ],
+            "comment": "Evidence can link to any node type"
+        },
+        {
+            "from": "CONDITION",
+            "to": "PATHOLOGY",
+            "types": [
+                "PREDISPOSED_BY",
+                "WORSENED_BY",
+                "IMPROVED_BY",
+                "RISK_INCREASED_BY"
+            ]
+        },
+        {
+            "from": "CONDITION",
+            "to": "DRUG",
+            "types": [
+                "INDICATED_IF",
+                "CONTRAINDICATED_IF"
+            ]
+        },
+        {
+            "from": "PATHOLOGY",
+            "to": "PATHOLOGY",
+            "types": [
+                "LEADS_TO",
+                "ASSOCIATED_WITH",
+                "COMPLICATES"
+            ]
+        }
+    ],
+    "meta_requirements": {
+        "must_have": [
+            "weight",
+            "rationale"
+        ],
+        "weight_range": [
+            0.0,
+            1.0
+        ],
+        "evidence_levels": [
+            "A",
+            "B",
+            "C",
+            "D"
+        ],
+        "optional_fields": [
+            "tags",
+            "source_refs",
+            "temporality",
+            "patient_context",
+            "constraints"
+        ]
+    },
+    "meta_extensions": {
+        "relation_scope": {
+            "type": "enum",
+            "values": [
+                "direct",
+                "derived",
+                "hypothesis"
+            ],
+            "description": "Scope of the relationship"
+        },
+        "temporality": {
+            "type": "enum",
+            "values": [
+                "acute",
+                "chronic",
+                "relapse",
+                "maintenance"
+            ],
+            "description": "Temporal context of the relationship"
+        },
+        "patient_context": {
+            "type": "enum",
+            "values": [
+                "adult",
+                "peds",
+                "pregnancy",
+                "elderly",
+                "renal_failure",
+                "hepatic_failure"
+            ],
+            "description": "Patient population context"
+        },
+        "constraints": {
+            "type": "object",
+            "properties": {
+                "if": "condition when edge applies",
+                "unless": "condition that invalidates edge"
+            }
+        }
+    }
+}

@@ -7,7 +7,7 @@ import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { Canvas, useFrame, ThreeEvent } from '@react-three/fiber';
 import { OrbitControls, Html, Line } from '@react-three/drei';
 import * as THREE from 'three';
-import { X, Play, Pause, RotateCcw, Sparkles, Loader2, MessageSquare, ExternalLink } from 'lucide-react';
+import { X, Play, Pause, RotateCcw, Sparkles, Loader2, MessageSquare, ExternalLink, Plus, GitBranch } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 
 // ============================================
@@ -24,6 +24,11 @@ interface RingNode {
     proximity_score: number;
     evidence_grade: string;
     translation_gap: boolean;
+    // Ontology facets
+    category_id?: string;
+    subcategory?: string;
+    tags?: string[];
+    is_inherited?: boolean; // True if node came from previous expansion
 }
 
 interface RingEdge {
@@ -77,6 +82,32 @@ const LANE_COLORS: Record<string, string> = {
     genetics: '#6366f1',
     exposures: '#84cc16',
     frontiers: '#06b6d4',
+};
+
+// Semantic node type colors (ontology)
+const NODE_TYPE_COLORS: Record<string, string> = {
+    PATHOLOGY: '#ef4444',    // Red
+    DRUG: '#22c55e',         // Green
+    SYMPTOM: '#f59e0b',      // Yellow
+    COMPLICATION: '#f97316', // Orange
+    CONDITION: '#a855f7',    // Purple
+    LAB: '#3b82f6',          // Blue
+    GUIDELINE: '#06b6d4',    // Cyan
+    EVIDENCE: '#6366f1',     // Indigo
+};
+
+// Semantic edge type colors (ontology)
+const EDGE_TYPE_COLORS: Record<string, { color: string; dashArray?: string }> = {
+    TREATS: { color: '#22c55e' },           // Green - positive
+    ASSOCIATED_WITH: { color: '#6b7280' },  // Gray - neutral
+    CAUSES: { color: '#f97316' },           // Orange - causal
+    LEADS_TO: { color: '#f59e0b' },         // Yellow - progression
+    RISK_INCREASED_BY: { color: '#eab308' },// Yellow - warning
+    INDICATED_IF: { color: '#3b82f6', dashArray: '5,3' }, // Blue dashed
+    CONTRAINDICATED_IF: { color: '#ef4444' }, // Red - danger
+    MANAGED_BY: { color: '#22c55e', dashArray: '3,3' },   // Green dashed
+    COMPLICATES: { color: '#f97316' },      // Orange - complication
+    MONITOR_WITH: { color: '#06b6d4', dashArray: '5,5' }, // Cyan dashed
 };
 
 // ============================================
@@ -163,14 +194,14 @@ function isWebGLAvailable(): boolean {
 interface SVGFallbackProps {
     data: RadialRingsData;
     animationTime: number;
-    onEdgeClick: (edge: RingEdge, source: RingNode, target: RingNode) => void;
+    onEdgeClick: (edge: RingEdge, source: RingNode, target: RingNode, multiNodes?: RingNode[]) => void;
     onSetCentral?: (nodeId: string) => void;
+    newlySpawnedNodes?: Set<string>;
 }
 
-function SVGFallback({ data, animationTime, onEdgeClick, onSetCentral }: SVGFallbackProps) {
+function SVGFallback({ data, animationTime, onEdgeClick, onSetCentral, newlySpawnedNodes }: SVGFallbackProps) {
     const svgSize = 600;
     const center = svgSize / 2;
-    const ringRadius = 80;
 
     // Zoom and pan state
     const [zoom, setZoom] = useState(1);
@@ -189,11 +220,20 @@ function SVGFallback({ data, animationTime, onEdgeClick, onSetCentral }: SVGFall
     // Animation state
     const [animationProgress, setAnimationProgress] = useState(0);
 
+    // NODE ACTION MODAL state
+    const [showNodeActionModal, setShowNodeActionModal] = useState(false);
+    const [actionNode, setActionNode] = useState<RingNode | null>(null);
+    const [multiSelectMode, setMultiSelectMode] = useState(false);
+    const [selectedNodesForAnalysis, setSelectedNodesForAnalysis] = useState<Set<string>>(new Set());
+
+
     // Entry animation effect
     useEffect(() => {
         setAnimationProgress(0);
         const startTime = Date.now();
-        const duration = 2500; // 2.5 seconds for full animation
+        // Dynamic duration based on node count: minimum 2s, +20ms per node beyond 20
+        const nodeCount = data.knowledge_graph.nodes.length;
+        const duration = Math.max(2000, 2000 + (nodeCount - 20) * 20);
 
         const animate = () => {
             const elapsed = Date.now() - startTime;
@@ -241,37 +281,111 @@ function SVGFallback({ data, animationTime, onEdgeClick, onSetCentral }: SVGFall
         setIsPanning(false);
     }, []);
 
-    // Calculate node positions
-    const nodePositions = useMemo(() => {
+    // Calculate node positions - NON-OVERLAPPING RADIAL LAYOUT
+    // Dynamic ring sizing based on node count to prevent overlaps
+    // Positions are ALWAYS recalculated to allow dynamic ring expansion when new nodes arrive
+    const { nodePositions, ringRadii, uniqueNodes } = useMemo(() => {
         const positions = new Map<string, { x: number; y: number }>();
-        const nodesByRing = new Map<number, RingNode[]>();
+        const radii = new Map<number, number>(); // Store calculated radius for each ring
 
-        for (const node of data.knowledge_graph.nodes) {
-            if (!nodesByRing.has(node.ring)) nodesByRing.set(node.ring, []);
-            nodesByRing.get(node.ring)!.push(node);
+        // DEDUPLICATE nodes by ID - keep first occurrence
+        const seenIds = new Set<string>();
+        const deduplicatedNodes = data.knowledge_graph.nodes.filter(node => {
+            if (seenIds.has(node.id)) return false;
+            seenIds.add(node.id);
+            return true;
+        });
+        const nodes = deduplicatedNodes;
+
+        // Find the center node (ring 0)
+        const centerNode = nodes.find(n => n.ring === 0);
+
+        // Place center node at center
+        if (centerNode) {
+            positions.set(centerNode.id, { x: center, y: center });
+        }
+        radii.set(0, 0); // Center ring has 0 radius
+
+        // Get all non-center nodes
+        const peripheralNodes = nodes.filter(n => n.ring !== 0);
+        const nodeCount = peripheralNodes.length;
+
+        if (nodeCount === 0) {
+            return { nodePositions: positions, ringRadii: radii, uniqueNodes: nodes };
         }
 
-        for (const [ring, nodes] of nodesByRing.entries()) {
-            const radius = ring === 0 ? 0 : ring * ringRadius;
-            const angleStep = (Math.PI * 2) / Math.max(nodes.length, 1);
-            nodes.forEach((node, i) => {
-                const angle = angleStep * i - Math.PI / 2;
+        // Group nodes by their ring
+        const nodesByRing = new Map<number, RingNode[]>();
+        peripheralNodes.forEach(node => {
+            const ring = node.ring || 1; // Default to ring 1
+            if (!nodesByRing.has(ring)) nodesByRing.set(ring, []);
+            nodesByRing.get(ring)!.push(node);
+        });
+
+        // Sort rings
+        const sortedRings = Array.from(nodesByRing.keys()).sort((a, b) => a - b);
+
+        // Constants for spacing calculation
+        const BASE_NODE_SIZE = 14; // Base node visual size
+        const LABEL_WIDTH = 60; // Estimated label width
+        const MIN_SPACING = BASE_NODE_SIZE + LABEL_WIDTH + 20; // Minimum space between node centers
+        const BASE_RING_RADIUS = 80; // Base radius for first ring
+
+        // Track the previous ring's outer boundary for proper ring separation
+        let previousRingOuterRadius = 30; // Center node's effective radius
+
+        sortedRings.forEach(ring => {
+            const ringNodes = nodesByRing.get(ring)!;
+            const ringNodeCount = ringNodes.length;
+
+            if (ringNodeCount === 0) return;
+
+            // Calculate minimum circumference needed for all nodes to fit without overlap
+            const minCircumference = ringNodeCount * MIN_SPACING;
+            const minRadiusForSpacing = minCircumference / (2 * Math.PI);
+
+            // Calculate minimum radius based on ring number (base positioning)
+            const minRadiusForRing = ring * BASE_RING_RADIUS;
+
+            // Ensure proper separation from previous ring
+            const minRadiusFromPrevious = previousRingOuterRadius + MIN_SPACING / 2;
+
+            // Use the largest required radius
+            const effectiveRadius = Math.max(minRadiusForSpacing, minRadiusForRing, minRadiusFromPrevious);
+
+            // Store the radius for this ring (for ring guide circles)
+            radii.set(ring, effectiveRadius);
+
+            // Distribute nodes evenly around the ring
+            const angleStep = (Math.PI * 2) / ringNodeCount;
+
+            // Stagger starting angle per ring for better visual distribution
+            const ringStartAngle = -Math.PI / 2 + (ring * Math.PI / 6);
+
+            ringNodes.forEach((node, i) => {
+                const angle = ringStartAngle + angleStep * i;
+
                 positions.set(node.id, {
-                    x: center + Math.cos(angle) * radius,
-                    y: center + Math.sin(angle) * radius
+                    x: center + Math.cos(angle) * effectiveRadius,
+                    y: center + Math.sin(angle) * effectiveRadius
                 });
             });
-        }
-        return positions;
-    }, [data, center, ringRadius]);
+
+            // Update previous ring boundary for next iteration
+            previousRingOuterRadius = effectiveRadius + MIN_SPACING / 2;
+        });
+
+
+        return { nodePositions: positions, ringRadii: radii, uniqueNodes: nodes };
+    }, [data, center]);
 
     const nodeMap = useMemo(() => {
         const map = new Map<string, RingNode>();
-        data.knowledge_graph.nodes.forEach(n => map.set(n.id, n));
+        uniqueNodes.forEach(n => map.set(n.id, n));
         return map;
-    }, [data]);
+    }, [uniqueNodes]);
 
-    const maxRing = Math.max(...data.knowledge_graph.nodes.map(n => n.ring));
+    const maxRing = Math.max(...uniqueNodes.map(n => n.ring));
 
     // Determine relationship type and color for edges
     const getRelationshipColor = (relationship: string, evidenceGrade: string): { color: string; type: 'positive' | 'danger' | 'contraindication' | 'warning' | 'neutral' } => {
@@ -353,43 +467,41 @@ function SVGFallback({ data, animationTime, onEdgeClick, onSetCentral }: SVGFall
         return animationTime >= appearTime;
     };
 
-    // Handle node click
+    // Handle node click - MIND MAP BEHAVIOR
+    // Opens action modal with options
     const handleNodeClick = useCallback((node: RingNode, e: React.MouseEvent) => {
         e.stopPropagation();
 
-        // If clicking on a highlighted node (when another node is selected) → trigger AI analysis
-        if (selectedNodeId && selectedNodeId !== node.id && highlightedNodeIds.has(node.id)) {
-            const selectedNode = nodeMap.get(selectedNodeId);
-            if (selectedNode) {
-                // Get the relationship info from connectionColors
-                const connectionColor = connectionColors.get(node.id);
-
-                // Find existing edge for relationship details
-                const existingEdge = data.knowledge_graph.edges.find(
-                    edge => (edge.source === selectedNodeId && edge.target === node.id) ||
-                        (edge.source === node.id && edge.target === selectedNodeId)
-                );
-
-                const syntheticEdge: RingEdge = existingEdge || {
-                    id: `${selectedNodeId}-${node.id}`,
-                    source: selectedNodeId,
-                    target: node.id,
-                    relationship: connectionColor?.type === 'positive' ? 'relation bénéfique' :
-                        connectionColor?.type === 'danger' ? 'relation dangereuse' :
-                            connectionColor?.type === 'contraindication' ? 'contre-indication' :
-                                connectionColor?.type === 'warning' ? 'précaution' : 'analyse demandée',
-                    evidence_grade: existingEdge?.evidence_grade || 'D',
-                    translation_gap: existingEdge?.translation_gap || false,
-                    weight: existingEdge?.weight || 0.5
-                };
-
-                onEdgeClick(syntheticEdge, selectedNode, node);
-            }
-        } else {
-            // Regular click → select/deselect node
-            setSelectedNodeId(prev => prev === node.id ? null : node.id);
+        // In multi-select mode, toggle node selection for analysis
+        if (multiSelectMode) {
+            setSelectedNodesForAnalysis(prev => {
+                const newSet = new Set(prev);
+                if (newSet.has(node.id)) {
+                    newSet.delete(node.id);
+                } else {
+                    newSet.add(node.id);
+                }
+                return newSet;
+            });
+            return;
         }
-    }, [selectedNodeId, highlightedNodeIds, nodeMap, connectionColors, data, onEdgeClick]);
+
+        // Normal mode: open action modal
+        setActionNode(node);
+        setShowNodeActionModal(true);
+        setSelectedNodeId(node.id);
+    }, [multiSelectMode]);
+
+    // Handle double click → expand graph from this node
+    const handleNodeDoubleClick = useCallback((node: RingNode, e: React.MouseEvent) => {
+        e.stopPropagation();
+        e.preventDefault();
+
+        // Only expand from non-center nodes
+        if (node.ring !== 0 && onSetCentral) {
+            onSetCentral(node.id);
+        }
+    }, [onSetCentral]);
 
     return (
         <div
@@ -410,9 +522,9 @@ function SVGFallback({ data, animationTime, onEdgeClick, onSetCentral }: SVGFall
                     transition: isPanning ? 'none' : 'transform 0.1s ease-out'
                 }}
             >
-                {/* Ring guides with staggered animation */}
-                {Array.from({ length: maxRing + 1 }).map((_, ring) => {
-                    if (ring === 0) return null;
+                {/* Ring guides with staggered animation - use dynamic radii */}
+                {Array.from(ringRadii.entries()).map(([ring, radius]) => {
+                    if (ring === 0 || radius === 0) return null;
                     // Each ring appears after the previous one
                     const ringAppearTime = ring * 0.15; // 15% of animation per ring
                     const ringProgress = Math.max(0, Math.min(1, (animationProgress - ringAppearTime) / 0.2));
@@ -423,9 +535,9 @@ function SVGFallback({ data, animationTime, onEdgeClick, onSetCentral }: SVGFall
                             key={`ring-${ring}`}
                             cx={center}
                             cy={center}
-                            r={ring * ringRadius * scale}
+                            r={radius * scale}
                             fill="none"
-                            stroke={RING_COLORS[ring]}
+                            stroke={RING_COLORS[ring] || '#6b7280'}
                             strokeWidth="1"
                             strokeDasharray="8 4"
                             opacity={0.3 * ringProgress}
@@ -436,114 +548,223 @@ function SVGFallback({ data, animationTime, onEdgeClick, onSetCentral }: SVGFall
                     );
                 })}
 
-                {/* All possible edges (complete graph - data loaded on click) */}
+                {/* SVG Definitions for animations */}
+                <defs>
+                    {/* Electric current gradient */}
+                    <linearGradient id="electricGradient" x1="0%" y1="0%" x2="100%" y2="0%">
+                        <stop offset="0%" stopColor="#06b6d4" stopOpacity="0">
+                            <animate attributeName="offset" values="0;1" dur="1.5s" repeatCount="indefinite" />
+                        </stop>
+                        <stop offset="30%" stopColor="#22d3ee" stopOpacity="1">
+                            <animate attributeName="offset" values="0.3;1.3" dur="1.5s" repeatCount="indefinite" />
+                        </stop>
+                        <stop offset="50%" stopColor="#ffffff" stopOpacity="1">
+                            <animate attributeName="offset" values="0.5;1.5" dur="1.5s" repeatCount="indefinite" />
+                        </stop>
+                        <stop offset="70%" stopColor="#22d3ee" stopOpacity="1">
+                            <animate attributeName="offset" values="0.7;1.7" dur="1.5s" repeatCount="indefinite" />
+                        </stop>
+                        <stop offset="100%" stopColor="#06b6d4" stopOpacity="0">
+                            <animate attributeName="offset" values="1;2" dur="1.5s" repeatCount="indefinite" />
+                        </stop>
+                    </linearGradient>
+
+                    {/* Glow filter */}
+                    <filter id="nodeGlow" x="-100%" y="-100%" width="300%" height="300%">
+                        <feGaussianBlur stdDeviation="4" result="blur" />
+                        <feMerge>
+                            <feMergeNode in="blur" />
+                            <feMergeNode in="SourceGraphic" />
+                        </feMerge>
+                    </filter>
+
+                    {/* Bright glow filter for spawn */}
+                    <filter id="spawnGlow" x="-200%" y="-200%" width="500%" height="500%">
+                        <feGaussianBlur stdDeviation="8" result="blur" />
+                        <feMerge>
+                            <feMergeNode in="blur" />
+                            <feMergeNode in="blur" />
+                            <feMergeNode in="SourceGraphic" />
+                        </feMerge>
+                    </filter>
+
+                    {/* Electric glow filter for edges */}
+                    <filter id="electricGlow" x="-50%" y="-50%" width="200%" height="200%">
+                        <feGaussianBlur stdDeviation="2" result="blur" />
+                        <feColorMatrix in="blur" type="matrix" values="0 0 0 0 0.2  0 0 0 0 0.8  0 0 0 0 1  0 0 0 1 0" result="blueGlow" />
+                        <feMerge>
+                            <feMergeNode in="blueGlow" />
+                            <feMergeNode in="SourceGraphic" />
+                        </feMerge>
+                    </filter>
+                </defs>
+
+                {/* Edges - OPTIMIZED: Only render defined edges, not all pairs */}
                 {(() => {
-                    const visibleNodes = data.knowledge_graph.nodes.filter(n => getNodeVisible(n.ring));
                     const allEdges: JSX.Element[] = [];
+                    const totalEdges = data.knowledge_graph.edges.length;
 
-                    for (let i = 0; i < visibleNodes.length; i++) {
-                        for (let j = i + 1; j < visibleNodes.length; j++) {
-                            const nodeA = visibleNodes[i];
-                            const nodeB = visibleNodes[j];
-                            const posA = nodePositions.get(nodeA.id);
-                            const posB = nodePositions.get(nodeB.id);
+                    // Deduplicate edges by normalized key
+                    const seenEdges = new Set<string>();
+                    const uniqueEdges = data.knowledge_graph.edges.filter(edge => {
+                        const key = [edge.source, edge.target].sort().join('-');
+                        if (seenEdges.has(key)) return false;
+                        seenEdges.add(key);
+                        return true;
+                    });
 
-                            if (!posA || !posB) continue;
+                    uniqueEdges.forEach((edge, edgeIndex) => {
+                        const posA = nodePositions.get(edge.source);
+                        const posB = nodePositions.get(edge.target);
+                        const nodeA = nodeMap.get(edge.source);
+                        const nodeB = nodeMap.get(edge.target);
 
-                            // Check if this edge is connected to selected node
-                            const isConnectedToSelected = selectedNodeId
-                                ? (nodeA.id === selectedNodeId || nodeB.id === selectedNodeId)
-                                : false;
+                        if (!posA || !posB || !nodeA || !nodeB) return;
 
-                            // Determine which node is NOT the selected one (for color lookup)
-                            const otherNodeId = nodeA.id === selectedNodeId ? nodeB.id :
-                                nodeB.id === selectedNodeId ? nodeA.id : null;
+                        // Check visibility (both nodes must be visible)
+                        if (!getNodeVisible(nodeA.ring) || !getNodeVisible(nodeB.ring)) return;
 
-                            // Check if there's a predefined edge for styling
-                            const existingEdge = data.knowledge_graph.edges.find(
-                                e => (e.source === nodeA.id && e.target === nodeB.id) ||
-                                    (e.source === nodeB.id && e.target === nodeA.id)
-                            );
+                        // Edge animation progress - staggered based on edge index
+                        const edgeStagger = (edgeIndex / totalEdges) * 0.6;
+                        const edgeAppearTime = 0.15 + edgeStagger;
+                        const edgeProgress = Math.max(0, Math.min(1, (animationProgress - edgeAppearTime) / 0.25));
+                        if (edgeProgress <= 0) return;
 
-                            // Determine color based on relationship type when selected
-                            let color: string;
-                            if (isConnectedToSelected && otherNodeId) {
-                                const connectionColor = connectionColors.get(otherNodeId);
-                                color = connectionColor?.color || '#6b7280';
-                            } else if (existingEdge) {
-                                color = existingEdge.evidence_grade === 'A' ? '#22c55e' :
-                                    existingEdge.evidence_grade === 'B' ? '#3b82f6' :
-                                        existingEdge.evidence_grade === 'C' ? '#f59e0b' : '#6b7280';
-                            } else {
-                                color = '#374151';
-                            }
+                        // Check if this edge is connected to selected node
+                        const isConnectedToSelected = selectedNodeId
+                            ? (nodeA.id === selectedNodeId || nodeB.id === selectedNodeId)
+                            : false;
 
-                            // Opacity based on selection state
-                            let opacity = existingEdge ? 0.6 : 0.15;
-                            if (selectedNodeId) {
-                                opacity = isConnectedToSelected ? 1 : 0.05; // Dim non-connected more
-                            }
+                        // Determine which node is NOT the selected one (for color lookup)
+                        const otherNodeId = nodeA.id === selectedNodeId ? nodeB.id :
+                            nodeB.id === selectedNodeId ? nodeA.id : null;
 
-                            const strokeWidth = isConnectedToSelected ? 4 : (existingEdge ? 2 : 1);
+                        // Determine color based on relationship type
+                        let color: string;
+                        if (isConnectedToSelected && otherNodeId) {
+                            const connectionColor = connectionColors.get(otherNodeId);
+                            color = connectionColor?.color || '#6b7280';
+                        } else {
+                            color = edge.evidence_grade === 'A' ? '#22c55e' :
+                                edge.evidence_grade === 'B' ? '#3b82f6' :
+                                    edge.evidence_grade === 'C' ? '#f59e0b' : '#6b7280';
+                        }
 
-                            // Create synthetic edge for click handler
-                            const syntheticEdge: RingEdge = existingEdge || {
-                                id: `${nodeA.id}-${nodeB.id}`,
-                                source: nodeA.id,
-                                target: nodeB.id,
-                                relationship: 'connexion potentielle',
-                                evidence_grade: 'D',
-                                translation_gap: false,
-                                weight: 0.5
-                            };
+                        // Opacity based on selection state and animation
+                        let opacity = 0.6;
+                        if (selectedNodeId) {
+                            opacity = isConnectedToSelected ? 1 : 0.1;
+                        }
+                        opacity *= edgeProgress;
 
-                            allEdges.push(
-                                <g key={`edge-${nodeA.id}-${nodeB.id}`}>
-                                    {/* Glow for highlighted edges */}
-                                    {isConnectedToSelected && (
+                        const strokeWidth = isConnectedToSelected ? 4 : 2;
+
+                        // Calculate line length for electric effect
+                        const dx = posB.x - posA.x;
+                        const dy = posB.y - posA.y;
+                        const length = Math.sqrt(dx * dx + dy * dy);
+
+                        // Animated line drawing effect
+                        const visibleLength = length * edgeProgress;
+                        const dashArray = `${visibleLength} ${length - visibleLength}`;
+
+                        allEdges.push(
+                            <g key={`edge-${edgeIndex}-${edge.id}`}>
+                                {/* Background line (drawn progressively) */}
+                                <line
+                                    x1={posA.x} y1={posA.y}
+                                    x2={posB.x} y2={posB.y}
+                                    stroke={color}
+                                    strokeWidth={strokeWidth}
+                                    strokeDasharray={dashArray}
+                                    opacity={opacity * 0.6}
+                                    strokeLinecap="round"
+                                />
+
+                                {/* Electric current effect on ALL edges after animation */}
+                                {edgeProgress >= 1 && (
+                                    <>
+                                        {/* Subtle glow behind electric current */}
                                         <line
                                             x1={posA.x} y1={posA.y}
                                             x2={posB.x} y2={posB.y}
-                                            stroke={color}
-                                            strokeWidth="6"
-                                            opacity="0.3"
+                                            stroke={isConnectedToSelected ? color : '#06b6d4'}
+                                            strokeWidth={isConnectedToSelected ? 6 : 3}
+                                            opacity={isConnectedToSelected ? 0.4 : 0.15}
+                                            strokeLinecap="round"
+                                            filter="url(#electricGlow)"
                                         />
-                                    )}
-                                    {/* Main line */}
-                                    <line
-                                        x1={posA.x} y1={posA.y}
-                                        x2={posB.x} y2={posB.y}
-                                        stroke={color}
-                                        strokeWidth={strokeWidth}
-                                        opacity={opacity}
-                                        className="cursor-pointer hover:opacity-100"
-                                        style={{ transition: 'all 0.2s' }}
-                                        onClick={(e) => {
-                                            e.stopPropagation();
-                                            onEdgeClick(syntheticEdge, nodeA, nodeB);
-                                        }}
-                                    />
-                                </g>
-                            );
-                        }
-                    }
+                                        {/* Animated electric dash - subtle on inactive, bright on active */}
+                                        <line
+                                            x1={posA.x} y1={posA.y}
+                                            x2={posB.x} y2={posB.y}
+                                            stroke={isConnectedToSelected ? 'white' : '#22d3ee'}
+                                            strokeWidth={isConnectedToSelected ? 2 : 1}
+                                            strokeDasharray={isConnectedToSelected ? '4 12' : '2 8'}
+                                            opacity={isConnectedToSelected ? 0.9 : 0.4}
+                                            strokeLinecap="round"
+                                        >
+                                            <animate
+                                                attributeName="stroke-dashoffset"
+                                                values="0;-20"
+                                                dur={isConnectedToSelected ? '0.4s' : '1s'}
+                                                repeatCount="indefinite"
+                                            />
+                                        </line>
+                                        {/* Spark particle - fast on active edges, slow on others */}
+                                        <circle
+                                            r={isConnectedToSelected ? 3 : 1.5}
+                                            fill={isConnectedToSelected ? 'white' : '#22d3ee'}
+                                            opacity={isConnectedToSelected ? 0.9 : 0.5}
+                                        >
+                                            <animateMotion
+                                                dur={isConnectedToSelected ? '0.6s' : '2s'}
+                                                repeatCount="indefinite"
+                                                path={`M${posA.x},${posA.y} L${posB.x},${posB.y}`}
+                                            />
+                                        </circle>
+                                    </>
+                                )}
+
+                                {/* Clickable overlay */}
+                                <line
+                                    x1={posA.x} y1={posA.y}
+                                    x2={posB.x} y2={posB.y}
+                                    stroke="transparent"
+                                    strokeWidth="12"
+                                    className="cursor-pointer"
+                                    onClick={(e) => {
+                                        e.stopPropagation();
+                                        onEdgeClick(edge, nodeA, nodeB);
+                                    }}
+                                />
+                            </g>
+                        );
+                    });
 
                     return allEdges;
                 })()}
 
-                {/* Nodes */}
-                {data.knowledge_graph.nodes.map((node) => {
+                {/* Nodes with staggered ease-in-out animation */}
+                {uniqueNodes.map((node, nodeIndex) => {
                     const pos = nodePositions.get(node.id);
                     if (!pos || !getNodeVisible(node.ring)) return null;
 
-                    // Calculate node animation based on ring
-                    const nodeAppearTime = 0.2 + node.ring * 0.15; // Start after rings, stagger by ring
-                    const nodeProgress = Math.max(0, Math.min(1, (animationProgress - nodeAppearTime) / 0.15));
+                    // Calculate stagger delay based on total node count to fit all in animation
+                    const totalNodes = data.knowledge_graph.nodes.length;
+                    const maxStaggerTime = 0.7; // All nodes start appearing by 70% of animation
+                    const staggerDelay = (nodeIndex / totalNodes) * maxStaggerTime;
+                    const nodeAppearTime = 0.05 + staggerDelay;
+                    const rawProgress = (animationProgress - nodeAppearTime) / 0.2;
+                    // Ease-in-out cubic bezier approximation
+                    const easeInOut = (t: number) => t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+                    const nodeProgress = Math.max(0, Math.min(1, easeInOut(Math.max(0, Math.min(1, rawProgress)))));
 
                     // Don't render if not visible yet
                     if (nodeProgress <= 0) return null;
 
-                    const baseColor = LANE_COLORS[node.lane] || RING_COLORS[node.ring] || '#94a3b8';
+                    // Use semantic node type color if available, fallback to lane/ring colors
+                    const baseColor = NODE_TYPE_COLORS[node.node_type?.toUpperCase()] || LANE_COLORS[node.lane] || RING_COLORS[node.ring] || '#94a3b8';
                     // Reduce size for ring 1 nodes to prevent overlap
                     const ringScale = node.ring === 1 ? 0.6 : 1;
                     const size = (8 + node.proximity_score * 6) * ringScale;
@@ -552,13 +773,17 @@ function SVGFallback({ data, animationTime, onEdgeClick, onSetCentral }: SVGFall
                     const isSelected = node.id === selectedNodeId;
                     const isHighlighted = highlightedNodeIds.has(node.id);
                     const isDimmed = selectedNodeId && !isSelected && !isHighlighted;
+                    const isMultiSelected = selectedNodesForAnalysis.has(node.id);
+                    const isNewlySpawned = newlySpawnedNodes?.has(node.id) || false;
 
                     // Get relationship-based color from connectionColors
                     const connectionColor = connectionColors.get(node.id);
 
                     // Determine node color based on state and relationship
                     let color: string;
-                    if (isSelected) {
+                    if (isMultiSelected && multiSelectMode) {
+                        color = '#22c55e'; // Green for multi-selected
+                    } else if (isSelected) {
                         color = '#a855f7'; // Purple for selected
                     } else if (isHighlighted && connectionColor) {
                         color = connectionColor.color; // Use relationship color
@@ -595,17 +820,46 @@ function SVGFallback({ data, animationTime, onEdgeClick, onSetCentral }: SVGFall
                             className="cursor-pointer"
                             style={{ transition: 'all 0.3s ease-out' }}
                         >
-                            {/* Entry burst animation - light expanding circle */}
+                            {/* Entry animation - multiple expanding light rings */}
                             {nodeProgress < 1 && (
-                                <circle
-                                    cx={pos.x}
-                                    cy={pos.y}
-                                    r={nodeSize * 3 * (1 - nodeProgress)}
-                                    fill="none"
-                                    stroke={color}
-                                    strokeWidth={2 * (1 - nodeProgress)}
-                                    opacity={0.6 * (1 - nodeProgress)}
-                                />
+                                <>
+                                    {/* Outer expanding ring */}
+                                    <circle
+                                        cx={pos.x}
+                                        cy={pos.y}
+                                        r={nodeSize * 5 * nodeProgress}
+                                        fill="none"
+                                        stroke={color}
+                                        strokeWidth={3 * (1 - nodeProgress)}
+                                        opacity={0.8 * (1 - nodeProgress)}
+                                    />
+                                    {/* Middle expanding ring */}
+                                    <circle
+                                        cx={pos.x}
+                                        cy={pos.y}
+                                        r={nodeSize * 3 * nodeProgress}
+                                        fill="none"
+                                        stroke={color}
+                                        strokeWidth={2 * (1 - nodeProgress)}
+                                        opacity={0.6 * (1 - nodeProgress)}
+                                    />
+                                    {/* Inner bright flash */}
+                                    <circle
+                                        cx={pos.x}
+                                        cy={pos.y}
+                                        r={nodeSize * 2 * (1 - nodeProgress * 0.5)}
+                                        fill={color}
+                                        opacity={0.7 * (1 - nodeProgress)}
+                                    />
+                                    {/* Center bright point */}
+                                    <circle
+                                        cx={pos.x}
+                                        cy={pos.y}
+                                        r={nodeSize * 0.8}
+                                        fill="white"
+                                        opacity={0.9 * (1 - nodeProgress)}
+                                    />
+                                </>
                             )}
                             {/* Selection ring for selected node */}
                             {isSelected && (
@@ -625,6 +879,33 @@ function SVGFallback({ data, animationTime, onEdgeClick, onSetCentral }: SVGFall
                                 <circle cx={pos.x} cy={pos.y} r={nodeSize * 2.5} fill="#ef4444" opacity="0.3">
                                     <animate attributeName="opacity" values="0.3;0.1;0.3" dur="1s" repeatCount="indefinite" />
                                 </circle>
+                            )}
+                            {/* COSMIC ENERGY BURST for newly spawned nodes */}
+                            {isNewlySpawned && (
+                                <>
+                                    {/* Outer pulsing cosmic glow */}
+                                    <circle cx={pos.x} cy={pos.y} r={nodeSize * 4} fill="none" stroke="#a855f7" strokeWidth="2">
+                                        <animate attributeName="r" values={`${nodeSize * 2};${nodeSize * 6}`} dur="1.5s" repeatCount="indefinite" />
+                                        <animate attributeName="opacity" values="0.8;0" dur="1.5s" repeatCount="indefinite" />
+                                    </circle>
+                                    {/* Inner rotating energy ring */}
+                                    <circle cx={pos.x} cy={pos.y} r={nodeSize * 3} fill="none" stroke="#06b6d4" strokeWidth="3" strokeDasharray="8 4">
+                                        <animate attributeName="stroke-dashoffset" values="0;-24" dur="0.5s" repeatCount="indefinite" />
+                                        <animate attributeName="opacity" values="0.7;0.3;0.7" dur="1s" repeatCount="indefinite" />
+                                    </circle>
+                                    {/* Bright core flash */}
+                                    <circle cx={pos.x} cy={pos.y} r={nodeSize * 1.8} fill="white" opacity="0.6">
+                                        <animate attributeName="opacity" values="0.8;0.2;0.8" dur="0.8s" repeatCount="indefinite" />
+                                    </circle>
+                                    {/* Energy particle 1 */}
+                                    <circle r="4" fill="#a855f7" opacity="0.9">
+                                        <animateMotion dur="1.2s" repeatCount="indefinite" path={`M${pos.x},${pos.y} m-${nodeSize * 3},0 a${nodeSize * 3},${nodeSize * 3} 0 1,1 ${nodeSize * 6},0 a${nodeSize * 3},${nodeSize * 3} 0 1,1 -${nodeSize * 6},0`} />
+                                    </circle>
+                                    {/* Energy particle 2 */}
+                                    <circle r="3" fill="#06b6d4" opacity="0.8">
+                                        <animateMotion dur="0.9s" repeatCount="indefinite" begin="0.3s" path={`M${pos.x},${pos.y} m-${nodeSize * 2.5},0 a${nodeSize * 2.5},${nodeSize * 2.5} 0 1,0 ${nodeSize * 5},0 a${nodeSize * 2.5},${nodeSize * 2.5} 0 1,0 -${nodeSize * 5},0`} />
+                                    </circle>
+                                </>
                             )}
                             {/* Outer glow - enhanced during animation */}
                             <circle
@@ -647,33 +928,46 @@ function SVGFallback({ data, animationTime, onEdgeClick, onSetCentral }: SVGFall
                                 opacity={mainOpacity * 0.5 * (nodeProgress < 1 ? 1.5 : 1)}
                             />
 
-                            {/* Label for selected/center nodes */}
-                            {(node.ring === 0 || isSelected) && (
+                            {/* Permanent label for ALL nodes */}
+                            <g style={{ pointerEvents: 'none' }}>
+                                {/* Label background pill */}
+                                <rect
+                                    x={pos.x - Math.min(node.name.length * 3.5, 50)}
+                                    y={pos.y + nodeSize + 4}
+                                    width={Math.min(node.name.length * 7, 100)}
+                                    height={16}
+                                    rx={8}
+                                    fill={baseColor}
+                                    opacity={mainOpacity * 0.9}
+                                />
+                                {/* Label text */}
                                 <text
                                     x={pos.x}
-                                    y={pos.y + nodeSize + 16}
+                                    y={pos.y + nodeSize + 15}
                                     textAnchor="middle"
-                                    fill={isSelected ? '#a855f7' : 'white'}
-                                    fontSize="11"
-                                    fontWeight="bold"
-                                    style={{ pointerEvents: 'none' }}
+                                    fill="white"
+                                    fontSize={node.ring === 0 ? "11" : "9"}
+                                    fontWeight={node.ring === 0 || isSelected ? "bold" : "500"}
+                                    style={{
+                                        textShadow: '0 1px 2px rgba(0,0,0,0.8)',
+                                        letterSpacing: '-0.3px'
+                                    }}
                                 >
-                                    {isSelected ? '🔍' : '🎯'} {node.name.substring(0, 25)}
+                                    {node.ring === 0 ? '🎯 ' : ''}{node.name.length > 15 ? node.name.substring(0, 13) + '…' : node.name}
                                 </text>
-                            )}
+                            </g>
 
-                            {/* Click hint for highlighted nodes */}
-                            {isHighlighted && selectedNodeId && (
+                            {/* Selection indicator */}
+                            {isSelected && (
                                 <text
                                     x={pos.x}
-                                    y={pos.y + nodeSize + 14}
+                                    y={pos.y - nodeSize - 8}
                                     textAnchor="middle"
-                                    fill={connectionColors.get(node.id)?.color || '#c084fc'}
-                                    fontSize="9"
+                                    fill="#a855f7"
+                                    fontSize="10"
                                     fontWeight="bold"
-                                    style={{ pointerEvents: 'none' }}
                                 >
-                                    ▶ Cliquer
+                                    🔍 Sélectionné
                                 </text>
                             )}
                         </g>
@@ -735,6 +1029,155 @@ function SVGFallback({ data, animationTime, onEdgeClick, onSetCentral }: SVGFall
                     <div className="mt-2 pt-2 border-t border-gray-700 text-xs text-purple-400">
                         Double-clic → nouveau centre
                     </div>
+                </div>
+            )}
+
+            {/* NODE ACTION MODAL */}
+            {showNodeActionModal && actionNode && (
+                <div
+                    className="absolute inset-0 bg-black/50 flex items-center justify-center z-50"
+                    onClick={() => setShowNodeActionModal(false)}
+                >
+                    <div
+                        className="bg-gray-800 rounded-xl border border-gray-700 p-6 max-w-md w-full mx-4 shadow-2xl"
+                        onClick={e => e.stopPropagation()}
+                    >
+                        <div className="flex items-center gap-3 mb-4">
+                            <span
+                                className="w-4 h-4 rounded-full"
+                                style={{ backgroundColor: NODE_TYPE_COLORS[actionNode.node_type?.toUpperCase()] || LANE_COLORS[actionNode.lane] || '#94a3b8' }}
+                            />
+                            <h3 className="text-lg font-bold text-white">{actionNode.name}</h3>
+                        </div>
+
+                        <p className="text-sm text-gray-400 mb-4">
+                            Type: {actionNode.node_type || actionNode.lane} | Anneau: {actionNode.ring}
+                        </p>
+
+                        <div className="space-y-3">
+                            {/* Option 1: Set as new center */}
+                            <button
+                                onClick={() => {
+                                    setShowNodeActionModal(false);
+                                    if (onSetCentral && actionNode.ring !== 0) {
+                                        onSetCentral(actionNode.id);
+                                    }
+                                }}
+                                disabled={actionNode.ring === 0}
+                                className="w-full flex items-center gap-3 px-4 py-3 bg-purple-600/20 hover:bg-purple-600/40 border border-purple-500/30 rounded-lg text-left transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                            >
+                                <span className="text-2xl">🎯</span>
+                                <div>
+                                    <div className="font-medium text-white">Définir comme nouveau centre</div>
+                                    <div className="text-xs text-gray-400">Explore le graphe depuis ce nœud</div>
+                                </div>
+                            </button>
+
+                            {/* Option 2: Analyze with central node */}
+                            <button
+                                onClick={() => {
+                                    setShowNodeActionModal(false);
+                                    const centerNode = data.knowledge_graph.nodes.find(n => n.ring === 0);
+                                    if (centerNode && actionNode.id !== centerNode.id) {
+                                        const syntheticEdge: RingEdge = {
+                                            id: `${actionNode.id}-${centerNode.id}`,
+                                            source: actionNode.id,
+                                            target: centerNode.id,
+                                            relationship: 'analyse demandée',
+                                            evidence_grade: 'D',
+                                            translation_gap: false,
+                                            weight: 0.5
+                                        };
+                                        onEdgeClick(syntheticEdge, actionNode, centerNode);
+                                    }
+                                }}
+                                disabled={actionNode.ring === 0}
+                                className="w-full flex items-center gap-3 px-4 py-3 bg-blue-600/20 hover:bg-blue-600/40 border border-blue-500/30 rounded-lg text-left transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                            >
+                                <span className="text-2xl">🔍</span>
+                                <div>
+                                    <div className="font-medium text-white">Analyser le lien avec le nœud central</div>
+                                    <div className="text-xs text-gray-400">Analyse IA de la relation</div>
+                                </div>
+                            </button>
+
+                            {/* Option 3: Analyze with other nodes */}
+                            <button
+                                onClick={() => {
+                                    setShowNodeActionModal(false);
+                                    setMultiSelectMode(true);
+                                    setSelectedNodesForAnalysis(new Set([actionNode.id]));
+                                }}
+                                className="w-full flex items-center gap-3 px-4 py-3 bg-green-600/20 hover:bg-green-600/40 border border-green-500/30 rounded-lg text-left transition-colors"
+                            >
+                                <span className="text-2xl">🔗</span>
+                                <div>
+                                    <div className="font-medium text-white">Analyser le lien avec d'autres nœuds</div>
+                                    <div className="text-xs text-gray-400">Sélectionnez plusieurs nœuds pour analyse</div>
+                                </div>
+                            </button>
+                        </div>
+
+                        <button
+                            onClick={() => setShowNodeActionModal(false)}
+                            className="mt-4 w-full py-2 text-sm text-gray-400 hover:text-white transition-colors"
+                        >
+                            Annuler
+                        </button>
+                    </div>
+                </div>
+            )}
+
+            {/* MULTI-SELECT MODE BAR */}
+            {multiSelectMode && (
+                <div className="absolute bottom-4 left-1/2 transform -translate-x-1/2 z-40 bg-gray-800/95 rounded-xl border border-green-500/50 px-6 py-4 shadow-xl backdrop-blur-sm">
+                    <div className="flex items-center gap-4">
+                        <div className="text-white">
+                            <span className="text-green-400 font-bold">{selectedNodesForAnalysis.size}</span> nœuds sélectionnés
+                        </div>
+                        <div className="h-6 w-px bg-gray-600" />
+                        <button
+                            onClick={() => {
+                                if (selectedNodesForAnalysis.size >= 2) {
+                                    // Get nodes for analysis
+                                    const nodesToAnalyze = data.knowledge_graph.nodes.filter(n =>
+                                        selectedNodesForAnalysis.has(n.id)
+                                    );
+                                    if (nodesToAnalyze.length >= 2) {
+                                        // Create synthetic multi-node edge for analysis
+                                        const syntheticEdge: RingEdge = {
+                                            id: `multi-${Date.now()}`,
+                                            source: nodesToAnalyze[0].id,
+                                            target: nodesToAnalyze[nodesToAnalyze.length - 1].id,
+                                            relationship: `Analyse multi-noeuds: ${nodesToAnalyze.map(n => n.name).join(' ↔ ')}`,
+                                            evidence_grade: 'D',
+                                            translation_gap: false,
+                                            weight: 0.5
+                                        };
+                                        // Pass ALL selected nodes for comprehensive analysis
+                                        onEdgeClick(syntheticEdge, nodesToAnalyze[0], nodesToAnalyze[nodesToAnalyze.length - 1], nodesToAnalyze);
+                                    }
+                                }
+                                setMultiSelectMode(false);
+                                setSelectedNodesForAnalysis(new Set());
+                            }}
+                            disabled={selectedNodesForAnalysis.size < 2}
+                            className="px-4 py-2 bg-green-600 hover:bg-green-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white font-medium rounded-lg transition-colors flex items-center gap-2"
+                        >
+                            <Sparkles className="w-4 h-4" />
+                            Lancer l'analyse
+                        </button>
+                        <button
+                            onClick={() => {
+                                setMultiSelectMode(false);
+                                setSelectedNodesForAnalysis(new Set());
+                            }}
+                            className="px-3 py-2 text-gray-400 hover:text-white transition-colors"
+                        >
+                            ✕
+                        </button>
+                    </div>
+                    <p className="text-xs text-gray-400 mt-2">Cliquez sur les nœuds pour les sélectionner</p>
                 </div>
             )}
         </div>
@@ -998,19 +1441,25 @@ interface LinkModalProps {
     edge: RingEdge | null;
     sourceNode: RingNode | null;
     targetNode: RingNode | null;
+    multiNodes?: RingNode[]; // All nodes for multi-node analysis
     pathology: string;
+    onSetCentral?: (nodeId: string) => void;
 }
 
-function LinkExplanationModal({ isOpen, onClose, edge, sourceNode, targetNode, pathology }: LinkModalProps) {
+function LinkExplanationModal({ isOpen, onClose, edge, sourceNode, targetNode, multiNodes, pathology, onSetCentral }: LinkModalProps) {
     const [explanation, setExplanation] = useState<string>('');
     const [isLoading, setIsLoading] = useState(false);
     const [fromCache, setFromCache] = useState(false);
+
+    // Determine if this is a multi-node analysis
+    const isMultiNodeAnalysis = multiNodes && multiNodes.length > 2;
+    const allNodeNames = isMultiNodeAnalysis ? multiNodes.map(n => n.name) : [sourceNode?.name, targetNode?.name].filter(Boolean);
 
     useEffect(() => {
         if (isOpen && edge && sourceNode && targetNode) {
             fetchExplanation();
         }
-    }, [isOpen, edge, sourceNode, targetNode]);
+    }, [isOpen, edge, sourceNode, targetNode, multiNodes]);
 
     const fetchExplanation = async () => {
         if (!edge || !sourceNode || !targetNode) return;
@@ -1044,9 +1493,20 @@ function LinkExplanationModal({ isOpen, onClose, edge, sourceNode, targetNode, p
             }
 
             // Step 2: Cache miss - call AI
-            const response = await supabase.functions.invoke('causal-reasoning', {
-                body: {
-                    query: `Explique en détail le lien entre "${sourceNode.name}" et "${targetNode.name}" dans le contexte de la pathologie "${pathology}". 
+            // Build query based on whether this is multi-node or standard 2-node analysis
+            const queryPrompt = isMultiNodeAnalysis
+                ? `Analyse en détail les relations thérapeutiques et cliniques entre TOUS ces concepts médicaux dans le contexte de "${pathology}":
+
+${multiNodes!.map((n, i) => `${i + 1}. ${n.name} (${n.node_type})`).join('\n')}
+
+Fournis une analyse complète incluant:
+1. Les interactions entre TOUS ces concepts (pas seulement par paires)
+2. Les synergies potentielles
+3. Les contre-indications croisées
+4. Les implications thérapeutiques globales
+5. Les risques cumulatifs
+6. Une recommandation clinique intégrée`
+                : `Explique en détail le lien entre "${sourceNode.name}" et "${targetNode.name}" dans le contexte de la pathologie "${pathology}". 
                     
 Type de relation: ${edge.relationship}
 Grade d'évidence: ${edge.evidence_grade}
@@ -1056,10 +1516,15 @@ Fournis:
 1. Une explication scientifique détaillée du mécanisme
 2. Les preuves cliniques disponibles
 3. Les implications thérapeutiques potentielles
-4. Les limitations ou incertitudes connues`,
+4. Les limitations ou incertitudes connues`;
+
+            const response = await supabase.functions.invoke('causal-reasoning', {
+                body: {
+                    query: queryPrompt,
                     context: {
                         sourceNode: sourceNode.name,
                         targetNode: targetNode.name,
+                        multiNodes: isMultiNodeAnalysis ? multiNodes!.map(n => ({ name: n.name, type: n.node_type })) : undefined,
                         relationship: edge.relationship,
                         evidence_grade: edge.evidence_grade,
                         pathology
@@ -1179,6 +1644,22 @@ Fournis:
                         </div>
                     )}
                 </div>
+
+                {/* Footer with action button */}
+                <div className="p-4 border-t border-gray-700 bg-gray-800/50">
+                    <button
+                        onClick={() => {
+                            if (onSetCentral && sourceNode) {
+                                onSetCentral(sourceNode.id);
+                                onClose();
+                            }
+                        }}
+                        className="w-full py-2.5 px-4 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white font-medium rounded-lg transition-all flex items-center justify-center gap-2 shadow-lg"
+                    >
+                        <GitBranch className="w-4 h-4" />
+                        Ajouter des nœuds liés à "{sourceNode?.name}"
+                    </button>
+                </div>
             </div>
         </div>
     );
@@ -1225,6 +1706,18 @@ function RadialScene({ data, animationTime, selectedNodeId, selectedEdgeId, onNo
         return { nodePositions: positions, maxRing, nodeMap };
     }, [data, ringRadius]);
 
+    // Deduplicate edges by their source-target pair to prevent React key warnings
+    const uniqueEdges = useMemo(() => {
+        const seen = new Set<string>();
+        return data.knowledge_graph.edges.filter(edge => {
+            // Create a normalized key (sorted to handle bidirectional edges)
+            const key = [edge.source, edge.target].sort().join('-');
+            if (seen.has(key)) return false;
+            seen.add(key);
+            return true;
+        });
+    }, [data.knowledge_graph.edges]);
+
     return (
         <>
             <color attach="background" args={['#050508']} />
@@ -1248,8 +1741,8 @@ function RadialScene({ data, animationTime, selectedNodeId, selectedEdgeId, onNo
                 <RingCircle key={ring} ring={ring} radius={ring * ringRadius} animationTime={animationTime} />
             ))}
 
-            {/* Edges (clickable) */}
-            {data.knowledge_graph.edges.map((edge) => {
+            {/* Edges (clickable) - using deduplicated edges */}
+            {uniqueEdges.map((edge, idx) => {
                 const startPos = nodePositions.get(edge.source);
                 const endPos = nodePositions.get(edge.target);
                 const sourceNode = nodeMap.get(edge.source);
@@ -1259,7 +1752,7 @@ function RadialScene({ data, animationTime, selectedNodeId, selectedEdgeId, onNo
 
                 return (
                     <ClickableEdge
-                        key={edge.id}
+                        key={`${edge.id}-${idx}`}
                         edge={edge}
                         start={startPos}
                         end={endPos}
@@ -1350,11 +1843,13 @@ export default function RadialRingsModal({
     const [animationTime, setAnimationTime] = useState(0);
     const [isPaused, setIsPaused] = useState(false);
     const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
+    const [centralNode, setCentralNode] = useState<string>(pathology); // Current center
 
     // Edge selection for explanation modal
     const [selectedEdge, setSelectedEdge] = useState<RingEdge | null>(null);
     const [selectedEdgeSource, setSelectedEdgeSource] = useState<RingNode | null>(null);
     const [selectedEdgeTarget, setSelectedEdgeTarget] = useState<RingNode | null>(null);
+    const [multiNodesForAnalysis, setMultiNodesForAnalysis] = useState<RingNode[]>([]);
     const [showLinkModal, setShowLinkModal] = useState(false);
 
     const animationRef = useRef<number>();
@@ -1367,7 +1862,10 @@ export default function RadialRingsModal({
     }, []);
 
     useEffect(() => {
-        if (isOpen && pathology) fetchData();
+        if (isOpen && pathology) {
+            setCentralNode(pathology);
+            fetchData(pathology);
+        }
         return () => { if (animationRef.current) cancelAnimationFrame(animationRef.current); };
     }, [isOpen, pathology]);
 
@@ -1382,7 +1880,7 @@ export default function RadialRingsModal({
         return () => { if (animationRef.current) cancelAnimationFrame(animationRef.current); };
     }, [data, isPaused, isOpen]);
 
-    const fetchData = async () => {
+    const fetchData = async (centralPathology: string) => {
         setIsLoading(true);
         setError(null);
         setData(null);
@@ -1390,22 +1888,225 @@ export default function RadialRingsModal({
         startTimeRef.current = 0;
 
         try {
-            const response = await supabase.functions.invoke('radial-rings-engine', {
-                body: { pathology, mode, budget: 'medium', context }
+            // Use deep-research-graph with Claude Opus for comprehensive research
+            const response = await supabase.functions.invoke('deep-research-graph', {
+                body: {
+                    topic: centralPathology,
+                    max_nodes: 100,
+                    include_pubmed: true,
+                    include_fda: true
+                }
             });
+
             if (response.error) throw response.error;
-            setData(response.data);
+
+            const result = response.data;
+            console.log('[DEEP-RESEARCH] Result:', result);
+
+            // Transform deep-research-graph response to RadialRingsData format
+            // Map node types to rings for visual grouping
+            const typeToRing: Record<string, number> = {
+                'PATHOLOGY': 0,    // Center
+                'DRUG': 1,         // Inner ring
+                'SYMPTOM': 2,      // Second ring
+                'COMPLICATION': 2, // Second ring
+                'LAB': 3,          // Third ring
+                'LIFESTYLE': 3,    // Third ring
+                'GUIDELINE': 4,    // Outer ring
+                'EVIDENCE': 4      // Outer ring
+            };
+
+            const transformedNodes: RingNode[] = result.nodes.map((node: any, index: number) => ({
+                id: node.id,
+                ring: typeToRing[node.node_type] ?? 2,
+                lane: node.node_type?.toLowerCase() || 'unknown',
+                name: node.label,
+                node_type: node.node_type,
+                properties: { description: node.description, source: node.source },
+                proximity_score: node.weight || 0.7,
+                evidence_grade: node.weight > 0.8 ? 'A' : node.weight > 0.5 ? 'B' : 'C',
+                translation_gap: false,
+                category_id: node.category_id,
+                subcategory: node.subcategory,
+                tags: node.tags
+            }));
+
+            const transformedEdges: RingEdge[] = result.edges.map((edge: any) => ({
+                id: `${edge.source_id}-${edge.target_id}`,
+                source: edge.source_id,
+                target: edge.target_id,
+                relationship: edge.edge_type,
+                weight: edge.weight || 0.5,
+                evidence_grade: edge.weight > 0.8 ? 'A' : edge.weight > 0.5 ? 'B' : 'C',
+                translation_gap: false
+            }));
+
+            setData({
+                knowledge_graph: { nodes: transformedNodes, edges: transformedEdges },
+                micro_signals: [],
+                hypotheses: []
+            });
+
         } catch (err) {
+            console.error('[DEEP-RESEARCH] Error:', err);
             setError(String(err));
         } finally {
             setIsLoading(false);
         }
     };
 
-    const handleEdgeSelect = (edge: RingEdge | null, source: RingNode | null, target: RingNode | null) => {
+    // Expand graph progressively from a node (MIND MAP BEHAVIOR)
+    // Uses deep-research-graph for comprehensive expansion with progressive animation
+    const [isExpanding, setIsExpanding] = useState(false);
+    const [expandingNodeName, setExpandingNodeName] = useState<string | null>(null);
+    const [newlySpawnedNodes, setNewlySpawnedNodes] = useState<Set<string>>(new Set());
+
+    const handleSetCentral = async (nodeId: string) => {
+        if (!data) return;
+        const node = data.knowledge_graph.nodes.find(n => n.id === nodeId);
+        if (!node) return;
+
+        setIsExpanding(true);
+        setExpandingNodeName(node.name);
+        // NOTE: Do NOT set isLoading here - we want to keep the graph visible during expansion
+
+        try {
+            // Call deep-research-graph for comprehensive expansion
+            const response = await supabase.functions.invoke('deep-research-graph', {
+                body: {
+                    topic: node.name,
+                    max_nodes: 100,
+                    include_pubmed: true,
+                    include_fda: true
+                }
+            });
+
+            if (response.error) throw response.error;
+
+            const result = response.data;
+            console.log('[EXPAND] Deep research result:', result);
+
+            // Map node types to rings
+            const typeToRing: Record<string, number> = {
+                'PATHOLOGY': 0,
+                'DRUG': 1,
+                'SYMPTOM': 2,
+                'COMPLICATION': 2,
+                'LAB': 3,
+                'LIFESTYLE': 3,
+                'GUIDELINE': 4,
+                'EVIDENCE': 4
+            };
+
+            // Transform new nodes
+            const newNodes: RingNode[] = result.nodes.map((n: any) => ({
+                id: n.id,
+                ring: typeToRing[n.node_type] ?? 2,
+                lane: n.node_type?.toLowerCase() || 'unknown',
+                name: n.label,
+                node_type: n.node_type,
+                properties: { description: n.description, source: n.source },
+                proximity_score: n.weight || 0.7,
+                evidence_grade: n.weight > 0.8 ? 'A' : n.weight > 0.5 ? 'B' : 'C',
+                translation_gap: false
+            }));
+
+            // Transform new edges
+            const newEdges: RingEdge[] = result.edges.map((e: any) => ({
+                id: `${e.source_id}-${e.target_id}`,
+                source: e.source_id,
+                target: e.target_id,
+                relationship: e.edge_type,
+                weight: e.weight || 0.5,
+                evidence_grade: e.weight > 0.8 ? 'A' : e.weight > 0.5 ? 'B' : 'C',
+                translation_gap: false
+            }));
+
+            // Merge with existing nodes, avoiding duplicates
+            const existingNodeNames = new Set(data.knowledge_graph.nodes.map(n => n.name.toLowerCase()));
+            const nodesToAdd = newNodes.filter(n => !existingNodeNames.has(n.name.toLowerCase()));
+
+            // Add nodes progressively with COSMIC STREAMING animation
+            let currentNodes = [...data.knowledge_graph.nodes];
+            let currentEdges = [...data.knowledge_graph.edges];
+
+            // Clear any previous spawn markers
+            setNewlySpawnedNodes(new Set());
+
+            // Add nodes one by one with visible streaming delay
+            for (let i = 0; i < nodesToAdd.length; i++) {
+                const newNode = nodesToAdd[i];
+                currentNodes = [...currentNodes, newNode];
+
+                // Mark this node as newly spawned for cosmic animation
+                setNewlySpawnedNodes(prev => new Set([...prev, newNode.id]));
+
+                // CREATE EDGE FROM SOURCE NODE TO NEW NODE
+                // This ensures all expanded nodes are connected to the source
+                const sourceToNewEdge: RingEdge = {
+                    id: `${nodeId}-${newNode.id}`,
+                    source: nodeId,
+                    target: newNode.id,
+                    relationship: 'RELATED_TO',
+                    weight: 0.7,
+                    evidence_grade: 'B',
+                    translation_gap: false
+                };
+
+                // Check if this edge doesn't already exist
+                if (!currentEdges.some(e => e.id === sourceToNewEdge.id ||
+                    (e.source === nodeId && e.target === newNode.id) ||
+                    (e.source === newNode.id && e.target === nodeId))) {
+                    currentEdges = [...currentEdges, sourceToNewEdge];
+                }
+
+                // Also add any edges from backend that now have both endpoints
+                const currentNodeIds = new Set(currentNodes.map(n => n.id));
+                const relevantEdges = newEdges.filter(e =>
+                    currentNodeIds.has(e.source) &&
+                    currentNodeIds.has(e.target) &&
+                    !currentEdges.some(ce => ce.id === e.id)
+                );
+                currentEdges = [...currentEdges, ...relevantEdges];
+
+                // Update state to trigger re-render (progressive appearance)
+                setData({
+                    ...data,
+                    knowledge_graph: { nodes: currentNodes, edges: currentEdges }
+                });
+
+                // STREAMING DELAY: 120ms per node for visible cosmic spawn effect
+                if (i < nodesToAdd.length - 1) {
+                    await new Promise(resolve => setTimeout(resolve, 120));
+                }
+            }
+
+            // Clear spawn markers after 2 seconds (cosmic glow fades)
+            setTimeout(() => {
+                setNewlySpawnedNodes(new Set());
+            }, 2000);
+
+            // Update central node display
+            setCentralNode(node.name);
+            console.log(`[EXPAND] Added ${nodesToAdd.length} nodes with cosmic streaming`);
+
+        } catch (err) {
+            console.error('[EXPAND] Error:', err);
+            // Fallback to full reload if expansion fails
+            setCentralNode(node.name);
+            await fetchData(node.name);
+        } finally {
+            setIsLoading(false);
+            setIsExpanding(false);
+            setExpandingNodeName(null);
+        }
+    };
+
+    const handleEdgeSelect = (edge: RingEdge | null, source: RingNode | null, target: RingNode | null, multiNodes?: RingNode[]) => {
         setSelectedEdge(edge);
         setSelectedEdgeSource(source);
         setSelectedEdgeTarget(target);
+        setMultiNodesForAnalysis(multiNodes || []);
         setShowLinkModal(true);
     };
 
@@ -1433,16 +2134,38 @@ export default function RadialRingsModal({
                 <div className="absolute top-4 left-4 right-4 z-20 flex justify-between items-start">
                     <div className="bg-gray-900/90 rounded-xl border border-gray-700/50 p-4 backdrop-blur-sm">
                         <h2 className="text-xl font-bold text-white flex items-center gap-2">
-                            🎯 Radial Discovery 3D
+                            🕸️ Mind Map Sémantique
                         </h2>
-                        <p className="text-purple-400 text-sm mt-1">{pathology}</p>
-                        {data && (
-                            <div className="flex gap-3 mt-2 text-xs">
-                                <span className="text-green-400">{data.knowledge_graph.nodes.length} nœuds</span>
-                                <span className="text-blue-400">{data.knowledge_graph.edges.length} liens</span>
-                            </div>
-                        )}
-                        <p className="text-gray-500 text-xs mt-2">💡 Cliquez sur un lien pour l'analyser avec l'IA</p>
+                        <p className="text-purple-400 text-sm mt-1">{centralNode}</p>
+                        {data && (() => {
+                            // Calculate unique counts matching SVGFallback deduplication
+                            const seenNodeIds = new Set<string>();
+                            const uniqueNodeCount = data.knowledge_graph.nodes.filter(n => {
+                                if (seenNodeIds.has(n.id)) return false;
+                                seenNodeIds.add(n.id);
+                                return true;
+                            }).length;
+
+                            const seenEdgeKeys = new Set<string>();
+                            const uniqueEdgeCount = data.knowledge_graph.edges.filter(e => {
+                                const key = [e.source, e.target].sort().join('-');
+                                if (seenEdgeKeys.has(key)) return false;
+                                seenEdgeKeys.add(key);
+                                return true;
+                            }).length;
+
+                            return (
+                                <div className="flex gap-3 mt-2 text-xs">
+                                    <span className="text-green-400">{uniqueNodeCount} nœuds</span>
+                                    <span className="text-blue-400">{uniqueEdgeCount} liens</span>
+                                </div>
+                            );
+                        })()}
+                        <div className="text-gray-500 text-xs mt-2 space-y-0.5">
+                            <p>🖱️ <span className="text-gray-400">1 clic</span> = sélectionner + voir connexions</p>
+                            <p>🖱️ <span className="text-gray-400">2ème clic</span> = analyse IA du lien</p>
+                            <p>🖱️ <span className="text-gray-400">Double-clic</span> = ajouter des nœuds liés</p>
+                        </div>
                     </div>
 
                     <div className="flex gap-2">
@@ -1458,14 +2181,40 @@ export default function RadialRingsModal({
                     </div>
                 </div>
 
-                {/* Legend */}
-                <div className="absolute top-28 right-4 z-20 bg-gray-900/90 rounded-xl border border-gray-700/50 p-3 text-xs">
-                    {['Centre', 'Traitements', 'Effets', 'Étiologie', 'Frontières'].map((label, i) => (
-                        <div key={i} className="flex items-center gap-2 mb-1">
-                            <div className="w-3 h-3 rounded-full" style={{ backgroundColor: RING_COLORS[i] }} />
-                            <span style={{ color: RING_COLORS[i] }}>{label}</span>
-                        </div>
-                    ))}
+                {/* Semantic Legend */}
+                <div className="absolute top-28 right-4 z-20 bg-gray-900/90 rounded-xl border border-gray-700/50 p-3 text-xs max-w-[200px]">
+                    {/* Node Types */}
+                    <div className="mb-2">
+                        <div className="text-gray-500 uppercase tracking-wider text-[10px] mb-1">Types de nœuds</div>
+                        {[
+                            { type: 'PATHOLOGY', label: 'Pathologie', color: NODE_TYPE_COLORS.PATHOLOGY },
+                            { type: 'DRUG', label: 'Médicament', color: NODE_TYPE_COLORS.DRUG },
+                            { type: 'SYMPTOM', label: 'Symptôme', color: NODE_TYPE_COLORS.SYMPTOM },
+                            { type: 'COMPLICATION', label: 'Complication', color: NODE_TYPE_COLORS.COMPLICATION },
+                        ].map(({ type, label, color }) => (
+                            <div key={type} className="flex items-center gap-2 mb-0.5">
+                                <div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: color }} />
+                                <span className="text-gray-400">{label}</span>
+                            </div>
+                        ))}
+                    </div>
+
+                    {/* Edge Types */}
+                    <div className="border-t border-gray-700/50 pt-2">
+                        <div className="text-gray-500 uppercase tracking-wider text-[10px] mb-1">Relations</div>
+                        {[
+                            { type: 'TREATS', label: 'Traite', color: EDGE_TYPE_COLORS.TREATS.color },
+                            { type: 'INTERACTS_WITH', label: 'Interaction', color: '#f97316' },
+                            { type: 'CONTRAINDICATED_IF', label: 'Contre-indiqué', color: EDGE_TYPE_COLORS.CONTRAINDICATED_IF.color },
+                            { type: 'COMPLICATES', label: 'Complique', color: EDGE_TYPE_COLORS.COMPLICATES.color },
+                            { type: 'ASSOCIATED_WITH', label: 'Associé à', color: EDGE_TYPE_COLORS.ASSOCIATED_WITH.color },
+                        ].map(({ type, label, color }) => (
+                            <div key={type} className="flex items-center gap-2 mb-0.5">
+                                <div className="w-4 h-0.5" style={{ backgroundColor: color }} />
+                                <span className="text-gray-400">{label}</span>
+                            </div>
+                        ))}
+                    </div>
                 </div>
 
                 {/* Loading */}
@@ -1478,22 +2227,33 @@ export default function RadialRingsModal({
                     </div>
                 )}
 
+                {/* Expansion overlay - shows on top of graph during node addition */}
+                {isExpanding && (
+                    <div className="absolute top-4 left-1/2 transform -translate-x-1/2 z-40 bg-gray-900/90 backdrop-blur-sm rounded-full px-6 py-3 border border-purple-500/50 shadow-xl">
+                        <div className="flex items-center gap-3">
+                            <Loader2 className="w-5 h-5 text-purple-400 animate-spin" />
+                            <span className="text-white text-sm">Expansion depuis <span className="text-purple-400 font-medium">{expandingNodeName}</span>...</span>
+                        </div>
+                    </div>
+                )}
                 {/* Error */}
                 {error && (
                     <div className="absolute inset-0 flex items-center justify-center bg-gray-900 z-30">
                         <div className="bg-red-900/50 border border-red-500 rounded-xl p-8 text-center">
                             <p className="text-red-400">Erreur: {error}</p>
-                            <button onClick={fetchData} className="mt-4 bg-red-600 text-white px-4 py-2 rounded-lg">Réessayer</button>
+                            <button onClick={() => fetchData(pathology)} className="mt-4 bg-red-600 text-white px-4 py-2 rounded-lg">Réessayer</button>
                         </div>
                     </div>
                 )}
 
-                {/* 2D SVG Visualization (always used - faster than WebGL) */}
-                {!isLoading && !error && data && (
+                {/* Show graph when: not initial loading, no error, has data, OR during expansion */}
+                {((!isLoading && !error && data) || (isExpanding && data)) && (
                     <SVGFallback
                         data={data}
                         animationTime={animationTime}
                         onEdgeClick={handleEdgeSelect}
+                        onSetCentral={handleSetCentral}
+                        newlySpawnedNodes={newlySpawnedNodes}
                     />
                 )}
 
@@ -1508,7 +2268,9 @@ export default function RadialRingsModal({
                 edge={selectedEdge}
                 sourceNode={selectedEdgeSource}
                 targetNode={selectedEdgeTarget}
+                multiNodes={multiNodesForAnalysis}
                 pathology={pathology}
+                onSetCentral={handleSetCentral}
             />
         </div>
     );

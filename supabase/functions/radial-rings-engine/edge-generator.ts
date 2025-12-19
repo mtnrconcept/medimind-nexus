@@ -230,30 +230,30 @@ export function generateAllEdges(
 
     const allEdges: RingEdge[] = [];
 
-    // Group nodes by ring
-    const nodesByRing: Map<number, RingNode[]> = new Map();
-    for (const node of nodes) {
-        if (!nodesByRing.has(node.ring)) {
-            nodesByRing.set(node.ring, []);
+    // SIMPLIFIED: Only Ring 0 (center) and Ring 1 (first circle)
+    // All Ring 1 nodes MUST be connected to the central node
+    const ring0Nodes = nodes.filter(n => n.ring === 0);
+    const ring1Nodes = nodes.filter(n => n.ring === 1);
+
+    // Create edges from each Ring 1 node to each Ring 0 node (center)
+    for (const r1Node of ring1Nodes) {
+        for (const r0Node of ring0Nodes) {
+            const edge: RingEdge = {
+                id: `edge_${r1Node.id}_${r0Node.id}`,
+                source: r1Node.id,
+                target: r0Node.id,
+                relationship: inferRelationship(r1Node, r0Node),
+                evidence_grade: r1Node.evidence_grade,
+                refs: [...r1Node.sources, ...r0Node.sources].filter(Boolean).slice(0, 3),
+                justification: `Direct association with central pathology`,
+                translation_gap: r1Node.translation_gap || r0Node.translation_gap,
+                weight: r1Node.proximity_score
+            };
+            allEdges.push(edge);
         }
-        nodesByRing.get(node.ring)!.push(node);
     }
 
-    // Generate edges ring by ring (outer rings connect to inner rings)
-    for (let ring = 1; ring <= 4; ring++) {
-        const ringNodes = nodesByRing.get(ring) || [];
-        const innerNodes = nodes.filter(n => n.ring < ring);
-
-        if (ringNodes.length > 0 && innerNodes.length > 0) {
-            const candidates = generateCandidateEdges(ringNodes, innerNodes);
-            console.log(`[EDGES] Ring ${ring}: ${candidates.length} candidate edges`);
-
-            const pruned = pruneEdges(candidates, budget, mode);
-            allEdges.push(...pruned);
-            console.log(`[EDGES] Ring ${ring}: ${pruned.length} edges after pruning`);
-        }
-    }
-
+    console.log(`[EDGES] Ring 1→Ring 0: ${allEdges.length} edges (simplified 2-ring mode)`);
     console.log(`[EDGES] Total: ${allEdges.length} edges generated`);
     return allEdges;
 }

@@ -487,27 +487,209 @@ export async function buildAllRings(
 ): Promise<RingNode[]> {
     const allNodes: RingNode[] = [];
 
-    // Build each ring sequentially
+    // Build Ring 0 (Central node - pathology)
     const ring0 = await buildRing0(request, supabase);
     allNodes.push(...ring0);
     console.log(`[RINGS] Ring 0: ${ring0.length} nodes`);
 
-    const ring1 = await buildRing1(request, supabase);
+    // Build Ring 1 (First circle - all related elements)
+    const ring1 = await buildRing1Complete(request, supabase);
     allNodes.push(...ring1);
     console.log(`[RINGS] Ring 1: ${ring1.length} nodes`);
 
-    const ring2 = await buildRing2(ring1, supabase);
-    allNodes.push(...ring2);
-    console.log(`[RINGS] Ring 2: ${ring2.length} nodes`);
+    // SIMPLIFIED: Only 2 rings (0 and 1)
+    // Ring 2, 3, 4 are no longer generated
+    // Dynamic navigation: clicking Ring 1 node re-centers the graph
 
-    const ring3 = await buildRing3(request, supabase);
-    allNodes.push(...ring3);
-    console.log(`[RINGS] Ring 3: ${ring3.length} nodes`);
-
-    const ring4 = await buildRing4(request);
-    allNodes.push(...ring4);
-    console.log(`[RINGS] Ring 4: ${ring4.length} nodes`);
-
-    console.log(`[RINGS] Total: ${allNodes.length} nodes across 5 rings`);
+    console.log(`[RINGS] Total: ${allNodes.length} nodes across 2 rings`);
     return allNodes;
 }
+
+// ============================================
+// RING 1 COMPLETE: ALL ELEMENTS IN FIRST CIRCLE
+// Symptoms, Treatments, Medications, Side Effects, Interactions
+// ============================================
+
+async function buildRing1Complete(
+    request: RadialRingsRequest,
+    supabase: any
+): Promise<RingNode[]> {
+    const nodes: RingNode[] = [];
+    const pathologyName = request.pathology;
+
+    // 1. TREATMENTS / MEDICATIONS
+    console.log('[RING 1] Fetching treatments/medications...');
+
+    // From context
+    if (request.context?.current_treatments) {
+        for (const drug of request.context.current_treatments) {
+            nodes.push({
+                id: `R1_drug_${drug.replace(/\s+/g, '_')}`,
+                ring: 1,
+                lane: 'drugs',
+                name: drug,
+                properties: { source: 'context' },
+                proximity_score: 0.9,
+                evidence_grade: 'A',
+                translation_gap: false,
+                sources: []
+            });
+        }
+    }
+
+    // From treatments table
+    const { data: treatments } = await supabase
+        .from('treatments')
+        .select('*, pathologies(name)')
+        .ilike('pathologies.name', `%${pathologyName}%`)
+        .limit(15);
+
+    for (const t of (treatments || [])) {
+        if (!nodes.some(n => n.name.toLowerCase() === t.name.toLowerCase())) {
+            nodes.push({
+                id: `R1_drug_${t.id}`,
+                ring: 1,
+                lane: 'drugs',
+                name: t.name,
+                properties: { type: t.type, description: t.description },
+                proximity_score: 0.85,
+                evidence_grade: 'B',
+                translation_gap: false,
+                sources: []
+            });
+        }
+    }
+
+    // From medications table
+    const { data: meds } = await supabase
+        .from('medications')
+        .select('id, name, mechanism, atc_code')
+        .limit(20);
+
+    for (const med of (meds || []).slice(0, 10)) {
+        if (!nodes.some(n => n.name.toLowerCase() === med.name.toLowerCase())) {
+            nodes.push({
+                id: `R1_med_${med.id}`,
+                ring: 1,
+                lane: 'drugs',
+                name: med.name,
+                properties: { mechanism: med.mechanism, atc_code: med.atc_code },
+                proximity_score: 0.8,
+                evidence_grade: 'B',
+                translation_gap: false,
+                sources: []
+            });
+        }
+    }
+
+    // 2. SYMPTOMS
+    console.log('[RING 1] Fetching symptoms...');
+    const { data: symptoms } = await supabase
+        .from('pathology_symptoms')
+        .select('*, symptoms(id, name, description, body_system), pathologies(name)')
+        .ilike('pathologies.name', `%${pathologyName}%`)
+        .limit(20);
+
+    for (const ps of (symptoms || [])) {
+        if (ps.symptoms) {
+            nodes.push({
+                id: `R1_symptom_${ps.symptoms.id || ps.symptom_id}`,
+                ring: 1,
+                lane: 'symptoms',
+                name: ps.symptoms.name,
+                properties: {
+                    body_system: ps.symptoms.body_system,
+                    is_primary: ps.is_primary,
+                    frequency: ps.frequency_percent
+                },
+                proximity_score: ps.is_primary ? 0.9 : 0.75,
+                evidence_grade: 'A',
+                translation_gap: false,
+                sources: []
+            });
+        }
+    }
+
+    // 3. SIDE EFFECTS
+    console.log('[RING 1] Fetching side effects...');
+    const { data: sideEffects } = await supabase
+        .from('side_effects')
+        .select('id, name, severity, frequency')
+        .limit(15);
+
+    for (const se of (sideEffects || [])) {
+        nodes.push({
+            id: `R1_side_effect_${se.id}`,
+            ring: 1,
+            lane: 'adverse_events',
+            name: se.name,
+            properties: {
+                severity: se.severity,
+                frequency: se.frequency
+            },
+            proximity_score: se.severity === 'severe' ? 0.9 : 0.7,
+            evidence_grade: 'B',
+            translation_gap: false,
+            sources: []
+        });
+    }
+
+    // 4. DRUG INTERACTIONS
+    console.log('[RING 1] Fetching interactions...');
+    const drugNames = nodes.filter(n => n.lane === 'drugs').map(n => n.name);
+
+    for (const drugName of drugNames.slice(0, 5)) { // Limit to avoid overload
+        const { data: interactions } = await supabase
+            .from('drug_interactions')
+            .select('*')
+            .or(`interacting_drug.ilike.%${drugName}%`)
+            .limit(5);
+
+        for (const inter of (interactions || [])) {
+            const nodeId = `R1_interaction_${inter.id}`;
+            if (!nodes.some(n => n.id === nodeId)) {
+                nodes.push({
+                    id: nodeId,
+                    ring: 1,
+                    lane: 'interactions',
+                    name: `${drugName} ↔ ${inter.interacting_drug}`,
+                    properties: {
+                        severity: inter.severity,
+                        mechanism: inter.mechanism,
+                        description: inter.description
+                    },
+                    proximity_score: inter.severity === 'major' ? 0.9 : 0.7,
+                    evidence_grade: 'B',
+                    translation_gap: false,
+                    sources: []
+                });
+            }
+        }
+    }
+
+    // 5. BIOMARKERS (keep a few key ones)
+    console.log('[RING 1] Adding key biomarkers...');
+    const keyBiomarkers = [
+        { name: 'Créatinine', unit: 'µmol/L', organ: 'rein' },
+        { name: 'DFG', unit: 'mL/min', organ: 'rein' },
+        { name: 'Glycémie', unit: 'mmol/L', organ: 'métabolisme' }
+    ];
+
+    for (const bm of keyBiomarkers) {
+        nodes.push({
+            id: `R1_biomarker_${bm.name.replace(/\s+/g, '_')}`,
+            ring: 1,
+            lane: 'biomarkers',
+            name: bm.name,
+            properties: { unit: bm.unit, organ: bm.organ },
+            proximity_score: 0.8,
+            evidence_grade: 'A',
+            translation_gap: false,
+            sources: []
+        });
+    }
+
+    console.log(`[RING 1] Total: ${nodes.length} nodes in first circle`);
+    return nodes;
+}
+

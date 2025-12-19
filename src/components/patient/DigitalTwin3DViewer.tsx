@@ -1,8 +1,7 @@
 import React, { Suspense, useState, useRef, useEffect, useCallback } from 'react';
-import { Canvas, useFrame, useThree, useLoader } from '@react-three/fiber';
+import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { OrbitControls, Html } from '@react-three/drei';
 import * as THREE from 'three';
-import { OBJLoader } from 'three/examples/jsm/loaders/OBJLoader.js';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Slider } from '@/components/ui/slider';
@@ -28,42 +27,89 @@ interface DigitalTwin3DViewerProps {
   pathologyName?: string;
 }
 
-// OBJ Model Component - Loads the FinalBaseMesh.obj
-const OBJModel = ({ opacity, color }: { opacity: number; color: string }) => {
-  const obj = useLoader(OBJLoader, '/models/FinalBaseMesh.obj');
-  const meshRef = useRef<THREE.Group>(null);
+// Procedural Skin Model Component - Replaces OBJ loader with procedural geometry
+// This prevents WebGL context loss from attempting to load missing OBJ files
+const SkinModel = ({ opacity, color }: { opacity: number; color: string }) => {
+  const material = new THREE.MeshStandardMaterial({
+    color: new THREE.Color(color),
+    transparent: true,
+    opacity: opacity,
+    roughness: 0.7,
+    side: THREE.DoubleSide,
+  });
 
-  useEffect(() => {
-    if (obj) {
-      obj.traverse((child) => {
-        if (child instanceof THREE.Mesh) {
-          child.material = new THREE.MeshStandardMaterial({
-            color: new THREE.Color(color),
-            transparent: true,
-            opacity: opacity,
-            roughness: 0.7,
-            side: THREE.DoubleSide,
-          });
-        }
-      });
-    }
-  }, [obj, opacity, color]);
+  return (
+    <group>
+      {/* Head */}
+      <mesh position={[0, 1.05, 0]} material={material}>
+        <sphereGeometry args={[0.18, 24, 24]} />
+      </mesh>
 
-  // Center and scale the model
-  useEffect(() => {
-    if (obj && meshRef.current) {
-      const box = new THREE.Box3().setFromObject(obj);
-      const center = box.getCenter(new THREE.Vector3());
-      const size = box.getSize(new THREE.Vector3());
-      const maxDim = Math.max(size.x, size.y, size.z);
-      const scale = 2.5 / maxDim;
+      {/* Neck */}
+      <mesh position={[0, 0.85, 0]} material={material}>
+        <cylinderGeometry args={[0.06, 0.08, 0.12, 16]} />
+      </mesh>
 
-      obj.position.set(-center.x * scale, -center.y * scale + 0.2, -center.z * scale);
-      obj.scale.setScalar(scale);
-    }
-  }, [obj]);
+      {/* Torso */}
+      <mesh position={[0, 0.4, 0]} material={material}>
+        <capsuleGeometry args={[0.2, 0.6, 16, 24]} />
+      </mesh>
 
-  return <primitive ref={meshRef} object={obj} />;
+      {/* Shoulders */}
+      {[-1, 1].map((side) => (
+        <mesh key={`shoulder-${side}`} position={[side * 0.22, 0.7, 0]} material={material}>
+          <sphereGeometry args={[0.07, 16, 16]} />
+        </mesh>
+      ))}
+
+      {/* Upper arms */}
+      {[-1, 1].map((side) => (
+        <mesh key={`upper-arm-${side}`} position={[side * 0.28, 0.52, 0]} rotation={[0, 0, side * 0.15]} material={material}>
+          <capsuleGeometry args={[0.045, 0.25, 8, 16]} />
+        </mesh>
+      ))}
+
+      {/* Lower arms */}
+      {[-1, 1].map((side) => (
+        <mesh key={`lower-arm-${side}`} position={[side * 0.32, 0.22, 0]} rotation={[0, 0, side * 0.1]} material={material}>
+          <capsuleGeometry args={[0.038, 0.28, 8, 16]} />
+        </mesh>
+      ))}
+
+      {/* Hands */}
+      {[-1, 1].map((side) => (
+        <mesh key={`hand-${side}`} position={[side * 0.35, 0.02, 0]} material={material}>
+          <sphereGeometry args={[0.04, 12, 12]} />
+        </mesh>
+      ))}
+
+      {/* Hips */}
+      <mesh position={[0, -0.1, 0]} material={material}>
+        <sphereGeometry args={[0.22, 16, 16]} />
+      </mesh>
+
+      {/* Upper legs */}
+      {[-1, 1].map((side) => (
+        <mesh key={`upper-leg-${side}`} position={[side * 0.1, -0.5, 0]} material={material}>
+          <capsuleGeometry args={[0.08, 0.45, 8, 16]} />
+        </mesh>
+      ))}
+
+      {/* Lower legs */}
+      {[-1, 1].map((side) => (
+        <mesh key={`lower-leg-${side}`} position={[side * 0.1, -1.05, 0]} material={material}>
+          <capsuleGeometry args={[0.055, 0.45, 8, 16]} />
+        </mesh>
+      ))}
+
+      {/* Feet */}
+      {[-1, 1].map((side) => (
+        <mesh key={`foot-${side}`} position={[side * 0.1, -1.38, 0.04]} rotation={[0.3, 0, 0]} material={material}>
+          <boxGeometry args={[0.08, 0.04, 0.16]} />
+        </mesh>
+      ))}
+    </group>
+  );
 };
 
 // Pulsing Alert Marker Component
@@ -549,12 +595,10 @@ const Scene = ({
           <TissuesModel opacity={getLayer('tissues')?.opacity || 1} />
         )}
         {getLayer('skin')?.visible && (
-          <Suspense fallback={null}>
-            <OBJModel
-              opacity={getLayer('skin')?.opacity || 1}
-              color={getLayer('skin')?.color || '#ffdbac'}
-            />
-          </Suspense>
+          <SkinModel
+            opacity={getLayer('skin')?.opacity || 1}
+            color={getLayer('skin')?.color || '#ffdbac'}
+          />
         )}
 
         {/* Anatomy Markers */}

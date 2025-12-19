@@ -3,7 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { AlertCircle, Plus, X, Activity, ShieldCheck, ShieldAlert } from 'lucide-react';
+import { AlertCircle, Plus, X, Activity, ShieldCheck, ShieldAlert, Loader2, Globe } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { useAutoTranslation } from '@/contexts/TranslationContext';
 import { toast } from 'sonner';
