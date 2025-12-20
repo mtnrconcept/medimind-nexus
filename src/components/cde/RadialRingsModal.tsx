@@ -29,6 +29,7 @@ interface RingNode {
     subcategory?: string;
     tags?: string[];
     is_inherited?: boolean; // True if node came from previous expansion
+    parent_pathology?: string; // For comorbidity: which pathology this node belongs to
 }
 
 interface RingEdge {
@@ -71,43 +72,79 @@ const RING_COLORS: Record<number, string> = {
 };
 
 const LANE_COLORS: Record<string, string> = {
-    pathology: '#ef4444',
-    drugs: '#22c55e',
-    symptoms: '#f59e0b',
-    biomarkers: '#3b82f6',
-    adverse_events: '#f97316',
-    mechanisms: '#ec4899',
-    interactions: '#14b8a6',
-    triggers: '#a855f7',
-    genetics: '#6366f1',
-    exposures: '#84cc16',
-    frontiers: '#06b6d4',
+    pathology: '#ef4444',    // Rouge - Pathologie
+    drugs: '#22c55e',        // Vert - Médicaments
+    drug: '#22c55e',         // Vert - Médicament
+    medication: '#22c55e',   // Vert - Médicament
+    treatment: '#3b82f6',    // Bleu - Traitement
+    symptoms: '#eab308',     // Jaune - Symptômes
+    symptom: '#eab308',      // Jaune - Symptôme
+    biomarkers: '#06b6d4',   // Turquoise - Analyses
+    lab: '#06b6d4',          // Turquoise - Analyses
+    adverse_events: '#f97316', // Orange - Effets indésirables
+    complication: '#f97316', // Orange - Complication
+    mechanisms: '#8b5cf6',   // Violet - Mécanismes
+    interactions: '#ef4444', // Rouge - Interactions dangereuses
+    triggers: '#eab308',     // Jaune - Déclencheurs
+    genetics: '#8b5cf6',     // Violet - Génétique
+    exposures: '#f97316',    // Orange - Expositions
+    frontiers: '#8b5cf6',    // Violet - Suggestions
+    guideline: '#8b5cf6',    // Violet - Suggestions
+    evidence: '#8b5cf6',     // Violet - Evidence
+    lifestyle: '#8b5cf6',    // Violet - Style de vie
 };
 
-// Semantic node type colors (ontology)
+// Semantic node type colors (ontology) - User customized colors
+// Médicament = Vert, Traitement = Bleu, Symptôme = Jaune, Pathologie = Rouge
+// Analyses = Turquoise, Suggestion = Violet
 const NODE_TYPE_COLORS: Record<string, string> = {
-    PATHOLOGY: '#ef4444',    // Red
-    DRUG: '#22c55e',         // Green
-    SYMPTOM: '#f59e0b',      // Yellow
-    COMPLICATION: '#f97316', // Orange
-    CONDITION: '#a855f7',    // Purple
-    LAB: '#3b82f6',          // Blue
-    GUIDELINE: '#06b6d4',    // Cyan
-    EVIDENCE: '#6366f1',     // Indigo
+    PATHOLOGY: '#ef4444',    // Rouge - Pathologie (comorbidité)
+    SYMPTOM: '#eab308',      // Jaune - Symptôme
+    TREATMENT: '#3b82f6',    // Bleu - Traitement
+    DRUG: '#22c55e',         // Vert - Médicament
+    MEDICATION: '#22c55e',   // Vert - Médicament (alias)
+    COMPLICATION: '#f97316', // Orange - Complication
+    CONDITION: '#ef4444',    // Rouge - Conditions (comorbidité)
+    LAB: '#06b6d4',          // Turquoise - Analyses
+    GUIDELINE: '#8b5cf6',    // Violet - Suggestions/Pistes d'actions
+    EVIDENCE: '#8b5cf6',     // Violet - Evidence/Suggestions
+    LIFESTYLE: '#8b5cf6',    // Violet - Style de vie/Suggestions
 };
 
-// Semantic edge type colors (ontology)
-const EDGE_TYPE_COLORS: Record<string, { color: string; dashArray?: string }> = {
-    TREATS: { color: '#22c55e' },           // Green - positive
-    ASSOCIATED_WITH: { color: '#6b7280' },  // Gray - neutral
-    CAUSES: { color: '#f97316' },           // Orange - causal
-    LEADS_TO: { color: '#f59e0b' },         // Yellow - progression
-    RISK_INCREASED_BY: { color: '#eab308' },// Yellow - warning
-    INDICATED_IF: { color: '#3b82f6', dashArray: '5,3' }, // Blue dashed
-    CONTRAINDICATED_IF: { color: '#ef4444' }, // Red - danger
-    MANAGED_BY: { color: '#22c55e', dashArray: '3,3' },   // Green dashed
-    COMPLICATES: { color: '#f97316' },      // Orange - complication
-    MONITOR_WITH: { color: '#06b6d4', dashArray: '5,5' }, // Cyan dashed
+// Semantic edge type colors based on relationship semantics
+// - Symptômes associés à pathologie = Vert
+// - Symptôme lié à médicament/traitement = Orange
+// - Interaction entre médicaments = Rouge
+// - Contre-indication médicament/pathologie = Rouge clignotant + ☠️
+const EDGE_TYPE_COLORS: Record<string, { color: string; dashArray?: string; isDangerous?: boolean }> = {
+    // Relations positives (Vert)
+    TREATS: { color: '#22c55e' },
+    IMPROVES: { color: '#22c55e' },
+    PREVENTS: { color: '#22c55e' },
+    MANAGED_BY: { color: '#22c55e', dashArray: '3,3' },
+    // Associations symptômes-pathologie (Vert)
+    SYMPTOM_OF: { color: '#22c55e' },
+    ASSOCIATED_SYMPTOM: { color: '#22c55e' },
+    // Relations médicament/traitement (Orange)  
+    ASSOCIATED_WITH: { color: '#f97316' },
+    CAUSES: { color: '#f97316' },
+    SIDE_EFFECT: { color: '#f97316' },
+    LEADS_TO: { color: '#f97316' },
+    // Avertissements (Jaune/Orange)
+    RISK_INCREASED_BY: { color: '#eab308' },
+    CAUTION_WITH: { color: '#eab308' },
+    MONITOR_WITH: { color: '#06b6d4', dashArray: '5,5' },
+    INDICATED_IF: { color: '#3b82f6', dashArray: '5,3' },
+    COMPLICATES: { color: '#f97316' },
+    WORSENED_BY: { color: '#f97316' },
+    // Interactions médicamenteuses dangereuses (Rouge)
+    INTERACTS_WITH: { color: '#ef4444' },
+    DRUG_INTERACTION: { color: '#ef4444' },
+    // Contre-indications GRAVES (Rouge clignotant + tête de mort)
+    CONTRAINDICATED_IF: { color: '#ef4444', isDangerous: true },
+    CONTRAINDICATION: { color: '#ef4444', isDangerous: true },
+    DANGEROUS: { color: '#ef4444', isDangerous: true },
+    TOXIC: { color: '#ef4444', isDangerous: true },
 };
 
 // ============================================
@@ -197,9 +234,15 @@ interface SVGFallbackProps {
     onEdgeClick: (edge: RingEdge, source: RingNode, target: RingNode, multiNodes?: RingNode[]) => void;
     onSetCentral?: (nodeId: string) => void;
     newlySpawnedNodes?: Set<string>;
+    edgeFilterMode?: 'all' | 'central-only' | 'selected-only';
+    centralNodeId?: string | null;
+    filterSelectedNodeId?: string | null;
+    focusMode?: boolean;
+    activePathologies?: Set<string>; // Comorbidity filter: which pathologies to show
+    visibleNodeCount?: number; // Progressive reveal: how many nodes to show
 }
 
-function SVGFallback({ data, animationTime, onEdgeClick, onSetCentral, newlySpawnedNodes }: SVGFallbackProps) {
+function SVGFallback({ data, animationTime, onEdgeClick, onSetCentral, newlySpawnedNodes, edgeFilterMode = 'all', centralNodeId, filterSelectedNodeId, focusMode = true, activePathologies, visibleNodeCount = Infinity }: SVGFallbackProps) {
     const svgSize = 600;
     const center = svgSize / 2;
 
@@ -216,6 +259,15 @@ function SVGFallback({ data, animationTime, onEdgeClick, onSetCentral, newlySpaw
     // Hover/Tooltip state
     const [hoveredNode, setHoveredNode] = useState<RingNode | null>(null);
     const [tooltipPos, setTooltipPos] = useState({ x: 0, y: 0 });
+
+    // Edge hover state for tooltip
+    const [hoveredEdge, setHoveredEdge] = useState<{
+        edge: RingEdge;
+        sourceNode: RingNode;
+        targetNode: RingNode;
+        x: number;
+        y: number;
+    } | null>(null);
 
     // Animation state
     const [animationProgress, setAnimationProgress] = useState(0);
@@ -295,7 +347,18 @@ function SVGFallback({ data, animationTime, onEdgeClick, onSetCentral, newlySpaw
             seenIds.add(node.id);
             return true;
         });
-        const nodes = deduplicatedNodes;
+
+        // Filter by active pathologies (comorbidity mode)
+        const filteredNodes = activePathologies && activePathologies.size > 0
+            ? deduplicatedNodes.filter(node => {
+                // Always show nodes without parent_pathology, or nodes whose parent is active
+                if (!node.parent_pathology) return true;
+                return activePathologies.has(node.parent_pathology);
+            })
+            : deduplicatedNodes;
+
+        // Progressive reveal: only show nodes up to visibleNodeCount
+        const nodes = filteredNodes.slice(0, visibleNodeCount);
 
         // Find the center node (ring 0)
         const centerNode = nodes.find(n => n.ring === 0);
@@ -322,17 +385,16 @@ function SVGFallback({ data, animationTime, onEdgeClick, onSetCentral, newlySpaw
             nodesByRing.get(ring)!.push(node);
         });
 
-        // Sort rings
+        // RING LAYOUT LOGIC:
+        // - Ring 0: Central pathology (center point)
+        // - Ring 1-4: Nodes distributed based on node_type
+        // - If too many nodes per ring, create sub-rings within the ring band
+
         const sortedRings = Array.from(nodesByRing.keys()).sort((a, b) => a - b);
 
-        // Constants for spacing calculation
-        const BASE_NODE_SIZE = 14; // Base node visual size
-        const LABEL_WIDTH = 60; // Estimated label width
-        const MIN_SPACING = BASE_NODE_SIZE + LABEL_WIDTH + 20; // Minimum space between node centers
-        const BASE_RING_RADIUS = 80; // Base radius for first ring
-
-        // Track the previous ring's outer boundary for proper ring separation
-        let previousRingOuterRadius = 30; // Center node's effective radius
+        const BASE_RADIUS = 80;      // First ring radius
+        const RING_SPACING = 90;     // Space between rings
+        const MIN_NODE_SPACING = 70; // Minimum arc length between nodes
 
         sortedRings.forEach(ring => {
             const ringNodes = nodesByRing.get(ring)!;
@@ -340,44 +402,83 @@ function SVGFallback({ data, animationTime, onEdgeClick, onSetCentral, newlySpaw
 
             if (ringNodeCount === 0) return;
 
-            // Calculate minimum circumference needed for all nodes to fit without overlap
-            const minCircumference = ringNodeCount * MIN_SPACING;
-            const minRadiusForSpacing = minCircumference / (2 * Math.PI);
+            // Calculate radius for this ring
+            const ringRadius = BASE_RADIUS + ring * RING_SPACING;
 
-            // Calculate minimum radius based on ring number (base positioning)
-            const minRadiusForRing = ring * BASE_RING_RADIUS;
+            // Calculate how many nodes can fit on this ring's circumference
+            const circumference = 2 * Math.PI * ringRadius;
+            const maxNodesOnRing = Math.max(6, Math.floor(circumference / MIN_NODE_SPACING));
 
-            // Ensure proper separation from previous ring
-            const minRadiusFromPrevious = previousRingOuterRadius + MIN_SPACING / 2;
-
-            // Use the largest required radius
-            const effectiveRadius = Math.max(minRadiusForSpacing, minRadiusForRing, minRadiusFromPrevious);
-
-            // Store the radius for this ring (for ring guide circles)
-            radii.set(ring, effectiveRadius);
-
-            // Distribute nodes evenly around the ring
-            const angleStep = (Math.PI * 2) / ringNodeCount;
-
-            // Stagger starting angle per ring for better visual distribution
-            const ringStartAngle = -Math.PI / 2 + (ring * Math.PI / 6);
+            // If we have more nodes than fit, create sub-rings
+            const subRingCount = Math.ceil(ringNodeCount / maxNodesOnRing);
+            const subRingSpacing = subRingCount > 1 ? 30 : 0; // Space between sub-rings
 
             ringNodes.forEach((node, i) => {
-                const angle = ringStartAngle + angleStep * i;
+                // Which sub-ring is this node on?
+                const subRingIndex = Math.floor(i / maxNodesOnRing);
+                const indexInSubRing = i % maxNodesOnRing;
+
+                // How many nodes are in this specific sub-ring?
+                const nodesInThisSubRing = subRingIndex < subRingCount - 1
+                    ? maxNodesOnRing
+                    : ringNodeCount - subRingIndex * maxNodesOnRing;
+
+                // Calculate radius for this sub-ring (spread inward/outward from main radius)
+                const subRingOffset = (subRingIndex - (subRingCount - 1) / 2) * subRingSpacing;
+                const nodeRadius = ringRadius + subRingOffset;
+
+                // Calculate angle for this node
+                const angleStep = (Math.PI * 2) / nodesInThisSubRing;
+                const startAngle = -Math.PI / 2 + (subRingIndex * Math.PI / 12); // Stagger sub-rings
+                const angle = startAngle + angleStep * indexInSubRing;
 
                 positions.set(node.id, {
-                    x: center + Math.cos(angle) * effectiveRadius,
-                    y: center + Math.sin(angle) * effectiveRadius
+                    x: center + Math.cos(angle) * nodeRadius,
+                    y: center + Math.sin(angle) * nodeRadius
                 });
             });
 
-            // Update previous ring boundary for next iteration
-            previousRingOuterRadius = effectiveRadius + MIN_SPACING / 2;
+            // Store the outer radius for ring guide visualization
+            radii.set(ring, ringRadius + (subRingCount - 1) * subRingSpacing / 2);
         });
 
+        // ANTI-COLLISION: Push overlapping nodes apart
+        const MIN_NODE_DISTANCE = 75; // Minimum distance between node centers
+        const COLLISION_ITERATIONS = 15; // Number of passes to resolve collisions
+
+        for (let iter = 0; iter < COLLISION_ITERATIONS; iter++) {
+            const nodeIds = Array.from(positions.keys());
+            let hasCollision = false;
+
+            for (let i = 0; i < nodeIds.length; i++) {
+                for (let j = i + 1; j < nodeIds.length; j++) {
+                    const posA = positions.get(nodeIds[i])!;
+                    const posB = positions.get(nodeIds[j])!;
+
+                    const dx = posB.x - posA.x;
+                    const dy = posB.y - posA.y;
+                    const dist = Math.sqrt(dx * dx + dy * dy);
+
+                    if (dist < MIN_NODE_DISTANCE && dist > 0) {
+                        hasCollision = true;
+                        const overlap = (MIN_NODE_DISTANCE - dist) / 2;
+                        const angle = Math.atan2(dy, dx);
+
+                        // Push nodes apart along the collision axis
+                        posA.x -= Math.cos(angle) * overlap * 0.5;
+                        posA.y -= Math.sin(angle) * overlap * 0.5;
+                        posB.x += Math.cos(angle) * overlap * 0.5;
+                        posB.y += Math.sin(angle) * overlap * 0.5;
+                    }
+                }
+            }
+
+            // Early exit if no more collisions
+            if (!hasCollision) break;
+        }
 
         return { nodePositions: positions, ringRadii: radii, uniqueNodes: nodes };
-    }, [data, center]);
+    }, [data, center, visibleNodeCount]);
 
     const nodeMap = useMemo(() => {
         const map = new Map<string, RingNode>();
@@ -387,43 +488,117 @@ function SVGFallback({ data, animationTime, onEdgeClick, onSetCentral, newlySpaw
 
     const maxRing = Math.max(...uniqueNodes.map(n => n.ring));
 
-    // Determine relationship type and color for edges
-    const getRelationshipColor = (relationship: string, evidenceGrade: string): { color: string; type: 'positive' | 'danger' | 'contraindication' | 'warning' | 'neutral' } => {
-        const rel = relationship.toLowerCase();
+    // ============================================
+    // SEMANTIC EDGE COLORING SYSTEM
+    // Based on user specifications:
+    // - Symptômes associés à pathologie = Vert (#22c55e)
+    // - Symptôme lié à médicament/traitement = Orange (#f97316)
+    // - Interaction entre médicaments = Rouge (#ef4444)
+    // - Contre-indication médicament/pathologie = Rouge clignotant + ☠️
+    // ============================================
+
+    // Helper to check node type
+    const isNodeType = (nodeType: string | undefined, types: string[]): boolean => {
+        if (!nodeType) return false;
+        const upper = nodeType.toUpperCase();
+        return types.some(t => upper.includes(t));
+    };
+
+    // Determine edge color based on connected node types and relationship
+    const getSemanticEdgeColor = (
+        sourceNode: RingNode | undefined,
+        targetNode: RingNode | undefined,
+        relationship: string,
+        evidenceGrade: string
+    ): { color: string; type: 'positive' | 'danger' | 'contraindication' | 'warning' | 'neutral' | 'deadly'; isDangerous: boolean; showSkull: boolean } => {
+        const rel = relationship.toUpperCase();
+        const sourceType = sourceNode?.node_type?.toUpperCase() || '';
+        const targetType = targetNode?.node_type?.toUpperCase() || '';
+
+        // Check for drug-related nodes
+        const isDrug = (type: string) => type.includes('DRUG') || type.includes('MEDICATION') || type.includes('MEDICAMENT');
+        const isSymptom = (type: string) => type.includes('SYMPTOM') || type.includes('SYMPTOME');
+        const isPathology = (type: string) => type.includes('PATHOLOGY') || type.includes('PATHOLOGIE');
+        const isTreatment = (type: string) => type.includes('TREATMENT') || type.includes('TRAITEMENT');
+
+        // 1. CONTRE-INDICATION MÉDICAMENT/PATHOLOGIE → Rouge clignotant + tête de mort ☠️
+        if ((isDrug(sourceType) && isPathology(targetType)) || (isPathology(sourceType) && isDrug(targetType))) {
+            if (rel.includes('CONTRAINDIC') || rel.includes('CONTRE-INDIC') || rel.includes('DANGEROUS') ||
+                rel.includes('TOXIC') || rel.includes('INTERDIT') || rel.includes('FATAL')) {
+                return { color: '#ef4444', type: 'deadly', isDangerous: true, showSkull: true };
+            }
+        }
+
+        // 2. INTERACTION ENTRE MÉDICAMENTS → Rouge
+        if (isDrug(sourceType) && isDrug(targetType)) {
+            if (rel.includes('INTERACT') || rel.includes('CONTRAINDIC') || rel.includes('DANGEROUS') ||
+                rel.includes('TOXIC') || rel.includes('INCOMPATIBLE')) {
+                return { color: '#ef4444', type: 'danger', isDangerous: true, showSkull: rel.includes('DANGEROUS') || rel.includes('TOXIC') };
+            }
+            // Default for drug-drug relationship is red (potential interaction)
+            return { color: '#ef4444', type: 'danger', isDangerous: false, showSkull: false };
+        }
+
+        // 3. SYMPTÔME LIÉ À MÉDICAMENT/TRAITEMENT → Orange
+        if ((isSymptom(sourceType) && (isDrug(targetType) || isTreatment(targetType))) ||
+            ((isDrug(sourceType) || isTreatment(sourceType)) && isSymptom(targetType))) {
+            return { color: '#f97316', type: 'warning', isDangerous: false, showSkull: false };
+        }
+
+        // 4. SYMPTÔMES ASSOCIÉS À PATHOLOGIE → Vert
+        if ((isSymptom(sourceType) && isPathology(targetType)) || (isPathology(sourceType) && isSymptom(targetType))) {
+            return { color: '#22c55e', type: 'positive', isDangerous: false, showSkull: false };
+        }
+
+        // 5. TRAITEMENT DE PATHOLOGIE → Vert (bénéfique)
+        if ((isTreatment(sourceType) && isPathology(targetType)) || (isPathology(sourceType) && isTreatment(targetType))) {
+            if (rel.includes('TREAT') || rel.includes('TRAITE') || rel.includes('MANAGE') || rel.includes('IMPROVE')) {
+                return { color: '#22c55e', type: 'positive', isDangerous: false, showSkull: false };
+            }
+        }
+
+        // Fallback: Use relationship text analysis (legacy logic)
+        const relLower = relationship.toLowerCase();
 
         // Positive/Beneficial relationships
-        if (rel.includes('traite') || rel.includes('améliore') || rel.includes('bénéfique') ||
-            rel.includes('thérapeutique') || rel.includes('efficace') || rel.includes('protège') ||
-            rel.includes('prévient') || rel.includes('réduit') || rel.includes('soulage') ||
-            rel.includes('positive') || rel.includes('synergie')) {
-            return { color: '#22c55e', type: 'positive' }; // Green
+        if (relLower.includes('traite') || relLower.includes('améliore') || relLower.includes('bénéfique') ||
+            relLower.includes('thérapeutique') || relLower.includes('efficace') || relLower.includes('protège') ||
+            relLower.includes('prévient') || relLower.includes('réduit') || relLower.includes('soulage') ||
+            relLower.includes('positive') || relLower.includes('synergie')) {
+            return { color: '#22c55e', type: 'positive', isDangerous: false, showSkull: false };
         }
 
         // Danger/Severe interaction
-        if (rel.includes('danger') || rel.includes('toxique') || rel.includes('mortel') ||
-            rel.includes('grave') || rel.includes('sévère') || rel.includes('fatal') ||
-            rel.includes('aggrave') || evidenceGrade === 'A' && rel.includes('risque')) {
-            return { color: '#ef4444', type: 'danger' }; // Red
+        if (relLower.includes('danger') || relLower.includes('toxique') || relLower.includes('mortel') ||
+            relLower.includes('grave') || relLower.includes('sévère') || relLower.includes('fatal') ||
+            relLower.includes('aggrave') || (evidenceGrade === 'A' && relLower.includes('risque'))) {
+            return { color: '#ef4444', type: 'danger', isDangerous: true, showSkull: relLower.includes('mortel') || relLower.includes('fatal') };
         }
 
         // Contraindication
-        if (rel.includes('contre-indic') || rel.includes('interdit') || rel.includes('éviter') ||
-            rel.includes('incompatible') || rel.includes('ne pas') || rel.includes('exclu')) {
-            return { color: '#f97316', type: 'contraindication' }; // Orange
+        if (relLower.includes('contre-indic') || relLower.includes('interdit') || relLower.includes('éviter') ||
+            relLower.includes('incompatible') || relLower.includes('ne pas') || relLower.includes('exclu')) {
+            return { color: '#ef4444', type: 'contraindication', isDangerous: true, showSkull: false };
         }
 
         // Warning/Slight risk
-        if (rel.includes('précaution') || rel.includes('prudence') || rel.includes('surveiller') ||
-            rel.includes('attention') || rel.includes('modéré') || rel.includes('possible') ||
-            rel.includes('risque') || rel.includes('interaction')) {
-            return { color: '#eab308', type: 'warning' }; // Yellow
+        if (relLower.includes('précaution') || relLower.includes('prudence') || relLower.includes('surveiller') ||
+            relLower.includes('attention') || relLower.includes('modéré') || relLower.includes('possible') ||
+            relLower.includes('risque') || relLower.includes('interaction')) {
+            return { color: '#eab308', type: 'warning', isDangerous: false, showSkull: false };
         }
 
         // Neutral/Unknown - use evidence grade for color
-        if (evidenceGrade === 'A') return { color: '#22c55e', type: 'positive' };
-        if (evidenceGrade === 'B') return { color: '#3b82f6', type: 'neutral' };
-        if (evidenceGrade === 'C') return { color: '#eab308', type: 'warning' };
-        return { color: '#6b7280', type: 'neutral' }; // Gray
+        if (evidenceGrade === 'A') return { color: '#22c55e', type: 'positive', isDangerous: false, showSkull: false };
+        if (evidenceGrade === 'B') return { color: '#3b82f6', type: 'neutral', isDangerous: false, showSkull: false };
+        if (evidenceGrade === 'C') return { color: '#eab308', type: 'warning', isDangerous: false, showSkull: false };
+        return { color: '#6b7280', type: 'neutral', isDangerous: false, showSkull: false };
+    };
+
+    // Legacy function for backwards compatibility
+    const getRelationshipColor = (relationship: string, evidenceGrade: string): { color: string; type: 'positive' | 'danger' | 'contraindication' | 'warning' | 'neutral' } => {
+        const result = getSemanticEdgeColor(undefined, undefined, relationship, evidenceGrade);
+        return { color: result.color, type: result.type === 'deadly' ? 'danger' : result.type };
     };
 
     // Calculate highlighted nodes with their colors based on selection
@@ -548,26 +723,74 @@ function SVGFallback({ data, animationTime, onEdgeClick, onSetCentral, newlySpaw
                     );
                 })}
 
-                {/* SVG Definitions for animations */}
+                {/* SVG Definitions with CSS animations for performance */}
                 <defs>
-                    {/* Electric current gradient */}
-                    <linearGradient id="electricGradient" x1="0%" y1="0%" x2="100%" y2="0%">
-                        <stop offset="0%" stopColor="#06b6d4" stopOpacity="0">
-                            <animate attributeName="offset" values="0;1" dur="1.5s" repeatCount="indefinite" />
-                        </stop>
-                        <stop offset="30%" stopColor="#22d3ee" stopOpacity="1">
-                            <animate attributeName="offset" values="0.3;1.3" dur="1.5s" repeatCount="indefinite" />
-                        </stop>
-                        <stop offset="50%" stopColor="#ffffff" stopOpacity="1">
-                            <animate attributeName="offset" values="0.5;1.5" dur="1.5s" repeatCount="indefinite" />
-                        </stop>
-                        <stop offset="70%" stopColor="#22d3ee" stopOpacity="1">
-                            <animate attributeName="offset" values="0.7;1.7" dur="1.5s" repeatCount="indefinite" />
-                        </stop>
-                        <stop offset="100%" stopColor="#06b6d4" stopOpacity="0">
-                            <animate attributeName="offset" values="1;2" dur="1.5s" repeatCount="indefinite" />
-                        </stop>
-                    </linearGradient>
+                    {/* CSS Animations - GPU accelerated */}
+                    <style>{`
+                        @keyframes pulse-danger {
+                            0%, 100% { opacity: 0.1; }
+                            50% { opacity: 0.4; }
+                        }
+                        @keyframes pulse-danger-bright {
+                            0%, 100% { opacity: 0.3; }
+                            50% { opacity: 1; }
+                        }
+                        @keyframes pulse-skull {
+                            0%, 100% { r: 10; stroke-width: 1; }
+                            50% { r: 14; stroke-width: 3; }
+                        }
+                        @keyframes glow-pulse {
+                            0%, 100% { opacity: 0.3; }
+                            50% { opacity: 0.1; }
+                        }
+                        @keyframes spawn-ring-expand {
+                            0% { transform: scale(0.5); opacity: 0.8; }
+                            100% { transform: scale(1.5); opacity: 0; }
+                        }
+                        @keyframes rotate-ring {
+                            from { stroke-dashoffset: 0; }
+                            to { stroke-dashoffset: -24; }
+                        }
+                        @keyframes flash-bright {
+                            0%, 100% { opacity: 0.2; }
+                            50% { opacity: 0.8; }
+                        }
+                        @keyframes dash-march {
+                            from { stroke-dashoffset: 0; }
+                            to { stroke-dashoffset: 18; }
+                        }
+                        @keyframes holographic-materialize {
+                            0% { 
+                                opacity: 0; 
+                                transform: scale(0.3); 
+                                filter: blur(8px) brightness(2);
+                            }
+                            30% { 
+                                opacity: 0.7; 
+                                transform: scale(1.2); 
+                                filter: blur(2px) brightness(1.5);
+                            }
+                            100% { 
+                                opacity: 1; 
+                                transform: scale(1); 
+                                filter: blur(0) brightness(1);
+                            }
+                        }
+                        @keyframes holographic-glow {
+                            0%, 100% { filter: drop-shadow(0 0 4px #06b6d4); }
+                            50% { filter: drop-shadow(0 0 12px #22d3ee); }
+                        }
+                        .danger-pulse { animation: pulse-danger 0.5s infinite; }
+                        .danger-pulse-bright { animation: pulse-danger-bright 0.5s infinite; }
+                        .skull-pulse { animation: pulse-skull 0.5s infinite; }
+                        .glow-pulse { animation: glow-pulse 1s infinite; }
+                        .spawn-ring { animation: spawn-ring-expand 1.5s infinite; transform-origin: center; }
+                        .rotate-ring { animation: rotate-ring 0.5s linear infinite; }
+                        .flash-bright { animation: flash-bright 0.8s infinite; }
+                        .dash-march { animation: dash-march 1s linear infinite; }
+                        .holographic-node { animation: holographic-materialize 0.5s ease-out forwards; }
+                        .node-glow { animation: holographic-glow 2s ease-in-out infinite; }
+                    `}</style>
 
                     {/* Glow filter */}
                     <filter id="nodeGlow" x="-100%" y="-100%" width="300%" height="300%">
@@ -606,12 +829,24 @@ function SVGFallback({ data, animationTime, onEdgeClick, onSetCentral, newlySpaw
 
                     // Deduplicate edges by normalized key
                     const seenEdges = new Set<string>();
-                    const uniqueEdges = data.knowledge_graph.edges.filter(edge => {
+                    let uniqueEdges = data.knowledge_graph.edges.filter(edge => {
                         const key = [edge.source, edge.target].sort().join('-');
                         if (seenEdges.has(key)) return false;
                         seenEdges.add(key);
                         return true;
                     });
+
+                    // Apply edge filter based on mode
+                    if (edgeFilterMode === 'central-only' && centralNodeId) {
+                        uniqueEdges = uniqueEdges.filter(edge =>
+                            edge.source === centralNodeId || edge.target === centralNodeId
+                        );
+                    } else if (edgeFilterMode === 'selected-only' && (filterSelectedNodeId || selectedNodeId)) {
+                        const nodeToFilter = filterSelectedNodeId || selectedNodeId;
+                        uniqueEdges = uniqueEdges.filter(edge =>
+                            edge.source === nodeToFilter || edge.target === nodeToFilter
+                        );
+                    }
 
                     uniqueEdges.forEach((edge, edgeIndex) => {
                         const posA = nodePositions.get(edge.source);
@@ -635,31 +870,25 @@ function SVGFallback({ data, animationTime, onEdgeClick, onSetCentral, newlySpaw
                             ? (nodeA.id === selectedNodeId || nodeB.id === selectedNodeId)
                             : false;
 
-                        // Determine which node is NOT the selected one (for color lookup)
-                        const otherNodeId = nodeA.id === selectedNodeId ? nodeB.id :
-                            nodeB.id === selectedNodeId ? nodeA.id : null;
+                        // ============================================
+                        // SEMANTIC EDGE COLORING
+                        // Uses node types to determine relationship color
+                        // ============================================
+                        const semanticColor = getSemanticEdgeColor(nodeA, nodeB, edge.relationship, edge.evidence_grade);
+                        const color = semanticColor.color;
+                        const isDangerousEdge = semanticColor.isDangerous;
+                        const showSkullSymbol = semanticColor.showSkull;
 
-                        // Determine color based on relationship type
-                        let color: string;
-                        if (isConnectedToSelected && otherNodeId) {
-                            const connectionColor = connectionColors.get(otherNodeId);
-                            color = connectionColor?.color || '#6b7280';
-                        } else {
-                            color = edge.evidence_grade === 'A' ? '#22c55e' :
-                                edge.evidence_grade === 'B' ? '#3b82f6' :
-                                    edge.evidence_grade === 'C' ? '#f59e0b' : '#6b7280';
-                        }
-
-                        // Opacity based on selection state and animation
+                        // Opacity based on selection state, animation, and focus mode
                         let opacity = 0.6;
-                        if (selectedNodeId) {
-                            opacity = isConnectedToSelected ? 1 : 0.1;
+                        if (selectedNodeId && focusMode) {
+                            opacity = isConnectedToSelected ? 1 : 0.15;
                         }
                         opacity *= edgeProgress;
 
-                        const strokeWidth = isConnectedToSelected ? 4 : 2;
+                        const strokeWidth = isConnectedToSelected ? 4 : (isDangerousEdge ? 3 : 2);
 
-                        // Calculate line length for electric effect
+                        // Calculate line length for effects
                         const dx = posB.x - posA.x;
                         const dy = posB.y - posA.y;
                         const length = Math.sqrt(dx * dx + dy * dy);
@@ -667,6 +896,10 @@ function SVGFallback({ data, animationTime, onEdgeClick, onSetCentral, newlySpaw
                         // Animated line drawing effect
                         const visibleLength = length * edgeProgress;
                         const dashArray = `${visibleLength} ${length - visibleLength}`;
+
+                        // Mid point for skull symbol
+                        const midX = (posA.x + posB.x) / 2;
+                        const midY = (posA.y + posB.y) / 2;
 
                         allEdges.push(
                             <g key={`edge-${edgeIndex}-${edge.id}`}>
@@ -679,10 +912,76 @@ function SVGFallback({ data, animationTime, onEdgeClick, onSetCentral, newlySpaw
                                     strokeDasharray={dashArray}
                                     opacity={opacity * 0.6}
                                     strokeLinecap="round"
-                                />
+                                >
+                                    {/* BLINKING ANIMATION for dangerous edges */}
+                                    {isDangerousEdge && edgeProgress >= 1 && (
+                                        <animate
+                                            attributeName="opacity"
+                                            values={`${opacity * 0.3};${opacity};${opacity * 0.3}`}
+                                            dur="0.5s"
+                                            repeatCount="indefinite"
+                                        />
+                                    )}
+                                </line>
 
-                                {/* Electric current effect on ALL edges after animation */}
-                                {edgeProgress >= 1 && (
+                                {/* DANGEROUS EDGE: Pulsing glow effect - CSS animated */}
+                                {isDangerousEdge && edgeProgress >= 1 && (
+                                    <>
+                                        {/* Outer pulsing glow */}
+                                        <line
+                                            x1={posA.x} y1={posA.y}
+                                            x2={posB.x} y2={posB.y}
+                                            stroke="#ef4444"
+                                            strokeWidth={strokeWidth + 4}
+                                            strokeLinecap="round"
+                                            className="danger-pulse"
+                                        />
+                                        {/* Bright core that blinks */}
+                                        <line
+                                            x1={posA.x} y1={posA.y}
+                                            x2={posB.x} y2={posB.y}
+                                            stroke="#ff6b6b"
+                                            strokeWidth={strokeWidth}
+                                            strokeLinecap="round"
+                                            className="danger-pulse-bright"
+                                        />
+                                    </>
+                                )}
+
+                                {/* SKULL SYMBOL ☠️ for deadly contraindications - CSS animated */}
+                                {showSkullSymbol && edgeProgress >= 1 && (
+                                    <g>
+                                        {/* Skull background circle */}
+                                        <circle
+                                            cx={midX}
+                                            cy={midY}
+                                            r={12}
+                                            fill="#1f2937"
+                                            stroke="#ef4444"
+                                            strokeWidth={2}
+                                            className="skull-pulse"
+                                        />
+                                        {/* Skull emoji */}
+                                        <text
+                                            x={midX}
+                                            y={midY + 4}
+                                            textAnchor="middle"
+                                            fontSize="14"
+                                            fill="#ef4444"
+                                        >
+                                            ☠️
+                                            <animate
+                                                attributeName="opacity"
+                                                values="0.5;1;0.5"
+                                                dur="0.5s"
+                                                repeatCount="indefinite"
+                                            />
+                                        </text>
+                                    </g>
+                                )}
+
+                                {/* Electric current effect on ALL edges after animation (non-dangerous) */}
+                                {edgeProgress >= 1 && !isDangerousEdge && (
                                     <>
                                         {/* Subtle glow behind electric current */}
                                         <line
@@ -726,7 +1025,31 @@ function SVGFallback({ data, animationTime, onEdgeClick, onSetCentral, newlySpaw
                                     </>
                                 )}
 
-                                {/* Clickable overlay */}
+                                {/* DANGEROUS edge electric effect - red themed */}
+                                {edgeProgress >= 1 && isDangerousEdge && (
+                                    <>
+                                        {/* Red warning spark */}
+                                        <circle
+                                            r={4}
+                                            fill="#ef4444"
+                                            opacity={1}
+                                        >
+                                            <animateMotion
+                                                dur="0.4s"
+                                                repeatCount="indefinite"
+                                                path={`M${posA.x},${posA.y} L${posB.x},${posB.y}`}
+                                            />
+                                            <animate
+                                                attributeName="opacity"
+                                                values="0.3;1;0.3"
+                                                dur="0.4s"
+                                                repeatCount="indefinite"
+                                            />
+                                        </circle>
+                                    </>
+                                )}
+
+                                {/* Clickable overlay with hover detection */}
                                 <line
                                     x1={posA.x} y1={posA.y}
                                     x2={posB.x} y2={posB.y}
@@ -737,6 +1060,29 @@ function SVGFallback({ data, animationTime, onEdgeClick, onSetCentral, newlySpaw
                                         e.stopPropagation();
                                         onEdgeClick(edge, nodeA, nodeB);
                                     }}
+                                    onMouseEnter={(e) => {
+                                        const rect = containerRef.current?.getBoundingClientRect();
+                                        if (rect) {
+                                            setHoveredEdge({
+                                                edge,
+                                                sourceNode: nodeA,
+                                                targetNode: nodeB,
+                                                x: e.clientX - rect.left,
+                                                y: e.clientY - rect.top - 10
+                                            });
+                                        }
+                                    }}
+                                    onMouseMove={(e) => {
+                                        const rect = containerRef.current?.getBoundingClientRect();
+                                        if (rect && hoveredEdge) {
+                                            setHoveredEdge(prev => prev ? {
+                                                ...prev,
+                                                x: e.clientX - rect.left,
+                                                y: e.clientY - rect.top - 10
+                                            } : null);
+                                        }
+                                    }}
+                                    onMouseLeave={() => setHoveredEdge(null)}
                                 />
                             </g>
                         );
@@ -772,7 +1118,7 @@ function SVGFallback({ data, animationTime, onEdgeClick, onSetCentral, newlySpaw
                     // Determine node state
                     const isSelected = node.id === selectedNodeId;
                     const isHighlighted = highlightedNodeIds.has(node.id);
-                    const isDimmed = selectedNodeId && !isSelected && !isHighlighted;
+                    const isDimmed = focusMode && selectedNodeId && !isSelected && !isHighlighted;
                     const isMultiSelected = selectedNodesForAnalysis.has(node.id);
                     const isNewlySpawned = newlySpawnedNodes?.has(node.id) || false;
 
@@ -861,7 +1207,7 @@ function SVGFallback({ data, animationTime, onEdgeClick, onSetCentral, newlySpaw
                                     />
                                 </>
                             )}
-                            {/* Selection ring for selected node */}
+                            {/* Selection ring for selected node - CSS animated */}
                             {isSelected && (
                                 <circle
                                     cx={pos.x} cy={pos.y} r={nodeSize * 2.5}
@@ -870,41 +1216,36 @@ function SVGFallback({ data, animationTime, onEdgeClick, onSetCentral, newlySpaw
                                     strokeWidth="3"
                                     strokeDasharray="6 3"
                                     opacity="0.8"
-                                >
-                                    <animate attributeName="stroke-dashoffset" values="0;18" dur="1s" repeatCount="indefinite" />
-                                </circle>
+                                    className="dash-march"
+                                />
                             )}
-                            {/* Pulsing glow for highlighted danger nodes */}
+                            {/* Pulsing glow for highlighted danger nodes - CSS animated */}
                             {isHighlighted && connectionColor?.type === 'danger' && (
-                                <circle cx={pos.x} cy={pos.y} r={nodeSize * 2.5} fill="#ef4444" opacity="0.3">
-                                    <animate attributeName="opacity" values="0.3;0.1;0.3" dur="1s" repeatCount="indefinite" />
-                                </circle>
+                                <circle cx={pos.x} cy={pos.y} r={nodeSize * 2.5} fill="#ef4444" className="glow-pulse" />
                             )}
-                            {/* COSMIC ENERGY BURST for newly spawned nodes */}
+                            {/* COSMIC ENERGY BURST for newly spawned nodes - CSS animated */}
                             {isNewlySpawned && (
                                 <>
-                                    {/* Outer pulsing cosmic glow */}
-                                    <circle cx={pos.x} cy={pos.y} r={nodeSize * 4} fill="none" stroke="#a855f7" strokeWidth="2">
-                                        <animate attributeName="r" values={`${nodeSize * 2};${nodeSize * 6}`} dur="1.5s" repeatCount="indefinite" />
-                                        <animate attributeName="opacity" values="0.8;0" dur="1.5s" repeatCount="indefinite" />
-                                    </circle>
-                                    {/* Inner rotating energy ring */}
-                                    <circle cx={pos.x} cy={pos.y} r={nodeSize * 3} fill="none" stroke="#06b6d4" strokeWidth="3" strokeDasharray="8 4">
-                                        <animate attributeName="stroke-dashoffset" values="0;-24" dur="0.5s" repeatCount="indefinite" />
-                                        <animate attributeName="opacity" values="0.7;0.3;0.7" dur="1s" repeatCount="indefinite" />
-                                    </circle>
-                                    {/* Bright core flash */}
-                                    <circle cx={pos.x} cy={pos.y} r={nodeSize * 1.8} fill="white" opacity="0.6">
-                                        <animate attributeName="opacity" values="0.8;0.2;0.8" dur="0.8s" repeatCount="indefinite" />
-                                    </circle>
-                                    {/* Energy particle 1 */}
-                                    <circle r="4" fill="#a855f7" opacity="0.9">
-                                        <animateMotion dur="1.2s" repeatCount="indefinite" path={`M${pos.x},${pos.y} m-${nodeSize * 3},0 a${nodeSize * 3},${nodeSize * 3} 0 1,1 ${nodeSize * 6},0 a${nodeSize * 3},${nodeSize * 3} 0 1,1 -${nodeSize * 6},0`} />
-                                    </circle>
-                                    {/* Energy particle 2 */}
-                                    <circle r="3" fill="#06b6d4" opacity="0.8">
-                                        <animateMotion dur="0.9s" repeatCount="indefinite" begin="0.3s" path={`M${pos.x},${pos.y} m-${nodeSize * 2.5},0 a${nodeSize * 2.5},${nodeSize * 2.5} 0 1,0 ${nodeSize * 5},0 a${nodeSize * 2.5},${nodeSize * 2.5} 0 1,0 -${nodeSize * 5},0`} />
-                                    </circle>
+                                    {/* Outer pulsing cosmic glow - uses CSS animation */}
+                                    <circle
+                                        cx={pos.x} cy={pos.y} r={nodeSize * 3}
+                                        fill="none" stroke="#a855f7" strokeWidth="2"
+                                        className="spawn-ring"
+                                        style={{ transformOrigin: `${pos.x}px ${pos.y}px` }}
+                                    />
+                                    {/* Inner rotating energy ring - CSS animated */}
+                                    <circle
+                                        cx={pos.x} cy={pos.y} r={nodeSize * 2.5}
+                                        fill="none" stroke="#06b6d4" strokeWidth="3" strokeDasharray="8 4"
+                                        className="rotate-ring"
+                                        opacity="0.7"
+                                    />
+                                    {/* Bright core flash - CSS animated */}
+                                    <circle
+                                        cx={pos.x} cy={pos.y} r={nodeSize * 1.5}
+                                        fill="white"
+                                        className="flash-bright"
+                                    />
                                 </>
                             )}
                             {/* Outer glow - enhanced during animation */}
@@ -1000,7 +1341,20 @@ function SVGFallback({ data, animationTime, onEdgeClick, onSetCentral, newlySpaw
 
             <div className="absolute bottom-8 right-4 text-right text-gray-400 text-sm">
                 <p>🎯 1er clic: sélectionner | 2ème clic: analyser le lien IA</p>
-                <p className="text-xs mt-1">🟢 Bénéfique | 🔴 Danger | 🟠 Contre-indiqué | 🟡 Précaution</p>
+                {/* Node colors legend */}
+                <div className="text-xs mt-1 flex flex-wrap gap-2 justify-end">
+                    <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-red-500"></span>Pathologie</span>
+                    <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-blue-500"></span>Symptôme</span>
+                    <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-green-500"></span>Traitement</span>
+                    <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-orange-500"></span>Médicament</span>
+                </div>
+                {/* Edge colors legend */}
+                <div className="text-xs mt-1 flex flex-wrap gap-2 justify-end">
+                    <span>🟢 Sympt→Patho</span>
+                    <span>🟠 Sympt→Médic</span>
+                    <span>🔴 Médic↔Médic</span>
+                    <span>☠️ Contre-indic</span>
+                </div>
                 <p className="text-xs mt-1 text-purple-400">🖱️ Double-clic: définir comme centre</p>
             </div>
 
@@ -1124,6 +1478,51 @@ function SVGFallback({ data, animationTime, onEdgeClick, onSetCentral, newlySpaw
                         >
                             Annuler
                         </button>
+                    </div>
+                </div>
+            )}
+
+            {/* EDGE HOVER TOOLTIP */}
+            {hoveredEdge && (
+                <div
+                    className="absolute z-50 pointer-events-none animate-in fade-in-0 zoom-in-95 duration-150"
+                    style={{
+                        left: hoveredEdge.x,
+                        top: hoveredEdge.y,
+                        transform: 'translate(-50%, -100%)'
+                    }}
+                >
+                    <div className="bg-gray-900/95 backdrop-blur-sm border border-gray-600 rounded-xl px-4 py-3 shadow-2xl">
+                        <div className="flex items-center gap-2 mb-2">
+                            <div className="w-3 h-3 rounded-full" style={{
+                                backgroundColor: NODE_TYPE_COLORS[hoveredEdge.sourceNode.node_type?.toUpperCase() || ''] || '#94a3b8'
+                            }} />
+                            <span className="text-white font-medium text-sm">{hoveredEdge.sourceNode.name}</span>
+                        </div>
+                        <div className="flex items-center gap-2 px-2">
+                            <div className="text-lg">↓</div>
+                            <span className="text-xs font-bold px-2 py-1 rounded" style={{
+                                backgroundColor: hoveredEdge.edge.relationship.includes('CONTRA') || hoveredEdge.edge.relationship.includes('DANGER')
+                                    ? '#ef444430'
+                                    : hoveredEdge.edge.relationship.includes('TREAT') || hoveredEdge.edge.relationship.includes('IMPROVE')
+                                        ? '#22c55e30'
+                                        : '#f9731630',
+                                color: hoveredEdge.edge.relationship.includes('CONTRA') || hoveredEdge.edge.relationship.includes('DANGER')
+                                    ? '#ef4444'
+                                    : hoveredEdge.edge.relationship.includes('TREAT') || hoveredEdge.edge.relationship.includes('IMPROVE')
+                                        ? '#22c55e'
+                                        : '#f97316'
+                            }}>
+                                {hoveredEdge.edge.relationship.replace(/_/g, ' ')}
+                            </span>
+                        </div>
+                        <div className="flex items-center gap-2 mt-2">
+                            <div className="w-3 h-3 rounded-full" style={{
+                                backgroundColor: NODE_TYPE_COLORS[hoveredEdge.targetNode.node_type?.toUpperCase() || ''] || '#94a3b8'
+                            }} />
+                            <span className="text-white font-medium text-sm">{hoveredEdge.targetNode.name}</span>
+                        </div>
+                        <div className="text-[10px] text-gray-500 mt-2 text-center">Cliquez pour analyse IA</div>
                     </div>
                 </div>
             )}
@@ -1825,7 +2224,8 @@ function SignalPanel({ signals }: { signals: MicroSignal[] }) {
 interface RadialRingsModalProps {
     isOpen: boolean;
     onClose: () => void;
-    pathology: string;
+    pathology?: string; // Single pathology (legacy)
+    pathologies?: string[]; // Multiple pathologies for comorbidity analysis
     mode?: 'THERAPY' | 'SAFETY' | 'ETIOLOGY' | 'RELAPSE';
     context?: Record<string, any>;
 }
@@ -1834,16 +2234,23 @@ export default function RadialRingsModal({
     isOpen,
     onClose,
     pathology,
+    pathologies = [],
     mode = 'ETIOLOGY',
     context
 }: RadialRingsModalProps) {
+    // Support both single pathology and array of pathologies
+    const allPathologies = pathologies.length > 0 ? pathologies : (pathology ? [pathology] : []);
+    const primaryPathology = allPathologies[0] || '';
+    const isComorbidityMode = allPathologies.length > 1;
+
     const [data, setData] = useState<RadialRingsData | null>(null);
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    const [fromCache, setFromCache] = useState(false);
     const [animationTime, setAnimationTime] = useState(0);
     const [isPaused, setIsPaused] = useState(false);
     const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
-    const [centralNode, setCentralNode] = useState<string>(pathology); // Current center
+    const [centralNode, setCentralNode] = useState<string>(primaryPathology); // Current center
 
     // Edge selection for explanation modal
     const [selectedEdge, setSelectedEdge] = useState<RingEdge | null>(null);
@@ -1852,8 +2259,23 @@ export default function RadialRingsModal({
     const [multiNodesForAnalysis, setMultiNodesForAnalysis] = useState<RingNode[]>([]);
     const [showLinkModal, setShowLinkModal] = useState(false);
 
+    // Edge filter mode: 'all' shows all edges, 'central-only' = central node, 'selected-only' = selected node
+    const [edgeFilterMode, setEdgeFilterMode] = useState<'all' | 'central-only' | 'selected-only'>('all');
+    const [centralNodeId, setCentralNodeId] = useState<string | null>(null);
+    const [filterSelectedNodeId, setFilterSelectedNodeId] = useState<string | null>(null);
+
+    // Focus mode: dim unconnected nodes and edges when a node is selected
+    const [focusMode, setFocusMode] = useState(true);
+
+    // Comorbidity mode: track which pathologies are active for filtering
+    const [activePathologies, setActivePathologies] = useState<Set<string>>(new Set(allPathologies));
+
+    // Progressive reveal: nodes appear one by one
+    const [visibleNodeCount, setVisibleNodeCount] = useState(0);
+
     const animationRef = useRef<number>();
     const startTimeRef = useRef<number>(0);
+    const revealIntervalRef = useRef<NodeJS.Timeout | null>(null);
     const [webglAvailable, setWebglAvailable] = useState<boolean | null>(null);
 
     // Check WebGL on mount
@@ -1862,12 +2284,12 @@ export default function RadialRingsModal({
     }, []);
 
     useEffect(() => {
-        if (isOpen && pathology) {
-            setCentralNode(pathology);
-            fetchData(pathology);
+        if (isOpen && allPathologies.length > 0) {
+            setCentralNode(primaryPathology);
+            fetchData(allPathologies);
         }
         return () => { if (animationRef.current) cancelAnimationFrame(animationRef.current); };
-    }, [isOpen, pathology]);
+    }, [isOpen, allPathologies.join(',')]);
 
     useEffect(() => {
         if (!data || isPaused || !isOpen) return;
@@ -1880,7 +2302,36 @@ export default function RadialRingsModal({
         return () => { if (animationRef.current) cancelAnimationFrame(animationRef.current); };
     }, [data, isPaused, isOpen]);
 
-    const fetchData = async (centralPathology: string) => {
+    // Progressive node reveal: nodes appear one by one for holographic effect
+    useEffect(() => {
+        if (!data?.knowledge_graph.nodes.length) return;
+
+        // Clear any existing interval
+        if (revealIntervalRef.current) {
+            clearInterval(revealIntervalRef.current);
+        }
+
+        // Reset visible count
+        setVisibleNodeCount(0);
+        const totalNodes = data.knowledge_graph.nodes.length;
+
+        // Reveal nodes progressively
+        revealIntervalRef.current = setInterval(() => {
+            setVisibleNodeCount(prev => {
+                if (prev >= totalNodes) {
+                    if (revealIntervalRef.current) clearInterval(revealIntervalRef.current);
+                    return prev;
+                }
+                return prev + 1;
+            });
+        }, 40); // 40ms between each node = ~25 nodes/second
+
+        return () => {
+            if (revealIntervalRef.current) clearInterval(revealIntervalRef.current);
+        };
+    }, [data]);
+
+    const fetchData = async (pathologies: string[]) => {
         setIsLoading(true);
         setError(null);
         setData(null);
@@ -1889,9 +2340,12 @@ export default function RadialRingsModal({
 
         try {
             // Use deep-research-graph with Claude Opus for comprehensive research
+            // Pass array for comorbidity analysis
             const response = await supabase.functions.invoke('deep-research-graph', {
                 body: {
-                    topic: centralPathology,
+                    topic: pathologies[0], // Primary pathology
+                    pathologies: pathologies, // All pathologies for comorbidity
+                    isComorbidityAnalysis: pathologies.length > 1,
                     max_nodes: 100,
                     include_pubmed: true,
                     include_fda: true
@@ -1903,22 +2357,31 @@ export default function RadialRingsModal({
             const result = response.data;
             console.log('[DEEP-RESEARCH] Result:', result);
 
+            // Track if result came from cache
+            setFromCache(result.from_cache || false);
+            if (result.from_cache) {
+                console.log(`[DEEP-RESEARCH] Loaded from cache (hit #${result.cache_hit_count})`);
+            }
+
             // Transform deep-research-graph response to RadialRingsData format
-            // Map node types to rings for visual grouping
+            // Map node types to rings for visual grouping (semantic proximity)
             const typeToRing: Record<string, number> = {
-                'PATHOLOGY': 0,    // Center
-                'DRUG': 1,         // Inner ring
-                'SYMPTOM': 2,      // Second ring
-                'COMPLICATION': 2, // Second ring
-                'LAB': 3,          // Third ring
-                'LIFESTYLE': 3,    // Third ring
-                'GUIDELINE': 4,    // Outer ring
-                'EVIDENCE': 4      // Outer ring
+                'PATHOLOGY': 0,     // Ring 0: Centre - Pathologie(s) centrale(s)
+                'SYMPTOM': 1,       // Ring 1: Symptômes (directement liés)
+                'COMPLICATION': 1,  // Ring 1: Complications (directement liées)
+                'TREATMENT': 2,     // Ring 2: Traitements
+                'DRUG': 2,          // Ring 2: Médicaments
+                'MEDICATION': 2,    // Ring 2: Médicaments (alias)
+                'LAB': 3,           // Ring 3: Examens diagnostiques
+                'CAUSE': 3,         // Ring 3: Causes / Étiologie
+                'GUIDELINE': 4,     // Ring 4: Recommandations cliniques
+                'EVIDENCE': 4,      // Ring 4: Preuves scientifiques
+                'LIFESTYLE': 4      // Ring 4: Facteurs de mode de vie
             };
 
             const transformedNodes: RingNode[] = result.nodes.map((node: any, index: number) => ({
                 id: node.id,
-                ring: typeToRing[node.node_type] ?? 2,
+                ring: node.ring !== undefined ? node.ring : (typeToRing[node.node_type] ?? 2), // Use ring from API if provided
                 lane: node.node_type?.toLowerCase() || 'unknown',
                 name: node.label,
                 node_type: node.node_type,
@@ -1928,7 +2391,8 @@ export default function RadialRingsModal({
                 translation_gap: false,
                 category_id: node.category_id,
                 subcategory: node.subcategory,
-                tags: node.tags
+                tags: node.tags,
+                parent_pathology: node.parent_pathology || allPathologies[0] || primaryPathology
             }));
 
             const transformedEdges: RingEdge[] = result.edges.map((edge: any) => ({
@@ -1971,13 +2435,26 @@ export default function RadialRingsModal({
         // NOTE: Do NOT set isLoading here - we want to keep the graph visible during expansion
 
         try {
+            // Prepare existing nodes for cross-link analysis
+            // Send node names and types so Claude can identify relevant cross-links
+            const existingNodesForCrossLink = data.knowledge_graph.nodes
+                .filter(n => n.id !== nodeId) // Exclude the node we're expanding from
+                .map(n => ({
+                    name: n.name,
+                    node_type: n.node_type || n.lane || 'UNKNOWN'
+                }));
+
+            console.log(`[EXPAND] Sending ${existingNodesForCrossLink.length} existing nodes for cross-link analysis`);
+
             // Call deep-research-graph for comprehensive expansion
             const response = await supabase.functions.invoke('deep-research-graph', {
                 body: {
                     topic: node.name,
                     max_nodes: 100,
                     include_pubmed: true,
-                    include_fda: true
+                    include_fda: true,
+                    // NEW: Send existing nodes for cross-link analysis
+                    existing_nodes: existingNodesForCrossLink
                 }
             });
 
@@ -2011,16 +2488,50 @@ export default function RadialRingsModal({
                 translation_gap: false
             }));
 
-            // Transform new edges
-            const newEdges: RingEdge[] = result.edges.map((e: any) => ({
-                id: `${e.source_id}-${e.target_id}`,
-                source: e.source_id,
-                target: e.target_id,
-                relationship: e.edge_type,
-                weight: e.weight || 0.5,
-                evidence_grade: e.weight > 0.8 ? 'A' : e.weight > 0.5 ? 'B' : 'C',
-                translation_gap: false
-            }));
+            // Build maps for resolving node references
+            // Claude may reference nodes by ID (c0, d1, s1) or by name (for cross-links to existing nodes)
+            const newNodeIdToName = new Map<string, string>();
+            const newNodeNameToId = new Map<string, string>();
+            newNodes.forEach(n => {
+                newNodeIdToName.set(n.id, n.name);
+                newNodeNameToId.set(n.name.toLowerCase(), n.id);
+            });
+
+            // Also map existing nodes by name for cross-link resolution
+            const existingNodeNameToId = new Map<string, string>();
+            data.knowledge_graph.nodes.forEach(n => {
+                existingNodeNameToId.set(n.name.toLowerCase(), n.id);
+            });
+
+            // Combine both maps for edge resolution
+            const allNodeNameToId = new Map<string, string>([...existingNodeNameToId, ...newNodeNameToId]);
+
+            // Transform new edges with cross-link resolution
+            const newEdges: RingEdge[] = result.edges.map((e: any) => {
+                // Resolve source: could be an ID (c0, d1) or a node name (for cross-links)
+                let sourceId = e.source_id;
+                let targetId = e.target_id;
+
+                // Try to resolve by name if the ID doesn't match a new node
+                if (!newNodeIdToName.has(sourceId)) {
+                    const resolvedId = allNodeNameToId.get(sourceId.toLowerCase());
+                    if (resolvedId) sourceId = resolvedId;
+                }
+                if (!newNodeIdToName.has(targetId)) {
+                    const resolvedId = allNodeNameToId.get(targetId.toLowerCase());
+                    if (resolvedId) targetId = resolvedId;
+                }
+
+                return {
+                    id: `${sourceId}-${targetId}`,
+                    source: sourceId,
+                    target: targetId,
+                    relationship: e.edge_type,
+                    weight: e.weight || 0.5,
+                    evidence_grade: e.weight > 0.8 ? 'A' : e.weight > 0.5 ? 'B' : 'C',
+                    translation_gap: false
+                };
+            });
 
             // Merge with existing nodes, avoiding duplicates
             const existingNodeNames = new Set(data.knowledge_graph.nodes.map(n => n.name.toLowerCase()));
@@ -2034,6 +2545,7 @@ export default function RadialRingsModal({
             setNewlySpawnedNodes(new Set());
 
             // Add nodes one by one with visible streaming delay
+            // ONLY use edges from Claude API - no automatic RELATED_TO edges
             for (let i = 0; i < nodesToAdd.length; i++) {
                 const newNode = nodesToAdd[i];
                 currentNodes = [...currentNodes, newNode];
@@ -2041,32 +2553,19 @@ export default function RadialRingsModal({
                 // Mark this node as newly spawned for cosmic animation
                 setNewlySpawnedNodes(prev => new Set([...prev, newNode.id]));
 
-                // CREATE EDGE FROM SOURCE NODE TO NEW NODE
-                // This ensures all expanded nodes are connected to the source
-                const sourceToNewEdge: RingEdge = {
-                    id: `${nodeId}-${newNode.id}`,
-                    source: nodeId,
-                    target: newNode.id,
-                    relationship: 'RELATED_TO',
-                    weight: 0.7,
-                    evidence_grade: 'B',
-                    translation_gap: false
-                };
-
-                // Check if this edge doesn't already exist
-                if (!currentEdges.some(e => e.id === sourceToNewEdge.id ||
-                    (e.source === nodeId && e.target === newNode.id) ||
-                    (e.source === newNode.id && e.target === nodeId))) {
-                    currentEdges = [...currentEdges, sourceToNewEdge];
-                }
-
-                // Also add any edges from backend that now have both endpoints
+                // Add ONLY edges from Claude that now have both endpoints (real semantic links)
                 const currentNodeIds = new Set(currentNodes.map(n => n.id));
                 const relevantEdges = newEdges.filter(e =>
                     currentNodeIds.has(e.source) &&
                     currentNodeIds.has(e.target) &&
-                    !currentEdges.some(ce => ce.id === e.id)
+                    !currentEdges.some(ce => ce.id === e.id ||
+                        (ce.source === e.source && ce.target === e.target) ||
+                        (ce.source === e.target && ce.target === e.source))
                 );
+
+                if (relevantEdges.length > 0) {
+                    console.log(`[EXPAND] Adding ${relevantEdges.length} semantic edges from Claude`);
+                }
                 currentEdges = [...currentEdges, ...relevantEdges];
 
                 // Update state to trigger re-render (progressive appearance)
@@ -2079,6 +2578,25 @@ export default function RadialRingsModal({
                 if (i < nodesToAdd.length - 1) {
                     await new Promise(resolve => setTimeout(resolve, 120));
                 }
+            }
+
+            // FINAL PASS: Add any remaining cross-links that may have been missed
+            const finalNodeIds = new Set(currentNodes.map(n => n.id));
+            const remainingCrossLinks = newEdges.filter(e =>
+                finalNodeIds.has(e.source) &&
+                finalNodeIds.has(e.target) &&
+                !currentEdges.some(ce => ce.id === e.id ||
+                    (ce.source === e.source && ce.target === e.target) ||
+                    (ce.source === e.target && ce.target === e.source))
+            );
+
+            if (remainingCrossLinks.length > 0) {
+                console.log(`[EXPAND] Final pass: Adding ${remainingCrossLinks.length} remaining cross-links`);
+                currentEdges = [...currentEdges, ...remainingCrossLinks];
+                setData({
+                    ...data,
+                    knowledge_graph: { nodes: currentNodes, edges: currentEdges }
+                });
             }
 
             // Clear spawn markers after 2 seconds (cosmic glow fades)
@@ -2094,7 +2612,7 @@ export default function RadialRingsModal({
             console.error('[EXPAND] Error:', err);
             // Fallback to full reload if expansion fails
             setCentralNode(node.name);
-            await fetchData(node.name);
+            await fetchData([node.name]);
         } finally {
             setIsLoading(false);
             setIsExpanding(false);
@@ -2187,10 +2705,13 @@ export default function RadialRingsModal({
                     <div className="mb-2">
                         <div className="text-gray-500 uppercase tracking-wider text-[10px] mb-1">Types de nœuds</div>
                         {[
-                            { type: 'PATHOLOGY', label: 'Pathologie', color: NODE_TYPE_COLORS.PATHOLOGY },
                             { type: 'DRUG', label: 'Médicament', color: NODE_TYPE_COLORS.DRUG },
+                            { type: 'TREATMENT', label: 'Traitement', color: NODE_TYPE_COLORS.TREATMENT },
                             { type: 'SYMPTOM', label: 'Symptôme', color: NODE_TYPE_COLORS.SYMPTOM },
+                            { type: 'PATHOLOGY', label: 'Pathologie', color: NODE_TYPE_COLORS.PATHOLOGY },
                             { type: 'COMPLICATION', label: 'Complication', color: NODE_TYPE_COLORS.COMPLICATION },
+                            { type: 'LAB', label: 'Analyses', color: NODE_TYPE_COLORS.LAB },
+                            { type: 'GUIDELINE', label: 'Suggestion', color: NODE_TYPE_COLORS.GUIDELINE },
                         ].map(({ type, label, color }) => (
                             <div key={type} className="flex items-center gap-2 mb-0.5">
                                 <div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: color }} />
@@ -2199,15 +2720,15 @@ export default function RadialRingsModal({
                         ))}
                     </div>
 
-                    {/* Edge Types */}
+                    {/* Edge Types - Relations */}
                     <div className="border-t border-gray-700/50 pt-2">
                         <div className="text-gray-500 uppercase tracking-wider text-[10px] mb-1">Relations</div>
                         {[
-                            { type: 'TREATS', label: 'Traite', color: EDGE_TYPE_COLORS.TREATS.color },
-                            { type: 'INTERACTS_WITH', label: 'Interaction', color: '#f97316' },
-                            { type: 'CONTRAINDICATED_IF', label: 'Contre-indiqué', color: EDGE_TYPE_COLORS.CONTRAINDICATED_IF.color },
-                            { type: 'COMPLICATES', label: 'Complique', color: EDGE_TYPE_COLORS.COMPLICATES.color },
-                            { type: 'ASSOCIATED_WITH', label: 'Associé à', color: EDGE_TYPE_COLORS.ASSOCIATED_WITH.color },
+                            { type: 'TREATS', label: 'Traite', color: '#22c55e' },
+                            { type: 'SIDE_EFFECT', label: 'Effet indésirable', color: '#f97316' },
+                            { type: 'MILD_EFFECT', label: 'Effet léger', color: '#eab308' },
+                            { type: 'CONTRAINDICATION', label: 'Contre-indiqué ☠️', color: '#ef4444' },
+                            { type: 'INTERACTS', label: 'Interaction', color: '#ef4444' },
                         ].map(({ type, label, color }) => (
                             <div key={type} className="flex items-center gap-2 mb-0.5">
                                 <div className="w-4 h-0.5" style={{ backgroundColor: color }} />
@@ -2215,6 +2736,88 @@ export default function RadialRingsModal({
                             </div>
                         ))}
                     </div>
+
+                    {/* Edge Filter Toggle */}
+                    <div className="border-t border-gray-700/50 pt-2 mt-2">
+                        <div className="text-gray-500 uppercase tracking-wider text-[10px] mb-2">Filtre liens</div>
+                        <div className="flex flex-col gap-1">
+                            <button
+                                onClick={() => setEdgeFilterMode('all')}
+                                className={`px-2 py-1 rounded text-[10px] transition-all ${edgeFilterMode === 'all'
+                                    ? 'bg-purple-600 text-white'
+                                    : 'bg-gray-800 text-gray-400 hover:bg-gray-700'
+                                    }`}
+                            >
+                                🔗 Tous les liens
+                            </button>
+                            <button
+                                onClick={() => setEdgeFilterMode('central-only')}
+                                className={`px-2 py-1 rounded text-[10px] transition-all ${edgeFilterMode === 'central-only'
+                                    ? 'bg-purple-600 text-white'
+                                    : 'bg-gray-800 text-gray-400 hover:bg-gray-700'
+                                    }`}
+                            >
+                                🎯 Nœud central
+                            </button>
+                            <button
+                                onClick={() => setEdgeFilterMode('selected-only')}
+                                className={`px-2 py-1 rounded text-[10px] transition-all ${edgeFilterMode === 'selected-only'
+                                    ? 'bg-purple-600 text-white'
+                                    : 'bg-gray-800 text-gray-400 hover:bg-gray-700'
+                                    }`}
+                            >
+                                👆 Nœud sélectionné
+                            </button>
+                        </div>
+                    </div>
+
+                    {/* Focus Mode Toggle */}
+                    <div className="border-t border-gray-700/50 pt-2 mt-2">
+                        <label className="flex items-center gap-2 cursor-pointer">
+                            <input
+                                type="checkbox"
+                                checked={focusMode}
+                                onChange={(e) => setFocusMode(e.target.checked)}
+                                className="w-3.5 h-3.5 rounded border-gray-600 bg-gray-800 text-purple-600 focus:ring-purple-500 focus:ring-offset-0"
+                            />
+                            <span className="text-gray-400 text-[10px]">🔦 Mode focus</span>
+                        </label>
+                        <p className="text-[9px] text-gray-500 mt-1">Assombrit les nœuds non-connectés</p>
+                    </div>
+
+                    {/* Comorbidity Pathology Filter - only show if multiple pathologies */}
+                    {isComorbidityMode && allPathologies.length > 1 && (
+                        <div className="border-t border-gray-700/50 pt-2 mt-2">
+                            <p className="text-[10px] font-medium text-amber-400 mb-2">⚠️ Filtre Comorbidités</p>
+                            <div className="flex flex-col gap-1.5">
+                                {allPathologies.map((pathology, idx) => (
+                                    <label key={idx} className="flex items-center gap-2 cursor-pointer">
+                                        <input
+                                            type="checkbox"
+                                            checked={activePathologies.has(pathology)}
+                                            onChange={(e) => {
+                                                const newSet = new Set(activePathologies);
+                                                if (e.target.checked) {
+                                                    newSet.add(pathology);
+                                                } else {
+                                                    newSet.delete(pathology);
+                                                }
+                                                setActivePathologies(newSet);
+                                            }}
+                                            className="w-3.5 h-3.5 rounded border-gray-600 bg-gray-800 text-red-600 focus:ring-red-500 focus:ring-offset-0"
+                                        />
+                                        <span className="text-gray-300 text-[10px]">{pathology}</span>
+                                    </label>
+                                ))}
+                            </div>
+                            <p className="text-[9px] text-gray-500 mt-1.5">
+                                {activePathologies.size === allPathologies.length
+                                    ? '✅ Liens d\'interaction visibles'
+                                    : `${activePathologies.size}/${allPathologies.length} pathologies`
+                                }
+                            </p>
+                        </div>
+                    )}
                 </div>
 
                 {/* Loading */}
@@ -2241,7 +2844,7 @@ export default function RadialRingsModal({
                     <div className="absolute inset-0 flex items-center justify-center bg-gray-900 z-30">
                         <div className="bg-red-900/50 border border-red-500 rounded-xl p-8 text-center">
                             <p className="text-red-400">Erreur: {error}</p>
-                            <button onClick={() => fetchData(pathology)} className="mt-4 bg-red-600 text-white px-4 py-2 rounded-lg">Réessayer</button>
+                            <button onClick={() => fetchData(allPathologies)} className="mt-4 bg-red-600 text-white px-4 py-2 rounded-lg">Réessayer</button>
                         </div>
                     </div>
                 )}
@@ -2254,6 +2857,12 @@ export default function RadialRingsModal({
                         onEdgeClick={handleEdgeSelect}
                         onSetCentral={handleSetCentral}
                         newlySpawnedNodes={newlySpawnedNodes}
+                        edgeFilterMode={edgeFilterMode}
+                        centralNodeId={data.knowledge_graph.nodes.find(n => n.ring === 0)?.id || null}
+                        filterSelectedNodeId={filterSelectedNodeId}
+                        focusMode={focusMode}
+                        activePathologies={activePathologies}
+                        visibleNodeCount={visibleNodeCount}
                     />
                 )}
 

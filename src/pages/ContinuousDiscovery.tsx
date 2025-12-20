@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import AppLayout from '@/components/layout/AppLayout';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -52,6 +53,9 @@ interface KGStats {
 
 const ContinuousDiscovery = () => {
     const { t } = useAutoTranslation();
+    const [searchParams] = useSearchParams();
+    const urlTab = searchParams.get('tab');
+
     const [isLoading, setIsLoading] = useState(false);
     const [isSeedingKG, setIsSeedingKG] = useState(false);
     const [isEnriching, setIsEnriching] = useState(false);
@@ -61,10 +65,11 @@ const ContinuousDiscovery = () => {
     const [statusFilter, setStatusFilter] = useState<string>('all');
     const [searchQuery, setSearchQuery] = useState<string>('');
     const [typeFilter, setTypeFilter] = useState<string>('all');
-    const [activeTab, setActiveTab] = useState('analyze');
+    const [activeTab, setActiveTab] = useState(urlTab || 'analyze');
     const [analysisOutput, setAnalysisOutput] = useState<string>('');
     const abortControllerRef = useRef<AbortController | null>(null);
     const outputRef = useRef<HTMLDivElement>(null);
+
 
     // NEW: Medical Stats from APIs (OpenFDA, ICD-10, DrugBank)
     const { stats: medicalStats, loading: statsLoading } = useMedicalStats();
@@ -81,7 +86,8 @@ const ContinuousDiscovery = () => {
     const [showResearchDetails, setShowResearchDetails] = useState(true);
     // Radial rings state
     const [isRadialModalOpen, setIsRadialModalOpen] = useState(false);
-    const [radialQuery, setRadialQuery] = useState('');
+    const [radialQueries, setRadialQueries] = useState<string[]>([]);
+    const [radialQueryInput, setRadialQueryInput] = useState('');
 
     // Load discoveries and stats
     const loadData = async () => {
@@ -950,26 +956,77 @@ const ContinuousDiscovery = () => {
                             </CardHeader>
                             <CardContent className="space-y-4">
                                 <p className="text-sm text-muted-foreground">
-                                    {t('Visualisation 3D des connexions médicales en anneaux concentriques. Détection de micro-signaux triangulés avec contre-hypothèses anti-biais.')}
+                                    {t('Visualisation 3D des connexions médicales en anneaux concentriques. Ajoutez plusieurs pathologies pour analyser les comorbidités.')}
                                 </p>
-                                <div className="flex gap-4">
+
+                                {/* Added conditions chips */}
+                                {radialQueries.length > 0 && (
+                                    <div className="flex flex-wrap gap-2">
+                                        {radialQueries.map((query, idx) => (
+                                            <div
+                                                key={idx}
+                                                className="flex items-center gap-1 px-3 py-1.5 rounded-full bg-gradient-to-r from-purple-500/20 to-pink-500/20 border border-purple-500/30"
+                                            >
+                                                <span className="text-sm font-medium text-purple-700 dark:text-purple-300">{query}</span>
+                                                <button
+                                                    onClick={() => setRadialQueries(prev => prev.filter((_, i) => i !== idx))}
+                                                    className="ml-1 text-purple-500 hover:text-red-500 transition-colors"
+                                                >
+                                                    ✕
+                                                </button>
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
+
+                                {/* Input + Add button */}
+                                <div className="flex gap-2">
                                     <Input
-                                        placeholder={t('Ex: Syndrome néphrotique pédiatrique')}
-                                        value={radialQuery}
-                                        onChange={(e) => setRadialQuery(e.target.value)}
+                                        placeholder={radialQueries.length === 0
+                                            ? t('Ex: Syndrome néphrotique pédiatrique')
+                                            : t('Ajouter une comorbidité (ex: Varicelle)')}
+                                        value={radialQueryInput}
+                                        onChange={(e) => setRadialQueryInput(e.target.value)}
+                                        onKeyDown={(e) => {
+                                            if (e.key === 'Enter' && radialQueryInput.trim()) {
+                                                setRadialQueries(prev => [...prev, radialQueryInput.trim()]);
+                                                setRadialQueryInput('');
+                                            }
+                                        }}
                                         className="flex-1"
                                     />
                                     <Button
+                                        onClick={() => {
+                                            if (radialQueryInput.trim()) {
+                                                setRadialQueries(prev => [...prev, radialQueryInput.trim()]);
+                                                setRadialQueryInput('');
+                                            }
+                                        }}
+                                        disabled={!radialQueryInput.trim()}
+                                        variant="outline"
+                                        className="gap-1"
+                                    >
+                                        + {t('Ajouter')}
+                                    </Button>
+                                    <Button
                                         onClick={() => setIsRadialModalOpen(true)}
-                                        disabled={!radialQuery.trim()}
+                                        disabled={radialQueries.length === 0}
                                         className="gap-2 bg-gradient-to-r from-purple-500 to-pink-600 hover:from-purple-600 hover:to-pink-700"
                                     >
                                         <Sparkles className="h-4 w-4" />
                                         {t('Lancer Radial 3D')}
                                     </Button>
                                 </div>
+
+                                {/* Comorbidity info */}
+                                {radialQueries.length > 1 && (
+                                    <div className="p-3 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-700 dark:text-amber-300 text-sm">
+                                        ⚠️ {t('Analyse de comorbidité')} : {radialQueries.length} {t('conditions')} — {t('Le graphe montrera les interactions et complications potentielles')}
+                                    </div>
+                                )}
+
                                 <div className="grid grid-cols-5 gap-2 text-xs text-center">
-                                    <div className="p-2 rounded bg-red-500/20 text-red-600">Ring 0: Pathologie</div>
+                                    <div className="p-2 rounded bg-red-500/20 text-red-600">Ring 0: Pathologie(s)</div>
                                     <div className="p-2 rounded bg-green-500/20 text-green-600">Ring 1: Traitements</div>
                                     <div className="p-2 rounded bg-orange-500/20 text-orange-600">Ring 2: Effets</div>
                                     <div className="p-2 rounded bg-purple-500/20 text-purple-600">Ring 3: Étiologie</div>
@@ -984,7 +1041,7 @@ const ContinuousDiscovery = () => {
                 <RadialRingsModal
                     isOpen={isRadialModalOpen}
                     onClose={() => setIsRadialModalOpen(false)}
-                    pathology={radialQuery.trim()}
+                    pathologies={radialQueries}
                     mode="ETIOLOGY"
                 />
             </div>

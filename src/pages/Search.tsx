@@ -10,8 +10,9 @@ import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { supabase } from '@/integrations/supabase/client';
-import { Search as SearchIcon, Activity, ChevronRight, X, Sparkles, Database, Globe, Filter, Loader2 } from 'lucide-react';
+import { Search as SearchIcon, Activity, ChevronRight, X, Sparkles, Database, Globe, Filter, Loader2, MessageCircle } from 'lucide-react';
 import DeepResearchPanel from '@/components/search/DeepResearchPanel';
+import SymptomQuestionnaireModal from '@/components/search/SymptomQuestionnaireModal';
 import { COMMON_MEDICAL_SYMPTOMS, BODY_SYSTEMS } from '@/data/medicalSymptoms';
 
 interface Symptom {
@@ -50,6 +51,20 @@ const Search = () => {
   const [ncbiSearchQuery, setNcbiSearchQuery] = useState('');
   const [ncbiResults, setNcbiResults] = useState<Symptom[]>([]);
   const [ncbiLoading, setNcbiLoading] = useState(false);
+
+  // Questionnaire Modal State - opens automatically on page load
+  const [questionnaireOpen, setQuestionnaireOpen] = useState(true);
+
+  // Handler when questionnaire completes
+  const handleQuestionnaireComplete = (symptoms: string[]) => {
+    // Add symptoms to selected list
+    setSelectedSymptomNames(prev => [...new Set([...prev, ...symptoms])]);
+    // Try to find matching symptom IDs in database
+    const matchingIds = dbSymptoms
+      .filter(s => symptoms.some(name => s.name.toLowerCase() === name.toLowerCase()))
+      .map(s => s.id);
+    setSelectedSymptoms(prev => [...new Set([...prev, ...matchingIds])]);
+  };
 
   useEffect(() => {
     const fetchSymptoms = async () => {
@@ -256,15 +271,31 @@ const Search = () => {
   return (
     <AppLayout>
       <div className="space-y-6">
-        <div>
-          <h1 className="text-3xl font-bold flex items-center gap-2">
-            <SearchIcon className="h-8 w-8" />
-            Recherche Avancée par Symptômes
-          </h1>
-          <p className="text-muted-foreground mt-1">
-            Sélectionnez les symptômes observés pour identifier les pathologies possibles avec la Deep Research IA
-          </p>
+        <div className="flex items-center justify-between flex-wrap gap-4">
+          <div>
+            <h1 className="text-3xl font-bold flex items-center gap-2">
+              <SearchIcon className="h-8 w-8" />
+              Recherche Avancée par Symptômes
+            </h1>
+            <p className="text-muted-foreground mt-1">
+              Sélectionnez les symptômes observés pour identifier les pathologies possibles avec la Deep Research IA
+            </p>
+          </div>
+          <Button
+            onClick={() => setQuestionnaireOpen(true)}
+            className="bg-gradient-to-r from-primary to-purple-500 hover:from-primary/90 hover:to-purple-500/90"
+          >
+            <MessageCircle className="h-4 w-4 mr-2" />
+            Assistant de symptômes
+          </Button>
         </div>
+
+        {/* Questionnaire Modal */}
+        <SymptomQuestionnaireModal
+          open={questionnaireOpen}
+          onOpenChange={setQuestionnaireOpen}
+          onComplete={handleQuestionnaireComplete}
+        />
 
         <div className="grid gap-6 lg:grid-cols-3">
           {/* Panneau de sélection des symptômes */}
@@ -467,46 +498,50 @@ const Search = () => {
                         Triées par pertinence
                       </p>
                     </div>
-                    {results.map((pathology, index) => (
-                      <Link key={pathology.id} to={`/pathologies/${pathology.id}`}>
-                        <Card className="hover:border-primary/50 transition-colors cursor-pointer">
-                          <CardContent className="py-4">
-                            <div className="flex items-start gap-4">
-                              <div className="flex items-center justify-center w-10 h-10 rounded-full bg-primary/10 text-primary font-bold flex-shrink-0">
-                                {index + 1}
-                              </div>
-                              <div className="flex-1 min-w-0">
-                                <div className="flex items-center gap-2 flex-wrap">
-                                  <h3 className="font-semibold text-lg">{pathology.name}</h3>
-                                  {pathology.icd_code && (
-                                    <Badge variant="outline" className="font-mono">
-                                      {pathology.icd_code}
-                                    </Badge>
-                                  )}
-                                  <Badge className={getSeverityColor(pathology.severity)}>
-                                    {getSeverityLabel(pathology.severity)}
-                                  </Badge>
+                    <ScrollArea className="h-[calc(100vh-400px)] min-h-[300px] pr-4">
+                      <div className="space-y-4">
+                        {results.map((pathology, index) => (
+                          <Link key={pathology.id} to={`/pathologies/${pathology.id}`}>
+                            <Card className="hover:border-primary/50 transition-colors cursor-pointer">
+                              <CardContent className="py-4">
+                                <div className="flex items-start gap-4">
+                                  <div className="flex items-center justify-center w-10 h-10 rounded-full bg-primary/10 text-primary font-bold flex-shrink-0">
+                                    {index + 1}
+                                  </div>
+                                  <div className="flex-1 min-w-0">
+                                    <div className="flex items-center gap-2 flex-wrap">
+                                      <h3 className="font-semibold text-lg">{pathology.name}</h3>
+                                      {pathology.icd_code && (
+                                        <Badge variant="outline" className="font-mono">
+                                          {pathology.icd_code}
+                                        </Badge>
+                                      )}
+                                      <Badge className={getSeverityColor(pathology.severity)}>
+                                        {getSeverityLabel(pathology.severity)}
+                                      </Badge>
+                                    </div>
+                                    <p className="text-sm mt-1 line-clamp-2 text-muted-foreground">
+                                      {pathology.description}
+                                    </p>
+                                    <div className="flex items-center gap-2 mt-2 flex-wrap">
+                                      <span className="text-xs text-muted-foreground">
+                                        Symptômes correspondants :
+                                      </span>
+                                      {pathology.matchedSymptoms.map((symptomId) => (
+                                        <Badge key={symptomId} variant="secondary" className="text-xs">
+                                          {getSymptomName(symptomId)}
+                                        </Badge>
+                                      ))}
+                                    </div>
+                                  </div>
+                                  <ChevronRight className="h-5 w-5 text-muted-foreground flex-shrink-0" />
                                 </div>
-                                <p className="text-sm mt-1 line-clamp-2 text-muted-foreground">
-                                  {pathology.description}
-                                </p>
-                                <div className="flex items-center gap-2 mt-2 flex-wrap">
-                                  <span className="text-xs text-muted-foreground">
-                                    Symptômes correspondants :
-                                  </span>
-                                  {pathology.matchedSymptoms.map((symptomId) => (
-                                    <Badge key={symptomId} variant="secondary" className="text-xs">
-                                      {getSymptomName(symptomId)}
-                                    </Badge>
-                                  ))}
-                                </div>
-                              </div>
-                              <ChevronRight className="h-5 w-5 text-muted-foreground flex-shrink-0" />
-                            </div>
-                          </CardContent>
-                        </Card>
-                      </Link>
-                    ))}
+                              </CardContent>
+                            </Card>
+                          </Link>
+                        ))}
+                      </div>
+                    </ScrollArea>
                   </>
                 )}
               </TabsContent>
