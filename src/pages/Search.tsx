@@ -270,23 +270,23 @@ const Search = () => {
 
   return (
     <AppLayout>
-      <div className="space-y-6">
-        <div className="flex items-center justify-between flex-wrap gap-4">
+      <div className="space-y-4 sm:space-y-6 px-2 sm:px-0">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 sm:gap-4">
           <div>
-            <h1 className="text-3xl font-bold flex items-center gap-2">
-              <SearchIcon className="h-8 w-8" />
-              Recherche Avancée par Symptômes
+            <h1 className="text-xl sm:text-2xl md:text-3xl font-bold flex items-center gap-2">
+              <SearchIcon className="h-5 w-5 sm:h-6 sm:w-6 md:h-8 md:w-8" />
+              <span className="hidden sm:inline">Recherche Avancée par</span> Symptômes
             </h1>
-            <p className="text-muted-foreground mt-1">
+            <p className="text-sm sm:text-base text-muted-foreground mt-1 hidden sm:block">
               Sélectionnez les symptômes observés pour identifier les pathologies possibles avec la Deep Research IA
             </p>
           </div>
           <Button
             onClick={() => setQuestionnaireOpen(true)}
-            className="bg-gradient-to-r from-primary to-purple-500 hover:from-primary/90 hover:to-purple-500/90"
+            className="bg-gradient-to-r from-primary to-purple-500 hover:from-primary/90 hover:to-purple-500/90 touch-manipulation w-full sm:w-auto text-sm sm:text-base"
           >
-            <MessageCircle className="h-4 w-4 mr-2" />
-            Assistant de symptômes
+            <MessageCircle className="h-4 w-4 mr-1 sm:mr-2" />
+            <span className="hidden xs:inline">Assistant de</span> symptômes
           </Button>
         </div>
 
@@ -297,10 +297,10 @@ const Search = () => {
           onComplete={handleQuestionnaireComplete}
         />
 
-        <div className="grid gap-6 lg:grid-cols-3">
+        <div className="grid gap-4 sm:gap-6 grid-cols-1 lg:grid-cols-3">
           {/* Panneau de sélection des symptômes */}
           <div className="lg:col-span-1">
-            <Card className="sticky top-24">
+            <Card className="lg:sticky lg:top-24">
               <CardHeader className="pb-3">
                 <CardTitle className="flex items-center justify-between">
                   <span>Symptômes</span>

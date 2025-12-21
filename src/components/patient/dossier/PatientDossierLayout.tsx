@@ -51,6 +51,9 @@ const PatientDossierLayout = ({ patientId, patient, alerts }: PatientDossierLayo
     const [activeCategory, setActiveCategory] = useState<CategoryKey | null>(null);
     const [refreshKey, setRefreshKey] = useState(0);
 
+    // Mobile navigation state
+    const [mobileTab, setMobileTab] = useState<'twin' | 'summary' | 'menu' | 'docs' | 'ai'>('twin');
+
     const handleSelectCategory = (category: CategoryKey) => {
         setActiveCategory(activeCategory === category ? null : category);
     };
@@ -136,74 +139,189 @@ const PatientDossierLayout = ({ patientId, patient, alerts }: PatientDossierLayo
         }
     };
 
-    return (
-        <div className="flex h-[calc(100vh-120px)] gap-4">
-            {/* Left Panel - Summary + Categories + Documents */}
-            <div className="w-72 shrink-0 flex flex-col gap-2 overflow-y-auto">
-                <div className="shrink-0">
-                    <PatientSummaryPanel patientId={patientId} patient={patient} />
-                </div>
-                <div className="shrink-0">
-                    <CategoryMenu
-                        activeCategory={activeCategory}
-                        onSelectCategory={handleSelectCategory}
-                    />
-                </div>
-                {/* Document Gallery - compact under menu */}
-                <div className="shrink-0">
-                    <DocumentGallery
-                        patientId={patientId}
-                        onDocumentIntegrated={handleDocumentIntegrated}
-                    />
-                </div>
-            </div>
-
-            {/* Center - Digital Twin (full height) */}
-            <div className="flex-1 min-w-0">
-                <DigitalTwin3DViewer
-                    alerts={alerts}
-                    pathologyName={patient.pathologies?.name}
-                />
-            </div>
-
-            {/* Right Panel - AI Health Synthesis + AI Assistant */}
-            <div className="w-80 shrink-0 flex flex-col gap-4">
-                <div className="shrink-0">
-                    <PatientHealthSynthesis
-                        key={refreshKey}
-                        patientId={patientId}
-                    />
-                </div>
-                <div className="shrink-0">
-                    <AIAssistant
-                        patient={{
-                            ...patient,
-                            patient_id: patient.patient_id || patient.id,
-                            lab_results_json: patient.lab_results_json || {},
-                            alerts: alerts,
-                            bmi: patient.height_cm && patient.weight_kg
-                                ? Math.round((patient.weight_kg / ((patient.height_cm / 100) ** 2)) * 10) / 10
-                                : undefined,
-                        } as any}
-                    />
-                </div>
-            </div>
-
-            {/* Floating Cards */}
-            {activeCategory && activeCategoryConfig && (
-                <FloatingCard
-                    title={activeCategoryConfig.label}
-                    icon={activeCategoryConfig.icon}
-                    isOpen={!!activeCategory}
-                    onClose={handleCloseCard}
-                    initialPosition={{ x: 320, y: 100 }}
-                >
-                    <div key={refreshKey} className="h-full">
-                        {renderCardContent()}
+    // Render mobile content based on active tab
+    const renderMobileContent = () => {
+        switch (mobileTab) {
+            case 'twin':
+                return (
+                    <div className="h-full">
+                        <DigitalTwin3DViewer
+                            alerts={alerts}
+                            pathologyName={patient.pathologies?.name}
+                        />
                     </div>
-                </FloatingCard>
-            )}
-        </div>
+                );
+            case 'summary':
+                return (
+                    <ScrollArea className="h-full">
+                        <div className="p-4 space-y-4">
+                            <PatientSummaryPanel patientId={patientId} patient={patient} />
+                            <PatientHealthSynthesis key={refreshKey} patientId={patientId} />
+                        </div>
+                    </ScrollArea>
+                );
+            case 'menu':
+                return (
+                    <ScrollArea className="h-full">
+                        <div className="p-4">
+                            <CategoryMenu
+                                activeCategory={activeCategory}
+                                onSelectCategory={handleSelectCategory}
+                                accordionMode={true}
+                                renderContent={(category) => (
+                                    <div key={`${category}-${refreshKey}`}>
+                                        {renderCardContent()}
+                                    </div>
+                                )}
+                            />
+                        </div>
+                    </ScrollArea>
+                );
+            case 'docs':
+                return (
+                    <ScrollArea className="h-full">
+                        <div className="p-4">
+                            <DocumentGallery
+                                patientId={patientId}
+                                onDocumentIntegrated={handleDocumentIntegrated}
+                            />
+                        </div>
+                    </ScrollArea>
+                );
+            case 'ai':
+                return (
+                    <div className="h-full p-4">
+                        <AIAssistant
+                            patient={{
+                                ...patient,
+                                patient_id: patient.patient_id || patient.id,
+                                lab_results_json: patient.lab_results_json || {},
+                                alerts: alerts,
+                                bmi: patient.height_cm && patient.weight_kg
+                                    ? Math.round((patient.weight_kg / ((patient.height_cm / 100) ** 2)) * 10) / 10
+                                    : undefined,
+                            } as any}
+                        />
+                    </div>
+                );
+            default:
+                return null;
+        }
+    };
+
+    return (
+        <>
+            {/* Desktop Layout - Hidden on mobile */}
+            <div className="hidden lg:flex h-[calc(100vh-120px)] gap-4">
+                {/* Left Panel - Summary + Categories + Documents */}
+                <div className="w-72 shrink-0 flex flex-col gap-2 overflow-y-auto">
+                    <div className="shrink-0">
+                        <PatientSummaryPanel patientId={patientId} patient={patient} />
+                    </div>
+                    <div className="shrink-0">
+                        <CategoryMenu
+                            activeCategory={activeCategory}
+                            onSelectCategory={handleSelectCategory}
+                        />
+                    </div>
+                    {/* Document Gallery - compact under menu */}
+                    <div className="shrink-0">
+                        <DocumentGallery
+                            patientId={patientId}
+                            onDocumentIntegrated={handleDocumentIntegrated}
+                        />
+                    </div>
+                </div>
+
+                {/* Center - Digital Twin (full height) */}
+                <div className="flex-1 min-w-0">
+                    <DigitalTwin3DViewer
+                        alerts={alerts}
+                        pathologyName={patient.pathologies?.name}
+                    />
+                </div>
+
+                {/* Right Panel - AI Health Synthesis + AI Assistant */}
+                <div className="w-80 shrink-0 flex flex-col gap-4">
+                    <div className="shrink-0">
+                        <PatientHealthSynthesis
+                            key={refreshKey}
+                            patientId={patientId}
+                        />
+                    </div>
+                    <div className="shrink-0">
+                        <AIAssistant
+                            patient={{
+                                ...patient,
+                                patient_id: patient.patient_id || patient.id,
+                                lab_results_json: patient.lab_results_json || {},
+                                alerts: alerts,
+                                bmi: patient.height_cm && patient.weight_kg
+                                    ? Math.round((patient.weight_kg / ((patient.height_cm / 100) ** 2)) * 10) / 10
+                                    : undefined,
+                            } as any}
+                        />
+                    </div>
+                </div>
+
+                {/* Floating Cards - Desktop only */}
+                {activeCategory && activeCategoryConfig && (
+                    <FloatingCard
+                        title={activeCategoryConfig.label}
+                        icon={activeCategoryConfig.icon}
+                        isOpen={!!activeCategory}
+                        onClose={handleCloseCard}
+                        initialPosition={{ x: 320, y: 100 }}
+                    >
+                        <div key={refreshKey} className="h-full">
+                            {renderCardContent()}
+                        </div>
+                    </FloatingCard>
+                )}
+            </div>
+
+            {/* Mobile Layout - Shown only on mobile */}
+            <div className="lg:hidden flex flex-col h-[calc(100vh-140px)]">
+                {/* Mobile Content Area */}
+                <div className="flex-1 overflow-hidden">
+                    {renderMobileContent()}
+                </div>
+
+                {/* Mobile Bottom Navigation */}
+                <nav className="fixed bottom-0 left-0 right-0 z-50 bg-white/95 dark:bg-slate-900/95 backdrop-blur-lg border-t border-slate-200 dark:border-slate-700">
+                    <div className="flex items-center justify-around h-16 pb-safe">
+                        {[
+                            { key: 'twin' as const, icon: Activity, label: 'Twin' },
+                            { key: 'summary' as const, icon: Heart, label: 'Résumé' },
+                            { key: 'menu' as const, icon: Hospital, label: 'Menu' },
+                            { key: 'docs' as const, icon: Image, label: 'Docs' },
+                            { key: 'ai' as const, icon: Brain, label: 'IA' },
+                        ].map((tab) => {
+                            const Icon = tab.icon;
+                            const isActive = mobileTab === tab.key;
+                            return (
+                                <button
+                                    key={tab.key}
+                                    onClick={() => setMobileTab(tab.key)}
+                                    className={`flex flex-col items-center justify-center flex-1 h-full gap-0.5 touch-manipulation transition-colors relative ${isActive
+                                        ? 'text-primary'
+                                        : 'text-slate-500 dark:text-slate-400'
+                                        }`}
+                                >
+                                    <Icon className={`h-5 w-5 ${isActive ? 'scale-110' : ''} transition-transform`} />
+                                    <span className={`text-[10px] font-medium`}>
+                                        {tab.label}
+                                    </span>
+                                    {isActive && (
+                                        <div className="absolute bottom-1 w-8 h-0.5 bg-primary rounded-full" />
+                                    )}
+                                </button>
+                            );
+                        })}
+                    </div>
+                </nav>
+            </div>
+        </>
     );
 };
 

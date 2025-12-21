@@ -346,7 +346,9 @@ serve(async (req) => {
             include_pubmed = true,
             include_fda = true,
             // NEW: Receive existing nodes for cross-link analysis
-            existing_nodes = []
+            existing_nodes = [],
+            // NEW: Enable SSE streaming for real-time node display
+            streaming = false
         } = await req.json();
 
         // Handle multiple pathologies for comorbidity analysis
@@ -473,6 +475,104 @@ serve(async (req) => {
             console.log(`[DEEP-RESEARCH] Skipping cache - only ${result.nodes.length} nodes (min: ${MIN_NODES_TO_CACHE})`);
         }
 
+        // ========== STREAMING MODE (SSE) ==========
+        if (streaming) {
+            console.log('[DEEP-RESEARCH] Streaming mode enabled - sending nodes via SSE');
+
+            const encoder = new TextEncoder();
+            const stream = new ReadableStream({
+                async start(controller) {
+                    try {
+                        // 1. Stream cached nodes one by one (Fast Replay)
+                        if (cachedNodes.length > 0) {
+                            console.log(`[DEEP-RESEARCH] Replaying ${cachedNodes.length} cached nodes...`);
+
+                            // Send nodes individually
+                            for (let i = 0; i < cachedNodes.length; i++) {
+                                controller.enqueue(encoder.encode(
+                                    `data: ${JSON.stringify({
+                                        type: 'node',
+                                        node: cachedNodes[i],
+                                        index: i,
+                                        from_cache: true
+                                    })}\n\n`
+                                ));
+                                // Helper flush for Deno?
+                                await new Promise(resolve => setTimeout(resolve, 20)); // Fast 20ms delay for visual effect
+                            }
+
+                            // Send all cached edges
+                            if (cachedEdges.length > 0) {
+                                controller.enqueue(encoder.encode(
+                                    `data: ${JSON.stringify({
+                                        type: 'edges',
+                                        edges: cachedEdges
+                                    })}\n\n`
+                                ));
+                            }
+                        }
+
+                        // 2. Stream new nodes one by one with delay
+                        for (let i = 0; i < newNodesFromClaude.length; i++) {
+                            const node = newNodesFromClaude[i];
+                            controller.enqueue(encoder.encode(
+                                `data: ${JSON.stringify({
+                                    type: 'node',
+                                    node,
+                                    index: i,
+                                    total: newNodesFromClaude.length
+                                })}\n\n`
+                            ));
+
+                            // Small delay for visual effect
+                            await new Promise(r => setTimeout(r, 50));
+                        }
+
+                        // 3. Stream new edges
+                        if (newEdgesFromClaude.length > 0) {
+                            controller.enqueue(encoder.encode(
+                                `data: ${JSON.stringify({
+                                    type: 'edges',
+                                    edges: newEdgesFromClaude
+                                })}\n\n`
+                            ));
+                        }
+
+                        // 4. Send completion signal
+                        controller.enqueue(encoder.encode(
+                            `data: ${JSON.stringify({
+                                type: 'complete',
+                                total_nodes: result.nodes.length,
+                                total_edges: result.edges.length,
+                                compute_time_ms: computeTime,
+                                cache_stats: {
+                                    cached_nodes_used: cachedNodes.length,
+                                    new_nodes_discovered: newNodesFromClaude.length
+                                }
+                            })}\n\n`
+                        ));
+
+                        console.log(`[DEEP-RESEARCH] Streaming complete: ${result.nodes.length} total nodes`);
+                        controller.close();
+
+                    } catch (streamErr) {
+                        console.error('[DEEP-RESEARCH] Streaming error:', streamErr);
+                        controller.error(streamErr);
+                    }
+                }
+            });
+
+            return new Response(stream, {
+                headers: {
+                    ...corsHeaders,
+                    "Content-Type": "text/event-stream",
+                    "Cache-Control": "no-cache",
+                    "Connection": "keep-alive"
+                }
+            });
+        }
+
+        // ========== NORMAL JSON MODE ==========
         return new Response(
             JSON.stringify({
                 success: true,

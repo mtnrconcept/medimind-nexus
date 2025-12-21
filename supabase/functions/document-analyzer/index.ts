@@ -522,50 +522,23 @@ async function autoIntegrateData(
     if (extractedData.diagnoses?.length) {
         for (const diag of extractedData.diagnoses) {
             try {
-                // Find or create pathology
-                let pathologyId = null;
-                const { data: existingPath } = await supabase
-                    .from('pathologies')
-                    .select('id')
-                    .ilike('name', diag.name)
-                    .maybeSingle();
-
-                if (existingPath) {
-                    pathologyId = existingPath.id;
-                } else {
-                    const { data: newPath, error: createPathError } = await supabase
-                        .from('pathologies')
-                        .insert({ name: diag.name })
-                        .select()
-                        .single();
-                    if (newPath) pathologyId = newPath.id;
-                    else console.error('Failed to create pathology', createPathError);
-                }
-
-                // Check dupes
-                // diagnosis often just linked via pathology_id
+                // Check dupes by condition_name
                 const { data: existingHistory } = await supabase
                     .from('patient_medical_history')
                     .select('id')
                     .eq('patient_id', patientId)
-                    .ilike('title', diag.name) // or check by pathology_id if possible
+                    .ilike('condition_name', diag.name)
                     .maybeSingle();
 
                 if (!existingHistory) {
-                    const insertData: any = {
+                    await supabase.from('patient_medical_history').insert({
                         patient_id: patientId,
-                        category: diag.type || 'disease',
-                        title: diag.name,
+                        condition_type: diag.type || 'disease',
+                        condition_name: diag.name,
                         diagnosis_date: diag.date || today,
                         is_chronic: diag.status === 'chronic',
                         notes: 'Extrait via AI'
-                    };
-
-                    if (pathologyId) {
-                        insertData.pathology_id = pathologyId;
-                    }
-
-                    await supabase.from('patient_medical_history').insert(insertData);
+                    });
                     integrated.push(`Diagnostic: ${diag.name}`);
                 }
             } catch (e: any) {
@@ -580,15 +553,15 @@ async function autoIntegrateData(
             try {
                 await supabase.from('patient_consultations').insert({
                     patient_id: patientId,
-                    consultation_date: cons.date || now,
+                    consultation_date: cons.date || today,
                     specialty: cons.specialty || 'general',
                     physician_name: cons.physician_name || 'Inconnu',
                     reason: cons.reason,
                     diagnosis: cons.conclusion,
                     facility: cons.facility,
-                    treatment_plan: cons.treatment_plan,     // NEW
-                    follow_up_date: cons.follow_up_date,     // NEW
-                    document_id: documentId
+                    treatment_plan: cons.treatment_plan,
+                    follow_up_date: cons.follow_up_date || null,
+                    notes: 'Extrait via AI'
                 });
                 integrated.push(`Consultation: ${cons.date} - ${cons.specialty}`);
             } catch (e: any) {
@@ -600,12 +573,11 @@ async function autoIntegrateData(
         try {
             await supabase.from('patient_consultations').insert({
                 patient_id: patientId,
-                consultation_date: extractedData.dates.document_date || now,
+                consultation_date: extractedData.dates.document_date || today,
                 specialty: 'general',
                 physician_name: 'Inconnu',
                 reason: 'Compte-rendu importé',
-                treatment_plan: extractedData.notes,
-                document_id: documentId
+                notes: extractedData.notes
             });
             integrated.push(`Consultation générée depuis CR`);
         } catch (e) { }
@@ -619,13 +591,12 @@ async function autoIntegrateData(
                 await supabase.from('patient_lab_results').insert({
                     patient_id: patientId,
                     test_date: lab.date || extractedData.dates?.document_date || today,
-                    test_category: lab.category || 'other',
+                    category: lab.category || 'biochemistry',
                     test_name: lab.name,
                     value: isNaN(numValue) ? null : numValue,
                     unit: lab.unit,
                     is_abnormal: lab.status === 'high' || lab.status === 'low' || lab.status === 'critical',
-                    interpretation: lab.status,
-                    source_document_id: documentId
+                    notes: lab.status ? `Statut: ${lab.status}` : null
                 });
                 integrated.push(`Labo: ${lab.name}`);
             } catch (e: any) {
@@ -648,7 +619,7 @@ async function autoIntegrateData(
                     temperature: vs.temperature,
                     weight_kg: vs.weight,
                     height_cm: vs.height,
-                    oxygen_saturation: vs.oxygen_saturation,
+                    spo2: vs.oxygen_saturation,
                     notes: 'Extrait via AI'
                 });
                 integrated.push('Constantes vitales');
@@ -665,7 +636,7 @@ async function autoIntegrateData(
                 await supabase.from('patient_vaccinations').insert({
                     patient_id: patientId,
                     vaccine_name: vacc.vaccine_name,
-                    date_administered: vacc.date || today,
+                    vaccination_date: vacc.date || today,
                     lot_number: vacc.lot_number
                 });
                 integrated.push(`Vaccin: ${vacc.vaccine_name}`);
@@ -702,14 +673,12 @@ async function autoIntegrateData(
                 patient_id: patientId,
                 exam_date: extractedData.imaging.date || extractedData.dates?.document_date || today,
                 imaging_type: extractedData.imaging.type,
-                body_region: extractedData.imaging.body_region || 'Inconnu',
+                body_region: extractedData.imaging.body_region || 'chest',
                 findings: extendedFindings,
                 conclusion: extractedData.imaging.conclusion,
-                document_id: documentId,
-                // Store scores as JSON if column exists, otherwise they're in findings
-                scores: extractedData.imaging.scores || null,
-                physician_name: extractedData.imaging.physician_name,
-                facility: extractedData.imaging.facility
+                radiologist: extractedData.imaging.physician_name,
+                facility: extractedData.imaging.facility,
+                is_abnormal: false
             });
             integrated.push(`Imagerie: ${extractedData.imaging.type}`);
         } catch (e: any) {
@@ -724,8 +693,10 @@ async function autoIntegrateData(
                 await supabase.from('patient_allergies').insert({
                     patient_id: patientId,
                     allergen: all.allergen,
+                    allergy_type: all.type || 'medication',
                     reaction: all.reaction,
-                    severity: all.severity || 'moderate'
+                    severity: all.severity || 'moderate',
+                    confirmed: true
                 });
                 integrated.push(`Allergie: ${all.allergen}`);
             } catch (e: any) {
@@ -739,12 +710,10 @@ async function autoIntegrateData(
         try {
             await supabase.from('patient_mental_health').insert({
                 patient_id: patientId,
-                assessment_date: extractedData.dates?.document_date || today,
-                mood: extractedData.mentalHealth.mood || 'neutral',
+                entry_date: extractedData.dates?.document_date || today,
+                entry_type: 'diagnosis',
                 diagnosis: extractedData.mentalHealth.diagnosis,
-                anxiety_level: extractedData.mentalHealth.anxiety,
-                sleep_quality: extractedData.mentalHealth.sleep,
-                notes: 'Extrait via AI'
+                notes: `Humeur: ${extractedData.mentalHealth.mood || 'N/A'}, Anxiété: ${extractedData.mentalHealth.anxiety || 'N/A'}, Sommeil: ${extractedData.mentalHealth.sleep || 'N/A'}`
             });
             integrated.push(`Santé mentale: ${extractedData.mentalHealth.diagnosis || 'Évaluation'}`);
         } catch (e: any) {
@@ -757,9 +726,11 @@ async function autoIntegrateData(
         try {
             await supabase.from('patient_reproductive_health').insert({
                 patient_id: patientId,
-                last_updated: now,
+                entry_date: today,
+                entry_type: 'pregnancy',
                 pregnancy_status: extractedData.reproductiveHealth.pregnancy_status,
-                last_menstrual_period: extractedData.reproductiveHealth.lmp || null
+                cycle_start: extractedData.reproductiveHealth.lmp || null,
+                notes: 'Extrait via AI'
             });
             integrated.push('Santé reproductive');
         } catch (e: any) {
@@ -773,7 +744,6 @@ async function autoIntegrateData(
             try {
                 // Map common alert patterns to diagnoses
                 let diagName = alert;
-                let diagType = 'disease';
                 let isChronicFlag = false;
 
                 // Detect specific conditions from alert text
@@ -806,14 +776,14 @@ async function autoIntegrateData(
                     .from('patient_medical_history')
                     .select('id')
                     .eq('patient_id', patientId)
-                    .ilike('title', `%${diagName.substring(0, 20)}%`)
+                    .ilike('condition_name', `%${diagName.substring(0, 20)}%`)
                     .maybeSingle();
 
                 if (!existingAlert) {
                     await supabase.from('patient_medical_history').insert({
                         patient_id: patientId,
-                        category: diagType,
-                        title: diagName,
+                        condition_type: 'disease',
+                        condition_name: diagName,
                         diagnosis_date: extractedData.dates?.document_date || today,
                         is_chronic: isChronicFlag,
                         notes: `Détecté via analyse AI: ${alert}`
@@ -835,21 +805,21 @@ async function autoIntegrateData(
                     .from('patient_medical_history')
                     .select('id')
                     .eq('patient_id', patientId)
-                    .ilike('title', `%${hist.title.substring(0, 30)}%`)
+                    .ilike('condition_name', `%${hist.title.substring(0, 30)}%`)
                     .maybeSingle();
 
                 if (!existingHist) {
                     await supabase.from('patient_medical_history').insert({
                         patient_id: patientId,
-                        category: hist.category || 'disease',
-                        title: hist.title,
+                        condition_type: hist.category || 'disease',
+                        condition_name: hist.title,
                         description: hist.description,
-                        start_date: hist.start_date,
-                        end_date: hist.end_date,
+                        diagnosis_date: hist.start_date,
+                        resolution_date: hist.end_date,
                         severity: hist.severity || 'moderate',
                         treating_physician: hist.treating_physician,
                         treating_facility: hist.treating_facility,
-                        is_ongoing: hist.is_ongoing || false,
+                        is_chronic: hist.is_ongoing || false,
                     });
                     integrated.push(`Antécédent: ${hist.title}`);
                 }
@@ -900,18 +870,13 @@ async function autoIntegrateData(
                 .eq('patient_id', patientId)
                 .maybeSingle();
 
-            const lifestylePayload = {
+            const lifestylePayload: Record<string, any> = {
                 patient_id: patientId,
                 smoking_status: extractedData.lifestyle.smoking_status,
-                cigarettes_per_day: extractedData.lifestyle.cigarettes_per_day,
                 years_smoking: extractedData.lifestyle.years_smoking,
-                quit_date: extractedData.lifestyle.quit_date,
                 alcohol_status: extractedData.lifestyle.alcohol_status,
-                drinks_per_week: extractedData.lifestyle.drinks_per_week,
-                physical_activity_level: extractedData.lifestyle.physical_activity_level,
                 exercise_hours_per_week: extractedData.lifestyle.exercise_hours_per_week,
                 diet_type: extractedData.lifestyle.diet_type,
-                sleep_hours_average: extractedData.lifestyle.sleep_hours_average,
                 sleep_quality: extractedData.lifestyle.sleep_quality,
             };
 
@@ -945,14 +910,12 @@ async function autoIntegrateData(
                 .eq('patient_id', patientId)
                 .maybeSingle();
 
-            const socialPayload = {
+            const socialPayload: Record<string, any> = {
                 patient_id: patientId,
-                living_situation: extractedData.socialFactors.living_situation,
+                housing_status: extractedData.socialFactors.living_situation,
                 employment_status: extractedData.socialFactors.employment_status,
-                occupation: extractedData.socialFactors.occupation,
-                marital_status: extractedData.socialFactors.marital_status,
-                children_count: extractedData.socialFactors.children_count,
-                social_support: extractedData.socialFactors.social_support,
+                education_level: extractedData.socialFactors.marital_status,
+                notes: `Profession: ${extractedData.socialFactors.occupation || 'N/A'}, Enfants: ${extractedData.socialFactors.children_count || 'N/A'}, Soutien: ${extractedData.socialFactors.social_support || 'N/A'}`
             };
 
             if (existingSocial) {

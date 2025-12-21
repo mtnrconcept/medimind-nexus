@@ -339,17 +339,57 @@ Sois précis, factuel et cliniquement pertinent. Le score de santé doit reflét
         // Parse JSON response
         let synthesis: HealthSynthesis;
         try {
-            // Extract JSON from response (in case there's extra text)
-            const jsonMatch = content.match(/\{[\s\S]*\}/);
+            let jsonContent = content;
+
+            // Remove markdown code blocks if present
+            const codeBlockMatch = content.match(/```(?:json)?\s*([\s\S]*?)```/);
+            if (codeBlockMatch) {
+                jsonContent = codeBlockMatch[1].trim();
+            }
+
+            // Extract JSON object from response
+            const jsonMatch = jsonContent.match(/\{[\s\S]*\}/);
             if (jsonMatch) {
                 synthesis = JSON.parse(jsonMatch[0]);
+
+                // Validate essential fields
+                if (typeof synthesis.health_score !== 'number') {
+                    synthesis.health_score = 50;
+                }
+                if (!synthesis.risk_level) {
+                    synthesis.risk_level = 'moderate';
+                }
+                if (!synthesis.global_synthesis || synthesis.global_synthesis.startsWith('{')) {
+                    synthesis.global_synthesis = "Synthèse en cours de génération...";
+                }
+                if (!Array.isArray(synthesis.vigilance_points)) {
+                    synthesis.vigilance_points = [];
+                }
+                if (!Array.isArray(synthesis.weak_signals)) {
+                    synthesis.weak_signals = [];
+                }
+                if (!Array.isArray(synthesis.treatment_recommendations)) {
+                    synthesis.treatment_recommendations = [];
+                }
+                if (!Array.isArray(synthesis.prevention_alerts)) {
+                    synthesis.prevention_alerts = [];
+                }
+                if (!Array.isArray(synthesis.lifestyle_advice)) {
+                    synthesis.lifestyle_advice = [];
+                }
+                if (!Array.isArray(synthesis.drug_interactions)) {
+                    synthesis.drug_interactions = [];
+                }
+                if (!synthesis.summary_for_patient) {
+                    synthesis.summary_for_patient = "Consultez votre médecin pour plus de détails.";
+                }
             } else {
                 throw new Error("No JSON found in response");
             }
         } catch (parseError) {
-            console.error("Error parsing Claude response:", parseError);
+            console.error("Error parsing Claude response:", parseError, "Content:", content.substring(0, 500));
             synthesis = {
-                global_synthesis: content,
+                global_synthesis: "Erreur lors de l'analyse. Le dossier patient semble incomplet ou vide. Veuillez ajouter des données cliniques pour obtenir une synthèse pertinente.",
                 health_score: 50,
                 risk_level: 'moderate',
                 vigilance_points: [],
@@ -358,7 +398,7 @@ Sois précis, factuel et cliniquement pertinent. Le score de santé doit reflét
                 prevention_alerts: [],
                 lifestyle_advice: [],
                 drug_interactions: [],
-                summary_for_patient: "Consultez votre médecin pour plus de détails.",
+                summary_for_patient: "Impossible de générer une synthèse complète. Consultez votre médecin.",
             };
         }
 

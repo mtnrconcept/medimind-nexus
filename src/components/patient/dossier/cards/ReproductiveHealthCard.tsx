@@ -178,11 +178,20 @@ const ReproductiveHealthCard = ({ patientId }: ReproductiveHealthCardProps) => {
     const handleSave = async () => {
         setSaving(true);
         try {
+            // Convert empty strings to null for date fields
+            const payload = {
+                ...formData,
+                due_date: formData.due_date || null,
+                cycle_start: formData.cycle_start || null,
+                start_date: formData.start_date || null,
+                gestational_weeks: formData.gestational_weeks || null,
+            };
+
             if (editing) {
-                await supabase.from('patient_reproductive_health').update(formData).eq('id', editing.id);
+                await supabase.from('patient_reproductive_health').update(payload).eq('id', editing.id);
                 toast.success('Entrée mise à jour');
             } else {
-                await supabase.from('patient_reproductive_health').insert({ ...formData, patient_id: patientId });
+                await supabase.from('patient_reproductive_health').insert({ ...payload, patient_id: patientId });
                 toast.success('Entrée ajoutée');
             }
             setDialogOpen(false);

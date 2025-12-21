@@ -157,28 +157,29 @@ const PatientDetail = () => {
 
   return (
     <AppLayout>
-      <div className="space-y-4">
+      <div className="space-y-3 sm:space-y-4 px-2 sm:px-0 pb-20 lg:pb-0">
         {/* Header */}
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-4">
+        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 sm:gap-4">
+          <div className="flex items-center gap-2 sm:gap-4">
             <Link to="/patients">
-              <Button variant="outline" size="sm">
-                <ArrowLeft className="h-4 w-4 mr-2" /> Retour
+              <Button variant="outline" size="sm" className="touch-manipulation">
+                <ArrowLeft className="h-4 w-4 sm:mr-2" />
+                <span className="hidden sm:inline">Retour</span>
               </Button>
             </Link>
             <div>
-              <h1 className="text-xl font-bold">
+              <h1 className="text-base sm:text-lg md:text-xl font-bold truncate max-w-[200px] sm:max-w-none">
                 {patient.first_name && patient.last_name
                   ? `${patient.first_name} ${patient.last_name}`
                   : `Patient ${patient.patient_id}`
                 }
               </h1>
-              <p className="text-sm text-muted-foreground">
+              <p className="text-xs sm:text-sm text-muted-foreground truncate max-w-[200px] sm:max-w-none">
                 {patient.pathologies?.name || 'Pathologie non spécifiée'}
               </p>
             </div>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1 sm:gap-2 w-full sm:w-auto justify-end">
             <ExportDialog
               patientData={{
                 patient,
@@ -191,8 +192,10 @@ const PatientDetail = () => {
                 medicalNotes: patient.medical_notes_nlp,
               }}
             />
-            <Badge variant="secondary" className="flex items-center gap-1">
-              <Shield className="h-3 w-3" /> Données chiffrées
+            <Badge variant="secondary" className="flex items-center gap-1 text-xs">
+              <Shield className="h-3 w-3" />
+              <span className="hidden sm:inline">Données chiffrées</span>
+              <span className="sm:hidden">Chiffré</span>
             </Badge>
           </div>
         </div>

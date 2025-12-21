@@ -316,26 +316,26 @@ const ContinuousDiscovery = () => {
                 </div>
             </div>
 
-            <div className="space-y-6 pb-12">
+            <div className="space-y-4 sm:space-y-6 pb-8 sm:pb-12 px-2 sm:px-0">
                 {/* Header */}
-                <div className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-violet-500/10 via-purple-500/10 to-indigo-500/10 backdrop-blur-xl border border-white/20 shadow-2xl">
+                <div className="relative overflow-hidden rounded-xl sm:rounded-2xl md:rounded-3xl bg-gradient-to-br from-violet-500/10 via-purple-500/10 to-indigo-500/10 backdrop-blur-xl border border-white/20 shadow-2xl">
                     <div className="absolute inset-0 bg-white/5" />
-                    <div className="relative p-8">
-                        <div className="flex items-center justify-between">
-                            <div className="flex items-center gap-3">
-                                <div className="p-3 rounded-xl bg-gradient-to-br from-violet-400 to-purple-600">
-                                    <Brain className="h-6 w-6 text-white" />
+                    <div className="relative p-4 sm:p-6 md:p-8">
+                        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 sm:gap-0">
+                            <div className="flex items-center gap-2 sm:gap-3">
+                                <div className="p-2 sm:p-3 rounded-lg sm:rounded-xl bg-gradient-to-br from-violet-400 to-purple-600">
+                                    <Brain className="h-4 w-4 sm:h-5 sm:w-5 md:h-6 md:w-6 text-white" />
                                 </div>
                                 <div>
-                                    <h1 className="text-3xl font-bold bg-gradient-to-r from-violet-600 via-purple-600 to-indigo-600 bg-clip-text text-transparent">
+                                    <h1 className="text-lg sm:text-xl md:text-2xl lg:text-3xl font-bold bg-gradient-to-r from-violet-600 via-purple-600 to-indigo-600 bg-clip-text text-transparent">
                                         {t('Continuous Discovery Engine')}
                                     </h1>
-                                    <p className="text-slate-600 dark:text-slate-400">
+                                    <p className="text-xs sm:text-sm text-slate-600 dark:text-slate-400 hidden sm:block">
                                         {t('Analyse IA en continu avec Claude Opus 4.5')}
                                     </p>
                                 </div>
                             </div>
-                            <div className="flex gap-2">
+                            <div className="flex flex-wrap gap-1 sm:gap-2">
                                 <Button
                                     variant="outline"
                                     onClick={loadData}
@@ -377,7 +377,7 @@ const ContinuousDiscovery = () => {
                 </div>
 
                 {/* Medical Stats Cards (API Integration) */}
-                <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-2 sm:gap-4">
                     <Card className="bg-white/60 dark:bg-slate-800/60 backdrop-blur border-white/20">
                         <CardContent className="p-4 flex items-center gap-3">
                             <div className="p-2 rounded-lg bg-red-100 dark:bg-red-900">
@@ -451,46 +451,48 @@ const ContinuousDiscovery = () => {
                 </div>
 
                 {/* Main Content Tabs */}
-                <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
-                    <div className="flex items-center justify-between">
-                        <TabsList className="bg-white/60 dark:bg-slate-800/60 backdrop-blur">
-                            <TabsTrigger value="analyze" className="gap-2">
-                                <Sparkles className="h-4 w-4" />
-                                {t('Analyse IA Live')}
-                            </TabsTrigger>
-                            <TabsTrigger value="feed" className="gap-2">
-                                <Lightbulb className="h-4 w-4" />
-                                {t('Découvertes')}
-                            </TabsTrigger>
-                            <TabsTrigger value="graph" className="gap-2">
-                                <Network className="h-4 w-4" />
-                                {t('Knowledge Graph')}
-                            </TabsTrigger>
-                            <TabsTrigger value="systematic" className="gap-2">
-                                <FlaskConical className="h-4 w-4" />
-                                {t('Analyse Systématique')}
-                            </TabsTrigger>
-                            <TabsTrigger value="focused" className="gap-2">
-                                <Crosshair className="h-4 w-4" />
-                                {t('Recherche Ciblée')}
-                            </TabsTrigger>
-                            <TabsTrigger value="history" className="gap-2">
-                                <History className="h-4 w-4" />
-                                {t('Historique')}
-                            </TabsTrigger>
-                            <TabsTrigger value="tools" className="gap-2">
-                                <Stethoscope className="h-4 w-4" />
-                                {t('Outils Cliniques')}
-                            </TabsTrigger>
-                            <TabsTrigger value="discovery" className="gap-2 bg-gradient-to-r from-violet-500/10 to-purple-500/10">
-                                <Sparkles className="h-4 w-4" />
-                                {t('Moteur de Découverte')}
-                            </TabsTrigger>
-                            <TabsTrigger value="radial" className="gap-2 bg-gradient-to-r from-purple-500/10 to-pink-500/10">
-                                <Sparkles className="h-4 w-4" />
-                                {t('Radial 3D')}
-                            </TabsTrigger>
-                        </TabsList>
+                <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-3 sm:space-y-4">
+                    <div className="flex flex-col lg:flex-row items-start lg:items-center justify-between gap-2 lg:gap-0">
+                        <ScrollArea className="w-full lg:w-auto">
+                            <TabsList className="bg-white/60 dark:bg-slate-800/60 backdrop-blur flex-wrap h-auto gap-1 p-1">
+                                <TabsTrigger value="analyze" className="gap-2">
+                                    <Sparkles className="h-4 w-4" />
+                                    {t('Analyse IA Live')}
+                                </TabsTrigger>
+                                <TabsTrigger value="feed" className="gap-2">
+                                    <Lightbulb className="h-4 w-4" />
+                                    {t('Découvertes')}
+                                </TabsTrigger>
+                                <TabsTrigger value="graph" className="gap-2">
+                                    <Network className="h-4 w-4" />
+                                    {t('Knowledge Graph')}
+                                </TabsTrigger>
+                                <TabsTrigger value="systematic" className="gap-2">
+                                    <FlaskConical className="h-4 w-4" />
+                                    {t('Analyse Systématique')}
+                                </TabsTrigger>
+                                <TabsTrigger value="focused" className="gap-2">
+                                    <Crosshair className="h-4 w-4" />
+                                    {t('Recherche Ciblée')}
+                                </TabsTrigger>
+                                <TabsTrigger value="history" className="gap-2">
+                                    <History className="h-4 w-4" />
+                                    {t('Historique')}
+                                </TabsTrigger>
+                                <TabsTrigger value="tools" className="gap-2">
+                                    <Stethoscope className="h-4 w-4" />
+                                    {t('Outils Cliniques')}
+                                </TabsTrigger>
+                                <TabsTrigger value="discovery" className="gap-2 bg-gradient-to-r from-violet-500/10 to-purple-500/10">
+                                    <Sparkles className="h-4 w-4" />
+                                    {t('Moteur de Découverte')}
+                                </TabsTrigger>
+                                <TabsTrigger value="radial" className="gap-2 bg-gradient-to-r from-purple-500/10 to-pink-500/10">
+                                    <Sparkles className="h-4 w-4" />
+                                    {t('Radial 3D')}
+                                </TabsTrigger>
+                            </TabsList>
+                        </ScrollArea>
 
                         {activeTab === 'feed' && (
                             <>

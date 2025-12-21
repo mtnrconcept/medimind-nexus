@@ -90,28 +90,51 @@ interface CategoryMenuProps {
     activeCategory: CategoryKey | null;
     onSelectCategory: (category: CategoryKey) => void;
     className?: string;
+    /** Optional: render content directly under category (accordion mode for mobile) */
+    renderContent?: (category: CategoryKey) => React.ReactNode;
+    /** If true, content expands inline under category */
+    accordionMode?: boolean;
 }
 
-const CategoryMenu = ({ activeCategory, onSelectCategory, className }: CategoryMenuProps) => {
+const CategoryMenu = ({ activeCategory, onSelectCategory, className, renderContent, accordionMode = false }: CategoryMenuProps) => {
     return (
         <Card className={cn("", className)}>
             <CardContent className="p-2">
                 <div className="flex flex-col gap-1">
-                    {CATEGORIES.map((cat) => (
-                        <Button
-                            key={cat.key}
-                            variant="ghost"
-                            className={cn(
-                                "h-9 justify-start gap-2 px-3 rounded-lg transition-all text-sm",
-                                cat.color,
-                                activeCategory === cat.key && "ring-2 ring-primary ring-offset-1 ring-offset-background"
-                            )}
-                            onClick={() => onSelectCategory(cat.key)}
-                        >
-                            {cat.icon}
-                            <span className="truncate">{cat.label}</span>
-                        </Button>
-                    ))}
+                    {CATEGORIES.map((cat) => {
+                        const isActive = activeCategory === cat.key;
+                        return (
+                            <div key={cat.key}>
+                                <Button
+                                    variant="ghost"
+                                    className={cn(
+                                        "w-full h-9 justify-start gap-2 px-3 rounded-lg transition-all text-sm",
+                                        cat.color,
+                                        isActive && "ring-2 ring-primary ring-offset-1 ring-offset-background"
+                                    )}
+                                    onClick={() => onSelectCategory(cat.key)}
+                                >
+                                    {cat.icon}
+                                    <span className="truncate flex-1 text-left">{cat.label}</span>
+                                    {accordionMode && (
+                                        <span className={cn(
+                                            "transition-transform duration-200",
+                                            isActive && "rotate-180"
+                                        )}>
+                                            ▼
+                                        </span>
+                                    )}
+                                </Button>
+
+                                {/* Accordion content - expands under the category */}
+                                {accordionMode && isActive && renderContent && (
+                                    <div className="mt-1 mb-2 ml-2 mr-1 p-3 bg-slate-50 dark:bg-slate-800/50 rounded-lg border border-slate-200 dark:border-slate-700 animate-in slide-in-from-top-2 duration-200">
+                                        {renderContent(cat.key)}
+                                    </div>
+                                )}
+                            </div>
+                        );
+                    })}
                 </div>
             </CardContent>
         </Card>

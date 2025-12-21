@@ -159,34 +159,34 @@ const Dashboard = () => {
         </div>
       </div>
 
-      <div className="space-y-8 pb-12">
+      <div className="space-y-4 sm:space-y-6 md:space-y-8 pb-8 md:pb-12 px-2 sm:px-0">
         {/* Hero Section with Glassmorphism */}
-        <div className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-cyan-500/10 via-blue-500/10 to-indigo-500/10 backdrop-blur-xl border border-white/20 shadow-2xl">
+        <div className="relative overflow-hidden rounded-xl sm:rounded-2xl md:rounded-3xl bg-gradient-to-br from-cyan-500/10 via-blue-500/10 to-indigo-500/10 backdrop-blur-xl border border-white/20 shadow-2xl">
           <div className="absolute inset-0 bg-white/5" />
-          <div className="relative p-8 md:p-12">
+          <div className="relative p-4 sm:p-6 md:p-8 lg:p-12">
             <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-6">
               <div className="space-y-4">
                 <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-white/20 backdrop-blur-sm border border-white/30">
                   <Sparkles className="h-4 w-4 text-cyan-600" />
                   <span className="text-sm font-medium text-cyan-900">MediMind Nexus</span>
                 </div>
-                <h1 className="text-4xl md:text-5xl font-bold bg-gradient-to-r from-cyan-600 via-blue-600 to-indigo-600 bg-clip-text text-transparent">
+                <h1 className="text-2xl sm:text-3xl md:text-4xl lg:text-5xl font-bold bg-gradient-to-r from-cyan-600 via-blue-600 to-indigo-600 bg-clip-text text-transparent">
                   {getGreeting()}, {user?.user_metadata?.first_name || 'Docteur'}
                 </h1>
-                <p className="text-lg text-slate-600 max-w-2xl">
+                <p className="text-sm sm:text-base md:text-lg text-slate-600 max-w-2xl">
                   {t('Plateforme médicale intelligente avec IA, visualisation 3D et analyse prédictive')}
                 </p>
               </div>
-              <div className="flex gap-3">
+              <div className="flex flex-wrap gap-2 sm:gap-3">
                 <Link to="/patients">
-                  <Button size="lg" className="gap-2 bg-gradient-to-r from-cyan-500 to-blue-500 hover:from-cyan-600 hover:to-blue-600 text-white shadow-lg shadow-cyan-500/50">
-                    <Users className="h-5 w-5" />
+                  <Button size="default" className="gap-1.5 sm:gap-2 bg-gradient-to-r from-cyan-500 to-blue-500 hover:from-cyan-600 hover:to-blue-600 text-white shadow-lg shadow-cyan-500/50 touch-manipulation text-sm sm:text-base">
+                    <Users className="h-4 w-4 sm:h-5 sm:w-5" />
                     Patients
                   </Button>
                 </Link>
                 <Link to="/pathologies">
-                  <Button size="lg" variant="outline" className="gap-2 border-2 border-cyan-200 hover:bg-cyan-50">
-                    <FileText className="h-5 w-5" />
+                  <Button size="default" variant="outline" className="gap-1.5 sm:gap-2 border-2 border-cyan-200 hover:bg-cyan-50 touch-manipulation text-sm sm:text-base">
+                    <FileText className="h-4 w-4 sm:h-5 sm:w-5" />
                     Index
                   </Button>
                 </Link>
@@ -196,7 +196,7 @@ const Dashboard = () => {
         </div>
 
         {/* Stats Cards with Glassmorphism */}
-        <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-4">
+        <div className="grid gap-3 sm:gap-4 md:gap-6 grid-cols-2 lg:grid-cols-4">
           {[
             { label: 'Patients', value: stats.totalPatients, icon: Users, color: 'cyan' },
             { label: 'Alertes Critiques', value: stats.criticalAlerts, icon: Activity, color: 'blue' },
@@ -228,12 +228,12 @@ const Dashboard = () => {
 
         {/* Tools Grid */}
         <div>
-          <div className="mb-6">
-            <h2 className="text-2xl font-bold text-slate-800 mb-2">Outils Disponibles</h2>
-            <p className="text-slate-600">Explorez toutes les fonctionnalités de la plateforme</p>
+          <div className="mb-4 sm:mb-6">
+            <h2 className="text-xl sm:text-2xl font-bold text-slate-800 mb-1 sm:mb-2">Outils Disponibles</h2>
+            <p className="text-sm sm:text-base text-slate-600">Explorez toutes les fonctionnalités de la plateforme</p>
           </div>
 
-          <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+          <div className="grid gap-3 sm:gap-4 md:gap-6 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
             {tools.map((tool, idx) => (
               <Link key={idx} to={tool.link}>
                 <div className="group h-full relative overflow-hidden rounded-2xl bg-white/40 backdrop-blur-xl border border-white/20 shadow-xl hover:shadow-2xl transition-all duration-300 hover:-translate-y-2">
@@ -270,9 +270,9 @@ const Dashboard = () => {
         </div>
 
         {/* Quick Actions */}
-        <div className="rounded-2xl bg-gradient-to-br from-cyan-500/10 via-blue-500/10 to-indigo-500/10 backdrop-blur-xl border border-white/20 shadow-xl p-8">
-          <h2 className="text-2xl font-bold text-slate-800 mb-6">Actions Rapides</h2>
-          <div className="grid gap-4 md:grid-cols-3">
+        <div className="rounded-xl sm:rounded-2xl bg-gradient-to-br from-cyan-500/10 via-blue-500/10 to-indigo-500/10 backdrop-blur-xl border border-white/20 shadow-xl p-4 sm:p-6 md:p-8">
+          <h2 className="text-xl sm:text-2xl font-bold text-slate-800 mb-4 sm:mb-6">Actions Rapides</h2>
+          <div className="grid gap-3 sm:gap-4 grid-cols-1 sm:grid-cols-3">
             <Link to="/patients">
               <div className="group p-6 rounded-xl bg-white/50 backdrop-blur-sm border border-white/30 hover:bg-white/70 transition-all cursor-pointer">
                 <Users className="h-8 w-8 text-cyan-600 mb-3" />
@@ -315,7 +315,7 @@ const Dashboard = () => {
           animation-delay: 4s;
         }
       `}</style>
-    </AppLayout>
+    </AppLayout >
   );
 };
 

@@ -143,26 +143,26 @@ const Patients = () => {
 
   return (
     <AppLayout>
-      <div className="space-y-6">
+      <div className="space-y-4 sm:space-y-6 px-2 sm:px-0">
         <div>
-          <h1 className="text-3xl font-bold flex items-center gap-2">
-            <Users className="h-8 w-8" />
+          <h1 className="text-xl sm:text-2xl md:text-3xl font-bold flex items-center gap-2">
+            <Users className="h-5 w-5 sm:h-6 sm:w-6 md:h-8 md:w-8" />
             {t('Gestion Patients')}
           </h1>
-          <p className="text-muted-foreground mt-1">
+          <p className="text-sm sm:text-base text-muted-foreground mt-1">
             {t('Gérez votre patientèle et accédez aux données anonymisées')}
           </p>
         </div>
 
-        <Tabs defaultValue="directory" className="space-y-4">
-          <TabsList>
-            <TabsTrigger value="directory" className="flex items-center gap-2">
+        <Tabs defaultValue="directory" className="space-y-3 sm:space-y-4">
+          <TabsList className="w-full sm:w-auto flex">
+            <TabsTrigger value="directory" className="flex-1 sm:flex-none flex items-center justify-center gap-1 sm:gap-2 text-xs sm:text-sm touch-manipulation">
               <BookUser className="h-4 w-4" />
               {t('Ma Patientèle')}
             </TabsTrigger>
-            <TabsTrigger value="anonymous" className="flex items-center gap-2">
-              <Users className="h-4 w-4" />
-              {t('Données Anonymisées')}
+            <TabsTrigger value="anonymous" className="flex-1 sm:flex-none flex items-center justify-center gap-1 sm:gap-2 text-xs sm:text-sm touch-manipulation">
+              <Users className="h-3 w-3 sm:h-4 sm:w-4" />
+              <span className="hidden xs:inline">{t('Données')}</span> {t('Anonymisées')}
             </TabsTrigger>
           </TabsList>
 
@@ -289,8 +289,8 @@ const Patients = () => {
             </Card>
 
             {/* Pagination */}
-            <div className="flex items-center justify-between">
-              <p className="text-sm text-muted-foreground">
+            <div className="flex flex-col sm:flex-row items-center justify-between gap-2 sm:gap-0">
+              <p className="text-xs sm:text-sm text-muted-foreground">
                 {filteredPatients.length} patient(s) trouvé(s)
               </p>
               <div className="flex items-center gap-2">
