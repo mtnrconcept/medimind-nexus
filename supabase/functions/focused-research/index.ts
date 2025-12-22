@@ -467,7 +467,7 @@ serve(async (req) => {
                     // Strategy 3: Search in medications table
                     const { data: medicationMatches } = await supabase
                         .from('medications')
-                        .select('id, name, substance, therapeutic_class, mechanism, indications')
+                        .select('id, name, substance, therapeutic_class, indications')
                         .or(`name.ilike.%${targetName}%,substance.ilike.%${targetName}%`)
                         .limit(300);
 
@@ -577,7 +577,7 @@ serve(async (req) => {
                         // Get ALL medications with their substances
                         const { data: allMedications } = await supabase
                             .from('medications')
-                            .select('id, name, substance, therapeutic_class, mechanism, indications')
+                            .select('id, name, substance, therapeutic_class, indications')
                             .limit(500);
                         relatedMedications = allMedications || [];
 
@@ -874,7 +874,7 @@ serve(async (req) => {
 
                     // Build context for Claude with ALL available data
                     const medicationsList = relatedMedications.slice(0, 100).map((m: any) =>
-                        `- **${m.name}** (${m.substance || 'N/A'}) - Classe: ${m.therapeutic_class || 'N/A'} - ${m.mechanism?.slice(0, 80) || ''}`
+                        `- **${m.name}** (${m.substance || 'N/A'}) - Classe: ${m.therapeutic_class || 'N/A'}`
                     ).join('\n') || 'Aucun médicament chargé';
 
                     const substancesList = relatedSubstances.slice(0, 100).map((s: any) =>

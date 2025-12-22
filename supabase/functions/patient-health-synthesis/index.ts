@@ -315,7 +315,7 @@ Sois précis, factuel et cliniquement pertinent. Le score de santé doit reflét
                 "content-type": "application/json",
             },
             body: JSON.stringify({
-                model: "claude-opus-4-5-20251101",
+                model: "claude-sonnet-4-20250514",
                 max_tokens: 4096,
                 system: systemPrompt,
                 messages: [

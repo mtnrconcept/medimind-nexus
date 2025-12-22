@@ -2120,8 +2120,8 @@ function RadialScene({ data, animationTime, selectedNodeId, selectedEdgeId, onNo
 
         for (const [ring, nodes] of nodesByRing.entries()) {
             // Linear expansion for 7-ring layout (User requested regular steps)
-            const expansion = 1 + (ring * 0.1);
-            const radius = ring === 0 ? 0 : (ring * ringRadius * expansion);
+            // Linear expansion for 7-ring layout (User requested regular steps)
+            const radius = ring === 0 ? 0 : (ring * ringRadius);
             const angleStep = (Math.PI * 2) / Math.max(nodes.length, 1);
             nodes.forEach((node, i) => {
                 const angle = angleStep * i - Math.PI / 2;

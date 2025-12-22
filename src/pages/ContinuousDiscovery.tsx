@@ -25,6 +25,7 @@ import DiscoveryEnginePanel from '@/components/cde/DiscoveryEnginePanel';
 import NeuralNetworkGraph from '@/components/cde/NeuralNetworkGraph';
 import RadialRingsModal from '@/components/cde/RadialRingsModal';
 import useMedicalStats from '@/hooks/useMedicalStats';
+import DiscoveryVideoTransition from '@/components/cde/DiscoveryVideoTransition';
 
 // Types
 interface DiscoveryCardData {
@@ -55,6 +56,10 @@ const ContinuousDiscovery = () => {
     const { t } = useAutoTranslation();
     const [searchParams] = useSearchParams();
     const urlTab = searchParams.get('tab');
+
+    // Video animation state
+    const [showDiscoveryVideo, setShowDiscoveryVideo] = useState(false);
+    const [discoveryButtonRect, setDiscoveryButtonRect] = useState<DOMRect | null>(null);
 
     const [isLoading, setIsLoading] = useState(false);
     const [isSeedingKG, setIsSeedingKG] = useState(false);
@@ -483,7 +488,15 @@ const ContinuousDiscovery = () => {
                                     <Stethoscope className="h-4 w-4" />
                                     {t('Outils Cliniques')}
                                 </TabsTrigger>
-                                <TabsTrigger value="discovery" className="gap-2 bg-gradient-to-r from-violet-500/10 to-purple-500/10">
+                                <TabsTrigger
+                                    value="discovery"
+                                    className="gap-2 bg-gradient-to-r from-violet-500/10 to-purple-500/10"
+                                    onClick={(e) => {
+                                        const rect = e.currentTarget.getBoundingClientRect();
+                                        setDiscoveryButtonRect(rect);
+                                        setShowDiscoveryVideo(true);
+                                    }}
+                                >
                                     <Sparkles className="h-4 w-4" />
                                     {t('Moteur de Découverte')}
                                 </TabsTrigger>
@@ -1046,6 +1059,15 @@ const ContinuousDiscovery = () => {
                     pathologies={radialQueries}
                     mode="ETIOLOGY"
                 />
+
+                {/* Video Transition Overlay */}
+                <DiscoveryVideoTransition
+                    isOpen={showDiscoveryVideo}
+                    fromRect={discoveryButtonRect}
+                    onClose={() => setShowDiscoveryVideo(false)}
+                    onVideoEnd={() => setShowDiscoveryVideo(false)}
+                />
+
             </div>
 
 

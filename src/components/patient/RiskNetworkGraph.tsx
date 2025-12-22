@@ -480,21 +480,18 @@ export function RiskNetworkGraph({
     // Générer le schéma proposé en appliquant les modifications
     // Ce useEffect se déclenche à chaque changement de hiddenNodes pour refléter les nœuds actuellement visibles
     useEffect(() => {
-        // Ne régénérer que si schemaComparison existe avec des changements
-        if (!analysisResult?.schemaComparison?.proposedChanges) {
-            return;
-        }
-
-        const changes = analysisResult.schemaComparison.proposedChanges;
-
         // Copier les nœuds visibles (sans groupes et sans nœuds cachés)
         const visibleNodes = nodes.filter(n => !hiddenNodes.has(n.id) && n.data.type !== 'group');
 
-        if (visibleNodes.length === 0) {
+        // Si pas de nœuds visibles ou pas d'edges, pas de schéma proposé
+        if (visibleNodes.length === 0 || edges.length === 0) {
             setProposedNodes([]);
             setProposedEdges([]);
             return;
         }
+
+        // Modifications optionnelles si elles existent
+        const changes = analysisResult?.schemaComparison?.proposedChanges || [];
 
         // Pour le split canvas, on utilise les mêmes positions (pas d'offset)
         // Les nœuds sont dans un ReactFlow séparé donc pas besoin de conteneur parent
@@ -547,30 +544,66 @@ export function RiskNetworkGraph({
             }
         });
 
-        // Copier les edges correspondants
+        // Copier les edges correspondants AVEC leurs couleurs et données originales
+        // Debug: Log pour comprendre le problème
+        console.log('[ProposedSchema] Génération edges:', {
+            nodesCount: proposedNodesList.length,
+            edgesCount: edges.length,
+            nodeIds: proposedNodesList.map(n => n.id).slice(0, 5),
+            edgeSourceTargets: edges.slice(0, 5).map(e => ({ source: e.source, target: e.target }))
+        });
+
         const newEdges = edges
             .filter(e => {
-                const sourceExists = proposedNodesList.some(n => n.id === `proposed-${e.source}`);
-                const targetExists = proposedNodesList.some(n => n.id === `proposed-${e.target}`);
+                // Les IDs des edges originaux utilisent les IDs originaux des nœuds
+                // Les proposedNodes ont des IDs préfixés avec 'proposed-'
+                const expectedSourceId = `proposed-${e.source}`;
+                const expectedTargetId = `proposed-${e.target}`;
+                const sourceExists = proposedNodesList.some(n => n.id === expectedSourceId);
+                const targetExists = proposedNodesList.some(n => n.id === expectedTargetId);
+
+                if (!sourceExists || !targetExists) {
+                    // Debug détaillé si filtré
+                    console.log('[ProposedSchema] Edge filtré:', {
+                        edgeId: e.id,
+                        source: e.source,
+                        target: e.target,
+                        expectedSourceId,
+                        expectedTargetId,
+                        sourceExists,
+                        targetExists
+                    });
+                }
                 return sourceExists && targetExists;
             })
-            .map(e => ({
-                ...e,
-                id: `proposed-${e.id}`,
-                source: `proposed-${e.source}`,
-                target: `proposed-${e.target}`,
-                selectable: false,
-                focusable: false,
-                style: {
-                    ...e.style,
-                    stroke: '#10b981',
-                    opacity: 0.8,
-                },
-            }));
+            .map(e => {
+                // Trouver le lien original pour cette edge
+                const originalLink = edgeLinkMap[e.id] || (e.data as any)?.link;
 
+                return {
+                    ...e,
+                    id: `proposed-${e.id}`,
+                    source: `proposed-${e.source}`,
+                    target: `proposed-${e.target}`,
+                    selectable: true,
+                    focusable: true,
+                    data: {
+                        ...e.data,
+                        link: originalLink,
+                        isProposed: true,
+                    },
+                    // Conserver le style original
+                    style: {
+                        ...e.style,
+                        opacity: 0.9,
+                    },
+                };
+            });
+
+        console.log('[ProposedSchema] Edges générées:', newEdges.length);
         setProposedNodes(proposedNodesList);
         setProposedEdges(newEdges);
-    }, [analysisResult, nodes, edges, hiddenNodes]);
+    }, [analysisResult, nodes, edges, hiddenNodes, edgeLinkMap]);
 
     // Toggle une carte
     const toggleLinkExpand = (linkId: string) => {
@@ -2324,9 +2357,18 @@ export function RiskNetworkGraph({
                                         edges={proposedEdges}
                                         nodesDraggable={true}
                                         nodesConnectable={false}
-                                        elementsSelectable={false}
+                                        elementsSelectable={true}
                                         panOnDrag={true}
                                         panOnScroll={true}
+                                        onEdgeClick={(_, edge) => {
+                                            // Récupérer le lien original (sans le préfixe 'proposed-')
+                                            const originalEdgeId = edge.id.replace('proposed-', '');
+                                            const link = edgeLinkMap[originalEdgeId] || (edge.data as any)?.link;
+                                            if (link) {
+                                                setHoveredLink(link);
+                                                setShowLinkDetails(true);
+                                            }
+                                        }}
                                         fitView
                                         attributionPosition="bottom-right"
                                         className="bg-transparent"

@@ -47,6 +47,7 @@ import {
     Info
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import HolographicLoader from '@/components/ui/HolographicLoader';
 
 // =====================================================
 // TYPES
@@ -244,10 +245,9 @@ const PatientHealthSynthesis = ({ patientId }: PatientHealthSynthesisProps) => {
                 )}
 
                 {loading && (
-                    <div className="text-center py-8">
-                        <Loader2 className="h-8 w-8 animate-spin mx-auto mb-3 text-primary" />
-                        <p className="text-sm text-muted-foreground">Analyse du dossier en cours...</p>
-                        <p className="text-xs text-muted-foreground mt-1">Cette opération peut prendre quelques secondes</p>
+                    <div className="py-8">
+                        <HolographicLoader text="Analyse cognitive du dossier en cours..." />
+                        <p className="text-center text-xs text-muted-foreground mt-2 opacity-70">Extraction des patterns cliniques & interactions</p>
                     </div>
                 )}
 

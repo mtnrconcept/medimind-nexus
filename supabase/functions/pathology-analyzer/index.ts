@@ -168,7 +168,7 @@ Réponds UNIQUEMENT avec un JSON valide au format suivant (sans markdown, sans c
         'content-type': 'application/json',
       },
       body: JSON.stringify({
-        model: 'claude-opus-4-5-20251101',
+        model: 'claude-sonnet-4-20250514',
         max_tokens: 4000,
         messages: [
           { role: 'user', content: systemPrompt + "\n\nAnalyse cette pathologie et retourne le JSON d'analyse." }
