@@ -426,16 +426,37 @@ Medical professional aesthetic - Dark theme with cyan/teal accent
   }
 }
 
-/* Holographic Scan Effect - smooth scanning beam */
-@keyframes holographicScan {
+/* Radar Sweep Effect - Submarine sonar style */
+@keyframes radarSweep {
+  0% {
+    transform: rotate(0deg);
+  }
 
-  0%,
   100% {
-    transform: translateY(-100%);
+    transform: rotate(360deg);
+  }
+}
+
+/* 3D Brain Rotation - Neon brain effect */
+@keyframes rotateBrain {
+  0% {
+    transform: rotateY(-15deg) rotateX(5deg);
+  }
+
+  25% {
+    transform: rotateY(15deg) rotateX(-3deg);
   }
 
   50% {
-    transform: translateY(100%);
+    transform: rotateY(-10deg) rotateX(8deg);
+  }
+
+  75% {
+    transform: rotateY(12deg) rotateX(-5deg);
+  }
+
+  100% {
+    transform: rotateY(-15deg) rotateX(5deg);
   }
 }
 

@@ -7,7 +7,7 @@ import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { Canvas, useFrame, ThreeEvent } from '@react-three/fiber';
 import { OrbitControls, Html, Line } from '@react-three/drei';
 import * as THREE from 'three';
-import { X, Play, Pause, RotateCcw, Sparkles, Loader2, MessageSquare, ExternalLink, Plus, GitBranch, Search } from 'lucide-react';
+import { X, Play, Pause, RotateCcw, Sparkles, Loader2, MessageSquare, ExternalLink, Plus, GitBranch, Search, Save, MousePointer2, Lasso, Circle as CircleIcon, Square } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { RingNode, RingEdge, MicroSignal, RadialRingsData } from '@/types/graph';
 import { RING_COLORS, LANE_COLORS, NODE_TYPE_COLORS, EDGE_TYPE_COLORS, TIMING } from '@/config/graphSemantics';
@@ -41,6 +41,279 @@ import { isWebGLAvailable, getSemanticEdgeColor, isNodeType, transformNode, tran
 // 2D SVG FALLBACK VISUALIZATION
 // ============================================
 
+// ============================================
+// MATRIX BACKGROUND - Canvas-based Matrix Rain Effect
+// ============================================
+
+function MatrixBackground() {
+    const canvasRef = useRef<HTMLCanvasElement>(null);
+
+    useEffect(() => {
+        const canvas = canvasRef.current;
+        if (!canvas) return;
+
+        const context = canvas.getContext('2d');
+        if (!context) return;
+
+        // Set canvas size to container size
+        const updateSize = () => {
+            const parent = canvas.parentElement;
+            if (parent) {
+                canvas.width = parent.clientWidth;
+                canvas.height = parent.clientHeight;
+            }
+        };
+        updateSize();
+
+        // Character sets
+        const katakana = 'アァカサタナハマヤャラワガザダバパイィキシチニヒミリヰギジヂビピウゥクスツヌフムユュルグズブヅプエェケセテネヘメレヱゲゼデベペオォコソトノホモヨョロヲゴゾドボポヴッン';
+        const latin = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+        const nums = '0123456789';
+        const alphabet = katakana + latin + nums;
+
+        const fontSize = 16;
+        let columns = Math.floor(canvas.width / fontSize);
+
+        // Initialize rain drops - each column starts at different position
+        const rainDrops: number[] = [];
+        for (let x = 0; x < columns; x++) {
+            rainDrops[x] = Math.random() * -100; // Start above the screen at random positions
+        }
+
+        let animationFrameId: number;
+
+        const draw = () => {
+            // Fade effect - creates the trail
+            context.fillStyle = 'rgba(0, 0, 0, 0.05)';
+            context.fillRect(0, 0, canvas.width, canvas.height);
+
+            // Cyan/green gradient for cyberpunk feel
+            context.font = `${fontSize}px monospace`;
+
+            for (let i = 0; i < rainDrops.length; i++) {
+                // Random character
+                const text = alphabet.charAt(Math.floor(Math.random() * alphabet.length));
+
+                // Position
+                const x = i * fontSize;
+                const y = rainDrops[i] * fontSize;
+
+                // Color gradient - brighter at the head, fading tail
+                const brightness = Math.max(0, Math.min(1, (canvas.height - y) / canvas.height));
+                if (y < fontSize * 2) {
+                    // Head of the drop - bright cyan/white
+                    context.fillStyle = '#22d3ee';
+                } else if (y < fontSize * 5) {
+                    // Near head - cyan
+                    context.fillStyle = '#06b6d4';
+                } else {
+                    // Body - darker green/cyan
+                    context.fillStyle = `rgba(14, 116, 144, ${0.3 + brightness * 0.5})`;
+                }
+
+                context.fillText(text, x, y);
+
+                // Reset drop to top when it reaches bottom
+                if (y > canvas.height && Math.random() > 0.975) {
+                    rainDrops[i] = 0;
+                }
+                rainDrops[i]++;
+            }
+        };
+
+        // Animation loop using setInterval for consistent speed
+        const intervalId = setInterval(draw, 30);
+
+        // Handle resize
+        const handleResize = () => {
+            updateSize();
+            // Recalculate columns and reinitialize drops
+            columns = Math.floor(canvas.width / fontSize);
+            rainDrops.length = 0;
+            for (let x = 0; x < columns; x++) {
+                rainDrops[x] = Math.random() * -100;
+            }
+        };
+
+        window.addEventListener('resize', handleResize);
+
+        return () => {
+            clearInterval(intervalId);
+            window.removeEventListener('resize', handleResize);
+            if (animationFrameId) {
+                cancelAnimationFrame(animationFrameId);
+            }
+        };
+    }, []);
+
+    return (
+        <canvas
+            ref={canvasRef}
+            className="absolute inset-0 pointer-events-none"
+            style={{ opacity: 0.4 }}
+        />
+    );
+}
+
+// ============================================
+// LOADING PROGRESS BAR - Futuristic animated progress with step descriptions
+// ============================================
+
+const LOADING_STEPS = [
+    { label: "Connexion à l'API Claude", icon: "🔌", duration: 1500 },
+    { label: "Analyse sémantique de la pathologie", icon: "🧠", duration: 2000 },
+    { label: "Extraction des entités médicales", icon: "🔬", duration: 2500 },
+    { label: "Identification des médicaments associés", icon: "💊", duration: 2000 },
+    { label: "Recherche des symptômes corrélés", icon: "🩺", duration: 1800 },
+    { label: "Analyse des interactions médicamenteuses", icon: "⚠️", duration: 2200 },
+    { label: "Détection des contre-indications", icon: "🚫", duration: 1500 },
+    { label: "Construction des liens sémantiques", icon: "🔗", duration: 2000 },
+    { label: "Calcul des scores de pertinence", icon: "📊", duration: 1800 },
+    { label: "Optimisation de la topologie du graphe", icon: "🌐", duration: 2000 },
+    { label: "Génération des positions des nœuds", icon: "📍", duration: 1500 },
+    { label: "Finalisation du Knowledge Graph", icon: "✨", duration: 1000 },
+];
+
+function LoadingProgressBar() {
+    const [currentStep, setCurrentStep] = useState(0);
+    const [progress, setProgress] = useState(0);
+
+    useEffect(() => {
+        // Progress animation - smooth continuous progress
+        const progressInterval = setInterval(() => {
+            setProgress(prev => {
+                if (prev >= 100) return 100;
+                // Slow down as we approach 100%
+                const increment = prev < 70 ? 1.5 : prev < 90 ? 0.8 : 0.3;
+                return Math.min(100, prev + increment);
+            });
+        }, 100);
+
+        // Step cycling - change step every 2-3 seconds
+        const stepInterval = setInterval(() => {
+            setCurrentStep(prev => (prev + 1) % LOADING_STEPS.length);
+        }, 1500);
+
+        return () => {
+            clearInterval(progressInterval);
+            clearInterval(stepInterval);
+        };
+    }, []);
+
+    const step = LOADING_STEPS[currentStep];
+
+    return (
+        <div className="absolute bottom-[-80px] left-1/2 transform -translate-x-1/2 w-[320px]">
+            {/* Title */}
+            <p className="text-purple-400 font-medium tracking-wider text-center mb-3 animate-pulse">
+                Construction du Knowledge Graph
+            </p>
+
+            {/* Futuristic Progress Bar Container */}
+            <div className="relative">
+                {/* Background track */}
+                <div className="h-2 bg-gray-800/80 rounded-full overflow-hidden border border-cyan-500/20">
+                    {/* Animated gradient background */}
+                    <div
+                        className="absolute inset-0 opacity-30"
+                        style={{
+                            background: 'linear-gradient(90deg, transparent 0%, rgba(6, 182, 212, 0.3) 50%, transparent 100%)',
+                            animation: 'shimmer 2s infinite linear',
+                            backgroundSize: '200% 100%'
+                        }}
+                    />
+
+                    {/* Main progress fill */}
+                    <div
+                        className="h-full rounded-full relative overflow-hidden transition-all duration-300 ease-out"
+                        style={{
+                            width: `${progress}%`,
+                            background: 'linear-gradient(90deg, #06b6d4 0%, #a855f7 50%, #22d3ee 100%)',
+                            boxShadow: '0 0 20px rgba(6, 182, 212, 0.5), 0 0 40px rgba(168, 85, 247, 0.3)'
+                        }}
+                    >
+                        {/* Glowing pulse effect on the progress bar */}
+                        <div
+                            className="absolute inset-0"
+                            style={{
+                                background: 'linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.4) 50%, transparent 100%)',
+                                animation: 'progressPulse 1.5s infinite'
+                            }}
+                        />
+                    </div>
+
+                    {/* Leading edge glow */}
+                    <div
+                        className="absolute top-0 h-full w-4 rounded-full"
+                        style={{
+                            left: `calc(${progress}% - 8px)`,
+                            background: 'radial-gradient(circle, rgba(34, 211, 238, 0.8) 0%, transparent 70%)',
+                            filter: 'blur(2px)',
+                            transition: 'left 0.3s ease-out'
+                        }}
+                    />
+                </div>
+
+                {/* Percentage indicator */}
+                <div className="absolute -right-12 top-1/2 -translate-y-1/2 text-cyan-400 font-mono text-xs font-bold">
+                    {Math.round(progress)}%
+                </div>
+            </div>
+
+            {/* Step description */}
+            <div className="mt-3 flex items-center justify-center gap-2 h-6">
+                <span className="text-lg" style={{ animation: 'bounce 1s infinite' }}>
+                    {step.icon}
+                </span>
+                <p
+                    className="text-cyan-400/80 text-sm font-mono"
+                    style={{
+                        animation: 'fadeInOut 2.5s infinite',
+                        textShadow: '0 0 10px rgba(6, 182, 212, 0.5)'
+                    }}
+                >
+                    {step.label}
+                </p>
+            </div>
+
+            {/* Step counter */}
+            <div className="mt-2 flex justify-center gap-1">
+                {LOADING_STEPS.map((_, i) => (
+                    <div
+                        key={i}
+                        className={`w-1.5 h-1.5 rounded-full transition-all duration-300 ${i === currentStep
+                            ? 'bg-cyan-400 scale-125 shadow-lg shadow-cyan-400/50'
+                            : i < currentStep
+                                ? 'bg-purple-500/60'
+                                : 'bg-gray-600/40'
+                            }`}
+                    />
+                ))}
+            </div>
+
+            {/* CSS Animations */}
+            <style>{`
+                @keyframes shimmer {
+                    0% { background-position: -200% 0; }
+                    100% { background-position: 200% 0; }
+                }
+                @keyframes progressPulse {
+                    0%, 100% { opacity: 0.3; transform: translateX(-100%); }
+                    50% { opacity: 0.8; transform: translateX(100%); }
+                }
+                @keyframes fadeInOut {
+                    0%, 100% { opacity: 0.6; }
+                    50% { opacity: 1; }
+                }
+                @keyframes bounce {
+                    0%, 100% { transform: translateY(0); }
+                    50% { transform: translateY(-3px); }
+                }
+            `}</style>
+        </div>
+    );
+}
+
 interface SVGFallbackProps {
     data: RadialRingsData;
     animationTime: number;
@@ -57,6 +330,7 @@ interface SVGFallbackProps {
     nodeSize?: number; // Size scale (default 1.0)
     hiddenNodeTypes?: Set<string>; // Types to hide
     hiddenRelationTypes?: Set<string>; // Relation types to hide
+    hiddenNodes?: Set<string>; // Individual nodes to hide (from chat commands)
     getNodeTypes?: (category: string) => string[]; // Helper to map UI categories to node types
     // Node grouping props
     nodeGroups?: Map<string, Set<string>>; // centerNodeId -> member node IDs
@@ -66,12 +340,77 @@ interface SVGFallbackProps {
     onStartGroupCreation?: (nodeId: string) => void;
     onFinishGroupCreation?: () => void;
     onDissolveGroup?: (centerId: string) => void;
+    // Custom positions for programmatic node repositioning (from chat commands)
+    customNodePositions?: Map<string, { x: number, y: number }>;
+    // Deep Analysis mode - golden highlighting for optimal treatment nodes
+    deepAnalysisMode?: boolean;
+    goldenNodeIds?: Set<string>;
+    onSaveGraph?: (graphData: any) => void;
 }
 
-function SVGFallback({ data, animationTime, onEdgeClick, onSetCentral, newlySpawnedNodes, edgeFilterMode = 'all', centralNodeId, filterSelectedNodeId, focusMode = true, activePathologies, visibleNodeCount = Infinity, nodeSpacing = 40, nodeSize: sizeScale = 1.0, hiddenNodeTypes = new Set(), hiddenRelationTypes = new Set(), getNodeTypes = () => [], nodeGroups = new Map(), groupCreationMode = false, currentGroupCenter = null, onAddToGroup, onStartGroupCreation, onFinishGroupCreation, onDissolveGroup }: SVGFallbackProps) {
+function SVGFallback({ data, animationTime, onEdgeClick, onSetCentral, newlySpawnedNodes, edgeFilterMode = 'all', centralNodeId, filterSelectedNodeId, focusMode = true, activePathologies, visibleNodeCount = Infinity, nodeSpacing = 40, nodeSize: sizeScale = 1.0, hiddenNodeTypes = new Set(), hiddenRelationTypes = new Set(), hiddenNodes = new Set(), getNodeTypes = () => [], nodeGroups = new Map(), groupCreationMode = false, currentGroupCenter = null, onAddToGroup, onStartGroupCreation, onFinishGroupCreation, onDissolveGroup, customNodePositions = new Map(), deepAnalysisMode = false, goldenNodeIds = new Set(), onSaveGraph }: SVGFallbackProps) {
     // Dragging state for center nodes (Hoisted)
     const [dragOffsets, setDragOffsets] = useState<Map<string, { x: number, y: number }>>(new Map());
     const [draggingNode, setDraggingNode] = useState<string | null>(null);
+
+    // Layout Mode State
+    type LayoutMode = 'radial' | 'grid' | 'hierarchical' | 'organic';
+    const [layoutMode, setLayoutMode] = useState<LayoutMode>('radial');
+
+    // Layout Parameters State
+    const [layoutParams, setLayoutParams] = useState({
+        gridCols: 0, // 0 = Auto
+        nodeSpacing: nodeSpacing, // Base spacing (default from prop)
+        levelHeight: 180, // Hierarchical level height
+        organicStrength: 350 // Organic spread distance
+    });
+
+    // State to ignore chat-based custom positions (Reset feature)
+    const [ignoreCustomPositions, setIgnoreCustomPositions] = useState(false);
+    const [showLayoutSettings, setShowLayoutSettings] = useState(false);
+
+    // Graph Explorer State
+    const [showExplorer, setShowExplorer] = useState(false);
+    const [localHiddenTypes, setLocalHiddenTypes] = useState<Set<string>>(new Set());
+    const [userHiddenNodes, setUserHiddenNodes] = useState<Set<string>>(new Set());
+    const [collapsedCategories, setCollapsedCategories] = useState<Set<string>>(new Set());
+
+    // Save Graph State
+    const [showSaveModal, setShowSaveModal] = useState(false);
+    const [saveGraphName, setSaveGraphName] = useState('');
+    const [saveDescription, setSaveDescription] = useState('');
+
+    const handleSaveConfirm = () => {
+        if (!onSaveGraph) return;
+
+        // Construct view state
+        const viewState = {
+            layoutMode,
+            layoutParams,
+            hiddenNodeTypes: Array.from(hiddenNodeTypes),
+            hiddenRelationTypes: Array.from(hiddenRelationTypes),
+            hiddenNodes: Array.from(hiddenNodes),
+            centralNodeId,
+            customNodePositions: Object.fromEntries(customNodePositions),
+            localHiddenTypes: Array.from(localHiddenTypes),
+            userHiddenNodes: Array.from(userHiddenNodes),
+            collapsedCategories: Array.from(collapsedCategories),
+            nodeSpacing,
+            nodeSize: sizeScale
+        };
+
+        const payload = {
+            name: saveGraphName,
+            description: saveDescription,
+            graph_data: data.knowledge_graph, // Only save the graph structure
+            view_state: viewState
+        };
+
+        onSaveGraph(payload);
+        setShowSaveModal(false);
+        setSaveGraphName('');
+        setSaveDescription('');
+    };
 
     // Track if actual dragging occurred (to distinguish from click)
     const didDragRef = useRef(false);
@@ -110,6 +449,14 @@ function SVGFallback({ data, animationTime, onEdgeClick, onSetCentral, newlySpaw
     const [actionNode, setActionNode] = useState<RingNode | null>(null);
     const [multiSelectMode, setMultiSelectMode] = useState(false);
     const [selectedNodesForAnalysis, setSelectedNodesForAnalysis] = useState<Set<string>>(new Set());
+
+    // Selection Tool State
+    // type SelectionMode = 'cursor' | 'lasso' | 'circle' | 'rectangle'; // Defined in state generic
+    const [selectionMode, setSelectionMode] = useState<'cursor' | 'lasso' | 'circle' | 'rectangle'>('cursor');
+    const [multiSelectedNodeIds, setMultiSelectedNodeIds] = useState<Set<string>>(new Set());
+    const [isSelecting, setIsSelecting] = useState(false);
+    const [selectionPoints, setSelectionPoints] = useState<{ x: number, y: number }[]>([]);
+    const selectionStartRef = useRef<{ x: number, y: number } | null>(null);
 
     // Sync external selection (from search) to trigger click behavior (Modal, etc.)
     useEffect(() => {
@@ -166,10 +513,28 @@ function SVGFallback({ data, animationTime, onEdgeClick, onSetCentral, newlySpaw
         if (draggingNode) return;
 
         if (e.button === 0 && !e.ctrlKey) { // Left click without Ctrl
+            // NEW: Handle Selection Mode
+            if (selectionMode !== 'cursor') {
+                const rect = containerRef.current?.getBoundingClientRect();
+                if (rect) {
+                    const x = e.clientX - rect.left;
+                    const y = e.clientY - rect.top;
+                    selectionStartRef.current = { x, y };
+                    setSelectionPoints([{ x, y }]);
+                    setIsSelecting(true);
+
+                    // Clear Previous if shift not held (Standard behavior)
+                    if (!e.shiftKey) {
+                        setMultiSelectedNodeIds(new Set());
+                    }
+                }
+                return;
+            }
+
             setIsPanning(true);
             setPanStart({ x: e.clientX - pan.x, y: e.clientY - pan.y });
         }
-    }, [pan, draggingNode]);
+    }, [pan, draggingNode, selectionMode]);
 
     const handleMouseMove = useCallback((e: React.MouseEvent) => {
         // 1. Handle Node Dragging
@@ -218,16 +583,112 @@ function SVGFallback({ data, animationTime, onEdgeClick, onSetCentral, newlySpaw
             return;
         }
 
-        // 2. Handle Canvas Panning
+        // 2. Handle Selection Drawing
+        if (isSelecting) {
+            const rect = containerRef.current?.getBoundingClientRect();
+            if (rect) {
+                const x = e.clientX - rect.left;
+                const y = e.clientY - rect.top;
+                setSelectionPoints(prev => [...prev, { x, y }]);
+            }
+            return;
+        }
+
+        // 3. Handle Canvas Panning
         if (isPanning) {
             setPan({ x: e.clientX - panStart.x, y: e.clientY - panStart.y });
         }
-    }, [isPanning, panStart, draggingNode, zoom, nodeGroups]);
+    }, [isPanning, panStart, draggingNode, zoom, nodeGroups, isSelecting]);
 
-    const handleMouseUp = useCallback(() => {
+    const handleMouseUp = useCallback((e: React.MouseEvent | MouseEvent | any) => {
+        // Handle explicit event passing or fallback
+        const shiftKey = e?.shiftKey ?? false;
+
+        if (isSelecting) {
+            // FINISH SELECTION
+            setIsSelecting(false);
+            setSelectionPoints([]); // Clear visual path
+
+            const container = containerRef.current;
+            if (!container) return;
+            const rect = container.getBoundingClientRect();
+
+            // Calculate selection bounds/shape in SCREEN space relative to container
+            let selectedIds = new Set<string>();
+
+            // Helper: Convert Graph Space (x,y) to Screen Space (relative to container)
+            const toScreen = (gx: number, gy: number) => ({
+                x: gx * zoom + pan.x + center,
+                y: gy * zoom + pan.y + center
+            });
+
+            const start = selectionStartRef.current || { x: 0, y: 0 };
+            const end = selectionPoints.length > 0 ? selectionPoints[selectionPoints.length - 1] : start;
+
+            nodePositions.forEach((pos, nodeId) => {
+                // Check if node is visible/not hidden
+                if (hiddenNodes.has(nodeId)) return;
+
+                const screenPos = toScreen(pos.x, pos.y);
+                let isInside = false;
+
+                if (selectionMode === 'rectangle') {
+                    const minX = Math.min(start.x, end.x);
+                    const maxX = Math.max(start.x, end.x);
+                    const minY = Math.min(start.y, end.y);
+                    const maxY = Math.max(start.y, end.y);
+                    isInside = screenPos.x >= minX && screenPos.x <= maxX &&
+                        screenPos.y >= minY && screenPos.y <= maxY;
+                }
+                else if (selectionMode === 'circle') {
+                    const radius = Math.sqrt(Math.pow(end.x - start.x, 2) + Math.pow(end.y - start.y, 2));
+                    const dist = Math.sqrt(Math.pow(screenPos.x - start.x, 2) + Math.pow(screenPos.y - start.y, 2));
+                    isInside = dist <= radius;
+                }
+                else if (selectionMode === 'lasso' && selectionPoints.length > 2) {
+                    // Ray casting algorithm for point in polygon
+                    let inside = false;
+                    for (let i = 0, j = selectionPoints.length - 1; i < selectionPoints.length; j = i++) {
+                        const xi = selectionPoints[i].x, yi = selectionPoints[i].y;
+                        const xj = selectionPoints[j].x, yj = selectionPoints[j].y;
+
+                        const intersect = ((yi > screenPos.y) !== (yj > screenPos.y))
+                            && (screenPos.x < (xj - xi) * (screenPos.y - yi) / (yj - yi) + xi);
+                        if (intersect) inside = !inside;
+                    }
+                    isInside = inside;
+                }
+
+                if (isInside) {
+                    selectedIds.add(nodeId);
+                }
+            });
+
+            // Update selection state
+            if (shiftKey) {
+                // Add to existing
+                setMultiSelectedNodeIds(prev => {
+                    const next = new Set(prev);
+                    selectedIds.forEach(id => next.add(id));
+                    return next;
+                });
+            } else {
+                // Replace
+                setMultiSelectedNodeIds(selectedIds);
+            }
+
+            // If we selected only one, also set the main selectedNodeId for details
+            if (selectedIds.size === 1) {
+                const id = Array.from(selectedIds)[0];
+                setSelectedNodeId(id);
+            }
+
+            return;
+        }
+
         setIsPanning(false);
         setDraggingNode(null); // Stop dragging node
-    }, []);
+    }, [isSelecting, selectionPoints, selectionMode, zoom, pan, nodePositions, hiddenNodes]);
 
     // Calculate node positions - NON-OVERLAPPING RADIAL LAYOUT
     // Dynamic ring sizing based on node count to prevent overlaps
@@ -279,20 +740,33 @@ function SVGFallback({ data, animationTime, onEdgeClick, onSetCentral, newlySpaw
 
         // Filter by hidden node types (checkbox filters)
         // NEVER filter out central nodes (ring 0) to keep the graph connected
-        if (hiddenNodeTypes && hiddenNodeTypes.size > 0) {
+        // Filter by hidden node types (checkbox filters + explorer types)
+        // NEVER filter out central nodes (ring 0) to keep the graph connected
+        if ((hiddenNodeTypes && hiddenNodeTypes.size > 0) || localHiddenTypes.size > 0) {
             filteredNodes = filteredNodes.filter(node => {
                 // Always keep central nodes
                 if (node.ring === 0) return true;
-                // Check if node's type is hidden via any of the UI categories
                 const nodeType = node.node_type?.toUpperCase() || '';
-                for (const category of hiddenNodeTypes) {
-                    const typesInCategory = getNodeTypes(category);
-                    if (typesInCategory.some(t => t === nodeType)) {
-                        return false; // This node's type is hidden
+
+                // Check local types (exact match from Explorer)
+                if (localHiddenTypes.has(nodeType)) return false;
+
+                // Check prop hidden types (categories)
+                if (hiddenNodeTypes && hiddenNodeTypes.size > 0) {
+                    for (const category of hiddenNodeTypes) {
+                        const typesInCategory = getNodeTypes(category);
+                        if (typesInCategory.some(t => t === nodeType)) {
+                            return false; // This node's type is hidden
+                        }
                     }
                 }
                 return true;
             });
+        }
+
+        // Filter by individual hidden nodes (from Explorer)
+        if (userHiddenNodes.size > 0) {
+            filteredNodes = filteredNodes.filter(node => !userHiddenNodes.has(node.id));
         }
 
         // Progressive reveal: only show nodes up to visibleNodeCount
@@ -301,184 +775,259 @@ function SVGFallback({ data, animationTime, onEdgeClick, onSetCentral, newlySpaw
         // Find ALL center nodes (ring 0) - Support for dual/multi pathologies
         // DUAL/MULTI GRAPH LAYOUT: Twin Graph Logic
         const centerNodes = nodes.filter(n => n.ring === 0);
+        const peripheralNodes = nodes.filter(n => n.ring !== 0);
         const isMultiGraph = centerNodes.length > 1;
         const foci = new Map<string, { x: number, y: number }>();
         const defaultCenter = { x: center, y: center };
 
-        if (isMultiGraph) {
-            if (centerNodes.length === 2) {
-                // Side-by-Side (Left-Right) - WIDE SEPARATION for Twin Graph Strict Mode
-                const offset = svgSize * 0.35;
-                foci.set(centerNodes[0].id, { x: center - offset, y: center });
-                foci.set(centerNodes[1].id, { x: center + offset, y: center });
-            } else {
-                // Triangle / Circle for 3+
-                const radius = svgSize * 0.3;
-                const angleStep = (Math.PI * 2) / centerNodes.length;
-                centerNodes.forEach((node, i) => {
-                    const angle = i * angleStep - Math.PI / 2;
-                    foci.set(node.id, {
-                        x: center + Math.cos(angle) * radius,
-                        y: center + Math.sin(angle) * radius
-                    });
-                });
-            }
-        } else if (centerNodes[0]) {
-            foci.set(centerNodes[0].id, defaultCenter);
-        }
-
-        // Place centers (including user drag offsets)
-        centerNodes.forEach(node => {
-            const basePos = foci.get(node.id) || defaultCenter;
-            const dragOffset = dragOffsets.get(node.id) || { x: 0, y: 0 };
-
-            // Update the focus point itself so rings follow the center!
-            foci.set(node.id, { x: basePos.x + dragOffset.x, y: basePos.y + dragOffset.y });
-            positions.set(node.id, { x: basePos.x + dragOffset.x, y: basePos.y + dragOffset.y });
-        });
-        radii.set(0, 0); // Center ring has 0 radius
-
-        // ============================================
-        // CATEGORY-BASED RING LAYOUT
-        // Each ring contains only one category type
-        // Larger rings = more capacity (proportional to circumference)
-        // ============================================
-
-        // Define category order (innermost to outermost)
-        // Pathologies are central (ring 0), others are organized by clinical relevance
-        const CATEGORY_ORDER = [
-            'DRUG', 'MEDICATION',     // Ring 1: Médicaments
-            'TREATMENT',              // Ring 2: Traitements
-            'SYMPTOM',                // Ring 3: Symptômes
-            'COMPLICATION',           // Ring 4: Complications
-            'LAB',                    // Ring 5: Analyses
-            'GUIDELINE', 'EVIDENCE', 'LIFESTYLE'  // Ring 6: Suggestions
-        ];
-
-        // Map categories to ring numbers
-        const getCategoryRing = (nodeType: string): number => {
-            const type = nodeType?.toUpperCase() || '';
-            if (type === 'PATHOLOGY') return 0; // Central
-            if (['DRUG', 'MEDICATION'].includes(type)) return 1;
-            if (type === 'TREATMENT') return 2;
-            if (type === 'SYMPTOM') return 3;
-            if (type === 'COMPLICATION') return 4;
-            if (type === 'LAB') return 5;
-            if (['GUIDELINE', 'EVIDENCE', 'LIFESTYLE'].includes(type)) return 6;
-            return 7; // Unknown types go to outer ring
-        };
-
-        // Get category color label for ring
-        const getCategoryLabel = (ring: number): string => {
-            switch (ring) {
-                case 1: return '💊 Médicaments';
-                case 2: return '🩺 Traitements';
-                case 3: return '🤒 Symptômes';
-                case 4: return '⚠️ Complications';
-                case 5: return '🔬 Analyses';
-                case 6: return '📋 Suggestions';
-                default: return '❓ Autres';
-            }
-        };
-
-        // Get all non-center nodes and group by category ring
-        const peripheralNodes = nodes.filter(n => n.ring !== 0);
-        const nodesByCategoryRing = new Map<number, RingNode[]>();
-
-        peripheralNodes.forEach(node => {
-            const catRing = getCategoryRing(node.node_type || '');
-            if (catRing === 0) return; // Skip pathologies (already placed)
-            if (!nodesByCategoryRing.has(catRing)) nodesByCategoryRing.set(catRing, []);
-            nodesByCategoryRing.get(catRing)!.push(node);
-        });
-
-        // Sort category rings
-        const sortedCategoryRings = Array.from(nodesByCategoryRing.keys()).sort((a, b) => a - b);
-
-        // Dynamic spacing derived from nodeSpacing prop (base 40)
-        const spacingFactor = nodeSpacing / 40;
-
-        const BASE_RADIUS = 80 * spacingFactor;        // First ring radius
-        const RING_SPACING = 60 * spacingFactor;       // Spacing between category rings
-        const MIN_NODE_SPACING_ANGLE = 0.15;           // Minimum angle between nodes (radians)
-
-        let currentRadius = BASE_RADIUS;
-
-        // Layout each category ring
-        sortedCategoryRings.forEach(catRing => {
-            const catNodes = nodesByCategoryRing.get(catRing)!;
-            if (catNodes.length === 0) return;
-
-            // Calculate capacity based on ring circumference
-            // Larger rings can fit more nodes at the same angular spacing
-            const circumference = 2 * Math.PI * currentRadius;
-            const idealNodeSpacing = 45; // pixels between nodes
-            const maxNodesAtThisRadius = Math.floor(circumference / idealNodeSpacing);
-
-            // If we have more nodes than fit, create multiple concentric sub-rings
-            const nodesPerSubRing = Math.max(8, maxNodesAtThisRadius);
-            const numSubRings = Math.ceil(catNodes.length / nodesPerSubRing);
-            const SUB_RING_SPACING = 35 * spacingFactor;
-
-            // Sub-group by parent pathology for multi-graph mode
-            const nodesByParent = new Map<string, RingNode[]>();
-            catNodes.forEach(n => {
-                let parentId = 'unknown';
-                if (n.parent_pathology) {
-                    const parent = centerNodes.find(c => c.name === n.parent_pathology);
-                    if (parent && foci.has(parent.id)) parentId = parent.id;
-                }
-                if (parentId === 'unknown') {
-                    parentId = centerNodes[0]?.id || 'unknown';
-                }
-                if (!nodesByParent.has(parentId)) nodesByParent.set(parentId, []);
-                nodesByParent.get(parentId)!.push(n);
-            });
-
-            // Layout each parent group
-            Array.from(nodesByParent.entries()).forEach(([parentId, pNodes]) => {
-                const focus = foci.get(parentId) || defaultCenter;
-
-                // Distribute across sub-rings if needed
-                for (let i = 0; i < pNodes.length; i += nodesPerSubRing) {
-                    const subRingIndex = Math.floor(i / nodesPerSubRing);
-                    const chunk = pNodes.slice(i, i + nodesPerSubRing);
-                    const subRingRadius = currentRadius + (subRingIndex * SUB_RING_SPACING);
-
-                    // Evenly distribute nodes around the ring
-                    const angleStep = (Math.PI * 2) / Math.max(1, chunk.length);
-                    const angleOffset = catRing * Math.PI / 6; // Stagger start angle per category
-
-                    chunk.forEach((node, j) => {
-                        const angle = j * angleStep + angleOffset - Math.PI / 2;
-                        positions.set(node.id, {
-                            x: focus.x + Math.cos(angle) * subRingRadius,
-                            y: focus.y + Math.sin(angle) * subRingRadius
+        if (layoutMode === 'radial') {
+            if (isMultiGraph) {
+                if (centerNodes.length === 2) {
+                    // Side-by-Side (Left-Right) - WIDE SEPARATION for Twin Graph Strict Mode
+                    const offset = svgSize * 0.35;
+                    foci.set(centerNodes[0].id, { x: center - offset, y: center });
+                    foci.set(centerNodes[1].id, { x: center + offset, y: center });
+                } else {
+                    // Triangle / Circle for 3+
+                    const radius = svgSize * 0.3;
+                    const angleStep = (Math.PI * 2) / centerNodes.length;
+                    centerNodes.forEach((node, i) => {
+                        const angle = i * angleStep - Math.PI / 2;
+                        foci.set(node.id, {
+                            x: center + Math.cos(angle) * radius,
+                            y: center + Math.sin(angle) * radius
                         });
                     });
                 }
+            } else if (centerNodes[0]) {
+                foci.set(centerNodes[0].id, defaultCenter);
+            }
+
+            // Place centers (including user drag offsets)
+            centerNodes.forEach(node => {
+                const basePos = foci.get(node.id) || defaultCenter;
+                const dragOffset = dragOffsets.get(node.id) || { x: 0, y: 0 };
+
+                // Update the focus point itself so rings follow the center!
+                foci.set(node.id, { x: basePos.x + dragOffset.x, y: basePos.y + dragOffset.y });
+                positions.set(node.id, { x: basePos.x + dragOffset.x, y: basePos.y + dragOffset.y });
+            });
+            radii.set(0, 0); // Center ring has 0 radius
+
+            // ============================================
+            // CATEGORY-BASED RING LAYOUT
+            // Each ring contains only one category type
+            // Larger rings = more capacity (proportional to circumference)
+            // ============================================
+
+            // Define category order (innermost to outermost)
+            // Pathologies are central (ring 0), others are organized by clinical relevance
+            const CATEGORY_ORDER = [
+                'DRUG', 'MEDICATION',     // Ring 1: Médicaments
+                'TREATMENT',              // Ring 2: Traitements
+                'SYMPTOM',                // Ring 3: Symptômes
+                'COMPLICATION',           // Ring 4: Complications
+                'LAB',                    // Ring 5: Analyses
+                'GUIDELINE', 'EVIDENCE', 'LIFESTYLE'  // Ring 6: Suggestions
+            ];
+
+            // Map categories to ring numbers
+            const getCategoryRing = (nodeType: string): number => {
+                const type = nodeType?.toUpperCase() || '';
+                if (type === 'PATHOLOGY') return 0; // Central
+                if (['DRUG', 'MEDICATION'].includes(type)) return 1;
+                if (type === 'TREATMENT') return 2;
+                if (type === 'SYMPTOM') return 3;
+                if (type === 'COMPLICATION') return 4;
+                if (type === 'LAB') return 5;
+                if (['GUIDELINE', 'EVIDENCE', 'LIFESTYLE'].includes(type)) return 6;
+                return 7; // Unknown types go to outer ring
+            };
+
+            // Get category color label for ring
+            const getCategoryLabel = (ring: number): string => {
+                switch (ring) {
+                    case 1: return '💊 Médicaments';
+                    case 2: return '🩺 Traitements';
+                    case 3: return '🤒 Symptômes';
+                    case 4: return '⚠️ Complications';
+                    case 5: return '🔬 Analyses';
+                    case 6: return '📋 Suggestions';
+                    default: return '❓ Autres';
+                }
+            };
+
+            // Get all non-center nodes and group by category ring
+            const peripheralNodes = nodes.filter(n => n.ring !== 0);
+            const nodesByCategoryRing = new Map<number, RingNode[]>();
+
+            peripheralNodes.forEach(node => {
+                const catRing = getCategoryRing(node.node_type || '');
+                if (catRing === 0) return; // Skip pathologies (already placed)
+                if (!nodesByCategoryRing.has(catRing)) nodesByCategoryRing.set(catRing, []);
+                nodesByCategoryRing.get(catRing)!.push(node);
             });
 
-            // Store the radius for ring visualization
-            radii.set(catRing, currentRadius);
+            // Sort category rings
+            const sortedCategoryRings = Array.from(nodesByCategoryRing.keys()).sort((a, b) => a - b);
 
-            // Move to next ring (account for sub-rings)
-            currentRadius += RING_SPACING + (numSubRings - 1) * SUB_RING_SPACING;
-        });
+            // Dynamic spacing derived from layoutParams
+            const spacingFactor = layoutParams.nodeSpacing / 40;
+
+            const BASE_RADIUS = 80 * spacingFactor;        // First ring radius
+            const RING_SPACING = 60 * spacingFactor;       // Spacing between category rings
+            const MIN_NODE_SPACING_ANGLE = 0.15;           // Minimum angle between nodes (radians)
+
+            let currentRadius = BASE_RADIUS;
+
+            // Layout each category ring
+            sortedCategoryRings.forEach(catRing => {
+                const catNodes = nodesByCategoryRing.get(catRing)!;
+                if (catNodes.length === 0) return;
+
+                // Calculate capacity based on ring circumference
+                // Larger rings can fit more nodes at the same angular spacing
+                const circumference = 2 * Math.PI * currentRadius;
+                const idealNodeSpacing = 45; // pixels between nodes
+                const maxNodesAtThisRadius = Math.floor(circumference / idealNodeSpacing);
+
+                // If we have more nodes than fit, create multiple concentric sub-rings
+                const nodesPerSubRing = Math.max(8, maxNodesAtThisRadius);
+                const numSubRings = Math.ceil(catNodes.length / nodesPerSubRing);
+                const SUB_RING_SPACING = 35 * spacingFactor;
+
+                // Sub-group by parent pathology for multi-graph mode
+                const nodesByParent = new Map<string, RingNode[]>();
+                catNodes.forEach(n => {
+                    let parentId = 'unknown';
+                    if (n.parent_pathology) {
+                        const parent = centerNodes.find(c => c.name === n.parent_pathology);
+                        if (parent && foci.has(parent.id)) parentId = parent.id;
+                    }
+                    if (parentId === 'unknown') {
+                        parentId = centerNodes[0]?.id || 'unknown';
+                    }
+                    if (!nodesByParent.has(parentId)) nodesByParent.set(parentId, []);
+                    nodesByParent.get(parentId)!.push(n);
+                });
+
+                // Layout each parent group
+                Array.from(nodesByParent.entries()).forEach(([parentId, pNodes]) => {
+                    const focus = foci.get(parentId) || defaultCenter;
+
+                    // Distribute across sub-rings if needed
+                    for (let i = 0; i < pNodes.length; i += nodesPerSubRing) {
+                        const subRingIndex = Math.floor(i / nodesPerSubRing);
+                        const chunk = pNodes.slice(i, i + nodesPerSubRing);
+                        const subRingRadius = currentRadius + (subRingIndex * SUB_RING_SPACING);
+
+                        // Evenly distribute nodes around the ring
+                        const angleStep = (Math.PI * 2) / Math.max(1, chunk.length);
+                        const angleOffset = catRing * Math.PI / 6; // Stagger start angle per category
+
+                        chunk.forEach((node, j) => {
+                            const angle = j * angleStep + angleOffset - Math.PI / 2;
+                            positions.set(node.id, {
+                                x: focus.x + Math.cos(angle) * subRingRadius,
+                                y: focus.y + Math.sin(angle) * subRingRadius
+                            });
+                        });
+                    }
+                });
+
+                // Store the radius for ring visualization
+                radii.set(catRing, currentRadius);
+
+                // Move to next ring (account for sub-rings)
+                currentRadius += RING_SPACING + (numSubRings - 1) * SUB_RING_SPACING;
+            });
+        } // END RADIAL LAYOUT
+
+        // --- 2. GRID LAYOUT ---
+        else if (layoutMode === 'grid') {
+            const GRID_COLS = layoutParams.gridCols > 0 ? layoutParams.gridCols : Math.ceil(Math.sqrt(nodes.length * 1.6));
+            const CELL_SIZE_X = layoutParams.nodeSpacing * 3.5;
+            const CELL_SIZE_Y = layoutParams.nodeSpacing * 2.5;
+            const startX = center - (GRID_COLS * CELL_SIZE_X) / 2;
+            const startY = center - (Math.ceil(nodes.length / GRID_COLS) * CELL_SIZE_Y) / 2;
+
+            const sortedGridNodes = [
+                ...centerNodes,
+                ...peripheralNodes.sort((a, b) => (a.node_type || '').localeCompare(b.node_type || ''))
+            ];
+
+            sortedGridNodes.forEach((node, i) => {
+                const col = i % GRID_COLS;
+                const row = Math.floor(i / GRID_COLS);
+                const dragOffset = dragOffsets.get(node.id) || { x: 0, y: 0 };
+                positions.set(node.id, {
+                    x: startX + col * CELL_SIZE_X + dragOffset.x,
+                    y: startY + row * CELL_SIZE_Y + dragOffset.y
+                });
+            });
+        }
+
+        // --- 3. HIERARCHICAL LAYOUT ---
+        else if (layoutMode === 'hierarchical') {
+            const LEVEL_HEIGHT = layoutParams.levelHeight;
+            const NODE_WIDTH = layoutParams.nodeSpacing * 2.75;
+            const levelGroups = [
+                centerNodes,
+                peripheralNodes.filter(n => ['SYMPTOM', 'TREATMENT', 'DRUG'].includes(n.node_type?.toUpperCase() || '')),
+                peripheralNodes.filter(n => !['SYMPTOM', 'TREATMENT', 'DRUG'].includes(n.node_type?.toUpperCase() || ''))
+            ];
+            const totalHeight = (levelGroups.length - 1) * LEVEL_HEIGHT;
+            const startY = center - totalHeight / 2;
+
+            levelGroups.forEach((group, levelIdx) => {
+                const rowWidth = group.length * NODE_WIDTH;
+                const startX = center - rowWidth / 2 + NODE_WIDTH / 2;
+                group.forEach((node, i) => {
+                    const dragOffset = dragOffsets.get(node.id) || { x: 0, y: 0 };
+                    positions.set(node.id, {
+                        x: startX + i * NODE_WIDTH + dragOffset.x,
+                        y: startY + levelIdx * LEVEL_HEIGHT + dragOffset.y
+                    });
+                });
+            });
+        }
+
+        // --- 4. ORGANIC LAYOUT ---
+        else if (layoutMode === 'organic') {
+            centerNodes.forEach(node => {
+                const dragOffset = dragOffsets.get(node.id) || { x: 0, y: 0 };
+                positions.set(node.id, { x: center + dragOffset.x, y: center + dragOffset.y });
+            });
+            peripheralNodes.forEach((node, i) => {
+                const dragOffset = dragOffsets.get(node.id) || { x: 0, y: 0 };
+                // Deterministic random
+                const hash = node.id.split('').reduce((a, c) => a + c.charCodeAt(0), 0);
+                const rand = (seed: number) => Math.abs(Math.sin(seed * 9999));
+                const typeCode = (node.node_type || '').length;
+                const baseAngle = (typeCode * 60) * (Math.PI / 180);
+                const finalAngle = baseAngle + (rand(hash) - 0.5) * 2;
+                const dist = 150 + rand(hash + 1) * layoutParams.organicStrength;
+                positions.set(node.id, {
+                    x: center + Math.cos(finalAngle) * dist + dragOffset.x,
+                    y: center + Math.sin(finalAngle) * dist + dragOffset.y
+                });
+            });
+        }
 
         // ANTI-COLLISION: Disabled per user request to maintain stable spacing
         // Nodes will respect their calculated orbital positions.
         /*
-        const MIN_NODE_DISTANCE = 75; 
+        const MIN_NODE_DISTANCE = 55; 
         const COLLISION_ITERATIONS = 15; 
-
+ 
         for (let iter = 0; iter < COLLISION_ITERATIONS; iter++) {
              // ... logic disabled ...
         }
         */
 
         return { nodePositions: positions, ringRadii: radii, uniqueNodes: nodes, idRedirects };
-    }, [data, center, visibleNodeCount, nodeSpacing, activePathologies, hiddenNodeTypes, getNodeTypes]);
+        return { nodePositions: positions, ringRadii: radii, uniqueNodes: nodes, idRedirects };
+    }, [data, center, visibleNodeCount, layoutParams, activePathologies, hiddenNodeTypes, getNodeTypes, layoutMode, dragOffsets, localHiddenTypes, userHiddenNodes]);
 
     const nodeMap = useMemo(() => {
         const map = new Map<string, RingNode>();
@@ -604,6 +1153,17 @@ function SVGFallback({ data, animationTime, onEdgeClick, onSetCentral, newlySpaw
             onMouseLeave={handleMouseUp}
             style={{ cursor: isPanning ? 'grabbing' : 'grab' }}
         >
+            {/* Graph Explorer Toggle */}
+            <button
+                onClick={() => setShowExplorer(!showExplorer)}
+                className="absolute top-4 left-4 z-20 bg-gray-900/80 border border-gray-700 text-gray-300 px-3 py-2 rounded-lg flex items-center gap-2 hover:bg-white/10 transition-colors backdrop-blur-sm shadow-lg"
+            >
+                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
+                </svg>
+                <span className="text-sm font-medium">Contenu</span>
+            </button>
+
             <svg
                 width={svgSize}
                 height={svgSize}
@@ -719,8 +1279,17 @@ function SVGFallback({ data, animationTime, onEdgeClick, onSetCentral, newlySpaw
                             // Apply drag offsets to edge endpoints
                             const dragOffsetA = dragOffsets.get(edge.source) || { x: 0, y: 0 };
                             const dragOffsetB = dragOffsets.get(edge.target) || { x: 0, y: 0 };
-                            const posA = { x: basePosA.x + dragOffsetA.x, y: basePosA.y + dragOffsetA.y };
-                            const posB = { x: basePosB.x + dragOffsetB.x, y: basePosB.y + dragOffsetB.y };
+                            // Apply custom positions (from chat commands) and drag offsets
+                            const customPosA = customNodePositions.get(edge.source);
+                            const customPosB = customNodePositions.get(edge.target);
+
+                            const posA = (!ignoreCustomPositions && customPosA)
+                                ? { x: customPosA.x + dragOffsetA.x, y: customPosA.y + dragOffsetA.y }
+                                : { x: basePosA.x + dragOffsetA.x, y: basePosA.y + dragOffsetA.y };
+
+                            const posB = (!ignoreCustomPositions && customPosB)
+                                ? { x: customPosB.x + dragOffsetB.x, y: customPosB.y + dragOffsetB.y }
+                                : { x: basePosB.x + dragOffsetB.x, y: basePosB.y + dragOffsetB.y };
 
 
                             // Check visibility (both nodes must be visible)
@@ -967,9 +1536,15 @@ function SVGFallback({ data, animationTime, onEdgeClick, onSetCentral, newlySpaw
                         const basePos = nodePositions.get(node.id);
                         if (!basePos || !getNodeVisible(node.ring)) return null;
 
-                        // Apply drag offset for any node that has been dragged
+                        // Skip nodes that are explicitly hidden via chat commands
+                        if (hiddenNodes.has(node.id)) return null;
+
+                        // Apply custom positions (from chat commands) and drag offset
+                        const customPos = !ignoreCustomPositions ? customNodePositions.get(node.id) : undefined;
                         const dragOffset = dragOffsets.get(node.id) || { x: 0, y: 0 };
-                        const pos = { x: basePos.x + dragOffset.x, y: basePos.y + dragOffset.y };
+                        const pos = customPos
+                            ? { x: customPos.x + dragOffset.x, y: customPos.y + dragOffset.y }
+                            : { x: basePos.x + dragOffset.x, y: basePos.y + dragOffset.y };
 
                         // Calculate stagger delay based on total node count to fit all in animation
                         const totalNodes = data.knowledge_graph.nodes.length;
@@ -995,15 +1570,24 @@ function SVGFallback({ data, animationTime, onEdgeClick, onSetCentral, newlySpaw
                         const isHighlighted = highlightedNodeIds.has(node.id);
                         const isDimmed = focusMode && selectedNodeId && !isSelected && !isHighlighted;
                         if (isDimmed) return null; // Hide unconnected nodes in focus mode
-                        const isMultiSelected = selectedNodesForAnalysis.has(node.id);
+
+                        // Merge existing analysis selection with new Tool selection
+                        const isMultiSelected = selectedNodesForAnalysis.has(node.id) || multiSelectedNodeIds.has(node.id);
+
                         const isNewlySpawned = newlySpawnedNodes?.has(node.id) || false;
 
                         // Get relationship-based color from connectionColors
                         const connectionColor = connectionColors.get(node.id);
 
+                        // Check if this is a golden (optimal treatment) node in deep analysis mode
+                        const isGoldenNode = deepAnalysisMode && goldenNodeIds.has(node.id);
+                        const isDimmedByAnalysis = deepAnalysisMode && !isGoldenNode;
+
                         // Determine node color based on state and relationship
                         let color: string;
-                        if (isMultiSelected && multiSelectMode) {
+                        if (isGoldenNode) {
+                            color = '#fbbf24'; // Gold for optimal treatment nodes
+                        } else if (isMultiSelected) {
                             color = '#22c55e'; // Green for multi-selected
                         } else if (isSelected) {
                             color = '#a855f7'; // Purple for selected
@@ -1016,9 +1600,11 @@ function SVGFallback({ data, animationTime, onEdgeClick, onSetCentral, newlySpaw
                         // Apply pop animation effect
                         const popScale = nodeProgress < 1 ? 0.8 + 0.4 * Math.sin(nodeProgress * Math.PI * 0.5) : 1;
 
-                        const glowOpacity = (isSelected ? 0.5 : (isHighlighted ? 0.4 : (isDimmed ? 0.03 : 0.15))) * nodeProgress;
-                        const mainOpacity = (isDimmed ? 0.2 : 1) * nodeProgress;
-                        const nodeSize = (isSelected ? size * 1.5 : (isHighlighted ? size * 1.2 : size)) * popScale;
+                        // In deep analysis mode, non-golden nodes have 20% opacity
+                        const baseOpacity = isDimmedByAnalysis ? 0.2 : 1;
+                        const glowOpacity = (isGoldenNode ? 0.7 : (isSelected ? 0.5 : (isHighlighted ? 0.4 : (isDimmed ? 0.03 : 0.15)))) * nodeProgress * baseOpacity;
+                        const mainOpacity = (isDimmed ? 0.2 : 1) * nodeProgress * baseOpacity;
+                        const nodeSize = (isGoldenNode ? size * 1.8 : (isSelected ? size * 1.5 : (isHighlighted ? size * 1.2 : size))) * popScale;
 
                         // Define visibility based on animation progress
                         const isVisible = nodeProgress > 0;
@@ -1029,9 +1615,9 @@ function SVGFallback({ data, animationTime, onEdgeClick, onSetCentral, newlySpaw
                         return (
                             <g
                                 key={node.id}
-                                className={`transition-opacity duration-500`}
+                                className={`transition-opacity duration-500 ${isGoldenNode ? 'golden-pulse' : ''}`}
                                 style={{
-                                    opacity: isVisible ? (isDimmed ? 0.2 : 1) : 0,
+                                    opacity: isVisible ? (isDimmedByAnalysis ? 0.2 : (isDimmed ? 0.2 : 1)) : 0,
                                     cursor: cursorStyle
                                 }}
                                 onClick={(e) => {
@@ -1236,6 +1822,300 @@ function SVGFallback({ data, animationTime, onEdgeClick, onSetCentral, newlySpaw
                     })
                 }
             </svg>
+
+            {/* Layout Controls */}
+            <div className="absolute bottom-20 left-4 bg-gray-900/80 border border-gray-700 rounded-lg p-2 flex flex-col gap-2 backdrop-blur-sm z-10 w-10">
+                <button
+                    onClick={() => setLayoutMode('radial')}
+                    className={`p-1.5 rounded transition-colors ${layoutMode === 'radial' ? 'bg-cyan-600 text-white' : 'text-gray-400 hover:bg-white/10'}`}
+                    title="Radial (Rings)"
+                >
+                    <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <circle cx="12" cy="12" r="8" strokeWidth={2} />
+                        <circle cx="12" cy="12" r="2" fill="currentColor" />
+                    </svg>
+                </button>
+                <button
+                    onClick={() => setLayoutMode('organic')}
+                    className={`p-1.5 rounded transition-colors ${layoutMode === 'organic' ? 'bg-cyan-600 text-white' : 'text-gray-400 hover:bg-white/10'}`}
+                    title="Organique (Force)"
+                >
+                    <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
+                    </svg>
+                </button>
+                <button
+                    onClick={() => setLayoutMode('grid')}
+                    className={`p-1.5 rounded transition-colors ${layoutMode === 'grid' ? 'bg-cyan-600 text-white' : 'text-gray-400 hover:bg-white/10'}`}
+                    title="Grille"
+                >
+                    <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z" />
+                    </svg>
+                </button>
+                <button
+                    onClick={() => setLayoutMode('hierarchical')}
+                    className={`p-1.5 rounded transition-colors ${layoutMode === 'hierarchical' ? 'bg-cyan-600 text-white' : 'text-gray-400 hover:bg-white/10'}`}
+                    title="Hiérarchique (Arbre)"
+                >
+                    <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" />
+                    </svg>
+                </button>
+
+                <div className="h-px bg-gray-700 my-1 w-full" />
+
+                {/* Settings Toggle */}
+                <button
+                    onClick={() => setShowLayoutSettings(!showLayoutSettings)}
+                    className={`p-1.5 rounded transition-colors ${showLayoutSettings ? 'bg-gray-700 text-white' : 'text-gray-400 hover:bg-white/10'}`}
+                    title="Paramètres de disposition"
+                >
+                    <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                    </svg>
+                </button>
+
+                {/* Reset Positions */}
+                <button
+                    onClick={() => {
+                        setDragOffsets(new Map());
+                        setIgnoreCustomPositions(true);
+                        // Reset flag logic usually requires persistence or handling in useMemo, 
+                        // but here we just toggle it to force re-render/re-calc if logic used it.
+                        // For now, clearing dragOffsets is the main "Reset" for manual moves.
+                    }}
+                    className="p-1.5 rounded transition-colors text-red-400 hover:bg-red-900/30 hover:text-red-300"
+                    title="Réinitialiser les positions"
+                >
+                    <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                    </svg>
+                </button>
+
+                {/* Save Graph Button */}
+                {onSaveGraph && (
+                    <button
+                        onClick={() => setShowSaveModal(true)}
+                        className="p-1.5 rounded transition-colors text-emerald-400 hover:bg-emerald-900/30 hover:text-emerald-300"
+                        title="Sauvegarder ce graphe"
+                    >
+                        <Save className="w-5 h-5" />
+                    </button>
+                )}
+            </div>
+
+            {/* Save Graph Modal */}
+            {showSaveModal && (
+                <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+                    <div
+                        className="bg-gray-900 border border-emerald-500/50 rounded-xl p-6 w-96 shadow-2xl relative"
+                        onPointerDown={(e) => e.stopPropagation()}
+                        onWheel={(e) => e.stopPropagation()}
+                    >
+                        <button
+                            onClick={() => setShowSaveModal(false)}
+                            className="absolute top-4 right-4 text-gray-500 hover:text-white"
+                        >
+                            <X className="w-4 h-4" />
+                        </button>
+
+                        <div className="flex items-center gap-3 mb-6">
+                            <div className="w-10 h-10 rounded-full bg-emerald-900/50 flex items-center justify-center border border-emerald-500/30">
+                                <Save className="w-5 h-5 text-emerald-400" />
+                            </div>
+                            <h3 className="text-lg font-bold text-white">Sauvegarder le Graphe</h3>
+                        </div>
+
+                        <div className="space-y-4">
+                            <div>
+                                <label className="block text-xs font-medium text-gray-400 mb-1">Nom du graphe</label>
+                                <input
+                                    type="text"
+                                    value={saveGraphName}
+                                    onChange={(e) => setSaveGraphName(e.target.value)}
+                                    placeholder="Ex: Analyse Cardiovasculaire"
+                                    className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-emerald-500 transition-colors"
+                                    autoFocus
+                                />
+                            </div>
+                            <div>
+                                <label className="block text-xs font-medium text-gray-400 mb-1">Description (optionnelle)</label>
+                                <textarea
+                                    value={saveDescription}
+                                    onChange={(e) => setSaveDescription(e.target.value)}
+                                    placeholder="Notes sur cette session..."
+                                    className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-emerald-500 transition-colors h-20 resize-none"
+                                />
+                            </div>
+
+                            <button
+                                onClick={handleSaveConfirm}
+                                disabled={!saveGraphName.trim()}
+                                className="w-full mt-2 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 disabled:opacity-50 disabled:cursor-not-allowed text-white font-medium py-2 rounded-lg transition-all shadow-lg shadow-emerald-900/20"
+                            >
+                                Sauvegarder
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Layout Settings Panel */}
+            {showLayoutSettings && (
+                <div
+                    className="absolute bottom-20 left-20 bg-gray-900/95 border border-gray-700 rounded-lg p-4 shadow-xl backdrop-blur w-64 z-20"
+                    onPointerDown={(e) => e.stopPropagation()}
+                    onWheel={(e) => e.stopPropagation()}
+                >
+                    <div className="flex justify-between items-center mb-3">
+                        <h3 className="text-sm font-semibold text-gray-200">Paramètres</h3>
+                        <button onClick={() => setShowLayoutSettings(false)} className="text-gray-500 hover:text-white">✕</button>
+                    </div>
+
+                    {/* Common: Spacing */}
+                    <div className="mb-3">
+                        <label className="text-xs text-gray-400 block mb-1">Espacement ({layoutParams.nodeSpacing}px)</label>
+                        <input
+                            type="range" min="10" max="150" step="5"
+                            value={layoutParams.nodeSpacing}
+                            onChange={(e) => setLayoutParams(p => ({ ...p, nodeSpacing: parseInt(e.target.value) }))}
+                            className="w-full accent-cyan-500 bg-gray-700 h-1 rounded appearance-none"
+                        />
+                    </div>
+
+                    {/* Grid Specific */}
+                    {layoutMode === 'grid' && (
+                        <div className="mb-3">
+                            <label className="text-xs text-gray-400 block mb-1">Colonnes ({layoutParams.gridCols === 0 ? 'Auto' : layoutParams.gridCols})</label>
+                            <input
+                                type="range" min="0" max="20" step="1"
+                                value={layoutParams.gridCols}
+                                onChange={(e) => setLayoutParams(p => ({ ...p, gridCols: parseInt(e.target.value) }))}
+                                className="w-full accent-cyan-500 bg-gray-700 h-1 rounded appearance-none"
+                            />
+                        </div>
+                    )}
+
+                    {/* Hierarchical Specific */}
+                    {layoutMode === 'hierarchical' && (
+                        <div className="mb-3">
+                            <label className="text-xs text-gray-400 block mb-1">Hauteur de niveau ({layoutParams.levelHeight}px)</label>
+                            <input
+                                type="range" min="10" max="300" step="10"
+                                value={layoutParams.levelHeight}
+                                onChange={(e) => setLayoutParams(p => ({ ...p, levelHeight: parseInt(e.target.value) }))}
+                                className="w-full accent-cyan-500 bg-gray-700 h-1 rounded appearance-none"
+                            />
+                        </div>
+                    )}
+
+                    {/* Organic Specific */}
+                    {layoutMode === 'organic' && (
+                        <div className="mb-3">
+                            <label className="text-xs text-gray-400 block mb-1">Force de dispersion ({layoutParams.organicStrength})</label>
+                            <input
+                                type="range" min="10" max="500" step="10"
+                                value={layoutParams.organicStrength}
+                                onChange={(e) => setLayoutParams(p => ({ ...p, organicStrength: parseInt(e.target.value) }))}
+                                className="w-full accent-cyan-500 bg-gray-700 h-1 rounded appearance-none"
+                            />
+                        </div>
+                    )}
+                </div>
+            )}
+
+            {/* Sidebar Explorer */}
+            <div
+                className={`absolute top-0 left-0 h-full w-80 bg-gray-950/95 border-r border-gray-800 shadow-2xl z-30 transform transition-transform duration-300 overflow-hidden flex flex-col ${showExplorer ? 'translate-x-0' : '-translate-x-full'}`}
+                onPointerDown={(e) => e.stopPropagation()}
+                onWheel={(e) => e.stopPropagation()}
+            >
+                {/* Header */}
+                <div className="p-4 border-b border-gray-800 flex justify-between items-center bg-gray-900/50">
+                    <h2 className="text-lg font-bold text-white flex items-center gap-2">
+                        <svg className="w-5 h-5 text-cyan-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
+                        </svg>
+                        Explorateur
+                    </h2>
+                    <button onClick={() => setShowExplorer(false)} className="text-gray-500 hover:text-white transition-colors">✕</button>
+                </div>
+
+                {/* Content List */}
+                <div className="flex-1 overflow-y-auto p-4 space-y-4">
+                    {/* Render Categories */}
+                    {Array.from(new Set(data.knowledge_graph.nodes.map(n => n.node_type || 'Inconnu'))).sort().map(type => {
+                        const nodesOfType = data.knowledge_graph.nodes.filter(n => (n.node_type || 'Inconnu') === type).sort((a, b) => a.name.localeCompare(b.name));
+                        const isCollapsed = collapsedCategories.has(type);
+                        const isTypeHidden = localHiddenTypes.has(type.toUpperCase());
+
+                        return (
+                            <div key={type} className="border border-gray-800 rounded bg-gray-900/30 overflow-hidden">
+                                <div className="flex items-center gap-2 p-2 hover:bg-white/5 transition-colors">
+                                    <button
+                                        onClick={() => {
+                                            const newSet = new Set(collapsedCategories);
+                                            if (isCollapsed) newSet.delete(type); else newSet.add(type);
+                                            setCollapsedCategories(newSet);
+                                        }}
+                                        className="text-gray-400 hover:text-white transition-colors p-1"
+                                    >
+                                        <svg className={`w-4 h-4 transition-transform duration-200 ${isCollapsed ? '-rotate-90' : 'rotate-0'}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                                        </svg>
+                                    </button>
+
+                                    <input
+                                        type="checkbox"
+                                        checked={!isTypeHidden}
+                                        onChange={() => {
+                                            const newSet = new Set(localHiddenTypes);
+                                            const typeKey = type.toUpperCase();
+                                            if (newSet.has(typeKey)) newSet.delete(typeKey); else newSet.add(typeKey);
+                                            setLocalHiddenTypes(newSet);
+                                        }}
+                                        className="rounded border-gray-600 bg-gray-800 accent-cyan-500 w-4 h-4 cursor-pointer"
+                                    />
+
+                                    <span className="text-xs font-semibold text-gray-300 flex-1 truncate uppercase tracking-wider">{type}</span>
+                                    <span className="text-[10px] text-gray-500 bg-gray-800 px-1.5 py-0.5 rounded font-mono border border-gray-700">{nodesOfType.length}</span>
+                                </div>
+
+                                {/* Node List */}
+                                {!isCollapsed && (
+                                    <div className="border-t border-gray-800/50 bg-black/20 animate-in slide-in-from-top-1 duration-200">
+                                        {nodesOfType.map(node => {
+                                            const isHidden = userHiddenNodes.has(node.id);
+                                            // Determine node status color
+                                            const statusColor = node.ring === 0 ? 'bg-purple-500' : 'bg-cyan-500';
+
+                                            return (
+                                                <div key={node.id} className="flex items-center gap-2 px-3 py-1.5 hover:bg-white/5 pl-9 border-l-2 border-transparent hover:border-cyan-500/30 group transition-colors">
+                                                    <input
+                                                        type="checkbox"
+                                                        checked={!isHidden}
+                                                        onChange={() => {
+                                                            const newSet = new Set(userHiddenNodes);
+                                                            if (newSet.has(node.id)) newSet.delete(node.id); else newSet.add(node.id);
+                                                            setUserHiddenNodes(newSet);
+                                                        }}
+                                                        className="rounded border-gray-700 bg-gray-800 accent-cyan-500 w-3.5 h-3.5 cursor-pointer opacity-70 group-hover:opacity-100 transition-opacity"
+                                                    />
+                                                    <span className={`text-xs truncate transition-all flex-1 ${isHidden ? 'text-gray-600 line-through' : 'text-gray-400 group-hover:text-white'}`} title={node.name}>
+                                                        {node.name}
+                                                    </span>
+                                                </div>
+                                            );
+                                        })}
+                                    </div>
+                                )}
+                            </div>
+                        );
+                    })}
+                </div>
+            </div>
 
             {/* Zoom controls */}
             <div className="absolute bottom-8 left-4 flex gap-2">
@@ -1875,6 +2755,64 @@ function LinkExplanationModal({ isOpen, onClose, edge, sourceNode, targetNode, m
     const [isLoading, setIsLoading] = useState(false);
     const [fromCache, setFromCache] = useState(false);
 
+    // Chat state
+    const [chatMessages, setChatMessages] = useState<{ role: 'user' | 'assistant', content: string }[]>([]);
+    const [chatInput, setChatInput] = useState('');
+    const [isChatLoading, setIsChatLoading] = useState(false);
+    const [isChatExpanded, setIsChatExpanded] = useState(false);
+    const chatContainerRef = useRef<HTMLDivElement>(null);
+
+    // Reset chat when modal closes/reopens
+    useEffect(() => {
+        if (!isOpen) {
+            setChatMessages([]);
+            setChatInput('');
+            setIsChatExpanded(false);
+        }
+    }, [isOpen]);
+
+    // Auto-scroll chat to bottom
+    useEffect(() => {
+        if (chatContainerRef.current) {
+            chatContainerRef.current.scrollTop = chatContainerRef.current.scrollHeight;
+        }
+    }, [chatMessages]);
+
+    // Send chat message
+    const sendChatMessage = async () => {
+        if (!chatInput.trim() || isChatLoading) return;
+
+        const userMessage = chatInput.trim();
+        setChatInput('');
+        setChatMessages(prev => [...prev, { role: 'user', content: userMessage }]);
+        setIsChatLoading(true);
+
+        try {
+            const { data, error } = await supabase.functions.invoke('graph-chat', {
+                body: {
+                    mode: 'analysis_qa',
+                    message: userMessage,
+                    context: {
+                        analysisContent: explanation,
+                        sourceNode: sourceNode?.name,
+                        targetNode: targetNode?.name,
+                        pathology,
+                        conversationHistory: chatMessages
+                    }
+                }
+            });
+
+            if (error) throw error;
+
+            setChatMessages(prev => [...prev, { role: 'assistant', content: data.message || 'Désolé, je n\'ai pas pu générer une réponse.' }]);
+        } catch (err) {
+            console.error('Chat error:', err);
+            setChatMessages(prev => [...prev, { role: 'assistant', content: '❌ Erreur de communication avec l\'assistant. Veuillez réessayer.' }]);
+        } finally {
+            setIsChatLoading(false);
+        }
+    };
+
     // Determine if this is a multi-node analysis
     const isMultiNodeAnalysis = multiNodes && multiNodes.length > 2;
     const allNodeNames = isMultiNodeAnalysis ? multiNodes.map(n => n.name) : [sourceNode?.name, targetNode?.name].filter(Boolean);
@@ -1994,7 +2932,7 @@ Fournis:
         <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
             <div className="absolute inset-0 bg-black/80" onClick={onClose} />
 
-            <div className="relative bg-gray-900 border border-gray-700 rounded-2xl max-w-2xl w-full max-h-[80vh] overflow-hidden shadow-2xl">
+            <div className="relative bg-gray-900 border border-gray-700 rounded-2xl max-w-2xl w-full max-h-[85vh] shadow-2xl flex flex-col overflow-hidden">
                 {/* Header */}
                 <div className="p-4 border-b border-gray-700 bg-gray-800/50">
                     <div className="flex items-center justify-between">
@@ -2040,7 +2978,7 @@ Fournis:
                 </div>
 
                 {/* Content */}
-                <div className="p-4 overflow-y-auto max-h-[60vh]">
+                <div className="p-4 overflow-y-auto flex-1 min-h-0">
                     {isLoading ? (
                         <div className="flex items-center justify-center py-12">
                             <div className="text-center">
@@ -2065,6 +3003,81 @@ Fournis:
                                 }
                                 return null;
                             })}
+                        </div>
+                    )}
+                </div>
+
+                {/* Chat Section */}
+                <div className="px-4 pb-4 flex-shrink-0">
+                    {/* Expand/Collapse button */}
+                    <button
+                        onClick={() => setIsChatExpanded(!isChatExpanded)}
+                        className="w-full py-2 px-3 bg-gray-800/50 hover:bg-gray-700/50 border border-gray-600/50 rounded-lg flex items-center justify-center gap-2 transition-all text-sm"
+                    >
+                        <MessageSquare className="w-4 h-4 text-cyan-400" />
+                        <span className="text-gray-300">
+                            {isChatExpanded ? 'Fermer le chat' : '💬 Des questions sur cette analyse ?'}
+                        </span>
+                    </button>
+
+                    {/* Chat panel */}
+                    {isChatExpanded && (
+                        <div className="mt-3 border border-gray-600/50 rounded-lg bg-gray-800/30 overflow-hidden">
+                            {/* Messages container */}
+                            <div
+                                ref={chatContainerRef}
+                                className="max-h-[200px] overflow-y-auto p-3 space-y-3"
+                            >
+                                {chatMessages.length === 0 ? (
+                                    <p className="text-gray-500 text-sm text-center py-4">
+                                        Posez une question sur cette analyse...
+                                    </p>
+                                ) : (
+                                    chatMessages.map((msg, i) => (
+                                        <div
+                                            key={i}
+                                            className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
+                                        >
+                                            <div
+                                                className={`max-w-[85%] px-3 py-2 rounded-lg text-sm ${msg.role === 'user'
+                                                    ? 'bg-purple-600/50 text-white border border-purple-500/30'
+                                                    : 'bg-gray-700/50 text-gray-200 border border-gray-600/30'
+                                                    }`}
+                                            >
+                                                {msg.content}
+                                            </div>
+                                        </div>
+                                    ))
+                                )}
+                                {isChatLoading && (
+                                    <div className="flex justify-start">
+                                        <div className="bg-gray-700/50 text-gray-400 px-3 py-2 rounded-lg text-sm border border-gray-600/30 flex items-center gap-2">
+                                            <Loader2 className="w-4 h-4 animate-spin" />
+                                            Réflexion...
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+
+                            {/* Input area */}
+                            <div className="p-2 border-t border-gray-600/50 flex gap-2">
+                                <input
+                                    type="text"
+                                    value={chatInput}
+                                    onChange={(e) => setChatInput(e.target.value)}
+                                    onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && sendChatMessage()}
+                                    placeholder="Votre question..."
+                                    className="flex-1 px-3 py-2 bg-gray-900/50 border border-gray-600/50 rounded-lg text-sm text-white placeholder-gray-500 focus:outline-none focus:border-cyan-500/50"
+                                    disabled={isChatLoading}
+                                />
+                                <button
+                                    onClick={sendChatMessage}
+                                    disabled={isChatLoading || !chatInput.trim()}
+                                    className="px-3 py-2 bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-lg transition-all"
+                                >
+                                    <MessageSquare className="w-4 h-4" />
+                                </button>
+                            </div>
                         </div>
                     )}
                 </div>
@@ -2243,6 +3256,269 @@ function SignalPanel({ signals }: { signals: MicroSignal[] }) {
         </div>
     );
 }
+// ============================================
+// GRAPH INTERACTIVE CHAT - Floating command chat panel
+// ============================================
+
+interface GraphChatProps {
+    isOpen: boolean;
+    graphNodes: RingNode[];
+    graphEdges: RingEdge[];
+    pathology: string;
+    // Existing callbacks
+    onCreateGroup: (nodeType: string, groupName: string, nodeNames?: string[]) => void;
+    onFilterVisibility: (nodeName: string) => void;
+    onAddNode: (nodeName: string) => void;
+    onHighlightNode: (nodeName: string) => void;
+    onResetView: () => void;
+    // New callbacks
+    onShowOnlyNodes: (nodeNames: string[]) => void;
+    onShowOnlyNodeTypes: (nodeTypes: string[]) => void;
+    onHideNodes: (nodeNames: string[]) => void;
+    onArrangeLayout: (layout: 'corners' | 'grid' | 'radial') => void;
+    onAutoGroupByType: () => void;
+    onHideGroup: (groupName: string) => void;
+    onShowOnlyGroup: (groupName: string) => void;
+    onSetCentral: (nodeName: string) => void;
+}
+
+function GraphInteractiveChat({
+    isOpen,
+    graphNodes,
+    graphEdges,
+    pathology,
+    onCreateGroup,
+    onFilterVisibility,
+    onAddNode,
+    onHighlightNode,
+    onResetView,
+    onShowOnlyNodes,
+    onShowOnlyNodeTypes,
+    onHideNodes,
+    onArrangeLayout,
+    onAutoGroupByType,
+    onHideGroup,
+    onShowOnlyGroup,
+    onSetCentral
+}: GraphChatProps) {
+    const [isExpanded, setIsExpanded] = useState(false);
+    const [messages, setMessages] = useState<{ role: 'user' | 'assistant', content: string }[]>([]);
+    const [input, setInput] = useState('');
+    const [isLoading, setIsLoading] = useState(false);
+    const messagesEndRef = useRef<HTMLDivElement>(null);
+
+    // Auto-scroll to bottom
+    useEffect(() => {
+        messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }, [messages]);
+
+    // Reset on close
+    useEffect(() => {
+        if (!isOpen) {
+            setIsExpanded(false);
+            setMessages([]);
+            setInput('');
+        }
+    }, [isOpen]);
+
+    const sendCommand = async () => {
+        if (!input.trim() || isLoading) return;
+
+        const userMessage = input.trim();
+        setInput('');
+        setMessages(prev => [...prev, { role: 'user', content: userMessage }]);
+        setIsLoading(true);
+
+        try {
+            const { data, error } = await supabase.functions.invoke('graph-chat', {
+                body: {
+                    mode: 'graph_command',
+                    message: userMessage,
+                    context: {
+                        graphState: {
+                            nodes: graphNodes.map(n => ({ id: n.id, name: n.name, node_type: n.node_type, ring: n.ring })),
+                            edges: graphEdges.slice(0, 50).map(e => ({ id: e.id, source: e.source, target: e.target, relationship: e.relationship }))
+                        },
+                        pathology,
+                        conversationHistory: messages
+                    }
+                }
+            });
+
+            if (error) throw error;
+
+            const response = data.message || 'Commande exécutée.';
+            setMessages(prev => [...prev, { role: 'assistant', content: response }]);
+
+            // Execute action if present
+            if (data.action) {
+                const { type, params = {} } = data.action;
+                switch (type) {
+                    case 'CREATE_GROUP':
+                        if (params?.nodeType) onCreateGroup(params.nodeType, params.groupName || params.nodeType, params?.nodeNames);
+                        else if (params?.nodeNames?.length) onCreateGroup('custom', params.groupName || 'Groupe personnalisé', params.nodeNames);
+                        break;
+                    case 'FILTER_VISIBILITY':
+                        if (params?.nodeName) onFilterVisibility(params.nodeName);
+                        break;
+                    case 'ADD_NODE':
+                        if (params?.nodeName) onAddNode(params.nodeName);
+                        break;
+                    case 'HIGHLIGHT_NODE':
+                        if (params?.nodeName) onHighlightNode(params.nodeName);
+                        break;
+                    case 'RESET_VIEW':
+                        onResetView();
+                        break;
+                    // New action types
+                    case 'SHOW_ONLY_NODES':
+                        if (params?.nodeNames?.length) onShowOnlyNodes(params.nodeNames);
+                        break;
+                    case 'SHOW_ONLY_NODE_TYPES':
+                        if (params?.nodeTypes?.length) onShowOnlyNodeTypes(params.nodeTypes);
+                        break;
+                    case 'HIDE_NODES':
+                        if (params?.nodeNames?.length) onHideNodes(params.nodeNames);
+                        break;
+                    case 'ARRANGE_LAYOUT':
+                        if (params?.layout) onArrangeLayout(params.layout);
+                        break;
+                    case 'AUTO_GROUP_BY_TYPE':
+                        onAutoGroupByType();
+                        break;
+                    case 'HIDE_GROUP':
+                        if (params?.groupName) onHideGroup(params.groupName);
+                        break;
+                    case 'SHOW_ONLY_GROUP':
+                        if (params?.groupName) onShowOnlyGroup(params.groupName);
+                        break;
+                    case 'SET_CENTRAL':
+                        if (params?.nodeName) onSetCentral(params.nodeName);
+                        break;
+                    // INFO_RESPONSE just displays the message
+                }
+            }
+        } catch (err) {
+            console.error('Graph chat error:', err);
+            setMessages(prev => [...prev, { role: 'assistant', content: '❌ Erreur de communication. Réessayez.' }]);
+        } finally {
+            setIsLoading(false);
+        }
+    };
+
+    if (!isOpen) return null;
+
+    return (
+        <div className="absolute bottom-4 right-4 z-50">
+            {/* Toggle button */}
+            {!isExpanded && (
+                <button
+                    onClick={() => setIsExpanded(true)}
+                    className="w-14 h-14 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 rounded-full shadow-lg flex items-center justify-center transition-all hover:scale-110 border border-purple-400/30"
+                    title="Chat avec le graphe"
+                >
+                    <MessageSquare className="w-6 h-6 text-white" />
+                </button>
+            )}
+
+            {/* Expanded chat panel */}
+            {isExpanded && (
+                <div className="w-[380px] bg-gray-900/95 backdrop-blur-md rounded-xl border border-purple-500/30 shadow-2xl overflow-hidden">
+                    {/* Header */}
+                    <div className="p-3 bg-gradient-to-r from-purple-900/50 to-indigo-900/50 border-b border-gray-700/50 flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                            <div className="w-8 h-8 bg-purple-600/30 rounded-lg flex items-center justify-center">
+                                <Sparkles className="w-4 h-4 text-purple-400" />
+                            </div>
+                            <div>
+                                <h4 className="text-sm font-medium text-white">Assistant Graphe</h4>
+                                <p className="text-[10px] text-gray-400">Contrôlez le graphe en langage naturel</p>
+                            </div>
+                        </div>
+                        <button
+                            onClick={() => setIsExpanded(false)}
+                            className="p-1.5 hover:bg-gray-700/50 rounded-lg transition-colors"
+                        >
+                            <X className="w-4 h-4 text-gray-400" />
+                        </button>
+                    </div>
+
+                    {/* Quick commands */}
+                    <div className="p-2 border-b border-gray-700/50 flex gap-1.5 flex-wrap">
+                        {[
+                            { label: '💊 Regrouper médicaments', cmd: 'Crée un groupe avec tous les médicaments' },
+                            { label: '🔗 Voir interactions', cmd: 'Montre les interactions avec la pathologie centrale' },
+                            { label: '🔄 Réinitialiser', cmd: 'Réinitialise la vue du graphe' }
+                        ].map((quick, i) => (
+                            <button
+                                key={i}
+                                onClick={() => { setInput(quick.cmd); }}
+                                className="px-2 py-1 text-[10px] bg-gray-800/50 hover:bg-purple-600/30 border border-gray-600/30 rounded-full text-gray-300 transition-colors"
+                            >
+                                {quick.label}
+                            </button>
+                        ))}
+                    </div>
+
+                    {/* Messages */}
+                    <div className="h-[200px] overflow-y-auto p-3 space-y-2">
+                        {messages.length === 0 ? (
+                            <div className="text-center py-8 text-gray-500 text-sm">
+                                <p>💬 Donnez une commande au graphe</p>
+                                <p className="text-xs mt-2 text-gray-600">Ex: "Crée un groupe avec tous les symptômes"</p>
+                            </div>
+                        ) : (
+                            messages.map((msg, i) => (
+                                <div
+                                    key={i}
+                                    className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
+                                >
+                                    <div
+                                        className={`max-w-[85%] px-3 py-2 rounded-lg text-sm ${msg.role === 'user'
+                                            ? 'bg-purple-600/40 text-white border border-purple-500/30'
+                                            : 'bg-gray-800/60 text-gray-200 border border-gray-600/30'
+                                            }`}
+                                    >
+                                        {msg.content}
+                                    </div>
+                                </div>
+                            ))
+                        )}
+                        {isLoading && (
+                            <div className="flex justify-start">
+                                <div className="bg-gray-800/60 text-cyan-400 px-3 py-2 rounded-lg text-sm border border-cyan-500/20 flex items-center gap-2">
+                                    <Loader2 className="w-4 h-4 animate-spin" />
+                                    Analyse...
+                                </div>
+                            </div>
+                        )}
+                        <div ref={messagesEndRef} />
+                    </div>
+
+                    {/* Input */}
+                    <div className="p-2 border-t border-gray-700/50 flex gap-2">
+                        <input
+                            type="text"
+                            value={input}
+                            onChange={(e) => setInput(e.target.value)}
+                            onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && sendCommand()}
+                            placeholder="Ex: Ajoute Aspirine au graphe..."
+                            className="flex-1 px-3 py-2 bg-gray-800/50 border border-gray-600/50 rounded-lg text-sm text-white placeholder-gray-500 focus:outline-none focus:border-purple-500/50"
+                            disabled={isLoading}
+                        />
+                        <button
+                            onClick={sendCommand}
+                            disabled={isLoading || !input.trim()}
+                            className="px-4 py-2 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-lg transition-all font-medium text-sm"
+                        >
+                            Envoyer
+                        </button>
+                    </div>
+                </div>
+            )}
+        </div>
+    );
+}
 
 // ============================================
 // MAIN MODAL
@@ -2255,6 +3531,9 @@ interface RadialRingsModalProps {
     pathologies?: string[]; // Multiple pathologies for comorbidity analysis
     mode?: 'THERAPY' | 'SAFETY' | 'ETIOLOGY' | 'RELAPSE';
     context?: Record<string, any>;
+    onSave?: (savedGraph: any) => void;
+    initialData?: RadialRingsData;
+    initialViewState?: any;
 }
 
 export default function RadialRingsModal({
@@ -2263,7 +3542,10 @@ export default function RadialRingsModal({
     pathology,
     pathologies = [],
     mode = 'ETIOLOGY',
-    context
+    context,
+    onSave,
+    initialData,
+    initialViewState
 }: RadialRingsModalProps) {
     // Support both single pathology and array of pathologies
     const allPathologies = pathologies.length > 0 ? pathologies : (pathology ? [pathology] : []);
@@ -2319,6 +3601,36 @@ export default function RadialRingsModal({
     const [nodeSizeScale, setNodeSizeScale] = useState(1.0);
     const [hiddenNodeTypes, setHiddenNodeTypes] = useState<Set<string>>(new Set());
     const [hiddenRelationTypes, setHiddenRelationTypes] = useState<Set<string>>(new Set());
+    const [hiddenNodes, setHiddenNodes] = useState<Set<string>>(new Set()); // Individual node hiding
+    const [customNodePositions, setCustomNodePositions] = useState<Map<string, { x: number, y: number }>>(new Map()); // Chat-controlled positions
+
+    // Initialize state from initialViewState if provided
+    useEffect(() => {
+        if (initialViewState) {
+            if (initialViewState.layoutParams) {
+                // We might need to lift layoutParams state up or handle it here if it was exposed
+                // Assuming layoutParams state exists or we interact with setters if exposed
+            }
+            if (initialViewState.hiddenNodes) setHiddenNodes(new Set(initialViewState.hiddenNodes as string[]));
+            if (initialViewState.customNodePositions) {
+                const map = new Map<string, { x: number, y: number }>();
+                Object.entries(initialViewState.customNodePositions).forEach(([k, v]: [string, any]) => map.set(k, v));
+                setCustomNodePositions(map);
+            }
+            if (initialViewState.cameraPosition) {
+                // If we had camera control exposed, we'd set it here
+            }
+        }
+    }, [initialViewState]);
+
+    // ============================================
+    // DEEP ANALYSIS FEATURE
+    // Analyze graph and highlight optimal treatment schema in gold
+    // ============================================
+    const [isDeepAnalyzing, setIsDeepAnalyzing] = useState(false);
+    const [deepAnalysisMode, setDeepAnalysisMode] = useState(false);
+    const [goldenNodeIds, setGoldenNodeIds] = useState<Set<string>>(new Set());
+    const [deepAnalysisResult, setDeepAnalysisResult] = useState<string | null>(null);
 
     // Highlighted nodes (neighbors of selected node)
     const [highlightedNodeIds, setHighlightedNodeIds] = useState<Set<string>>(new Set());
@@ -2331,6 +3643,15 @@ export default function RadialRingsModal({
 
     // Map: centerNodeId -> Set of member node IDs that orbit around it
     const [nodeGroups, setNodeGroups] = useState<Map<string, Set<string>>>(new Map());
+
+    // ============================================
+    // SELECTION TOOLS STATE
+    // ============================================
+    const [selectionMode, setSelectionMode] = useState<'cursor' | 'lasso' | 'circle' | 'rectangle'>('cursor');
+    const [multiSelectedNodeIds, setMultiSelectedNodeIds] = useState<Set<string>>(new Set());
+    const [isSelecting, setIsSelecting] = useState(false);
+    const [selectionPoints, setSelectionPoints] = useState<{ x: number; y: number }[]>([]);
+    const selectionStartRef = useRef<{ x: number; y: number } | null>(null);
 
     // Group creation mode: when true, clicking nodes adds them to the current group
     const [groupCreationMode, setGroupCreationMode] = useState(false);
@@ -2392,6 +3713,108 @@ export default function RadialRingsModal({
             next.delete(centerId);
             return next;
         });
+    }, []);
+
+    // Create a group with multiple nodes at once (for chat commands)
+    const createGroupWithNodes = useCallback((centerNodeId: string, memberNodeIds: string[]) => {
+        setNodeGroups(prev => {
+            const next = new Map(prev);
+            const members = new Set(memberNodeIds.filter(id => id !== centerNodeId));
+            next.set(centerNodeId, members);
+            return next;
+        });
+    }, []);
+
+    // ============================================
+    // DEEP ANALYSIS - AI-powered optimal treatment schema
+    // ============================================
+    const handleDeepAnalysis = useCallback(async () => {
+        if (!data || isDeepAnalyzing) return;
+
+        setIsDeepAnalyzing(true);
+        setDeepAnalysisMode(false);
+        setGoldenNodeIds(new Set());
+        setDeepAnalysisResult(null);
+
+        try {
+            // Prepare graph context for AI analysis
+            const nodesContext = data.knowledge_graph.nodes.map(n => ({
+                id: n.id,
+                name: n.name,
+                type: n.node_type,
+                ring: n.ring
+            }));
+
+            const edgesContext = data.knowledge_graph.edges.slice(0, 100).map(e => ({
+                source: typeof e.source === 'object' ? (e.source as any).id : e.source,
+                target: typeof e.target === 'object' ? (e.target as any).id : e.target,
+                relationship: e.relationship,
+                evidence: e.evidence_grade
+            }));
+
+            // Call AI to analyze optimal treatment
+            const { data: aiResponse, error } = await supabase.functions.invoke('causal-reasoning', {
+                body: {
+                    query: `Analyse ce graphe de connaissances médicales pour la pathologie "${primaryPathology}".
+
+NŒUDS DISPONIBLES:
+${nodesContext.map(n => `- ${n.name} (${n.type}, ID: ${n.id})`).join('\n')}
+
+RELATIONS:
+${edgesContext.map(e => `- ${e.source} → ${e.target}: ${e.relationship}`).join('\n')}
+
+MISSION CRITIQUE:
+1. Identifie le MEILLEUR SCHÉMA DE TRAITEMENT pour guérir ou gérer cette pathologie
+2. Sélectionne les nœuds les plus importants (médicaments, traitements, mécanismes clés)
+3. Ignore les nœuds non pertinents ou dangereux (contre-indications)
+
+RÉPONDS EN JSON STRICT:
+{
+    "optimal_node_ids": ["id1", "id2", ...],
+    "treatment_summary": "Résumé du schéma thérapeutique optimal",
+    "rationale": "Explication de pourquoi ces nœuds sont optimaux"
+}
+
+IMPORTANT: Retourne UNIQUEMENT les IDs des nœuds qui forment le schéma thérapeutique optimal. Maximum 10 nœuds.`,
+                    context: {
+                        pathology: primaryPathology,
+                        graph_size: { nodes: nodesContext.length, edges: edgesContext.length }
+                    }
+                }
+            });
+
+            if (error) throw error;
+
+            // Parse AI response
+            const analysisText = aiResponse?.analysis || aiResponse?.explanation || '';
+            const jsonMatch = analysisText.match(/\{[\s\S]*\}/);
+
+            if (jsonMatch) {
+                const parsed = JSON.parse(jsonMatch[0]);
+                const optimalIds = new Set(parsed.optimal_node_ids || []);
+
+                setGoldenNodeIds(optimalIds);
+                setDeepAnalysisResult(parsed.treatment_summary || 'Schéma thérapeutique optimal identifié');
+                setDeepAnalysisMode(true);
+
+                console.log(`[Deep Analysis] Identified ${optimalIds.size} optimal nodes:`, parsed.optimal_node_ids);
+            } else {
+                throw new Error('Invalid AI response format');
+            }
+
+        } catch (err) {
+            console.error('[Deep Analysis] Error:', err);
+            setDeepAnalysisResult('Erreur lors de l\'analyse. Réessayez.');
+        } finally {
+            setIsDeepAnalyzing(false);
+        }
+    }, [data, primaryPathology, isDeepAnalyzing]);
+
+    // Exit deep analysis mode
+    const exitDeepAnalysisMode = useCallback(() => {
+        setDeepAnalysisMode(false);
+        setGoldenNodeIds(new Set());
+        setDeepAnalysisResult(null);
     }, []);
 
     // Search & Isolate State
@@ -2547,7 +3970,17 @@ export default function RadialRingsModal({
     useEffect(() => {
         if (isOpen && allPathologies.length > 0) {
             setCentralNode(primaryPathology);
-            fetchData(allPathologies);
+            if (initialData) {
+                setData(initialData);
+                setFromCache(true);
+                // Also trigger rapid "spawn" effect for loaded nodes so they appear
+                if (initialData.knowledge_graph?.nodes) {
+                    // Ensure nodes are in queue or just set visible immediately
+                    setVisibleNodeCount(initialData.knowledge_graph.nodes.length);
+                }
+            } else {
+                fetchData(allPathologies);
+            }
         }
         return () => { if (animationRef.current) cancelAnimationFrame(animationRef.current); };
     }, [isOpen, allPathologies.join(',')]);
@@ -3413,43 +4846,41 @@ export default function RadialRingsModal({
                 {/* Show when loading AND graph has minimal content (placeholder only) */}
                 {isLoading && (!data || data.knowledge_graph.nodes.length <= 1) && (
                     <div className="absolute inset-0 flex items-center justify-center bg-gray-900 z-30 overflow-hidden">
-                        {/* Matrix Rain Background */}
-                        <div className="absolute inset-0 opacity-30 pointer-events-none overflow-hidden">
-                            {Array.from({ length: 30 }).map((_, i) => (
-                                <div
-                                    key={`matrix-col-${i}`}
-                                    className="absolute text-cyan-400 font-mono text-xs leading-none select-none"
-                                    style={{
-                                        left: `${(i / 30) * 100}%`,
-                                        animation: `matrixFall ${3 + Math.random() * 4}s linear infinite`,
-                                        animationDelay: `${Math.random() * 3}s`,
-                                        top: '-100%',
-                                        writingMode: 'vertical-rl'
-                                    }}
-                                >
-                                    {Array.from({ length: 30 }).map((_, j) => (
-                                        <span
-                                            key={j}
-                                            style={{
-                                                opacity: 1 - (j / 30) * 0.8,
-                                                color: j === 0 ? '#22d3ee' : j < 3 ? '#06b6d4' : '#0e7490'
-                                            }}
-                                        >
-                                            {String.fromCharCode(0x30A0 + Math.random() * 96)}
-                                        </span>
-                                    ))}
-                                </div>
-                            ))}
-                        </div>
+                        {/* Canvas-based Matrix Rain Background */}
+                        <MatrixBackground />
 
-                        {/* Holographic Scan Effect */}
-                        <div
-                            className="absolute inset-0 pointer-events-none"
-                            style={{
-                                background: 'linear-gradient(0deg, transparent 0%, rgba(6, 182, 212, 0.15) 45%, rgba(34, 211, 238, 0.3) 50%, rgba(6, 182, 212, 0.15) 55%, transparent 100%)',
-                                animation: 'holographicScan 3s ease-in-out infinite'
-                            }}
-                        />
+                        {/* Radar Sweep Effect - Submarine Style */}
+                        <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                            <div
+                                className="absolute"
+                                style={{
+                                    width: '100%',
+                                    height: '100%',
+                                    background: 'conic-gradient(from 0deg, transparent 0deg, transparent 340deg, rgba(6, 182, 212, 0.4) 355deg, rgba(34, 211, 238, 0.6) 360deg)',
+                                    animation: 'radarSweep 3s linear infinite',
+                                    borderRadius: '50%',
+                                    maxWidth: '600px',
+                                    maxHeight: '600px',
+                                }}
+                            />
+                            {/* Radar rings */}
+                            {[1, 2, 3, 4].map(i => (
+                                <div
+                                    key={i}
+                                    className="absolute border border-cyan-500/20 rounded-full"
+                                    style={{
+                                        width: `${i * 25}%`,
+                                        height: `${i * 25}%`,
+                                        maxWidth: `${i * 150}px`,
+                                        maxHeight: `${i * 150}px`,
+                                    }}
+                                />
+                            ))}
+                            {/* Center dot */}
+                            <div className="absolute w-3 h-3 bg-cyan-400 rounded-full animate-pulse"
+                                style={{ boxShadow: '0 0 20px rgba(34, 211, 238, 0.8)' }}
+                            />
+                        </div>
 
                         {/* Subtle CRT Scanlines */}
                         <div
@@ -3471,9 +4902,213 @@ export default function RadialRingsModal({
                             </svg>
                         </div>
 
-                        {/* Main animation container */}
-                        <div className="relative">
-                            <svg width="300" height="300" viewBox="0 0 300 300">
+                        {/* Neural Network Background */}
+                        <div className="absolute inset-0 overflow-hidden pointer-events-none">
+                            <svg width="100%" height="100%" className="opacity-30">
+                                <defs>
+                                    <filter id="networkGlow" x="-50%" y="-50%" width="200%" height="200%">
+                                        <feGaussianBlur stdDeviation="2" result="blur" />
+                                        <feMerge>
+                                            <feMergeNode in="blur" />
+                                            <feMergeNode in="SourceGraphic" />
+                                        </feMerge>
+                                    </filter>
+                                </defs>
+                                {/* Network nodes and connections */}
+                                {[
+                                    { x: 50, y: 80, connections: [[120, 150], [80, 180]] },
+                                    { x: 120, y: 150, connections: [[200, 120], [180, 200]] },
+                                    { x: 80, y: 180, connections: [[150, 220]] },
+                                    { x: 200, y: 120, connections: [[280, 90], [260, 180]] },
+                                    { x: 280, y: 90, connections: [[350, 130]] },
+                                    { x: 260, y: 180, connections: [[320, 220]] },
+                                    { x: 350, y: 130, connections: [[400, 100]] },
+                                    { x: 320, y: 220, connections: [[380, 260]] },
+                                    { x: 400, y: 100, connections: [] },
+                                    { x: 380, y: 260, connections: [] },
+                                    { x: 150, y: 220, connections: [[220, 280]] },
+                                    { x: 220, y: 280, connections: [[300, 300]] },
+                                    { x: 300, y: 300, connections: [] },
+                                    { x: 30, y: 200, connections: [[80, 180]] },
+                                    { x: 420, y: 200, connections: [[380, 260]] },
+                                ].map((node, i) => (
+                                    <g key={i}>
+                                        {node.connections.map((target, j) => (
+                                            <line
+                                                key={j}
+                                                x1={node.x}
+                                                y1={node.y}
+                                                x2={target[0]}
+                                                y2={target[1]}
+                                                stroke="#0891b2"
+                                                strokeWidth="0.5"
+                                                opacity="0.4"
+                                                filter="url(#networkGlow)"
+                                            />
+                                        ))}
+                                        <circle
+                                            cx={node.x}
+                                            cy={node.y}
+                                            r="4"
+                                            fill="#0e7490"
+                                            filter="url(#networkGlow)"
+                                            opacity="0.6"
+                                        >
+                                            <animate attributeName="opacity" values="0.3;0.8;0.3" dur={`${2 + i * 0.3}s`} repeatCount="indefinite" />
+                                        </circle>
+                                    </g>
+                                ))}
+                            </svg>
+                        </div>
+
+                        {/* 3D Rotating Realistic Brain with Intense Neon */}
+                        <div className="relative z-10" style={{ perspective: '1000px' }}>
+                            <svg
+                                width="320"
+                                height="280"
+                                viewBox="0 0 320 280"
+                                style={{
+                                    animation: 'rotateBrain 10s ease-in-out infinite',
+                                    transformStyle: 'preserve-3d',
+                                    filter: 'drop-shadow(0 0 30px rgba(6, 182, 212, 0.6)) drop-shadow(0 0 60px rgba(6, 182, 212, 0.3))'
+                                }}
+                            >
+                                <defs>
+                                    {/* Intense cyan neon glow */}
+                                    <filter id="brainNeon" x="-100%" y="-100%" width="300%" height="300%">
+                                        <feGaussianBlur stdDeviation="3" result="blur1" />
+                                        <feGaussianBlur stdDeviation="6" result="blur2" />
+                                        <feGaussianBlur stdDeviation="12" result="blur3" />
+                                        <feMerge>
+                                            <feMergeNode in="blur3" />
+                                            <feMergeNode in="blur2" />
+                                            <feMergeNode in="blur1" />
+                                            <feMergeNode in="SourceGraphic" />
+                                        </feMerge>
+                                    </filter>
+
+                                    {/* Brain inner glow gradient */}
+                                    <radialGradient id="brainInnerGlow" cx="40%" cy="40%" r="70%">
+                                        <stop offset="0%" stopColor="#22d3ee" stopOpacity="0.15" />
+                                        <stop offset="50%" stopColor="#0891b2" stopOpacity="0.08" />
+                                        <stop offset="100%" stopColor="#0e7490" stopOpacity="0.02" />
+                                    </radialGradient>
+
+                                    {/* Electric pulse gradient */}
+                                    <linearGradient id="pulseGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+                                        <stop offset="0%" stopColor="#22d3ee" stopOpacity="0" />
+                                        <stop offset="50%" stopColor="#67e8f9" stopOpacity="1" />
+                                        <stop offset="100%" stopColor="#22d3ee" stopOpacity="0" />
+                                    </linearGradient>
+                                </defs>
+
+                                {/* Brain silhouette fill */}
+                                <path
+                                    d="M 160 30
+                                       C 100 30, 50 60, 35 100
+                                       C 20 140, 25 170, 35 195
+                                       C 45 220, 70 235, 90 245
+                                       C 110 255, 130 258, 150 258
+                                       L 155 258
+                                       C 155 265, 160 270, 170 270
+                                       C 180 270, 185 265, 185 258
+                                       L 190 258
+                                       C 210 258, 230 255, 250 245
+                                       C 270 235, 295 220, 305 195
+                                       C 315 170, 320 140, 305 100
+                                       C 290 60, 240 30, 180 30
+                                       C 175 28, 165 28, 160 30 Z"
+                                    fill="url(#brainInnerGlow)"
+                                    stroke="#22d3ee"
+                                    strokeWidth="2.5"
+                                    filter="url(#brainNeon)"
+                                >
+                                    <animate attributeName="stroke-opacity" values="0.7;1;0.7" dur="2s" repeatCount="indefinite" />
+                                </path>
+
+                                {/* Temporal lobe (bottom left) */}
+                                <path
+                                    d="M 75 200 C 60 210, 50 230, 65 245 C 80 255, 100 250, 115 245"
+                                    fill="none" stroke="#22d3ee" strokeWidth="2" filter="url(#brainNeon)" opacity="0.9"
+                                />
+
+                                {/* Cerebellum (back bottom) */}
+                                <path
+                                    d="M 240 235 Q 260 250, 280 235 Q 295 220, 285 200"
+                                    fill="none" stroke="#22d3ee" strokeWidth="2" filter="url(#brainNeon)" opacity="0.8"
+                                />
+                                <path
+                                    d="M 250 225 Q 265 235, 275 225"
+                                    fill="none" stroke="#06b6d4" strokeWidth="1.5" filter="url(#brainNeon)" opacity="0.6"
+                                />
+
+                                {/* Gyri and Sulci - Detailed brain folds */}
+                                {/* Top section */}
+                                <path d="M 80 80 Q 110 60, 140 75 Q 170 90, 200 70 Q 230 55, 260 75" fill="none" stroke="#22d3ee" strokeWidth="2" filter="url(#brainNeon)" opacity="0.9" />
+                                <path d="M 70 105 Q 100 85, 130 100 Q 160 115, 190 95 Q 220 80, 255 95" fill="none" stroke="#06b6d4" strokeWidth="1.8" filter="url(#brainNeon)" opacity="0.85" />
+
+                                {/* Middle section */}
+                                <path d="M 55 130 Q 85 115, 120 130 Q 155 145, 190 125 Q 225 110, 265 125" fill="none" stroke="#22d3ee" strokeWidth="2" filter="url(#brainNeon)" opacity="0.9" />
+                                <path d="M 50 155 Q 80 140, 115 155 Q 150 170, 185 150 Q 220 135, 270 150" fill="none" stroke="#06b6d4" strokeWidth="1.8" filter="url(#brainNeon)" opacity="0.8" />
+
+                                {/* Lower section */}
+                                <path d="M 55 180 Q 90 165, 125 180 Q 160 195, 195 175 Q 230 160, 280 175" fill="none" stroke="#22d3ee" strokeWidth="1.8" filter="url(#brainNeon)" opacity="0.85" />
+                                <path d="M 70 205 Q 105 190, 140 205 Q 175 220, 210 200 Q 245 185, 285 195" fill="none" stroke="#06b6d4" strokeWidth="1.5" filter="url(#brainNeon)" opacity="0.75" />
+
+                                {/* Frontal lobe details */}
+                                <path d="M 45 95 Q 50 80, 65 75" fill="none" stroke="#67e8f9" strokeWidth="1.5" filter="url(#brainNeon)" opacity="0.7" />
+                                <path d="M 40 120 Q 45 105, 55 100" fill="none" stroke="#67e8f9" strokeWidth="1.5" filter="url(#brainNeon)" opacity="0.6" />
+                                <path d="M 38 145 Q 42 130, 50 125" fill="none" stroke="#67e8f9" strokeWidth="1.5" filter="url(#brainNeon)" opacity="0.5" />
+
+                                {/* Occipital lobe details (back) */}
+                                <path d="M 290 95 Q 300 90, 295 105" fill="none" stroke="#67e8f9" strokeWidth="1.5" filter="url(#brainNeon)" opacity="0.7" />
+                                <path d="M 295 120 Q 305 115, 302 135" fill="none" stroke="#67e8f9" strokeWidth="1.5" filter="url(#brainNeon)" opacity="0.6" />
+                                <path d="M 300 150 Q 310 155, 305 170" fill="none" stroke="#67e8f9" strokeWidth="1.5" filter="url(#brainNeon)" opacity="0.5" />
+
+                                {/* Central sulcus */}
+                                <path d="M 180 45 Q 175 80, 185 120 Q 190 160, 175 200" fill="none" stroke="#0891b2" strokeWidth="1.2" filter="url(#brainNeon)" opacity="0.5" />
+
+                                {/* Electric pulses traveling through brain */}
+                                <circle r="3" fill="#67e8f9" filter="url(#brainNeon)">
+                                    <animateMotion dur="3s" repeatCount="indefinite">
+                                        <mpath href="#pulse-path-1" />
+                                    </animateMotion>
+                                    <animate attributeName="opacity" values="0;1;1;0" dur="3s" repeatCount="indefinite" />
+                                </circle>
+                                <path id="pulse-path-1" d="M 80 80 Q 140 100, 200 70 Q 260 50, 280 95" fill="none" stroke="none" />
+
+                                <circle r="2" fill="#22d3ee" filter="url(#brainNeon)">
+                                    <animateMotion dur="2.5s" repeatCount="indefinite" begin="0.8s">
+                                        <mpath href="#pulse-path-2" />
+                                    </animateMotion>
+                                    <animate attributeName="opacity" values="0;1;1;0" dur="2.5s" repeatCount="indefinite" begin="0.8s" />
+                                </circle>
+                                <path id="pulse-path-2" d="M 55 155 Q 120 170, 185 150 Q 250 130, 290 160" fill="none" stroke="none" />
+
+                                <circle r="2.5" fill="#a5f3fc" filter="url(#brainNeon)">
+                                    <animateMotion dur="4s" repeatCount="indefinite" begin="1.5s">
+                                        <mpath href="#pulse-path-3" />
+                                    </animateMotion>
+                                    <animate attributeName="opacity" values="0;1;1;0" dur="4s" repeatCount="indefinite" begin="1.5s" />
+                                </circle>
+                                <path id="pulse-path-3" d="M 70 205 Q 140 220, 210 200 Q 260 180, 285 195" fill="none" stroke="none" />
+
+                                {/* Synapse sparks */}
+                                {[[100, 90], [160, 85], [220, 75], [90, 145], [150, 160], [210, 140], [130, 210], [190, 195]].map((pos, i) => (
+                                    <circle key={i} cx={pos[0]} cy={pos[1]} r="2" fill="#a5f3fc" filter="url(#brainNeon)">
+                                        <animate attributeName="r" values="1;3;1" dur={`${0.5 + i * 0.1}s`} repeatCount="indefinite" begin={`${i * 0.15}s`} />
+                                        <animate attributeName="opacity" values="0.3;1;0.3" dur={`${0.5 + i * 0.1}s`} repeatCount="indefinite" begin={`${i * 0.15}s`} />
+                                    </circle>
+                                ))}
+                            </svg>
+
+                            {/* Loading text with futuristic progress bar */}
+                            <LoadingProgressBar />
+                        </div>
+
+                        {/* Original electric circuit SVG - now below the brain */}
+                        <div className="absolute bottom-10 left-1/2 transform -translate-x-1/2 opacity-30">
+                            <svg width="200" height="80" viewBox="0 0 200 80">
                                 <defs>
                                     {/* Electric glow filter */}
                                     <filter id="electricGlow" x="-50%" y="-50%" width="200%" height="200%">
@@ -3624,15 +5259,8 @@ export default function RadialRingsModal({
                                 </circle>
                             </svg>
 
-                            {/* Loading text */}
-                            <div className="absolute bottom-[-40px] left-0 right-0 text-center">
-                                <p className="text-purple-400 font-medium tracking-wider animate-pulse">
-                                    Construction du graphe
-                                </p>
-                                <p className="text-cyan-400/60 text-sm mt-1">
-                                    Connexion des nœuds sémantiques...
-                                </p>
-                            </div>
+                            {/* Loading text with futuristic progress bar */}
+                            <LoadingProgressBar />
                         </div>
 
                         {/* Floating particles background */}
@@ -3690,6 +5318,7 @@ export default function RadialRingsModal({
                         nodeSize={nodeSizeScale}
                         hiddenNodeTypes={hiddenNodeTypes}
                         hiddenRelationTypes={hiddenRelationTypes}
+                        hiddenNodes={hiddenNodes}
                         getNodeTypes={getNodeTypes}
                         nodeGroups={nodeGroups}
                         groupCreationMode={groupCreationMode}
@@ -3698,11 +5327,368 @@ export default function RadialRingsModal({
                         onStartGroupCreation={startGroupCreation}
                         onFinishGroupCreation={finishGroupCreation}
                         onDissolveGroup={dissolveGroup}
+                        customNodePositions={customNodePositions}
+                        deepAnalysisMode={deepAnalysisMode}
+                        goldenNodeIds={goldenNodeIds}
+                        onSaveGraph={onSave}
                     />
+                )}
+
+                {/* ========================================== */}
+                {/* DEEP ANALYSIS BUTTON & UI */}
+                {/* ========================================== */}
+                {data && !isLoading && !error && (
+                    <>
+                        {/* Deep Analysis Button */}
+                        {!deepAnalysisMode && !isDeepAnalyzing && (
+                            <button
+                                onClick={handleDeepAnalysis}
+                                className="absolute top-4 right-4 z-50 bg-gradient-to-r from-amber-500 via-yellow-500 to-amber-600 hover:from-amber-400 hover:via-yellow-400 hover:to-amber-500 text-black font-bold px-4 py-2.5 rounded-xl shadow-lg shadow-amber-500/30 flex items-center gap-2 transition-all hover:scale-105 active:scale-95"
+                                title="Analyser le graphe pour identifier le schéma de traitement optimal"
+                            >
+                                <svg className="w-5 h-5 animate-pulse" fill="currentColor" viewBox="0 0 20 20">
+                                    <path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z" />
+                                </svg>
+                                Analyse Approfondie
+                            </button>
+                        )}
+
+                        {/* Loading Animation Overlay */}
+                        {isDeepAnalyzing && (
+                            <div className="absolute inset-0 z-50 flex flex-col items-center justify-center bg-black/70 backdrop-blur-sm">
+                                <div className="relative">
+                                    {/* Scanning animation rings */}
+                                    <div className="w-32 h-32 rounded-full border-4 border-amber-500/30 animate-ping absolute inset-0" />
+                                    <div className="w-32 h-32 rounded-full border-2 border-amber-400/50 animate-spin" style={{ animationDuration: '3s' }} />
+                                    <div className="absolute inset-0 flex items-center justify-center">
+                                        <div className="w-16 h-16 bg-gradient-to-br from-amber-400 to-yellow-500 rounded-full animate-pulse flex items-center justify-center shadow-lg shadow-amber-500/50">
+                                            <svg className="w-8 h-8 text-black" fill="currentColor" viewBox="0 0 20 20">
+                                                <path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z" />
+                                            </svg>
+                                        </div>
+                                    </div>
+                                </div>
+                                <p className="mt-8 text-lg font-semibold text-amber-400 animate-pulse">
+                                    Analyse en cours...
+                                </p>
+                                <p className="mt-2 text-sm text-gray-400">
+                                    Identification du schéma thérapeutique optimal
+                                </p>
+                            </div>
+                        )}
+
+                        {/* SELECTION TOOLBAR */}
+                        <div className="absolute top-4 left-1/2 -translate-x-1/2 bg-gray-900/90 backdrop-blur border border-gray-700 rounded-lg p-1.5 flex gap-1 shadow-xl z-20"
+                            onPointerDown={(e) => e.stopPropagation()}>
+                            <button
+                                onClick={() => setSelectionMode('cursor')}
+                                className={`p-2 rounded-md transition-all ${selectionMode === 'cursor' ? 'bg-purple-600 text-white shadow-lg shadow-purple-900/20' : 'text-gray-400 hover:text-gray-200 hover:bg-gray-800'}`}
+                                title="Curseur (Déplacement)"
+                            >
+                                <MousePointer2 className="w-4 h-4" />
+                            </button>
+                            <div className="w-[1px] bg-gray-700 mx-1 my-1" />
+                            <button
+                                onClick={() => setSelectionMode('rectangle')}
+                                className={`p-2 rounded-md transition-all ${selectionMode === 'rectangle' ? 'bg-cyan-600 text-white shadow-lg shadow-cyan-900/20' : 'text-gray-400 hover:text-gray-200 hover:bg-gray-800'}`}
+                                title="Sélection Rectangle"
+                            >
+                                <Square className="w-4 h-4" />
+                            </button>
+                            <button
+                                onClick={() => setSelectionMode('circle')}
+                                className={`p-2 rounded-md transition-all ${selectionMode === 'circle' ? 'bg-cyan-600 text-white shadow-lg shadow-cyan-900/20' : 'text-gray-400 hover:text-gray-200 hover:bg-gray-800'}`}
+                                title="Sélection Cercle"
+                            >
+                                <CircleIcon className="w-4 h-4" />
+                            </button>
+                            <button
+                                onClick={() => setSelectionMode('lasso')}
+                                className={`p-2 rounded-md transition-all ${selectionMode === 'lasso' ? 'bg-cyan-600 text-white shadow-lg shadow-cyan-900/20' : 'text-gray-400 hover:text-gray-200 hover:bg-gray-800'}`}
+                                title="Sélection Lasso"
+                            >
+                                <Lasso className="w-4 h-4" />
+                            </button>
+                        </div>
+
+                        {/* SELECTION OVERLAY (SVG) */}
+                        {isSelecting && selectionPoints.length > 0 && (
+                            <div className="absolute inset-0 pointer-events-none z-30">
+                                <svg width="100%" height="100%" style={{ filter: 'drop-shadow(0 0 4px #06b6d4)' }}>
+                                    {selectionMode === 'lasso' && (
+                                        <polyline
+                                            points={selectionPoints.map(p => `${p.x},${p.y}`).join(' ')}
+                                            fill="rgba(6, 182, 212, 0.1)"
+                                            stroke="#06b6d4"
+                                            strokeWidth="2"
+                                            strokeDasharray="4 2"
+                                        />
+                                    )}
+                                    {selectionMode === 'rectangle' && selectionStartRef.current && (
+                                        <rect
+                                            x={Math.min(selectionStartRef.current.x, selectionPoints[selectionPoints.length - 1].x)}
+                                            y={Math.min(selectionStartRef.current.y, selectionPoints[selectionPoints.length - 1].y)}
+                                            width={Math.abs(selectionPoints[selectionPoints.length - 1].x - selectionStartRef.current.x)}
+                                            height={Math.abs(selectionPoints[selectionPoints.length - 1].y - selectionStartRef.current.y)}
+                                            fill="rgba(6, 182, 212, 0.1)"
+                                            stroke="#06b6d4"
+                                            strokeWidth="2"
+                                            strokeDasharray="4 2"
+                                        />
+                                    )}
+                                    {selectionMode === 'circle' && selectionStartRef.current && (
+                                        <circle
+                                            cx={selectionStartRef.current.x}
+                                            cy={selectionStartRef.current.y}
+                                            r={Math.sqrt(Math.pow(selectionPoints[selectionPoints.length - 1].x - selectionStartRef.current.x, 2) + Math.pow(selectionPoints[selectionPoints.length - 1].y - selectionStartRef.current.y, 2))}
+                                            fill="rgba(6, 182, 212, 0.1)"
+                                            stroke="#06b6d4"
+                                            strokeWidth="2"
+                                            strokeDasharray="4 2"
+                                        />
+                                    )}
+                                </svg>
+                            </div>
+                        )}
+
+                        {/* Deep Analysis Result Panel */}
+                        {deepAnalysisMode && deepAnalysisResult && (
+                            <div className="absolute top-4 right-4 z-50 max-w-sm bg-gradient-to-br from-amber-900/90 to-amber-800/90 backdrop-blur-md border border-amber-500/50 rounded-xl p-4 shadow-xl shadow-amber-500/20">
+                                <div className="flex items-center gap-3 mb-3">
+                                    <div className="w-10 h-10 bg-gradient-to-br from-amber-400 to-yellow-500 rounded-full flex items-center justify-center shadow-lg shadow-amber-500/50">
+                                        <svg className="w-5 h-5 text-black" fill="currentColor" viewBox="0 0 20 20">
+                                            <path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z" />
+                                        </svg>
+                                    </div>
+                                    <div>
+                                        <h4 className="text-amber-400 font-bold text-sm">Schéma Optimal</h4>
+                                        <p className="text-amber-200/70 text-xs">{goldenNodeIds.size} nœuds identifiés</p>
+                                    </div>
+                                </div>
+                                <p className="text-sm text-amber-100 mb-3 leading-relaxed">{deepAnalysisResult}</p>
+                                <button
+                                    onClick={exitDeepAnalysisMode}
+                                    className="w-full bg-amber-600/50 hover:bg-amber-500/50 text-amber-100 text-sm py-2 rounded-lg transition-colors"
+                                >
+                                    Fermer l'analyse
+                                </button>
+                            </div>
+                        )}
+                    </>
                 )}
 
                 {/* Signals */}
                 {data && <SignalPanel signals={data.micro_signals} />}
+
+                {/* Graph Interactive Chat */}
+                {data && (
+                    <GraphInteractiveChat
+                        isOpen={!isLoading && !error}
+                        graphNodes={data.knowledge_graph.nodes}
+                        graphEdges={data.knowledge_graph.edges}
+                        pathology={pathology}
+                        onCreateGroup={(nodeType, groupName) => {
+                            // Find all nodes of the given type and create a group
+                            const matchingNodes = data.knowledge_graph.nodes.filter(
+                                n => n.node_type?.toUpperCase().includes(nodeType.toUpperCase()) ||
+                                    n.node_type?.toLowerCase().includes(nodeType.toLowerCase())
+                            );
+                            console.log(`[Graph Chat] Creating group for type "${nodeType}", found ${matchingNodes.length} nodes`);
+                            if (matchingNodes.length > 0) {
+                                // Use atomic group creation
+                                createGroupWithNodes(
+                                    matchingNodes[0].id,
+                                    matchingNodes.map(n => n.id)
+                                );
+                            }
+                        }}
+                        onFilterVisibility={(nodeName) => {
+                            // Find the node and show only connected nodes
+                            const node = data.knowledge_graph.nodes.find(
+                                n => n.name.toLowerCase().includes(nodeName.toLowerCase())
+                            );
+                            console.log(`[Graph Chat] Filtering visibility for "${nodeName}", found: ${node?.name}`);
+                            if (node) {
+                                // Enable focus mode on this node
+                                setSelectedNodeId(node.id);
+                                setFocusMode(true);
+                                // Calculate highlighted (connected) nodes
+                                const connectedIds = new Set<string>();
+                                data.knowledge_graph.edges.forEach(edge => {
+                                    const s = typeof edge.source === 'object' ? (edge.source as any).id : edge.source;
+                                    const t = typeof edge.target === 'object' ? (edge.target as any).id : edge.target;
+                                    if (s === node.id) connectedIds.add(String(t));
+                                    if (t === node.id) connectedIds.add(String(s));
+                                });
+                                setHighlightedNodeIds(connectedIds);
+                            }
+                        }}
+                        onAddNode={(nodeName) => {
+                            // Trigger expansion with the new node name as concept
+                            handleSetCentral(nodeName);
+                        }}
+                        onHighlightNode={(nodeName) => {
+                            // Find and highlight the node
+                            const node = data.knowledge_graph.nodes.find(
+                                n => n.name.toLowerCase().includes(nodeName.toLowerCase())
+                            );
+                            if (node) {
+                                setFilterSelectedNodeId(node.id);
+                            }
+                        }}
+                        onResetView={() => {
+                            // Reset all filters
+                            setFilterSelectedNodeId(null);
+                            setEdgeFilterMode('all');
+                            setHiddenNodeTypes(new Set());
+                            setHiddenRelationTypes(new Set());
+                            setHiddenNodes(new Set());
+                            setFocusMode(false);
+                            setHighlightedNodeIds(new Set());
+                            // Dissolve all groups
+                            nodeGroups.forEach((_, centerId) => dissolveGroup(centerId));
+                        }}
+                        onShowOnlyNodes={(nodeNames) => {
+                            // Show only the specified nodes, hide all others
+                            const visibleNodeIds = new Set<string>();
+                            nodeNames.forEach(name => {
+                                const node = data.knowledge_graph.nodes.find(
+                                    n => n.name.toLowerCase().includes(name.toLowerCase())
+                                );
+                                if (node) visibleNodeIds.add(node.id);
+                            });
+                            // Hide all nodes NOT in the visible set
+                            const toHide = new Set<string>();
+                            data.knowledge_graph.nodes.forEach(n => {
+                                if (!visibleNodeIds.has(n.id)) toHide.add(n.id);
+                            });
+                            setHiddenNodes(toHide);
+                            console.log(`[Graph Chat] Showing only ${visibleNodeIds.size} nodes, hiding ${toHide.size}`);
+                        }}
+                        onShowOnlyNodeTypes={(nodeTypes) => {
+                            // Show only the specified node types
+                            const allTypes = new Set(data.knowledge_graph.nodes.map(n => n.node_type?.toUpperCase()));
+                            const typesToShow = new Set(nodeTypes.map(t => t.toUpperCase()));
+                            const typesToHide = new Set<string>();
+                            allTypes.forEach(t => {
+                                if (t && !typesToShow.has(t)) typesToHide.add(t);
+                            });
+                            setHiddenNodeTypes(typesToHide);
+                            console.log(`[Graph Chat] Showing types: ${Array.from(typesToShow).join(', ')}`);
+                        }}
+                        onHideNodes={(nodeNames) => {
+                            // Hide the specified nodes
+                            const toHide = new Set(hiddenNodes);
+                            nodeNames.forEach(name => {
+                                const node = data.knowledge_graph.nodes.find(
+                                    n => n.name.toLowerCase().includes(name.toLowerCase())
+                                );
+                                if (node) toHide.add(node.id);
+                            });
+                            setHiddenNodes(toHide);
+                            console.log(`[Graph Chat] Hiding ${nodeNames.length} nodes`);
+                        }}
+                        onArrangeLayout={(layout) => {
+                            console.log(`[Graph Chat] Arranging layout: ${layout}`);
+
+                            if (layout === 'corners' || layout === 'grid') {
+                                // Group nodes by type
+                                const nodesByType = new Map<string, RingNode[]>();
+                                data.knowledge_graph.nodes.forEach(n => {
+                                    const type = n.node_type || 'OTHER';
+                                    if (!nodesByType.has(type)) nodesByType.set(type, []);
+                                    nodesByType.get(type)!.push(n);
+                                });
+
+                                // Define corner positions (SVG coordination: center is 300, total is 600)
+                                const corners = [
+                                    { x: 100, y: 100 },  // Top-left
+                                    { x: 500, y: 100 },  // Top-right
+                                    { x: 100, y: 500 },  // Bottom-left
+                                    { x: 500, y: 500 },  // Bottom-right
+                                    { x: 300, y: 100 },  // Top-center
+                                    { x: 300, y: 500 },  // Bottom-center
+                                    { x: 100, y: 300 },  // Left-center
+                                    { x: 500, y: 300 },  // Right-center
+                                ];
+
+                                const newPositions = new Map<string, { x: number, y: number }>();
+                                const types = Array.from(nodesByType.keys());
+
+                                types.forEach((type, typeIndex) => {
+                                    const nodes = nodesByType.get(type)!;
+                                    const corner = corners[typeIndex % corners.length];
+                                    const nodeCount = nodes.length;
+
+                                    // Arrange nodes in a grid around the corner
+                                    const cols = Math.ceil(Math.sqrt(nodeCount));
+                                    const spacing = 30;
+
+                                    nodes.forEach((node, nodeIndex) => {
+                                        const row = Math.floor(nodeIndex / cols);
+                                        const col = nodeIndex % cols;
+                                        newPositions.set(node.id, {
+                                            x: corner.x + (col - cols / 2) * spacing,
+                                            y: corner.y + (row - Math.ceil(nodeCount / cols) / 2) * spacing
+                                        });
+                                    });
+                                });
+
+                                setCustomNodePositions(newPositions);
+                                console.log(`[Graph Chat] Positioned ${newPositions.size} nodes in ${types.length} corners`);
+                            } else if (layout === 'radial') {
+                                // Reset to default radial layout
+                                setCustomNodePositions(new Map());
+                                console.log(`[Graph Chat] Reset to radial layout`);
+                            }
+                        }}
+                        onAutoGroupByType={() => {
+                            // Create groups for each node type
+                            const nodesByType = new Map<string, RingNode[]>();
+                            data.knowledge_graph.nodes.forEach(n => {
+                                const type = n.node_type || 'OTHER';
+                                if (!nodesByType.has(type)) nodesByType.set(type, []);
+                                nodesByType.get(type)!.push(n);
+                            });
+                            // Create groups
+                            nodesByType.forEach((nodes, type) => {
+                                if (nodes.length > 1) {
+                                    createGroupWithNodes(nodes[0].id, nodes.map(n => n.id));
+                                }
+                            });
+                            console.log(`[Graph Chat] Created ${nodesByType.size} groups by type`);
+                        }}
+                        onHideGroup={(groupName) => {
+                            // Hide all nodes in a group (by name matching)
+                            const typeName = groupName.toUpperCase();
+                            const toHide = new Set(hiddenNodes);
+                            data.knowledge_graph.nodes.forEach(n => {
+                                if (n.node_type?.toUpperCase().includes(typeName)) {
+                                    toHide.add(n.id);
+                                }
+                            });
+                            setHiddenNodes(toHide);
+                            console.log(`[Graph Chat] Hiding group "${groupName}"`);
+                        }}
+                        onShowOnlyGroup={(groupName) => {
+                            // Show only nodes in a specific group
+                            const typeName = groupName.toUpperCase();
+                            const toHide = new Set<string>();
+                            data.knowledge_graph.nodes.forEach(n => {
+                                if (!n.node_type?.toUpperCase().includes(typeName)) {
+                                    toHide.add(n.id);
+                                }
+                            });
+                            setHiddenNodes(toHide);
+                            console.log(`[Graph Chat] Showing only group "${groupName}"`);
+                        }}
+                        onSetCentral={(nodeName) => {
+                            // Set a node as central and regenerate the graph
+                            console.log(`[Graph Chat] Setting "${nodeName}" as central node`);
+                            handleSetCentral(nodeName);
+                        }}
+                    />
+                )}
             </div>
 
             {/* Link Explanation Modal */}

@@ -24,7 +24,12 @@ serve(async (req) => {
     try {
         const supabaseUrl = Deno.env.get('SUPABASE_URL') ?? '';
         const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
-        const anthropicKey = Deno.env.get('ANTHROPIC_API_KEY') ?? '';
+        const anthropicKey = Deno.env.get('ANTHROPIC_API_KEY') ?? Deno.env.get('CLAUDE_API_KEY') ?? '';
+
+        if (!anthropicKey) {
+            console.error('❌ Missing ANTHROPIC_API_KEY or CLAUDE_API_KEY');
+            // If we can't get the key, we should prolly fail gracefully, but let's just log for now
+        }
         const supabase = createClient(supabaseUrl, supabaseKey);
 
         console.log('🔄 Checking for pending jobs...');
@@ -155,7 +160,7 @@ Retourne JSON strict selon le format spécifié.`;
                     'anthropic-version': '2023-06-01'
                 },
                 body: JSON.stringify({
-                    model: 'claude-opus-4-20250514',
+                    model: 'claude-3-opus-20240229',
                     max_tokens: 30000,
                     stream: true,  // Enable streaming!
                     messages: [{ role: 'user', content: userPrompt }],

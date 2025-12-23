@@ -19,6 +19,7 @@ import {
 } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
+import RadialRingsModal from '@/components/cde/RadialRingsModal';
 
 // ============================================
 // TYPES
@@ -206,6 +207,19 @@ interface ExtractionResult {
         entity_counts: Record<string, number>;
         relation_counts: Record<string, number>;
     };
+    summary: {
+        entity_counts: Record<string, number>;
+        relation_counts: Record<string, number>;
+    };
+}
+
+interface SavedGraph {
+    id: string;
+    name: string;
+    description: string;
+    graph_data: any;
+    view_state: any;
+    created_at: string;
 }
 
 // ============================================
@@ -587,6 +601,8 @@ function StatisticsPanel() {
         </Card>
     );
 }
+
+
 
 // ============================================
 // COMPONENT: Scientific Search
@@ -2393,6 +2409,102 @@ function AlertsPanel() {
 }
 
 // ============================================
+// COMPONENT: Saved Graphs Panel
+// ============================================
+
+function SavedGraphsPanel({ onLoad, refreshTrigger }: { onLoad: (graph: SavedGraph) => void, refreshTrigger?: number }) {
+    const [savedGraphs, setSavedGraphs] = useState<SavedGraph[]>([]);
+    const [isLoading, setIsLoading] = useState(false);
+
+    const fetchSavedGraphs = useCallback(async () => {
+        setIsLoading(true);
+        try {
+            const { data, error } = await supabase
+                .from('saved_graphs')
+                .select('*')
+                .order('updated_at', { ascending: false });
+
+            if (error) throw error;
+            setSavedGraphs(data || []);
+        } catch (err: any) {
+            console.error('Error fetching saved graphs:', err);
+            toast.error('Erreur chargement graphes sauvegardés');
+        } finally {
+            setIsLoading(false);
+        }
+    }, []);
+
+    useEffect(() => {
+        fetchSavedGraphs();
+    }, [fetchSavedGraphs, refreshTrigger]);
+
+    const handleDelete = async (id: string, e: React.MouseEvent) => {
+        e.stopPropagation();
+        if (!confirm('Êtes-vous sûr de vouloir supprimer ce graphe ?')) return;
+
+        try {
+            const { error } = await supabase
+                .from('saved_graphs')
+                .delete()
+                .eq('id', id);
+
+            if (error) throw error;
+            toast.success('Graphe supprimé');
+            fetchSavedGraphs();
+        } catch (err) {
+            toast.error('Erreur suppression');
+        }
+    };
+
+    return (
+        <Card className="h-full">
+            <CardHeader className="pb-2">
+                <CardTitle className="text-sm font-semibold flex items-center gap-2">
+                    <Brain className="h-4 w-4 text-purple-600" />
+                    Mes Graphes
+                </CardTitle>
+            </CardHeader>
+            <CardContent>
+                <ScrollArea className="h-[200px]">
+                    {isLoading ? (
+                        <div className="flex justify-center p-4"><Loader2 className="animate-spin text-purple-600" /></div>
+                    ) : savedGraphs.length === 0 ? (
+                        <div className="text-center text-xs text-slate-500 p-4">Aucun graphe sauvegardé</div>
+                    ) : (
+                        <div className="space-y-2">
+                            {savedGraphs.map(graph => (
+                                <div
+                                    key={graph.id}
+                                    className="p-2 border rounded-lg hover:bg-purple-50 dark:hover:bg-purple-900/20 cursor-pointer transition-colors group relative"
+                                    onClick={() => onLoad(graph)}
+                                >
+                                    <div className="flex items-start justify-between">
+                                        <div>
+                                            <p className="font-medium text-xs text-purple-700 dark:text-purple-300">{graph.name}</p>
+                                            <p className="text-[10px] text-slate-500 line-clamp-1">{graph.description || 'Sans description'}</p>
+                                        </div>
+                                        <span className="text-[10px] text-slate-400">
+                                            {new Date(graph.created_at).toLocaleDateString()}
+                                        </span>
+                                    </div>
+                                    <button
+                                        onClick={(e) => handleDelete(graph.id, e)}
+                                        className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 p-1 hover:bg-red-100 rounded text-red-500 transition-all"
+                                        title="Supprimer"
+                                    >
+                                        <XCircle className="w-3 h-3" />
+                                    </button>
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                </ScrollArea>
+            </CardContent>
+        </Card>
+    );
+}
+
+// ============================================
 // MAIN PAGE COMPONENT
 // ============================================
 
@@ -2435,6 +2547,11 @@ const DiscoveryPlatform = () => {
         snippets: Array<{ paper_id: string; passage: string; entities: string[]; claim_tags: string[] }>;
         papers: Array<{ pmid: string; title: string; journal: string; publication_date: string; authors: string[] }>;
     } | null>(null);
+
+    // Saved Graphs State
+    const [savedGraphToLoad, setSavedGraphToLoad] = useState<SavedGraph | null>(null);
+    const [isRadialModalOpen, setIsRadialModalOpen] = useState(false);
+    const [refreshSavedGraphs, setRefreshSavedGraphs] = useState(0);
 
     // Toggle hypothesis comparison
     const handleToggleCompare = useCallback((id: string) => {
@@ -2699,76 +2816,7 @@ const DiscoveryPlatform = () => {
                     },
                     async (payload: any) => {
                         const job = payload.new;
-
-                        console.log('Job update:', job);
-
-                        // Update progress message
-                        if (job.progress_message) {
-                            setStreamingContent(prev =>
-                                prev + `\n[${job.progress_percentage}%] ${job.progress_message}`
-                            );
-                        }
-
-                        // Handle completion
-                        if (job.status === 'completed' && job.hypothesis_id) {
-                            // Fetch the generated hypothesis
-                            const { data: hypothesis, error: hypError } = await supabase
-                                .from('discovery_hypotheses')
-                                .select('*')
-                                .eq('id', job.hypothesis_id)
-                                .single();
-
-                            if (hypError || !hypothesis) {
-                                toast.error('Erreur lors de la récupération de l\'hypothèse');
-                                return;
-                            }
-
-                            // Add hypothesis to state
-                            const newHypothesis: Hypothesis = {
-                                id: hypothesis.id,
-                                hypothesis_id: hypothesis.hypothesis_id,
-                                statement: hypothesis.statement,
-                                executive_summary: hypothesis.executive_summary,
-                                clinical_scope: hypothesis.clinical_scope,
-                                rival_hypotheses: hypothesis.rival_hypotheses,
-                                evidence_snapshot: hypothesis.evidence_snapshot,
-                                mechanistic_model: hypothesis.mechanistic_model,
-                                risks_monitoring: hypothesis.risks_monitoring,
-                                detailed_analysis: hypothesis.detailed_analysis,
-                                drug_repurposing_candidates: hypothesis.drug_repurposing_candidates || [],
-                                predictions: hypothesis.predictions || [],
-                                minimal_tests: hypothesis.minimal_tests || [],
-                                risks_confounders: hypothesis.risks_confounders || [],
-                                evidence_citations: hypothesis.evidence_citations || [],
-                                scores: hypothesis.scores || { novelty: 0, plausibility: 0, strength: 0, feasibility: 0, impact: 0, total: 0 },
-                                status: hypothesis.status as 'pending' | 'accepted' | 'rejected',
-                                created_at: hypothesis.created_at
-                            };
-
-                            setHypotheses(prev => {
-                                const existingIds = new Set(prev.map(h => h.hypothesis_id));
-                                if (existingIds.has(newHypothesis.hypothesis_id)) {
-                                    return prev;
-                                }
-                                return [newHypothesis, ...prev];
-                            });
-
-                            setStats(prev => ({ ...prev, hypotheses: prev.hypotheses + 1 }));
-                            toast.success('Hypothèse générée avec succès !');
-
-                            // Unsubscribe and cleanup
-                            streamChannel.unsubscribe();
-                            jobChannel.unsubscribe();
-                            setIsGeneratingHypotheses(false);
-                        }
-
-                        // Handle failure
-                        if (job.status === 'failed') {
-                            toast.error(`Erreur: ${job.error_message || 'Génération échouée'}`);
-                            streamChannel.unsubscribe();
-                            jobChannel.unsubscribe();
-                            setIsGeneratingHypotheses(false);
-                        }
+                        handleJobUpdate(job);
                     }
                 )
                 .subscribe((status) => {
@@ -2777,8 +2825,100 @@ const DiscoveryPlatform = () => {
                     }
                 });
 
+            // Polling fallback (in case Realtime misses events)
+            const pollInterval = setInterval(async () => {
+                const { data: job, error } = await supabase
+                    .from('hypothesis_generation_jobs')
+                    .select('*')
+                    .eq('id', jobId)
+                    .single();
+
+                if (!error && job) {
+                    handleJobUpdate(job);
+                }
+            }, 2000);
+
+            // Consolidated update handler
+            const handleJobUpdate = async (job: any) => {
+                console.log('Job update:', job);
+
+                // Update progress message
+                if (job.progress_message) {
+                    setStreamingContent(prev => {
+                        // Avoid duplicating message if already there
+                        if (prev.includes(job.progress_message)) return prev;
+                        return prev + `\n[${job.progress_percentage}%] ${job.progress_message}`;
+                    });
+                }
+
+                // Handle completion
+                if (job.status === 'completed' && job.hypothesis_id) {
+                    clearInterval(pollInterval);
+                    streamChannel.unsubscribe();
+                    jobChannel.unsubscribe();
+
+                    // Fetch the generated hypothesis
+                    const { data: hypothesis, error: hypError } = await supabase
+                        .from('discovery_hypotheses')
+                        .select('*')
+                        .eq('id', job.hypothesis_id)
+                        .single();
+
+                    if (hypError || !hypothesis) {
+                        toast.error('Erreur lors de la récupération de l\'hypothèse');
+                        setIsGeneratingHypotheses(false);
+                        return;
+                    }
+
+                    // Add hypothesis to state
+                    const newHypothesis: Hypothesis = {
+                        id: hypothesis.id,
+                        hypothesis_id: hypothesis.hypothesis_id,
+                        statement: hypothesis.statement,
+                        executive_summary: hypothesis.executive_summary,
+                        clinical_scope: hypothesis.clinical_scope,
+                        rival_hypotheses: hypothesis.rival_hypotheses,
+                        evidence_snapshot: hypothesis.evidence_snapshot,
+                        mechanistic_model: hypothesis.mechanistic_model,
+                        risks_monitoring: hypothesis.risks_monitoring,
+                        detailed_analysis: hypothesis.detailed_analysis,
+                        drug_repurposing_candidates: hypothesis.drug_repurposing_candidates || [],
+                        predictions: hypothesis.predictions || [],
+                        minimal_tests: hypothesis.minimal_tests || [],
+                        risks_confounders: hypothesis.risks_confounders || [],
+                        evidence_citations: hypothesis.evidence_citations || [],
+                        scores: hypothesis.scores || { novelty: 0, plausibility: 0, strength: 0, feasibility: 0, impact: 0, total: 0 },
+                        status: hypothesis.status as 'pending' | 'accepted' | 'rejected',
+                        created_at: hypothesis.created_at
+                    };
+
+                    setHypotheses(prev => {
+                        const existingIds = new Set(prev.map(h => h.hypothesis_id));
+                        if (existingIds.has(newHypothesis.hypothesis_id)) {
+                            return prev;
+                        }
+                        return [newHypothesis, ...prev];
+                    });
+
+                    setStats(prev => ({ ...prev, hypotheses: prev.hypotheses + 1 }));
+                    toast.success('Hypothèse générée avec succès !');
+                    setIsGeneratingHypotheses(false);
+                }
+
+                // Handle failure
+                if (job.status === 'failed') {
+                    clearInterval(pollInterval);
+                    streamChannel.unsubscribe();
+                    jobChannel.unsubscribe();
+                    toast.error(`Erreur: ${job.error_message || 'Génération échouée'}`);
+                    setIsGeneratingHypotheses(false);
+                }
+            };
+
             // Set a timeout in case job never completes
             setTimeout(() => {
+                clearInterval(pollInterval);
+                streamChannel.unsubscribe();
                 jobChannel.unsubscribe();
                 if (isGeneratingHypotheses) {
                     setIsGeneratingHypotheses(false);
@@ -2863,6 +3003,13 @@ const DiscoveryPlatform = () => {
                         {/* Left Column: News + Stats + Alerts + KG */}
                         <div className="col-span-12 lg:col-span-3 space-y-4">
                             <NewsFeed items={newsItems} />
+                            <SavedGraphsPanel
+                                onLoad={(graph) => {
+                                    setSavedGraphToLoad(graph);
+                                    setIsRadialModalOpen(true);
+                                }}
+                                refreshTrigger={refreshSavedGraphs}
+                            />
                             <StatisticsPanel />
                             <AlertsPanel />
                         </div>
@@ -2934,6 +3081,37 @@ const DiscoveryPlatform = () => {
                 streamingContent={streamingContent}
                 onClose={() => setIsGeneratingHypotheses(false)}
             />
+
+            {/* Radial Rings Modal (Persistent Session) */}
+            {isRadialModalOpen && (
+                <RadialRingsModal
+                    isOpen={isRadialModalOpen}
+                    onClose={() => setIsRadialModalOpen(false)}
+                    pathology={savedGraphToLoad?.name || 'Session chargée'}
+                    initialData={savedGraphToLoad?.graph_data}
+                    initialViewState={savedGraphToLoad?.view_state}
+                    onSave={async (payload) => {
+                        try {
+                            const { error } = await supabase
+                                .from('saved_graphs')
+                                .insert({
+                                    user_id: (await supabase.auth.getUser()).data.user?.id,
+                                    name: payload.name,
+                                    description: payload.description,
+                                    graph_data: payload.graph_data,
+                                    view_state: payload.view_state
+                                });
+
+                            if (error) throw error;
+                            toast.success('Graphe sauvegardé avec succès');
+                            setRefreshSavedGraphs(prev => prev + 1);
+                        } catch (e) {
+                            console.error(e);
+                            toast.error('Erreur sauvegarde');
+                        }
+                    }}
+                />
+            )}
         </AppLayout >
     );
 };

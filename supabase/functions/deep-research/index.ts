@@ -249,7 +249,7 @@ Classe-les par ordre de probabilité et indique les signaux d'alerte à surveill
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        model: 'claude-opus-4-5-20251101',
+        model: 'claude-3-opus-20240229',
         max_tokens: 4096,
         system: systemPrompt,
         messages: [

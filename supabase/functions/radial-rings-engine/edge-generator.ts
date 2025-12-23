@@ -231,29 +231,80 @@ export function generateAllEdges(
     const allEdges: RingEdge[] = [];
 
     // SIMPLIFIED: Only Ring 0 (center) and Ring 1 (first circle)
-    // All Ring 1 nodes MUST be connected to the central node
+    // Ring 1 nodes are connected to their specific pathology (if linked_pathology exists)
+    // Otherwise, they connect to all Ring 0 nodes
     const ring0Nodes = nodes.filter(n => n.ring === 0);
     const ring1Nodes = nodes.filter(n => n.ring === 1);
 
-    // Create edges from each Ring 1 node to each Ring 0 node (center)
+    // Create nodeId lookup for pathology names
+    const pathologyNameToNodeId = new Map<string, string>();
+    for (const r0Node of ring0Nodes) {
+        pathologyNameToNodeId.set(r0Node.name.toLowerCase(), r0Node.id);
+    }
+
+    // Create edges from each Ring 1 node to its specific pathology (or all if not specified)
     for (const r1Node of ring1Nodes) {
-        for (const r0Node of ring0Nodes) {
-            const edge: RingEdge = {
-                id: `edge_${r1Node.id}_${r0Node.id}`,
-                source: r1Node.id,
-                target: r0Node.id,
-                relationship: inferRelationship(r1Node, r0Node),
-                evidence_grade: r1Node.evidence_grade,
-                refs: [...r1Node.sources, ...r0Node.sources].filter(Boolean).slice(0, 3),
-                justification: `Direct association with central pathology`,
-                translation_gap: r1Node.translation_gap || r0Node.translation_gap,
-                weight: r1Node.proximity_score
-            };
-            allEdges.push(edge);
+        const linkedPathology = r1Node.properties?.linked_pathology;
+
+        if (linkedPathology) {
+            // Find the specific Ring-0 node for this pathology
+            const targetNodeId = pathologyNameToNodeId.get(linkedPathology.toLowerCase());
+            const targetNode = ring0Nodes.find(n =>
+                n.name.toLowerCase() === linkedPathology.toLowerCase() ||
+                n.id === targetNodeId
+            );
+
+            if (targetNode) {
+                const edge: RingEdge = {
+                    id: `edge_${r1Node.id}_${targetNode.id}`,
+                    source: r1Node.id,
+                    target: targetNode.id,
+                    relationship: inferRelationship(r1Node, targetNode),
+                    evidence_grade: r1Node.evidence_grade,
+                    refs: [...r1Node.sources, ...targetNode.sources].filter(Boolean).slice(0, 3),
+                    justification: `Direct association with ${targetNode.name}`,
+                    translation_gap: r1Node.translation_gap || targetNode.translation_gap,
+                    weight: r1Node.proximity_score
+                };
+                allEdges.push(edge);
+            } else {
+                // Fall back to first Ring-0 node if no match found
+                console.log(`[EDGES] Warning: No pathology found for "${linkedPathology}", linking to main`);
+                if (ring0Nodes[0]) {
+                    const edge: RingEdge = {
+                        id: `edge_${r1Node.id}_${ring0Nodes[0].id}`,
+                        source: r1Node.id,
+                        target: ring0Nodes[0].id,
+                        relationship: inferRelationship(r1Node, ring0Nodes[0]),
+                        evidence_grade: r1Node.evidence_grade,
+                        refs: r1Node.sources.filter(Boolean).slice(0, 3),
+                        justification: `Association with central pathology`,
+                        translation_gap: r1Node.translation_gap,
+                        weight: r1Node.proximity_score
+                    };
+                    allEdges.push(edge);
+                }
+            }
+        } else {
+            // No linked_pathology: connect to ALL Ring-0 nodes (backward compatible)
+            for (const r0Node of ring0Nodes) {
+                const edge: RingEdge = {
+                    id: `edge_${r1Node.id}_${r0Node.id}`,
+                    source: r1Node.id,
+                    target: r0Node.id,
+                    relationship: inferRelationship(r1Node, r0Node),
+                    evidence_grade: r1Node.evidence_grade,
+                    refs: [...r1Node.sources, ...r0Node.sources].filter(Boolean).slice(0, 3),
+                    justification: `Direct association with central pathology`,
+                    translation_gap: r1Node.translation_gap || r0Node.translation_gap,
+                    weight: r1Node.proximity_score
+                };
+                allEdges.push(edge);
+            }
         }
     }
 
-    console.log(`[EDGES] Ring 1→Ring 0: ${allEdges.length} edges (simplified 2-ring mode)`);
+    console.log(`[EDGES] Ring 1→Ring 0: ${allEdges.length} edges (with pathology-specific linking)`);
     console.log(`[EDGES] Total: ${allEdges.length} edges generated`);
     return allEdges;
 }

@@ -57,10 +57,12 @@ app.add_middleware(
 )
 
 # Import routers
-from app.routers import extract, embeddings
+from app.routers import extract, embeddings, research, neural_kg
 
 app.include_router(extract.router, prefix="/extract", tags=["Extraction"])
 app.include_router(embeddings.router, prefix="/embed", tags=["Embeddings"])
+app.include_router(research.router, prefix="/research", tags=["Deep Research"])
+app.include_router(neural_kg.router, prefix="/neural-kg", tags=["Neural Knowledge Graph"])
 
 @app.get("/")
 async def root():

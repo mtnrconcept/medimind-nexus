@@ -58,7 +58,8 @@ export async function buildRing0(
         properties: {
             icd_code: pathology?.icd_code,
             description: pathology?.description,
-            subtypes: request.subtypes || []
+            subtypes: request.subtypes || [],
+            is_primary: true
         },
         proximity_score: 1.0,
         evidence_grade: 'A',
@@ -81,6 +82,42 @@ export async function buildRing0(
         });
     }
 
+    // =============================================
+    // COMORBIDITIES: Add each as a Ring-0 node
+    // =============================================
+    const comorbidities = request.context?.comorbidities || [];
+    for (const comorbidity of comorbidities) {
+        // Try to find in database
+        const { data: comorbData } = await supabase
+            .from('pathologies')
+            .select('*')
+            .or(`name.ilike.%${comorbidity}%,name_fr.ilike.%${comorbidity}%`)
+            .limit(1)
+            .single();
+
+        const nodeId = `R0_comorbidity_${(comorbData?.id || comorbidity).toString().replace(/\s+/g, '_')}`;
+
+        // Only add if not duplicate of main pathology
+        if (!nodes.some(n => n.name.toLowerCase() === (comorbData?.name || comorbidity).toLowerCase())) {
+            nodes.push({
+                id: nodeId,
+                ring: 0,
+                lane: 'pathology',
+                name: comorbData?.name || comorbidity,
+                properties: {
+                    icd_code: comorbData?.icd_code,
+                    description: comorbData?.description,
+                    is_comorbidity: true
+                },
+                proximity_score: 0.95,
+                evidence_grade: 'A',
+                translation_gap: false,
+                sources: []
+            });
+        }
+    }
+
+    console.log(`[RING 0] Built ${nodes.length} pathology nodes (main + ${comorbidities.length} comorbidities)`);
     return nodes;
 }
 
@@ -515,7 +552,10 @@ async function buildRing1Complete(
     supabase: any
 ): Promise<RingNode[]> {
     const nodes: RingNode[] = [];
-    const pathologyName = request.pathology;
+
+    // Get ALL pathologies to process (main + comorbidities)
+    const allPathologies = [request.pathology, ...(request.context?.comorbidities || [])];
+    console.log(`[RING 1] Processing ${allPathologies.length} pathologies:`, allPathologies);
 
     // 1. TREATMENTS / MEDICATIONS
     console.log('[RING 1] Fetching treatments/medications...');
@@ -537,26 +577,28 @@ async function buildRing1Complete(
         }
     }
 
-    // From treatments table
-    const { data: treatments } = await supabase
-        .from('treatments')
-        .select('*, pathologies(name)')
-        .ilike('pathologies.name', `%${pathologyName}%`)
-        .limit(15);
+    // From treatments table - for each pathology
+    for (const pathologyName of allPathologies) {
+        const { data: treatments } = await supabase
+            .from('treatments')
+            .select('*, pathologies(name)')
+            .ilike('pathologies.name', `%${pathologyName}%`)
+            .limit(15);
 
-    for (const t of (treatments || [])) {
-        if (!nodes.some(n => n.name.toLowerCase() === t.name.toLowerCase())) {
-            nodes.push({
-                id: `R1_drug_${t.id}`,
-                ring: 1,
-                lane: 'drugs',
-                name: t.name,
-                properties: { type: t.type, description: t.description },
-                proximity_score: 0.85,
-                evidence_grade: 'B',
-                translation_gap: false,
-                sources: []
-            });
+        for (const t of (treatments || [])) {
+            if (!nodes.some(n => n.name.toLowerCase() === t.name.toLowerCase())) {
+                nodes.push({
+                    id: `R1_drug_${t.id}`,
+                    ring: 1,
+                    lane: 'drugs',
+                    name: t.name,
+                    properties: { type: t.type, description: t.description, linked_pathology: pathologyName },
+                    proximity_score: 0.85,
+                    evidence_grade: 'B',
+                    translation_gap: false,
+                    sources: []
+                });
+            }
         }
     }
 
@@ -582,31 +624,34 @@ async function buildRing1Complete(
         }
     }
 
-    // 2. SYMPTOMS
+    // 2. SYMPTOMS - for each pathology
     console.log('[RING 1] Fetching symptoms...');
-    const { data: symptoms } = await supabase
-        .from('pathology_symptoms')
-        .select('*, symptoms(id, name, description, body_system), pathologies(name)')
-        .ilike('pathologies.name', `%${pathologyName}%`)
-        .limit(20);
+    for (const pathologyName of allPathologies) {
+        const { data: symptoms } = await supabase
+            .from('pathology_symptoms')
+            .select('*, symptoms(id, name, description, body_system), pathologies(name)')
+            .ilike('pathologies.name', `%${pathologyName}%`)
+            .limit(20);
 
-    for (const ps of (symptoms || [])) {
-        if (ps.symptoms) {
-            nodes.push({
-                id: `R1_symptom_${ps.symptoms.id || ps.symptom_id}`,
-                ring: 1,
-                lane: 'symptoms',
-                name: ps.symptoms.name,
-                properties: {
-                    body_system: ps.symptoms.body_system,
-                    is_primary: ps.is_primary,
-                    frequency: ps.frequency_percent
-                },
-                proximity_score: ps.is_primary ? 0.9 : 0.75,
-                evidence_grade: 'A',
-                translation_gap: false,
-                sources: []
-            });
+        for (const ps of (symptoms || [])) {
+            if (ps.symptoms && !nodes.some(n => n.id === `R1_symptom_${ps.symptoms.id || ps.symptom_id}`)) {
+                nodes.push({
+                    id: `R1_symptom_${ps.symptoms.id || ps.symptom_id}`,
+                    ring: 1,
+                    lane: 'symptoms',
+                    name: ps.symptoms.name,
+                    properties: {
+                        body_system: ps.symptoms.body_system,
+                        is_primary: ps.is_primary,
+                        frequency: ps.frequency_percent,
+                        linked_pathology: pathologyName
+                    },
+                    proximity_score: ps.is_primary ? 0.9 : 0.75,
+                    evidence_grade: 'A',
+                    translation_gap: false,
+                    sources: []
+                });
+            }
         }
     }
 
