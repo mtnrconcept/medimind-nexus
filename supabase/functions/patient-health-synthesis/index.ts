@@ -3,6 +3,7 @@
 
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { callAI } from "../_shared/ai-client.ts";
 
 const corsHeaders = {
     "Access-Control-Allow-Origin": "*",
@@ -209,138 +210,93 @@ serve(async (req) => {
             })) || [],
         };
 
-        // =====================================================
-        // CALL CLAUDE FOR ANALYSIS
-        // =====================================================
-
-        const CLAUDE_API_KEY = Deno.env.get("CLAUDE_API_KEY");
-
-        if (!CLAUDE_API_KEY) {
-            // Return basic analysis without AI
-            const basicSynthesis: HealthSynthesis = {
-                global_synthesis: "Analyse IA non disponible. Veuillez configurer la clé API Claude.",
-                health_score: 50,
-                risk_level: 'moderate',
-                vigilance_points: [],
-                weak_signals: [],
-                treatment_recommendations: [],
-                prevention_alerts: [],
-                lifestyle_advice: [],
-                drug_interactions: [],
-                summary_for_patient: "Consultez votre médecin pour une analyse complète.",
-            };
-
-            return new Response(
-                JSON.stringify(basicSynthesis),
-                { headers: { ...corsHeaders, "Content-Type": "application/json" } }
-            );
-        }
-
-        const systemPrompt = `Tu es un assistant médical expert. Analyse le dossier patient complet fourni et génère une synthèse de santé détaillée.
-
-IMPORTANT: Tu dois répondre UNIQUEMENT en JSON valide selon le schéma suivant:
-{
-    "global_synthesis": "Synthèse narrative de l'état de santé global du patient (2-3 paragraphes)",
-    "health_score": <nombre de 0 à 100>,
-    "risk_level": "low" | "moderate" | "high" | "critical",
-    "vigilance_points": [
-        {
-            "category": "cardiovascular|metabolic|respiratory|neurological|oncological|infectious|mental|other",
-            "level": "info|warning|critical",
-            "title": "Titre court",
-            "description": "Description détaillée",
-            "action_needed": "Action recommandée (optionnel)"
-        }
-    ],
-    "weak_signals": [
-        {
-            "indicator": "Nom de l'indicateur",
-            "trend": "stable|improving|worsening",
-            "observation": "Observation clinique",
-            "recommendation": "Recommandation"
-        }
-    ],
-    "treatment_recommendations": [
-        {
-            "category": "medication|therapy|procedure|monitoring|lifestyle",
-            "current_situation": "Situation actuelle",
-            "suggested_action": "Action suggérée",
-            "rationale": "Justification médicale",
-            "priority": "low|medium|high"
-        }
-    ],
-    "prevention_alerts": [
-        {
-            "screening": "Type de dépistage",
-            "status": "up_to_date|due_soon|overdue|never_done",
-            "due_date": "YYYY-MM-DD (optionnel)",
-            "recommendation": "Recommandation"
-        }
-    ],
-    "lifestyle_advice": [
-        {
-            "category": "nutrition|exercise|sleep|stress|tobacco|alcohol|other",
-            "current_status": "État actuel",
-            "advice": "Conseil spécifique",
-            "impact": "Impact attendu sur la santé"
-        }
-    ],
-    "drug_interactions": [
-        {
-            "medications": ["Médicament 1", "Médicament 2"],
-            "interaction_type": "Type d'interaction",
-            "severity": "mild|moderate|severe",
-            "recommendation": "Recommandation"
-        }
-    ],
-    "summary_for_patient": "Résumé simple et compréhensible pour le patient (1-2 phrases)"
-}
-
-Analyse avec attention:
-1. Les interactions médicamenteuses potentielles
-2. Les facteurs de risque combinés
-3. Les signaux faibles qui pourraient indiquer un problème émergent
-4. Les dépistages manquants ou en retard
-5. Les contradictions entre traitements et pathologies
-6. L'impact du mode de vie sur les pathologies existantes
-7. Les antécédents familiaux pertinents
-
-Sois précis, factuel et cliniquement pertinent. Le score de santé doit refléter objectivement l'état global.`;
-
-        const response = await fetch("https://api.anthropic.com/v1/messages", {
-            method: "POST",
-            headers: {
-                "x-api-key": CLAUDE_API_KEY,
-                "anthropic-version": "2023-06-01",
-                "content-type": "application/json",
-            },
-            body: JSON.stringify({
-                model: "claude-sonnet-4-20250514",
-                max_tokens: 4096,
-                system: systemPrompt,
-                messages: [
-                    {
-                        role: "user",
-                        content: `Voici le dossier patient complet à analyser:\n\n${JSON.stringify(patientContext, null, 2)}`
-                    }
-                ],
-            }),
-        });
-
-        if (!response.ok) {
-            const errorText = await response.text();
-            console.error("Claude API error:", errorText);
-            throw new Error(`Claude API error: ${response.status}`);
-        }
-
-        const claudeResponse = await response.json();
-        const content = claudeResponse.content[0]?.text || "";
-
-        // Parse JSON response
+        // Analysis with AI (callAI handles keys and fallback)
         let synthesis: HealthSynthesis;
         try {
-            let jsonContent = content;
+            const systemPrompt = `Tu es un assistant médical expert. Analyse le dossier patient complet fourni et génère une synthèse de santé détaillée.
+ 
+ IMPORTANT: Tu dois répondre UNIQUEMENT en JSON valide selon le schéma suivant:
+ {
+     "global_synthesis": "Synthèse narrative de l'état de santé global du patient (2-3 paragraphes)",
+     "health_score": <nombre de 0 à 100>,
+     "risk_level": "low" | "moderate" | "high" | "critical",
+     "vigilance_points": [
+         {
+             "category": "cardiovascular|metabolic|respiratory|neurological|oncological|infectious|mental|other",
+             "level": "info|warning|critical",
+             "title": "Titre court",
+             "description": "Description détaillée",
+             "action_needed": "Action recommandée (optionnel)"
+         }
+     ],
+     "weak_signals": [
+         {
+             "indicator": "Nom de l'indicateur",
+             "trend": "stable|improving|worsening",
+             "observation": "Observation clinique",
+             "recommendation": "Recommandation"
+         }
+     ],
+     "treatment_recommendations": [
+         {
+             "category": "medication|therapy|procedure|monitoring|lifestyle",
+             "current_situation": "Situation actuelle",
+             "suggested_action": "Action suggérée",
+             "rationale": "Justification médicale",
+             "priority": "low|medium|high"
+         }
+     ],
+     "prevention_alerts": [
+         {
+             "screening": "Type de dépistage",
+             "status": "up_to_date|due_soon|overdue|never_done",
+             "due_date": "YYYY-MM-DD (optionnel)",
+             "recommendation": "Recommandation"
+         }
+     ],
+     "lifestyle_advice": [
+         {
+             "category": "nutrition|exercise|sleep|stress|tobacco|alcohol|other",
+             "current_status": "État actuel",
+             "advice": "Conseil spécifique",
+             "impact": "Impact attendu sur la santé"
+         }
+     ],
+     "drug_interactions": [
+         {
+             "medications": ["Médicament 1", "Médicament 2"],
+             "interaction_type": "Type d'interaction",
+             "severity": "mild|moderate|severe",
+             "recommendation": "Recommandation"
+         }
+     ],
+     "summary_for_patient": "Résumé simple et compréhensible pour le patient (1-2 phrases)"
+ }
+ 
+ Analyse avec attention:
+ 1. Les interactions médicamenteuses potentielles
+ 2. Les facteurs de risque combinés
+ 3. Les signaux faibles qui pourraient indiquer un problème émergent
+ 4. Les dépistages manquants ou en retard
+ 5. Les contradictions entre traitements et pathologies
+ 6. L'impact du mode de vie sur les pathologies existantes
+ 7. Les antécédents familiaux pertinents
+ 
+ Sois précis, factuel et cliniquement pertinent. Le score de santé doit refléter objectivement l'état global.`;
 
+            const aiResponse = await callAI(
+                systemPrompt,
+                `Voici le dossier patient complet à analyser:\n\n${JSON.stringify(patientContext, null, 2)}`,
+                {
+                    model: "claude-3-5-sonnet-20240620",
+                    maxTokens: 4096,
+                    temperature: 0
+                }
+            );
+
+            const content = aiResponse.text;
+
+            let jsonContent = content;
             // Remove markdown code blocks if present
             const codeBlockMatch = content.match(/```(?:json)?\s*([\s\S]*?)```/);
             if (codeBlockMatch) {
@@ -386,8 +342,13 @@ Sois précis, factuel et cliniquement pertinent. Le score de santé doit reflét
             } else {
                 throw new Error("No JSON found in response");
             }
-        } catch (parseError) {
-            console.error("Error parsing Claude response:", parseError, "Content:", content.substring(0, 500));
+
+            return new Response(
+                JSON.stringify(synthesis),
+                { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+            );
+        } catch (aiError) {
+            console.error("AI Analysis error:", aiError);
             synthesis = {
                 global_synthesis: "Erreur lors de l'analyse. Le dossier patient semble incomplet ou vide. Veuillez ajouter des données cliniques pour obtenir une synthèse pertinente.",
                 health_score: 50,
@@ -400,13 +361,12 @@ Sois précis, factuel et cliniquement pertinent. Le score de santé doit reflét
                 drug_interactions: [],
                 summary_for_patient: "Impossible de générer une synthèse complète. Consultez votre médecin.",
             };
+
+            return new Response(
+                JSON.stringify(synthesis),
+                { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+            );
         }
-
-        return new Response(
-            JSON.stringify(synthesis),
-            { headers: { ...corsHeaders, "Content-Type": "application/json" } }
-        );
-
     } catch (error) {
         console.error("Error in health synthesis:", error);
         return new Response(

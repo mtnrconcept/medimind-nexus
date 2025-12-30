@@ -15,6 +15,7 @@ import { buildAllRings } from './rings-builder.ts';
 import { generateAllEdges, findWeakEdges } from './edge-generator.ts';
 import { detectMicroSignals, detectParentalExposureSignals } from './micro-signal-detector.ts';
 import { generateCounterHypotheses, adjustConfidenceWithCounterHypotheses } from './counter-hypothesis.ts';
+import { callAI } from '../_shared/ai-client.ts';
 
 // ============================================
 // CORS HEADERS
@@ -29,30 +30,14 @@ const corsHeaders = {
 // HYPOTHESIS GENERATION (Claude AI)
 // ============================================
 
-async function generateHypothesesWithClaude(
+async function generateHypothesesWithAI(
     microSignals: MicroSignal[],
     counterHypotheses: Map<string, CounterHypothesis[]>,
     nodes: RingNode[],
-    pathology: string,
-    claudeApiKey: string
+    pathology: string
 ): Promise<RadialHypothesis[]> {
-    if (!claudeApiKey || microSignals.length === 0) {
-        return microSignals.map((signal, i) => ({
-            id: `hyp_${i + 1}`,
-            title: signal.observation,
-            description: signal.testable_hypothesis,
-            mechanism_chain: signal.mechanism_path,
-            involved_nodes: [],
-            involved_edges: signal.supporting_edges,
-            probability: Math.round(signal.confidence * 100),
-            evidence_grade: signal.triangulation_score >= 3 ? 'C' : 'D' as any,
-            translation_gap: true,
-            validation_test: signal.falsification_test,
-            if_validated: `Poursuivre études cliniques sur ${signal.entity}`,
-            if_refuted: `Exclure ${signal.entity} comme facteur étiologique`,
-            micro_signal_id: signal.id,
-            counter_hypotheses: counterHypotheses.get(signal.id) || []
-        }));
+    if (microSignals.length === 0) {
+        return [];
     }
 
     try {
@@ -82,48 +67,17 @@ Pour chaque micro-signal, génère une hypothèse structurée:
 
 Réponds en JSON: { "hypotheses": [{"title": "...", "probability": X, "rationale": "...", "next_step": "..."}] }`;
 
-        const response = await fetch("https://api.anthropic.com/v1/messages", {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/json",
-                "x-api-key": claudeApiKey,
-                "anthropic-version": "2023-06-01"
-            },
-            body: JSON.stringify({
-                model: "claude-sonnet-4-20250514",
-                max_tokens: 4000,
-                temperature: 0.3,
-                messages: [{ role: "user", content: prompt }]
-            })
-        });
+        const aiResponse = await callAI(
+            "Tu es un expert en génération d'hypothèses médicales falsifiables. Réponds uniquement en JSON.",
+            prompt,
+            {
+                model: "claude-3-5-sonnet-20240620",
+                maxTokens: 4000,
+                temperature: 0.3
+            }
+        );
 
-        if (!response.ok) {
-            const errorText = await response.text();
-            console.error("[RADIAL-RINGS] Claude API error:", response.status, errorText);
-            // Don't throw - just log and continue to fallback
-            console.log("[RADIAL-RINGS] Using fallback hypothesis generation (no Claude)");
-            return microSignals.map((signal, i) => ({
-                id: `hyp_${i + 1}`,
-                title: signal.observation,
-                description: signal.testable_hypothesis,
-                mechanism_chain: signal.mechanism_path,
-                involved_nodes: [],
-                involved_edges: signal.supporting_edges,
-                probability: Math.round(signal.confidence * 100),
-                evidence_grade: signal.triangulation_score >= 3 ? 'C' : 'D' as any,
-                translation_gap: true,
-                validation_test: signal.falsification_test,
-                if_validated: `Poursuivre études sur ${signal.entity}`,
-                if_refuted: `Exclure ${signal.entity} comme facteur`,
-                micro_signal_id: signal.id,
-                counter_hypotheses: counterHypotheses.get(signal.id) || []
-            }));
-        }
-
-        const data = await response.json();
-        const textContent = data.content?.[0]?.text || "";
-
-        // Parse JSON from response
+        const textContent = aiResponse.text;
         const jsonMatch = textContent.match(/\{[\s\S]*\}/);
         if (jsonMatch) {
             const parsed = JSON.parse(jsonMatch[0]);
@@ -145,11 +99,10 @@ Réponds en JSON: { "hypotheses": [{"title": "...", "probability": X, "rationale
             }));
         }
     } catch (error) {
-        console.error("[RADIAL-RINGS] Hypothesis generation error:", error);
-        // Continue to fallback below
+        console.error("[RADIAL-RINGS] AI Hypothesis generation error:", error);
     }
 
-    // Fallback
+    // Fallback if AI fails
     return microSignals.map((signal, i) => ({
         id: `hyp_${i + 1}`,
         title: signal.observation,
@@ -222,7 +175,6 @@ serve(async (req) => {
         // Initialize Supabase
         const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
         const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-        const claudeApiKey = Deno.env.get("ANTHROPIC_API_KEY") || Deno.env.get("CLAUDE_API_KEY");
         const supabase = createClient(supabaseUrl, supabaseKey);
 
         // STEP 1: Build all rings
@@ -255,12 +207,11 @@ serve(async (req) => {
 
         // STEP 5: Generate hypotheses
         console.log("[RADIAL-RINGS] Step 5/5: Generating hypotheses...");
-        const hypotheses = await generateHypothesesWithClaude(
+        const hypotheses = await generateHypothesesWithAI(
             allMicroSignals.slice(0, 5), // Top 5 signals
             counterHypotheses,
             nodes,
-            request.pathology,
-            claudeApiKey || ''
+            request.pathology
         );
 
         // Organize knowledge graph

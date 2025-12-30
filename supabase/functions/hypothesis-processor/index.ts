@@ -3,6 +3,7 @@
 
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import { streamAI } from "../_shared/ai-client.ts";
 
 const corsHeaders = {
     'Access-Control-Allow-Origin': '*',
@@ -24,12 +25,6 @@ serve(async (req) => {
     try {
         const supabaseUrl = Deno.env.get('SUPABASE_URL') ?? '';
         const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
-        const anthropicKey = Deno.env.get('ANTHROPIC_API_KEY') ?? Deno.env.get('CLAUDE_API_KEY') ?? '';
-
-        if (!anthropicKey) {
-            console.error('❌ Missing ANTHROPIC_API_KEY or CLAUDE_API_KEY');
-            // If we can't get the key, we should prolly fail gracefully, but let's just log for now
-        }
         const supabase = createClient(supabaseUrl, supabaseKey);
 
         console.log('🔄 Checking for pending jobs...');
@@ -151,73 +146,25 @@ Retourne JSON strict selon le format spécifié.`;
                 config: { broadcast: { self: true } }
             });
 
-            // Call Claude API WITH STREAMING
-            const response = await fetch('https://api.anthropic.com/v1/messages', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'x-api-key': anthropicKey,
-                    'anthropic-version': '2023-06-01'
+            // Call AI with streaming and Gemini fallback
+            const aiResponse = await streamAI(
+                systemPrompt,
+                userPrompt,
+                async (text) => {
+                    // Broadcast chunk to frontend via Realtime
+                    await broadcastChannel.send({
+                        type: 'broadcast',
+                        event: 'chunk',
+                        payload: { text }
+                    });
                 },
-                body: JSON.stringify({
+                {
                     model: 'claude-3-opus-20240229',
-                    max_tokens: 30000,
-                    stream: true,  // Enable streaming!
-                    messages: [{ role: 'user', content: userPrompt }],
-                    system: systemPrompt
-                })
-            });
-
-            if (!response.ok) {
-                throw new Error(`Claude API error: ${response.status}`);
-            }
-
-            // Process streaming response
-            const reader = response.body?.getReader();
-            if (!reader) {
-                throw new Error('No reader available');
-            }
-
-            const decoder = new TextDecoder();
-            let buffer = '';
-            let content = '';
-
-            console.log('🔴 Starting live stream broadcast...');
-
-            while (true) {
-                const { done, value } = await reader.read();
-                if (done) break;
-
-                buffer += decoder.decode(value, { stream: true });
-
-                // Process SSE events
-                const lines = buffer.split('\n');
-                buffer = lines.pop() || '';
-
-                for (const line of lines) {
-                    if (line.startsWith('data: ')) {
-                        const data = line.slice(6);
-                        if (data === '[DONE]') continue;
-
-                        try {
-                            const event = JSON.parse(data);
-                            if (event.type === 'content_block_delta' && event.delta?.text) {
-                                const text = event.delta.text;
-                                content += text;
-
-                                // Broadcast chunk to frontend via Realtime
-                                await broadcastChannel.send({
-                                    type: 'broadcast',
-                                    event: 'chunk',
-                                    payload: { text }
-                                });
-                            }
-                        } catch (e) {
-                            // Skip invalid JSON
-                        }
-                    }
+                    maxTokens: 30000
                 }
-            }
+            );
+
+            const content = aiResponse.text;
 
             console.log(`✅ Stream complete. Total length: ${content.length}`);
 

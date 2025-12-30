@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { callAI } from "../_shared/ai-client.ts";
 import { buildMedicationCatalog, isInteractionDocumented } from "./medication-catalog.ts";
 
 const corsHeaders = {
@@ -271,28 +272,16 @@ Analyse chaque paire et retourne un JSON:
 }`;
 
             // Call Claude (non-streaming for structured response)
-            const response = await fetch("https://api.anthropic.com/v1/messages", {
-                method: "POST",
-                headers: {
-                    "x-api-key": CLAUDE_API_KEY,
-                    "anthropic-version": "2023-06-01",
-                    "content-type": "application/json",
-                },
-                body: JSON.stringify({
-                    model: "claude-sonnet-4-20250514", // Sonnet for faster + cheaper batch analysis
-                    max_tokens: 40000,
-                    system: systemPrompt,
-                    messages: [{ role: "user", content: userPrompt }],
-                }),
-            });
+            const aiResult = await callAI(
+                systemPrompt,
+                userPrompt,
+                {
+                    model: "claude-3-5-sonnet-20240620",
+                    maxTokens: 4000
+                }
+            );
 
-            if (!response.ok) {
-                const errorText = await response.text();
-                throw new Error(`Claude API Error: ${response.status} - ${errorText}`);
-            }
-
-            const claudeResult = await response.json();
-            const content = claudeResult.content?.[0]?.text || "{}";
+            const content = aiResult.text || "{}";
 
             // Parse JSON response
             let analysisResult;

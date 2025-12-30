@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { callAI, streamAI } from "../_shared/ai-client.ts";
 
 const corsHeaders = {
     "Access-Control-Allow-Origin": "*",
@@ -138,34 +139,18 @@ Produis une synthèse exhaustive et médicalement rigoureuse de cette relation.`
 
 
     try {
-        const response = await fetch('https://api.anthropic.com/v1/messages', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'x-api-key': claudeApiKey,
-                'anthropic-version': '2023-06-01'
-            },
-            body: JSON.stringify({
-                model: 'claude-sonnet-4-20250514', // Claude Opus 4.5
-                max_tokens: 2000,
-                system: systemPrompt,
-                messages: [
-                    { role: 'user', content: userPrompt }
-                ]
-            })
-        });
+        const aiResponse = await callAI(
+            systemPrompt,
+            userPrompt,
+            {
+                model: 'claude-3-5-sonnet-20240620', // Defaulting to robust model
+                maxTokens: 2000
+            }
+        );
 
-        if (!response.ok) {
-            const errorText = await response.text();
-            console.error('[CAUSAL-REASONING] Claude API error:', response.status, errorText);
-            throw new Error(`Claude API error: ${response.status}`);
-        }
-
-        const data = await response.json();
-        return data.content?.[0]?.text || 'Analyse non disponible.';
-
+        return aiResponse.text || 'Analyse non disponible.';
     } catch (error) {
-        console.error('[CAUSAL-REASONING] Claude generation error:', error);
+        console.error('[CAUSAL-REASONING] AI generation error:', error);
         throw error;
     }
 }
@@ -191,48 +176,59 @@ serve(async (req) => {
         // MODE 1: AI-powered link explanation
         // ============================================
         if (query.query && query.context) {
-            console.log('[CAUSAL-REASONING] Link explanation request:', query.context);
+            const explanationQuery = query.query;
+            const explanationContext = query.context;
+            const encoder = new TextEncoder();
+            const stream = new ReadableStream({
+                async start(controller) {
+                    const sendEvent = (data: any) => {
+                        controller.enqueue(encoder.encode(`data: ${JSON.stringify(data)}\n\n`));
+                    };
 
-            if (!claudeApiKey) {
-                console.error('[CAUSAL-REASONING] No Claude API key found');
-                return new Response(
-                    JSON.stringify({
-                        analysis: `**Connexion: ${query.context.sourceNode} → ${query.context.targetNode}**\n\n` +
-                            `Relation: ${query.context.relationship}\n` +
-                            `Pathologie: ${query.context.pathology}\n\n` +
-                            `_Configuration API requise pour l'analyse IA détaillée._`
-                    }),
-                    { headers: { ...corsHeaders, "Content-Type": "application/json" } }
-                );
-            }
+                    try {
+                        const systemPrompt = `Tu es un expert médical clinicien senior spécialisé dans la synthèse des connaissances médicales.
+Ta mission est de produire une SYNTHÈSE COMPLÈTE et ACTIONNABLE de la relation entre deux concepts médicaux dans le contexte d'une pathologie donnée.
 
-            try {
-                const explanation = await generateLinkExplanationWithClaude(
-                    query.query,
-                    query.context,
-                    claudeApiKey
-                );
+Règles:
+- Produis une synthèse de qualité professionnelle pour un médecin.
+- Explique les mécanismes biologiques et physiopathologiques.
+- Cite des preuves cliniques avec niveaux d'évidence.
+- Fournis des recommandations pratiques.`;
 
-                return new Response(
-                    JSON.stringify({ analysis: explanation }),
-                    { headers: { ...corsHeaders, "Content-Type": "application/json" } }
-                );
-            } catch (aiError) {
-                console.error('[CAUSAL-REASONING] AI explanation failed:', aiError);
+                        const userPrompt = `Analyse de la relation: ${explanationQuery}
+Contexte:
+- Source: ${explanationContext.sourceNode}
+- Cible: ${explanationContext.targetNode}
+- Relation: ${explanationContext.relationship}
+- Niveau de preuve: ${explanationContext.evidence_grade}
+- Pathologie concernée: ${explanationContext.pathology}`;
 
-                // Fallback: provide basic info
-                return new Response(
-                    JSON.stringify({
-                        analysis: `**Connexion: ${query.context.sourceNode} → ${query.context.targetNode}**\n\n` +
-                            `**Relation:** ${query.context.relationship}\n` +
-                            `**Grade d'évidence:** ${query.context.evidence_grade}\n` +
-                            `**Pathologie:** ${query.context.pathology}\n\n` +
-                            `_L'analyse IA détaillée n'a pas pu être générée. Cette connexion représente une relation identifiée dans la littérature scientifique entre ces deux concepts._`
-                    }),
-                    { headers: { ...corsHeaders, "Content-Type": "application/json" } }
-                );
-            }
+                        await streamAI(
+                            systemPrompt,
+                            userPrompt,
+                            (chunk) => {
+                                sendEvent({ type: 'text', content: chunk });
+                            },
+                            {
+                                model: "claude-3-5-sonnet-20240620",
+                                maxTokens: 4000,
+                                temperature: 0.1
+                            }
+                        );
+                        sendEvent({ type: 'done' });
+                    } catch (e) {
+                        sendEvent({ type: 'error', message: String(e) });
+                    } finally {
+                        controller.close();
+                    }
+                }
+            });
+
+            return new Response(stream, {
+                headers: { ...corsHeaders, "Content-Type": "text/event-stream" },
+            });
         }
+
 
         // ============================================
         // MODE 2: Knowledge Graph causal rules query

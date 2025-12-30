@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { callAI } from "../_shared/ai-client.ts";
 
 /**
  * DISCOVERY ENGINE v3 - Moteur de Découverte IA avec Streaming Corrigé
@@ -304,16 +305,8 @@ serve(async (req) => {
 
         const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
         const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-        const claudeApiKey = Deno.env.get("CLAUDE_API_KEY") || Deno.env.get("ANTHROPIC_API_KEY");
         const ncbiApiKey = Deno.env.get("NCBI_API_KEY");
         const supabase = createClient(supabaseUrl, supabaseKey);
-
-        if (!claudeApiKey) {
-            return new Response(
-                JSON.stringify({ error: "CLAUDE_API_KEY not configured" }),
-                { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-            );
-        }
 
         console.log(`[DISCOVERY-ENGINE] Pathology: ${pathology}`);
 
@@ -427,34 +420,17 @@ Génère une analyse COMPLÈTE et DÉTAILLÉE selon le format de ton prompt syst
 `;
 
                     // NON-STREAMING call to avoid text corruption
-                    const claudeResponse = await fetch("https://api.anthropic.com/v1/messages", {
-                        method: "POST",
-                        headers: {
-                            "Content-Type": "application/json",
-                            "x-api-key": claudeApiKey,
-                            "anthropic-version": "2023-06-01"
-                        },
-                        body: JSON.stringify({
-                            model: "claude-sonnet-4-20250514",
-                            max_tokens: 16000,
+                    const aiResult = await callAI(
+                        DISCOVERY_PROMPT,
+                        context,
+                        {
+                            model: "claude-3-5-sonnet-20240620",
+                            maxTokens: 16000,
                             temperature: 0.3,
-                            system: DISCOVERY_PROMPT,
-                            messages: [{ role: "user", content: context }]
-                        })
-                    });
-
-                    if (!claudeResponse.ok) {
-                        const err = await claudeResponse.text();
-                        throw new Error(`Claude API error: ${claudeResponse.status} - ${err}`);
-                    }
-
-                    const claudeData = await claudeResponse.json();
-                    let fullText = "";
-                    for (const block of claudeData.content || []) {
-                        if (block.type === "text") {
-                            fullText += block.text;
                         }
-                    }
+                    );
+
+                    const fullText = aiResult.text;
 
                     sendEvent('step', { id: 7, status: 'completed', details: '✅ Analyse générée' });
 

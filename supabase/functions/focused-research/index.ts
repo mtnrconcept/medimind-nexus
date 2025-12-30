@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { callAI, streamAI } from "../_shared/ai-client.ts";
 
 const corsHeaders = {
     "Access-Control-Allow-Origin": "*",
@@ -97,32 +98,20 @@ async function searchPubMed(query: string, maxResults: number = 10, apiKey?: str
     }
 }
 
-// Helper to translate query using Claude
-async function translateQuery(query: string, apiKey: string): Promise<string> {
+// Helper to translate query using AI
+async function translateQuery(query: string): Promise<string> {
     try {
-        const response = await fetch("https://api.anthropic.com/v1/messages", {
-            method: "POST",
-            headers: {
-                "x-api-key": apiKey,
-                "anthropic-version": "2023-06-01",
-                "content-type": "application/json",
-            },
-            body: JSON.stringify({
+        const response = await callAI(
+            "Translate the following medical term or query from French to English. Return ONLY the English translation, no other text. If it is already English or a universal scientific term, return it as is.",
+            `Query: "${query}"`,
+            {
                 model: "claude-3-haiku-20240307",
-                max_tokens: 100,
-                messages: [
-                    {
-                        role: "user",
-                        content: `Translate the following medical term or query from French to English. Return ONLY the English translation, no other text. If it is already English or a universal scientific term, return it as is.\n\nQuery: "${query}"`
-                    }
-                ]
-            }),
-        });
+                maxTokens: 100,
+                temperature: 0
+            }
+        );
 
-        if (!response.ok) return query;
-
-        const data = await response.json();
-        const translation = data.content[0].text.trim().replace(/"/g, '');
+        const translation = response.text.trim().replace(/"/g, '');
         return translation;
     } catch (e) {
         console.error("Translation error:", e);
@@ -365,13 +354,8 @@ serve(async (req) => {
     }
 
     try {
-        const CLAUDE_API_KEY = Deno.env.get("CLAUDE_API_KEY");
         const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
         const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-
-        if (!CLAUDE_API_KEY) {
-            throw new Error("CLAUDE_API_KEY is not configured");
-        }
 
         const supabase = createClient(supabaseUrl, supabaseKey);
         const { targetType, targetId, targetName, customPrompt } = await req.json();
@@ -822,7 +806,7 @@ serve(async (req) => {
                     });
 
                     // Build specialized PubMed queries
-                    const englishTargetName = await translateQuery(targetName, CLAUDE_API_KEY);
+                    const englishTargetName = await translateQuery(targetName);
                     console.log(`Translated "${targetName}" to "${englishTargetName}" for PubMed`);
 
                     // Create wildcard versions for broad "contains" search (prefix expansion)
@@ -1129,57 +1113,20 @@ Après le JSON, ajoute uniquement:
 Commence par le JSON maintenant.`;
 
 
-                    // Call Claude with streaming
-                    const aiResponse = await fetch("https://api.anthropic.com/v1/messages", {
-                        method: "POST",
-                        headers: {
-                            "x-api-key": CLAUDE_API_KEY,
-                            "anthropic-version": "2023-06-01",
-                            "content-type": "application/json",
-                        },
-                        body: JSON.stringify({
-                            model: "claude-opus-4-5-20251101",
-                            max_tokens: 64000,
-                            stream: true,
-                            system: systemPrompt,
-                            messages: [{ role: "user", content: userPrompt }],
-                        }),
-                    });
-
-                    if (!aiResponse.ok) {
-                        const errorText = await aiResponse.text();
-                        throw new Error(`Claude API error: ${aiResponse.status} - ${errorText}`);
-                    }
-
-                    const reader = aiResponse.body!.getReader();
-                    const decoder = new TextDecoder();
+                    // Call AI with streaming (handles Anthropic -> Gemini fallback)
                     let fullText = "";
-
-                    while (true) {
-                        const { done, value } = await reader.read();
-                        if (done) break;
-
-                        const chunk = decoder.decode(value, { stream: true });
-                        const lines = chunk.split("\n");
-
-                        for (const line of lines) {
-                            if (line.startsWith("data: ")) {
-                                const jsonStr = line.slice(6).trim();
-                                if (jsonStr === "[DONE]") continue;
-
-                                try {
-                                    const data = JSON.parse(jsonStr);
-                                    if (data.type === "content_block_delta" && data.delta?.text) {
-                                        const text = data.delta.text;
-                                        fullText += text;
-                                        sendEvent(controller, { type: 'text', content: text });
-                                    }
-                                } catch (e) {
-                                    // Ignore parse errors
-                                }
-                            }
+                    await streamAI(
+                        systemPrompt,
+                        userPrompt,
+                        (text) => {
+                            fullText += text;
+                            sendEvent(controller, { type: 'text', content: text });
+                        },
+                        {
+                            model: "claude-3-5-sonnet-20240620",
+                            maxTokens: 32000,
                         }
-                    }
+                    );
 
                     sendEvent(controller, {
                         type: 'step_update',

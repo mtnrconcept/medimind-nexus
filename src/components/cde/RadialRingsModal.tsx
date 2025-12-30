@@ -1,41 +1,40 @@
-// ============================================
-// RADIAL RINGS 3D - TOP-DOWN VIEW WITH CLICKABLE LINKS
-// ============================================
-// Smooth nodes with enhanced glow, clickable links for AI explanation
-
+// [SECTION:IMPORTS]
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { Canvas, useFrame, ThreeEvent } from '@react-three/fiber';
 import { OrbitControls, Html, Line } from '@react-three/drei';
 import * as THREE from 'three';
-import { X, Play, Pause, RotateCcw, Sparkles, Loader2, MessageSquare, ExternalLink, Plus, GitBranch, Search, Save, MousePointer2, Lasso, Circle as CircleIcon, Square } from 'lucide-react';
+import { X, Play, Pause, RotateCcw, Sparkles, Loader2, MessageSquare, ExternalLink, Plus, GitBranch, Search, Save, FolderOpen, MousePointer2, Lasso, Circle as CircleIcon, Square, EyeOff, GripHorizontal } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { RingNode, RingEdge, MicroSignal, RadialRingsData } from '@/types/graph';
 import { RING_COLORS, LANE_COLORS, NODE_TYPE_COLORS, EDGE_TYPE_COLORS, TIMING } from '@/config/graphSemantics';
 import { isWebGLAvailable, getSemanticEdgeColor, isNodeType, transformNode, transformEdge, getEdgeKey, dedupeEdges } from '@/utils/graphUtils';
+import DraggablePanel from './DraggablePanel';
+import { PanelRegistryProvider } from './PanelRegistry';
 
-// ============================================
-// TYPES
-// ============================================
-
+// [SECTION:TYPES]
 // Types imported from @/types/graph
 
-// ============================================
-// COLORS
-// ============================================
-
+// [SECTION:CONSTANTS]
+// [SUB:CONSTANTS.COLORS]
 // Semantic Colors imported from @/config/graphSemantics
 
-// ============================================
-// TIMING (ms converted to seconds in components)
-// ============================================
-
+// [SUB:CONSTANTS.TIMING]
 // Timing imported from @/config/graphSemantics
 
-// ============================================
-// WEBGL CHECK (comprehensive - tests shader compilation)
-// ============================================
-
+// [SECTION:UTILS]
 // WebGL Check imported from @/utils/graphUtils
+
+// [SECTION:UI]
+// [SUB:UI.DRAGGABLE_PANEL]
+
+// [SECTION:THREE]
+// [SUB:THREE.MESHES]
+
+// [SECTION:BACKGROUND]
+// [SUB:BACKGROUND.MATRIX]
+
+// [SECTION:SVG]
+// [SUB:SVG.FALLBACK]
 
 // ============================================
 // 2D SVG FALLBACK VISUALIZATION
@@ -155,10 +154,8 @@ function MatrixBackground() {
     );
 }
 
-// ============================================
-// LOADING PROGRESS BAR - Futuristic animated progress with step descriptions
-// ============================================
-
+// [SECTION:LOADING]
+// [SUB:LOADING.STEPS]
 const LOADING_STEPS = [
     { label: "Connexion à l'API Claude", icon: "🔌", duration: 1500 },
     { label: "Analyse sémantique de la pathologie", icon: "🧠", duration: 2000 },
@@ -174,6 +171,7 @@ const LOADING_STEPS = [
     { label: "Finalisation du Knowledge Graph", icon: "✨", duration: 1000 },
 ];
 
+// [SUB:LOADING.PROGRESS]
 function LoadingProgressBar() {
     const [currentStep, setCurrentStep] = useState(0);
     const [progress, setProgress] = useState(0);
@@ -314,6 +312,10 @@ function LoadingProgressBar() {
     );
 }
 
+// [SECTION:UI]
+// [SUB:UI.TOOLBAR]
+
+
 interface SVGFallbackProps {
     data: RadialRingsData;
     animationTime: number;
@@ -328,57 +330,167 @@ interface SVGFallbackProps {
     visibleNodeCount?: number; // Progressive reveal: how many nodes to show
     nodeSpacing?: number; // Density control (default 40)
     nodeSize?: number; // Size scale (default 1.0)
-    hiddenNodeTypes?: Set<string>; // Types to hide
-    hiddenRelationTypes?: Set<string>; // Relation types to hide
-    hiddenNodes?: Set<string>; // Individual nodes to hide (from chat commands)
-    getNodeTypes?: (category: string) => string[]; // Helper to map UI categories to node types
-    // Node grouping props
-    nodeGroups?: Map<string, Set<string>>; // centerNodeId -> member node IDs
+    onDissolveGroup?: (centerId: string) => void;
+    hiddenRelationTypes?: Set<string>;
+    getNodeTypes?: (category: string) => string[];
+    nodeGroups?: Map<string, Set<string>>;
     groupCreationMode?: boolean;
     currentGroupCenter?: string | null;
     onAddToGroup?: (nodeId: string) => void;
     onStartGroupCreation?: (nodeId: string) => void;
     onFinishGroupCreation?: () => void;
-    onDissolveGroup?: (centerId: string) => void;
-    // Custom positions for programmatic node repositioning (from chat commands)
     customNodePositions?: Map<string, { x: number, y: number }>;
-    // Deep Analysis mode - golden highlighting for optimal treatment nodes
     deepAnalysisMode?: boolean;
     goldenNodeIds?: Set<string>;
     onSaveGraph?: (graphData: any) => void;
+    onHideNodes?: (nodeIds: string[]) => void;
+    onRemoveNodes?: (nodeIds: string[]) => void;
+    // Multi-selection state passed from parent
+    multiSelectedNodeIds: Set<string>;
+    setMultiSelectedNodeIds: (ids: Set<string> | ((prev: Set<string>) => Set<string>)) => void;
+    selectionMode: 'cursor' | 'lasso' | 'circle' | 'rectangle';
+    setSelectionMode: (mode: 'cursor' | 'lasso' | 'circle' | 'rectangle') => void;
+    // Hidden nodes/types state control
+    hiddenNodes: Set<string>;
+    setHiddenNodes: (nodes: Set<string> | ((prev: Set<string>) => Set<string>)) => void;
+    hiddenNodeTypes: Set<string>;
+    setHiddenNodeTypes: (types: Set<string> | ((prev: Set<string>) => Set<string>)) => void;
+    // Lifted view state
+    layoutMode: 'radial' | 'grid' | 'hierarchical' | 'organic';
+    setLayoutMode: (mode: 'radial' | 'grid' | 'hierarchical' | 'organic') => void;
+    layoutParams: {
+        gridCols: number;
+        nodeSpacing: number;
+        levelHeight: number;
+        organicStrength: number;
+    };
+    setLayoutParams: React.Dispatch<React.SetStateAction<{
+        gridCols: number;
+        nodeSpacing: number;
+        levelHeight: number;
+        organicStrength: number;
+    }>>;
+    zoom: number;
+    setZoom: React.Dispatch<React.SetStateAction<number>>;
+    pan: { x: number; y: number };
+    setPan: React.Dispatch<React.SetStateAction<{ x: number; y: number }>>;
+    showLayoutSettings: boolean;
+    setShowLayoutSettings: (show: boolean) => void;
+    collapsedCategories: Set<string>;
+    setCollapsedCategories: (categories: Set<string> | ((prev: Set<string>) => Set<string>)) => void;
+    onLoadGraph?: (graph: any) => void;
+    showExplorer: boolean;
+    setShowExplorer: (show: boolean) => void;
 }
 
-function SVGFallback({ data, animationTime, onEdgeClick, onSetCentral, newlySpawnedNodes, edgeFilterMode = 'all', centralNodeId, filterSelectedNodeId, focusMode = true, activePathologies, visibleNodeCount = Infinity, nodeSpacing = 40, nodeSize: sizeScale = 1.0, hiddenNodeTypes = new Set(), hiddenRelationTypes = new Set(), hiddenNodes = new Set(), getNodeTypes = () => [], nodeGroups = new Map(), groupCreationMode = false, currentGroupCenter = null, onAddToGroup, onStartGroupCreation, onFinishGroupCreation, onDissolveGroup, customNodePositions = new Map(), deepAnalysisMode = false, goldenNodeIds = new Set(), onSaveGraph }: SVGFallbackProps) {
+function SVGFallback({
+    data,
+    animationTime,
+    onEdgeClick,
+    onSetCentral,
+    newlySpawnedNodes,
+    edgeFilterMode = 'all',
+    centralNodeId,
+    filterSelectedNodeId,
+    focusMode = true,
+    activePathologies,
+    visibleNodeCount = Infinity,
+    nodeSpacing = 40,
+    nodeSize: sizeScale = 1.0,
+    hiddenNodeTypes,
+    setHiddenNodeTypes,
+    hiddenRelationTypes = new Set(),
+    hiddenNodes,
+    setHiddenNodes,
+    getNodeTypes = () => [],
+    nodeGroups = new Map(),
+    groupCreationMode = false,
+    currentGroupCenter = null,
+    onAddToGroup,
+    onStartGroupCreation,
+    onFinishGroupCreation,
+    onDissolveGroup,
+    customNodePositions = new Map(),
+    deepAnalysisMode = false,
+    goldenNodeIds = new Set(),
+    onSaveGraph,
+    onRemoveNodes,
+    multiSelectedNodeIds,
+    setMultiSelectedNodeIds,
+    selectionMode,
+    setSelectionMode,
+    layoutMode,
+    setLayoutMode,
+    layoutParams,
+    setLayoutParams,
+    zoom,
+    setZoom,
+    pan,
+    setPan,
+    showLayoutSettings,
+    setShowLayoutSettings,
+    collapsedCategories,
+    setCollapsedCategories,
+    onLoadGraph,
+    showExplorer,
+    setShowExplorer
+}: SVGFallbackProps) {
     // Dragging state for center nodes (Hoisted)
     const [dragOffsets, setDragOffsets] = useState<Map<string, { x: number, y: number }>>(new Map());
     const [draggingNode, setDraggingNode] = useState<string | null>(null);
 
-    // Layout Mode State
-    type LayoutMode = 'radial' | 'grid' | 'hierarchical' | 'organic';
-    const [layoutMode, setLayoutMode] = useState<LayoutMode>('radial');
-
-    // Layout Parameters State
-    const [layoutParams, setLayoutParams] = useState({
-        gridCols: 0, // 0 = Auto
-        nodeSpacing: nodeSpacing, // Base spacing (default from prop)
-        levelHeight: 180, // Hierarchical level height
-        organicStrength: 350 // Organic spread distance
-    });
-
     // State to ignore chat-based custom positions (Reset feature)
     const [ignoreCustomPositions, setIgnoreCustomPositions] = useState(false);
-    const [showLayoutSettings, setShowLayoutSettings] = useState(false);
 
     // Graph Explorer State
-    const [showExplorer, setShowExplorer] = useState(false);
-    const [localHiddenTypes, setLocalHiddenTypes] = useState<Set<string>>(new Set());
-    const [userHiddenNodes, setUserHiddenNodes] = useState<Set<string>>(new Set());
-    const [collapsedCategories, setCollapsedCategories] = useState<Set<string>>(new Set());
+    const [showHiddenPanel, setShowHiddenPanel] = useState(false);
+
+    // Selection Tool State - HOISTED to Parent, receiving via props
+    // State removed from here
+
+    const [isSelecting, setIsSelecting] = useState(false);
+    const [selectionPoints, setSelectionPoints] = useState<{ x: number, y: number }[]>([]);
+    const selectionStartRef = useRef<{ x: number, y: number } | null>(null);
 
     // Save Graph State
     const [showSaveModal, setShowSaveModal] = useState(false);
+    const [showLoadModal, setShowLoadModal] = useState(false);
     const [saveGraphName, setSaveGraphName] = useState('');
     const [saveDescription, setSaveDescription] = useState('');
+
+    const [savedGraphs, setSavedGraphs] = useState<any[]>([]);
+    const [isLoadingGraphs, setIsLoadingGraphs] = useState(false);
+    const [loadSearchQuery, setLoadSearchQuery] = useState('');
+
+    const fetchSavedGraphs = async () => {
+        setIsLoadingGraphs(true);
+        try {
+            const { data, error } = await supabase
+                .from('saved_graphs')
+                .select('*')
+                .order('updated_at', { ascending: false });
+            if (error) throw error;
+            setSavedGraphs(data || []);
+        } catch (err) {
+            console.error('Error fetching graphs:', err);
+        } finally {
+            setIsLoadingGraphs(false);
+        }
+    };
+
+    useEffect(() => {
+        if (showLoadModal) {
+            fetchSavedGraphs();
+        }
+    }, [showLoadModal]);
+
+    const handleLoadGraph = (graph: any) => {
+        // Assume the parent handles the loading via onLoadGraph prop
+        if (onLoadGraph) {
+            onLoadGraph(graph);
+        }
+        setShowLoadModal(false);
+    };
 
     const handleSaveConfirm = () => {
         if (!onSaveGraph) return;
@@ -392,17 +504,20 @@ function SVGFallback({ data, animationTime, onEdgeClick, onSetCentral, newlySpaw
             hiddenNodes: Array.from(hiddenNodes),
             centralNodeId,
             customNodePositions: Object.fromEntries(customNodePositions),
-            localHiddenTypes: Array.from(localHiddenTypes),
-            userHiddenNodes: Array.from(userHiddenNodes),
             collapsedCategories: Array.from(collapsedCategories),
+            nodeGroups: Object.fromEntries(
+                Array.from(nodeGroups?.entries() || []).map(([k, v]) => [k, Array.from(v)])
+            ),
             nodeSpacing,
-            nodeSize: sizeScale
+            nodeSize: sizeScale,
+            zoom,
+            pan
         };
 
         const payload = {
             name: saveGraphName,
             description: saveDescription,
-            graph_data: data.knowledge_graph, // Only save the graph structure
+            graph_data: data, // Save the FULL data object (KG + signals + hypotheses)
             view_state: viewState
         };
 
@@ -418,9 +533,7 @@ function SVGFallback({ data, animationTime, onEdgeClick, onSetCentral, newlySpaw
     const svgSize = 600;
     const center = svgSize / 2;
 
-    // Zoom and pan state
-    const [zoom, setZoom] = useState(1);
-    const [pan, setPan] = useState({ x: 0, y: 0 });
+    // Zoom and pan state removed - hoisted to parent
     const [isPanning, setIsPanning] = useState(false);
     const [panStart, setPanStart] = useState({ x: 0, y: 0 });
     const containerRef = useRef<HTMLDivElement>(null);
@@ -449,14 +562,6 @@ function SVGFallback({ data, animationTime, onEdgeClick, onSetCentral, newlySpaw
     const [actionNode, setActionNode] = useState<RingNode | null>(null);
     const [multiSelectMode, setMultiSelectMode] = useState(false);
     const [selectedNodesForAnalysis, setSelectedNodesForAnalysis] = useState<Set<string>>(new Set());
-
-    // Selection Tool State
-    // type SelectionMode = 'cursor' | 'lasso' | 'circle' | 'rectangle'; // Defined in state generic
-    const [selectionMode, setSelectionMode] = useState<'cursor' | 'lasso' | 'circle' | 'rectangle'>('cursor');
-    const [multiSelectedNodeIds, setMultiSelectedNodeIds] = useState<Set<string>>(new Set());
-    const [isSelecting, setIsSelecting] = useState(false);
-    const [selectionPoints, setSelectionPoints] = useState<{ x: number, y: number }[]>([]);
-    const selectionStartRef = useRef<{ x: number, y: number } | null>(null);
 
     // Sync external selection (from search) to trigger click behavior (Modal, etc.)
     useEffect(() => {
@@ -498,6 +603,19 @@ function SVGFallback({ data, animationTime, onEdgeClick, onSetCentral, newlySpaw
         if (!container) return;
 
         const handleWheelNative = (e: WheelEvent) => {
+            // If we are scrolling inside a scrollable element (like the sidebar or settings),
+            // or interacting with an input, don't zoom the graph.
+            const target = e.target as HTMLElement;
+            if (target && (
+                target.closest('.overflow-y-auto') ||
+                target.closest('.overflow-y-scroll') ||
+                target.tagName === 'INPUT' ||
+                target.tagName === 'TEXTAREA' ||
+                target.tagName === 'SELECT'
+            )) {
+                return;
+            }
+
             e.preventDefault();
             const delta = e.deltaY > 0 ? 0.9 : 1.1;
             setZoom(z => Math.min(3, Math.max(0.5, z * delta)));
@@ -506,189 +624,6 @@ function SVGFallback({ data, animationTime, onEdgeClick, onSetCentral, newlySpaw
         container.addEventListener('wheel', handleWheelNative, { passive: false });
         return () => container.removeEventListener('wheel', handleWheelNative);
     }, []);
-
-    // Handle drag/pan state
-    const handleMouseDown = useCallback((e: React.MouseEvent) => {
-        // If we are already dragging a node (set via onMouseDown on the node itself), don't pan
-        if (draggingNode) return;
-
-        if (e.button === 0 && !e.ctrlKey) { // Left click without Ctrl
-            // NEW: Handle Selection Mode
-            if (selectionMode !== 'cursor') {
-                const rect = containerRef.current?.getBoundingClientRect();
-                if (rect) {
-                    const x = e.clientX - rect.left;
-                    const y = e.clientY - rect.top;
-                    selectionStartRef.current = { x, y };
-                    setSelectionPoints([{ x, y }]);
-                    setIsSelecting(true);
-
-                    // Clear Previous if shift not held (Standard behavior)
-                    if (!e.shiftKey) {
-                        setMultiSelectedNodeIds(new Set());
-                    }
-                }
-                return;
-            }
-
-            setIsPanning(true);
-            setPanStart({ x: e.clientX - pan.x, y: e.clientY - pan.y });
-        }
-    }, [pan, draggingNode, selectionMode]);
-
-    const handleMouseMove = useCallback((e: React.MouseEvent) => {
-        // 1. Handle Node Dragging
-        if (draggingNode) {
-            e.preventDefault();
-            e.stopPropagation();
-
-            // Calculate new offset in SVG coordinates
-            // We need to map screen delta to SVG delta (considering zoom)
-            const rect = containerRef.current?.getBoundingClientRect();
-            if (!rect) return;
-
-            // Calculate delta
-            const deltaX = e.movementX / zoom;
-            const deltaY = e.movementY / zoom;
-
-            // Mark that actual dragging occurred (to prevent click triggering)
-            if (Math.abs(deltaX) > 0.5 || Math.abs(deltaY) > 0.5) {
-                didDragRef.current = true;
-            }
-
-            setDragOffsets(prev => {
-                const newMap = new Map(prev);
-
-                // Apply delta to the dragged node
-                const current = prev.get(draggingNode) || { x: 0, y: 0 };
-                newMap.set(draggingNode, {
-                    x: current.x + deltaX,
-                    y: current.y + deltaY
-                });
-
-                // If this node is a group center, also move all group members
-                if (nodeGroups.has(draggingNode)) {
-                    const members = nodeGroups.get(draggingNode)!;
-                    members.forEach(memberId => {
-                        const memberCurrent = prev.get(memberId) || { x: 0, y: 0 };
-                        newMap.set(memberId, {
-                            x: memberCurrent.x + deltaX,
-                            y: memberCurrent.y + deltaY
-                        });
-                    });
-                }
-
-                return newMap;
-            });
-            return;
-        }
-
-        // 2. Handle Selection Drawing
-        if (isSelecting) {
-            const rect = containerRef.current?.getBoundingClientRect();
-            if (rect) {
-                const x = e.clientX - rect.left;
-                const y = e.clientY - rect.top;
-                setSelectionPoints(prev => [...prev, { x, y }]);
-            }
-            return;
-        }
-
-        // 3. Handle Canvas Panning
-        if (isPanning) {
-            setPan({ x: e.clientX - panStart.x, y: e.clientY - panStart.y });
-        }
-    }, [isPanning, panStart, draggingNode, zoom, nodeGroups, isSelecting]);
-
-    const handleMouseUp = useCallback((e: React.MouseEvent | MouseEvent | any) => {
-        // Handle explicit event passing or fallback
-        const shiftKey = e?.shiftKey ?? false;
-
-        if (isSelecting) {
-            // FINISH SELECTION
-            setIsSelecting(false);
-            setSelectionPoints([]); // Clear visual path
-
-            const container = containerRef.current;
-            if (!container) return;
-            const rect = container.getBoundingClientRect();
-
-            // Calculate selection bounds/shape in SCREEN space relative to container
-            let selectedIds = new Set<string>();
-
-            // Helper: Convert Graph Space (x,y) to Screen Space (relative to container)
-            const toScreen = (gx: number, gy: number) => ({
-                x: gx * zoom + pan.x + center,
-                y: gy * zoom + pan.y + center
-            });
-
-            const start = selectionStartRef.current || { x: 0, y: 0 };
-            const end = selectionPoints.length > 0 ? selectionPoints[selectionPoints.length - 1] : start;
-
-            nodePositions.forEach((pos, nodeId) => {
-                // Check if node is visible/not hidden
-                if (hiddenNodes.has(nodeId)) return;
-
-                const screenPos = toScreen(pos.x, pos.y);
-                let isInside = false;
-
-                if (selectionMode === 'rectangle') {
-                    const minX = Math.min(start.x, end.x);
-                    const maxX = Math.max(start.x, end.x);
-                    const minY = Math.min(start.y, end.y);
-                    const maxY = Math.max(start.y, end.y);
-                    isInside = screenPos.x >= minX && screenPos.x <= maxX &&
-                        screenPos.y >= minY && screenPos.y <= maxY;
-                }
-                else if (selectionMode === 'circle') {
-                    const radius = Math.sqrt(Math.pow(end.x - start.x, 2) + Math.pow(end.y - start.y, 2));
-                    const dist = Math.sqrt(Math.pow(screenPos.x - start.x, 2) + Math.pow(screenPos.y - start.y, 2));
-                    isInside = dist <= radius;
-                }
-                else if (selectionMode === 'lasso' && selectionPoints.length > 2) {
-                    // Ray casting algorithm for point in polygon
-                    let inside = false;
-                    for (let i = 0, j = selectionPoints.length - 1; i < selectionPoints.length; j = i++) {
-                        const xi = selectionPoints[i].x, yi = selectionPoints[i].y;
-                        const xj = selectionPoints[j].x, yj = selectionPoints[j].y;
-
-                        const intersect = ((yi > screenPos.y) !== (yj > screenPos.y))
-                            && (screenPos.x < (xj - xi) * (screenPos.y - yi) / (yj - yi) + xi);
-                        if (intersect) inside = !inside;
-                    }
-                    isInside = inside;
-                }
-
-                if (isInside) {
-                    selectedIds.add(nodeId);
-                }
-            });
-
-            // Update selection state
-            if (shiftKey) {
-                // Add to existing
-                setMultiSelectedNodeIds(prev => {
-                    const next = new Set(prev);
-                    selectedIds.forEach(id => next.add(id));
-                    return next;
-                });
-            } else {
-                // Replace
-                setMultiSelectedNodeIds(selectedIds);
-            }
-
-            // If we selected only one, also set the main selectedNodeId for details
-            if (selectedIds.size === 1) {
-                const id = Array.from(selectedIds)[0];
-                setSelectedNodeId(id);
-            }
-
-            return;
-        }
-
-        setIsPanning(false);
-        setDraggingNode(null); // Stop dragging node
-    }, [isSelecting, selectionPoints, selectionMode, zoom, pan, nodePositions, hiddenNodes]);
 
     // Calculate node positions - NON-OVERLAPPING RADIAL LAYOUT
     // Dynamic ring sizing based on node count to prevent overlaps
@@ -742,14 +677,14 @@ function SVGFallback({ data, animationTime, onEdgeClick, onSetCentral, newlySpaw
         // NEVER filter out central nodes (ring 0) to keep the graph connected
         // Filter by hidden node types (checkbox filters + explorer types)
         // NEVER filter out central nodes (ring 0) to keep the graph connected
-        if ((hiddenNodeTypes && hiddenNodeTypes.size > 0) || localHiddenTypes.size > 0) {
+        if (hiddenNodeTypes && hiddenNodeTypes.size > 0) {
             filteredNodes = filteredNodes.filter(node => {
                 // Always keep central nodes
                 if (node.ring === 0) return true;
                 const nodeType = node.node_type?.toUpperCase() || '';
 
                 // Check local types (exact match from Explorer)
-                if (localHiddenTypes.has(nodeType)) return false;
+                if (hiddenNodeTypes.has(nodeType)) return false;
 
                 // Check prop hidden types (categories)
                 if (hiddenNodeTypes && hiddenNodeTypes.size > 0) {
@@ -765,8 +700,8 @@ function SVGFallback({ data, animationTime, onEdgeClick, onSetCentral, newlySpaw
         }
 
         // Filter by individual hidden nodes (from Explorer)
-        if (userHiddenNodes.size > 0) {
-            filteredNodes = filteredNodes.filter(node => !userHiddenNodes.has(node.id));
+        if (hiddenNodes.size > 0) {
+            filteredNodes = filteredNodes.filter(node => !hiddenNodes.has(node.id));
         }
 
         // Progressive reveal: only show nodes up to visibleNodeCount
@@ -971,22 +906,35 @@ function SVGFallback({ data, animationTime, onEdgeClick, onSetCentral, newlySpaw
         else if (layoutMode === 'hierarchical') {
             const LEVEL_HEIGHT = layoutParams.levelHeight;
             const NODE_WIDTH = layoutParams.nodeSpacing * 2.75;
-            const levelGroups = [
-                centerNodes,
-                peripheralNodes.filter(n => ['SYMPTOM', 'TREATMENT', 'DRUG'].includes(n.node_type?.toUpperCase() || '')),
-                peripheralNodes.filter(n => !['SYMPTOM', 'TREATMENT', 'DRUG'].includes(n.node_type?.toUpperCase() || ''))
-            ];
-            const totalHeight = (levelGroups.length - 1) * LEVEL_HEIGHT;
-            const startY = center - totalHeight / 2;
+            const MAX_LEVELS = Math.max(2, layoutParams.maxLevels || 5);
+
+            // Central node is always alone at the top level (fixed position, no drag offset)
+            centerNodes.forEach(node => {
+                positions.set(node.id, { x: center, y: center - LEVEL_HEIGHT });
+            });
+
+            // Distribute peripheral nodes across remaining levels
+            const remainingLevels = MAX_LEVELS - 1;
+            const nodesPerLevel = Math.ceil(peripheralNodes.length / remainingLevels);
+
+            const levelGroups: typeof peripheralNodes[] = [];
+            for (let i = 0; i < remainingLevels; i++) {
+                const start = i * nodesPerLevel;
+                const end = Math.min(start + nodesPerLevel, peripheralNodes.length);
+                if (start < peripheralNodes.length) {
+                    levelGroups.push(peripheralNodes.slice(start, end));
+                }
+            }
 
             levelGroups.forEach((group, levelIdx) => {
                 const rowWidth = group.length * NODE_WIDTH;
                 const startX = center - rowWidth / 2 + NODE_WIDTH / 2;
+                const yPos = center + levelIdx * LEVEL_HEIGHT;
                 group.forEach((node, i) => {
                     const dragOffset = dragOffsets.get(node.id) || { x: 0, y: 0 };
                     positions.set(node.id, {
                         x: startX + i * NODE_WIDTH + dragOffset.x,
-                        y: startY + levelIdx * LEVEL_HEIGHT + dragOffset.y
+                        y: yPos + dragOffset.y
                     });
                 });
             });
@@ -1026,8 +974,222 @@ function SVGFallback({ data, animationTime, onEdgeClick, onSetCentral, newlySpaw
         */
 
         return { nodePositions: positions, ringRadii: radii, uniqueNodes: nodes, idRedirects };
-        return { nodePositions: positions, ringRadii: radii, uniqueNodes: nodes, idRedirects };
-    }, [data, center, visibleNodeCount, layoutParams, activePathologies, hiddenNodeTypes, getNodeTypes, layoutMode, dragOffsets, localHiddenTypes, userHiddenNodes]);
+    }, [data, center, visibleNodeCount, layoutParams, activePathologies, hiddenNodeTypes, hiddenNodes, getNodeTypes, layoutMode, dragOffsets]);
+
+    // Handle drag/pan state
+    const handleMouseDown = useCallback((e: React.MouseEvent) => {
+        // If we are already dragging a node (set via onMouseDown on the node itself), don't pan
+        if (draggingNode) return;
+
+        if (e.button === 0 && !e.ctrlKey) { // Left click without Ctrl
+            // NEW: Handle Selection Mode
+            if (selectionMode !== 'cursor') {
+                const rect = containerRef.current?.getBoundingClientRect();
+                if (rect) {
+                    const x = e.clientX - rect.left;
+                    const y = e.clientY - rect.top;
+                    selectionStartRef.current = { x, y };
+                    setSelectionPoints([{ x, y }]);
+                    setIsSelecting(true);
+
+                    // Clear Previous if shift not held (Standard behavior)
+                    if (!e.shiftKey) {
+                        setMultiSelectedNodeIds(new Set());
+                    }
+                }
+                return;
+            }
+
+            setIsPanning(true);
+            setPanStart({ x: e.clientX - pan.x, y: e.clientY - pan.y });
+        }
+    }, [pan, draggingNode, selectionMode]);
+
+    const handleMouseMove = useCallback((e: React.MouseEvent) => {
+        // 1. Handle Node Dragging
+        if (draggingNode) {
+            e.preventDefault();
+            e.stopPropagation();
+
+            // Calculate new offset in SVG coordinates
+            // We need to map screen delta to SVG delta (considering zoom)
+            const rect = containerRef.current?.getBoundingClientRect();
+            if (!rect) return;
+
+            // Calculate delta
+            const deltaX = e.movementX / zoom;
+            const deltaY = e.movementY / zoom;
+
+            // Mark that actual dragging occurred (to prevent click triggering)
+            if (Math.abs(deltaX) > 0.5 || Math.abs(deltaY) > 0.5) {
+                didDragRef.current = true;
+            }
+
+            setDragOffsets(prev => {
+                const newMap = new Map(prev);
+
+                // Apply delta to the dragged node
+                const current = prev.get(draggingNode) || { x: 0, y: 0 };
+                newMap.set(draggingNode, {
+                    x: current.x + deltaX,
+                    y: current.y + deltaY
+                });
+
+                // If this node is a group center, also move all group members
+                if (nodeGroups.has(draggingNode)) {
+                    const members = nodeGroups.get(draggingNode)!;
+                    members.forEach(memberId => {
+                        const memberCurrent = prev.get(memberId) || { x: 0, y: 0 };
+                        newMap.set(memberId, {
+                            x: memberCurrent.x + deltaX,
+                            y: memberCurrent.y + deltaY
+                        });
+                    });
+                }
+
+                // NEW: Handle Multi-Selection Dragging
+                // If the dragged node is part of a selection, move ALL selected nodes
+                if (multiSelectedNodeIds.has(draggingNode)) {
+                    multiSelectedNodeIds.forEach(selectedId => {
+                        if (selectedId === draggingNode) return; // Already handled
+
+                        const current = prev.get(selectedId) || { x: 0, y: 0 };
+                        newMap.set(selectedId, {
+                            x: current.x + deltaX,
+                            y: current.y + deltaY
+                        });
+
+                        // Also handle if the selected node is a group center
+                        if (nodeGroups.has(selectedId)) {
+                            const members = nodeGroups.get(selectedId)!;
+                            members.forEach(memberId => {
+                                const memberCurrent = prev.get(memberId) || { x: 0, y: 0 };
+                                newMap.set(memberId, {
+                                    x: memberCurrent.x + deltaX,
+                                    y: memberCurrent.y + deltaY
+                                });
+                            });
+                        }
+                    });
+                }
+
+                return newMap;
+            });
+            return;
+        }
+
+        // 2. Handle Selection Drawing
+        if (isSelecting) {
+            const rect = containerRef.current?.getBoundingClientRect();
+            if (rect) {
+                const x = e.clientX - rect.left;
+                const y = e.clientY - rect.top;
+                setSelectionPoints(prev => [...prev, { x, y }]);
+            }
+            return;
+        }
+
+        // 3. Handle Canvas Panning
+        if (isPanning) {
+            setPan({ x: e.clientX - panStart.x, y: e.clientY - panStart.y });
+        }
+    }, [isPanning, panStart, draggingNode, zoom, nodeGroups, isSelecting]);
+
+    const handleMouseUp = useCallback((e: React.MouseEvent | MouseEvent | any) => {
+        // Handle explicit event passing or fallback
+        const shiftKey = e?.shiftKey ?? false;
+
+        if (isSelecting) {
+            // FINISH SELECTION
+            setIsSelecting(false);
+            setSelectionPoints([]); // Clear visual path
+
+            const container = containerRef.current;
+            if (!container) return;
+            const rect = container.getBoundingClientRect();
+            const cx = rect.width / 2;
+            const cy = rect.height / 2;
+            const selectedIds = new Set<string>();
+
+            // Helper: Convert Graph Space (x,y) to Screen Space (relative to container)
+            // Considering transform-origin: center (default)
+            const toScreen = (gx: number, gy: number) => ({
+                x: (gx - 300) * zoom + pan.x + cx,
+                y: (gy - 300) * zoom + pan.y + cy
+            });
+
+            const start = selectionStartRef.current || { x: 0, y: 0 };
+            const end = selectionPoints.length > 0 ? selectionPoints[selectionPoints.length - 1] : start;
+
+            nodePositions.forEach((pos, nodeId) => {
+                // Check if node is visible/not hidden
+                if (hiddenNodes.has(nodeId)) return;
+
+                const screenPos = toScreen(pos.x, pos.y);
+                let isInside = false;
+
+                if (selectionMode === 'rectangle') {
+                    const minX = Math.min(start.x, end.x);
+                    const maxX = Math.max(start.x, end.x);
+                    const minY = Math.min(start.y, end.y);
+                    const maxY = Math.max(start.y, end.y);
+                    isInside = screenPos.x >= minX && screenPos.x <= maxX &&
+                        screenPos.y >= minY && screenPos.y <= maxY;
+                }
+                else if (selectionMode === 'circle') {
+                    const radius = Math.sqrt(Math.pow(end.x - start.x, 2) + Math.pow(end.y - start.y, 2));
+                    const dist = Math.sqrt(Math.pow(screenPos.x - start.x, 2) + Math.pow(screenPos.y - start.y, 2));
+                    isInside = dist <= radius;
+                }
+                else if (selectionMode === 'lasso' && selectionPoints.length > 2) {
+                    // Ray casting algorithm for point in polygon
+                    let inside = false;
+                    for (let i = 0, j = selectionPoints.length - 1; i < selectionPoints.length; j = i++) {
+                        const xi = selectionPoints[i].x, yi = selectionPoints[i].y;
+                        const xj = selectionPoints[j].x, yj = selectionPoints[j].y;
+
+                        const intersect = ((yi > screenPos.y) !== (yj > screenPos.y))
+                            && (screenPos.x < (xj - xi) * (screenPos.y - yi) / (yj - yi) + xi);
+                        if (intersect) inside = !inside;
+                    }
+                    isInside = inside;
+                }
+
+                if (isInside) {
+                    selectedIds.add(nodeId);
+                }
+            });
+
+            // Update selection state
+            if (shiftKey) {
+                // Add to existing
+                setMultiSelectedNodeIds((prev: Set<string>) => {
+                    const next = new Set(prev);
+                    selectedIds.forEach(id => next.add(id));
+                    return next;
+                });
+            } else {
+                // Replace
+                setMultiSelectedNodeIds(selectedIds);
+            }
+
+            // If we selected only one, also set the main selectedNodeId for details
+            if (selectedIds.size === 1) {
+                const id = Array.from(selectedIds)[0];
+                setSelectedNodeId(id);
+            }
+
+            return;
+        }
+
+        setIsPanning(false);
+        setDraggingNode(null); // Stop dragging node
+    }, [isSelecting, selectionPoints, selectionMode, zoom, pan, nodePositions, hiddenNodes]);
+
+    // Calculate node positions - NON-OVERLAPPING RADIAL LAYOUT
+    // Dynamic ring sizing based on node count to prevent overlaps
+    // Positions are ALWAYS recalculated to allow dynamic ring expansion when new nodes arrive
+
 
     const nodeMap = useMemo(() => {
         const map = new Map<string, RingNode>();
@@ -1151,18 +1313,57 @@ function SVGFallback({ data, animationTime, onEdgeClick, onSetCentral, newlySpaw
             onMouseMove={handleMouseMove}
             onMouseUp={handleMouseUp}
             onMouseLeave={handleMouseUp}
+            onClick={(e) => {
+                // Only deselect if clicking directly on the container (not on a node or edge)
+                if (e.target === e.currentTarget || (e.target as HTMLElement).tagName === 'DIV') {
+                    setSelectedNodeId(null);
+                    setSelectedNodesForAnalysis(new Set());
+                }
+            }}
             style={{ cursor: isPanning ? 'grabbing' : 'grab' }}
         >
-            {/* Graph Explorer Toggle */}
-            <button
-                onClick={() => setShowExplorer(!showExplorer)}
-                className="absolute top-4 left-4 z-20 bg-gray-900/80 border border-gray-700 text-gray-300 px-3 py-2 rounded-lg flex items-center gap-2 hover:bg-white/10 transition-colors backdrop-blur-sm shadow-lg"
-            >
-                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
-                </svg>
-                <span className="text-sm font-medium">Contenu</span>
-            </button>
+            {/* Top Toolbar Removed - Moved to Unified Menu */}
+
+
+            {/* SELECTION OVERLAY (SVG) */}
+            {isSelecting && selectionPoints.length > 0 && (
+                <div className="absolute inset-0 pointer-events-none z-30">
+                    <svg width="100%" height="100%" style={{ filter: 'drop-shadow(0 0 4px #06b6d4)' }}>
+                        {selectionMode === 'lasso' && (
+                            <polyline
+                                points={selectionPoints.map(p => `${p.x},${p.y}`).join(' ')}
+                                fill="rgba(6, 182, 212, 0.1)"
+                                stroke="#06b6d4"
+                                strokeWidth="2"
+                                strokeDasharray="4 2"
+                            />
+                        )}
+                        {selectionMode === 'rectangle' && selectionStartRef.current && (
+                            <rect
+                                x={Math.min(selectionStartRef.current.x, selectionPoints[selectionPoints.length - 1].x)}
+                                y={Math.min(selectionStartRef.current.y, selectionPoints[selectionPoints.length - 1].y)}
+                                width={Math.abs(selectionPoints[selectionPoints.length - 1].x - selectionStartRef.current.x)}
+                                height={Math.abs(selectionPoints[selectionPoints.length - 1].y - selectionStartRef.current.y)}
+                                fill="rgba(6, 182, 212, 0.1)"
+                                stroke="#06b6d4"
+                                strokeWidth="2"
+                                strokeDasharray="4 2"
+                            />
+                        )}
+                        {selectionMode === 'circle' && selectionStartRef.current && (
+                            <circle
+                                cx={selectionStartRef.current.x}
+                                cy={selectionStartRef.current.y}
+                                r={Math.sqrt(Math.pow(selectionPoints[selectionPoints.length - 1].x - selectionStartRef.current.x, 2) + Math.pow(selectionPoints[selectionPoints.length - 1].y - selectionStartRef.current.y, 2))}
+                                fill="rgba(6, 182, 212, 0.1)"
+                                stroke="#06b6d4"
+                                strokeWidth="2"
+                                strokeDasharray="4 2"
+                            />
+                        )}
+                    </svg>
+                </div>
+            )}
 
             <svg
                 width={svgSize}
@@ -1532,7 +1733,12 @@ function SVGFallback({ data, animationTime, onEdgeClick, onSetCentral, newlySpaw
 
                 {/* Nodes with staggered ease-in-out animation */}
                 {
-                    uniqueNodes.map((node, nodeIndex) => {
+                    // Sort nodes so the hovered node is rendered last (on top)
+                    [...uniqueNodes].sort((a, b) => {
+                        if (hoveredNode?.id === a.id) return 1;
+                        if (hoveredNode?.id === b.id) return -1;
+                        return 0;
+                    }).map((node, nodeIndex) => {
                         const basePos = nodePositions.get(node.id);
                         if (!basePos || !getNodeVisible(node.ring)) return null;
 
@@ -1823,377 +2029,633 @@ function SVGFallback({ data, animationTime, onEdgeClick, onSetCentral, newlySpaw
                 }
             </svg>
 
-            {/* Layout Controls */}
-            <div className="absolute bottom-20 left-4 bg-gray-900/80 border border-gray-700 rounded-lg p-2 flex flex-col gap-2 backdrop-blur-sm z-10 w-10">
-                <button
-                    onClick={() => setLayoutMode('radial')}
-                    className={`p-1.5 rounded transition-colors ${layoutMode === 'radial' ? 'bg-cyan-600 text-white' : 'text-gray-400 hover:bg-white/10'}`}
-                    title="Radial (Rings)"
-                >
-                    <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <circle cx="12" cy="12" r="8" strokeWidth={2} />
-                        <circle cx="12" cy="12" r="2" fill="currentColor" />
-                    </svg>
-                </button>
-                <button
-                    onClick={() => setLayoutMode('organic')}
-                    className={`p-1.5 rounded transition-colors ${layoutMode === 'organic' ? 'bg-cyan-600 text-white' : 'text-gray-400 hover:bg-white/10'}`}
-                    title="Organique (Force)"
-                >
-                    <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
-                    </svg>
-                </button>
-                <button
-                    onClick={() => setLayoutMode('grid')}
-                    className={`p-1.5 rounded transition-colors ${layoutMode === 'grid' ? 'bg-cyan-600 text-white' : 'text-gray-400 hover:bg-white/10'}`}
-                    title="Grille"
-                >
-                    <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z" />
-                    </svg>
-                </button>
-                <button
-                    onClick={() => setLayoutMode('hierarchical')}
-                    className={`p-1.5 rounded transition-colors ${layoutMode === 'hierarchical' ? 'bg-cyan-600 text-white' : 'text-gray-400 hover:bg-white/10'}`}
-                    title="Hiérarchique (Arbre)"
-                >
-                    <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" />
-                    </svg>
-                </button>
-
-                <div className="h-px bg-gray-700 my-1 w-full" />
-
-                {/* Settings Toggle */}
+            {/* Unified Floating Menu - Bottom Left */}
+            <DraggablePanel
+                initialPosition={{ x: 24, y: 700 }}
+                handleClass="menu-drag-handle"
+                className="z-30"
+                resizable
+                minimizable
+                title="Outils"
+            >
+                {/* Menu Toggle Button */}
                 <button
                     onClick={() => setShowLayoutSettings(!showLayoutSettings)}
-                    className={`p-1.5 rounded transition-colors ${showLayoutSettings ? 'bg-gray-700 text-white' : 'text-gray-400 hover:bg-white/10'}`}
-                    title="Paramètres de disposition"
+                    className="menu-drag-handle cursor-grab active:cursor-grabbing bg-cyan-600 hover:bg-cyan-500 text-white p-3 rounded-xl shadow-lg shadow-cyan-600/30 flex items-center gap-2 transition-all"
+                    title="Menu Outils (Glissez pour déplacer)"
                 >
+                    <GripHorizontal className="w-4 h-4 text-cyan-200/50" />
                     <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
                     </svg>
+                    <span className="text-sm font-medium hidden sm:inline">Menu</span>
                 </button>
 
-                {/* Reset Positions */}
-                <button
-                    onClick={() => {
-                        setDragOffsets(new Map());
-                        setIgnoreCustomPositions(true);
-                        // Reset flag logic usually requires persistence or handling in useMemo, 
-                        // but here we just toggle it to force re-render/re-calc if logic used it.
-                        // For now, clearing dragOffsets is the main "Reset" for manual moves.
-                    }}
-                    className="p-1.5 rounded transition-colors text-red-400 hover:bg-red-900/30 hover:text-red-300"
-                    title="Réinitialiser les positions"
-                >
-                    <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                    </svg>
-                </button>
-
-                {/* Save Graph Button */}
-                {onSaveGraph && (
-                    <button
-                        onClick={() => setShowSaveModal(true)}
-                        className="p-1.5 rounded transition-colors text-emerald-400 hover:bg-emerald-900/30 hover:text-emerald-300"
-                        title="Sauvegarder ce graphe"
-                    >
-                        <Save className="w-5 h-5" />
-                    </button>
-                )}
-            </div>
-
-            {/* Save Graph Modal */}
-            {showSaveModal && (
-                <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+                {/* Expanded Menu Panel */}
+                {showLayoutSettings && (
                     <div
-                        className="bg-gray-900 border border-emerald-500/50 rounded-xl p-6 w-96 shadow-2xl relative"
-                        onPointerDown={(e) => e.stopPropagation()}
-                        onWheel={(e) => e.stopPropagation()}
+                        className="mt-2 h-full w-full min-w-[250px] bg-gray-900/95 rounded-xl border border-gray-700/50 shadow-2xl backdrop-blur-sm overflow-hidden animate-in slide-in-from-bottom-2 duration-200 flex flex-col"
                     >
-                        <button
-                            onClick={() => setShowSaveModal(false)}
-                            className="absolute top-4 right-4 text-gray-500 hover:text-white"
-                        >
-                            <X className="w-4 h-4" />
-                        </button>
-
-                        <div className="flex items-center gap-3 mb-6">
-                            <div className="w-10 h-10 rounded-full bg-emerald-900/50 flex items-center justify-center border border-emerald-500/30">
-                                <Save className="w-5 h-5 text-emerald-400" />
-                            </div>
-                            <h3 className="text-lg font-bold text-white">Sauvegarder le Graphe</h3>
-                        </div>
-
-                        <div className="space-y-4">
-                            <div>
-                                <label className="block text-xs font-medium text-gray-400 mb-1">Nom du graphe</label>
-                                <input
-                                    type="text"
-                                    value={saveGraphName}
-                                    onChange={(e) => setSaveGraphName(e.target.value)}
-                                    placeholder="Ex: Analyse Cardiovasculaire"
-                                    className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-emerald-500 transition-colors"
-                                    autoFocus
-                                />
-                            </div>
-                            <div>
-                                <label className="block text-xs font-medium text-gray-400 mb-1">Description (optionnelle)</label>
-                                <textarea
-                                    value={saveDescription}
-                                    onChange={(e) => setSaveDescription(e.target.value)}
-                                    placeholder="Notes sur cette session..."
-                                    className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-emerald-500 transition-colors h-20 resize-none"
-                                />
-                            </div>
-
-                            <button
-                                onClick={handleSaveConfirm}
-                                disabled={!saveGraphName.trim()}
-                                className="w-full mt-2 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 disabled:opacity-50 disabled:cursor-not-allowed text-white font-medium py-2 rounded-lg transition-all shadow-lg shadow-emerald-900/20"
-                            >
-                                Sauvegarder
+                        {/* Header */}
+                        <div className="flex-shrink-0 px-4 py-3 border-b border-gray-700/50 flex items-center justify-between menu-drag-handle cursor-grab active:cursor-grabbing">
+                            <span className="text-white font-semibold text-sm flex items-center gap-2">
+                                <GripHorizontal className="w-4 h-4 text-gray-500" />
+                                🛠️ Outils
+                            </span>
+                            <button onClick={() => setShowLayoutSettings(false)} className="text-gray-500 hover:text-white">
+                                <X className="w-4 h-4" />
                             </button>
                         </div>
-                    </div>
-                </div>
-            )}
 
-            {/* Layout Settings Panel */}
-            {showLayoutSettings && (
-                <div
-                    className="absolute bottom-20 left-20 bg-gray-900/95 border border-gray-700 rounded-lg p-4 shadow-xl backdrop-blur w-64 z-20"
-                    onPointerDown={(e) => e.stopPropagation()}
-                    onWheel={(e) => e.stopPropagation()}
-                >
-                    <div className="flex justify-between items-center mb-3">
-                        <h3 className="text-sm font-semibold text-gray-200">Paramètres</h3>
-                        <button onClick={() => setShowLayoutSettings(false)} className="text-gray-500 hover:text-white">✕</button>
-                    </div>
+                        {/* Categories - Scrollable content area */}
+                        <div
+                            className="flex-1 p-3 space-y-3 overflow-y-auto overflow-x-hidden min-h-0"
+                            onPointerDown={(e) => e.stopPropagation()}
+                            onMouseDown={(e) => e.stopPropagation()}
+                            onWheel={(e) => e.stopPropagation()}
+                        >
 
-                    {/* Common: Spacing */}
-                    <div className="mb-3">
-                        <label className="text-xs text-gray-400 block mb-1">Espacement ({layoutParams.nodeSpacing}px)</label>
-                        <input
-                            type="range" min="10" max="150" step="5"
-                            value={layoutParams.nodeSpacing}
-                            onChange={(e) => setLayoutParams(p => ({ ...p, nodeSpacing: parseInt(e.target.value) }))}
-                            className="w-full accent-cyan-500 bg-gray-700 h-1 rounded appearance-none"
-                        />
-                    </div>
-
-                    {/* Grid Specific */}
-                    {layoutMode === 'grid' && (
-                        <div className="mb-3">
-                            <label className="text-xs text-gray-400 block mb-1">Colonnes ({layoutParams.gridCols === 0 ? 'Auto' : layoutParams.gridCols})</label>
-                            <input
-                                type="range" min="0" max="20" step="1"
-                                value={layoutParams.gridCols}
-                                onChange={(e) => setLayoutParams(p => ({ ...p, gridCols: parseInt(e.target.value) }))}
-                                className="w-full accent-cyan-500 bg-gray-700 h-1 rounded appearance-none"
-                            />
-                        </div>
-                    )}
-
-                    {/* Hierarchical Specific */}
-                    {layoutMode === 'hierarchical' && (
-                        <div className="mb-3">
-                            <label className="text-xs text-gray-400 block mb-1">Hauteur de niveau ({layoutParams.levelHeight}px)</label>
-                            <input
-                                type="range" min="10" max="300" step="10"
-                                value={layoutParams.levelHeight}
-                                onChange={(e) => setLayoutParams(p => ({ ...p, levelHeight: parseInt(e.target.value) }))}
-                                className="w-full accent-cyan-500 bg-gray-700 h-1 rounded appearance-none"
-                            />
-                        </div>
-                    )}
-
-                    {/* Organic Specific */}
-                    {layoutMode === 'organic' && (
-                        <div className="mb-3">
-                            <label className="text-xs text-gray-400 block mb-1">Force de dispersion ({layoutParams.organicStrength})</label>
-                            <input
-                                type="range" min="10" max="500" step="10"
-                                value={layoutParams.organicStrength}
-                                onChange={(e) => setLayoutParams(p => ({ ...p, organicStrength: parseInt(e.target.value) }))}
-                                className="w-full accent-cyan-500 bg-gray-700 h-1 rounded appearance-none"
-                            />
-                        </div>
-                    )}
-                </div>
-            )}
-
-            {/* Sidebar Explorer */}
-            <div
-                className={`absolute top-0 left-0 h-full w-80 bg-gray-950/95 border-r border-gray-800 shadow-2xl z-30 transform transition-transform duration-300 overflow-hidden flex flex-col ${showExplorer ? 'translate-x-0' : '-translate-x-full'}`}
-                onPointerDown={(e) => e.stopPropagation()}
-                onWheel={(e) => e.stopPropagation()}
-            >
-                {/* Header */}
-                <div className="p-4 border-b border-gray-800 flex justify-between items-center bg-gray-900/50">
-                    <h2 className="text-lg font-bold text-white flex items-center gap-2">
-                        <svg className="w-5 h-5 text-cyan-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
-                        </svg>
-                        Explorateur
-                    </h2>
-                    <button onClick={() => setShowExplorer(false)} className="text-gray-500 hover:text-white transition-colors">✕</button>
-                </div>
-
-                {/* Content List */}
-                <div className="flex-1 overflow-y-auto p-4 space-y-4">
-                    {/* Render Categories */}
-                    {Array.from(new Set(data.knowledge_graph.nodes.map(n => n.node_type || 'Inconnu'))).sort().map(type => {
-                        const nodesOfType = data.knowledge_graph.nodes.filter(n => (n.node_type || 'Inconnu') === type).sort((a, b) => a.name.localeCompare(b.name));
-                        const isCollapsed = collapsedCategories.has(type);
-                        const isTypeHidden = localHiddenTypes.has(type.toUpperCase());
-
-                        return (
-                            <div key={type} className="border border-gray-800 rounded bg-gray-900/30 overflow-hidden">
-                                <div className="flex items-center gap-2 p-2 hover:bg-white/5 transition-colors">
+                            {/* Layout Category */}
+                            <div className="space-y-2">
+                                <div className="text-xs font-semibold text-gray-400 uppercase tracking-wider px-1">📐 Disposition</div>
+                                <div className="grid grid-cols-4 gap-2">
                                     <button
-                                        onClick={() => {
-                                            const newSet = new Set(collapsedCategories);
-                                            if (isCollapsed) newSet.delete(type); else newSet.add(type);
-                                            setCollapsedCategories(newSet);
-                                        }}
-                                        className="text-gray-400 hover:text-white transition-colors p-1"
+                                        onClick={() => setLayoutMode('radial')}
+                                        className={`p-2 rounded-lg transition-colors ${layoutMode === 'radial' ? 'bg-cyan-600 text-white' : 'bg-gray-800 text-gray-400 hover:bg-gray-700'}`}
+                                        title="Radial"
                                     >
-                                        <svg className={`w-4 h-4 transition-transform duration-200 ${isCollapsed ? '-rotate-90' : 'rotate-0'}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                                        <svg className="w-5 h-5 mx-auto" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                            <circle cx="12" cy="12" r="8" strokeWidth={2} />
+                                            <circle cx="12" cy="12" r="2" fill="currentColor" />
                                         </svg>
                                     </button>
-
-                                    <input
-                                        type="checkbox"
-                                        checked={!isTypeHidden}
-                                        onChange={() => {
-                                            const newSet = new Set(localHiddenTypes);
-                                            const typeKey = type.toUpperCase();
-                                            if (newSet.has(typeKey)) newSet.delete(typeKey); else newSet.add(typeKey);
-                                            setLocalHiddenTypes(newSet);
-                                        }}
-                                        className="rounded border-gray-600 bg-gray-800 accent-cyan-500 w-4 h-4 cursor-pointer"
-                                    />
-
-                                    <span className="text-xs font-semibold text-gray-300 flex-1 truncate uppercase tracking-wider">{type}</span>
-                                    <span className="text-[10px] text-gray-500 bg-gray-800 px-1.5 py-0.5 rounded font-mono border border-gray-700">{nodesOfType.length}</span>
+                                    <button
+                                        onClick={() => setLayoutMode('organic')}
+                                        className={`p-2 rounded-lg transition-colors ${layoutMode === 'organic' ? 'bg-cyan-600 text-white' : 'bg-gray-800 text-gray-400 hover:bg-gray-700'}`}
+                                        title="Organique"
+                                    >
+                                        <svg className="w-5 h-5 mx-auto" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
+                                        </svg>
+                                    </button>
+                                    <button
+                                        onClick={() => setLayoutMode('grid')}
+                                        className={`p-2 rounded-lg transition-colors ${layoutMode === 'grid' ? 'bg-cyan-600 text-white' : 'bg-gray-800 text-gray-400 hover:bg-gray-700'}`}
+                                        title="Grille"
+                                    >
+                                        <svg className="w-5 h-5 mx-auto" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z" />
+                                        </svg>
+                                    </button>
+                                    <button
+                                        onClick={() => setLayoutMode('hierarchical')}
+                                        className={`p-2 rounded-lg transition-colors ${layoutMode === 'hierarchical' ? 'bg-cyan-600 text-white' : 'bg-gray-800 text-gray-400 hover:bg-gray-700'}`}
+                                        title="Hiérarchique"
+                                    >
+                                        <svg className="w-5 h-5 mx-auto" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" />
+                                        </svg>
+                                    </button>
                                 </div>
 
-                                {/* Node List */}
-                                {!isCollapsed && (
-                                    <div className="border-t border-gray-800/50 bg-black/20 animate-in slide-in-from-top-1 duration-200">
-                                        {nodesOfType.map(node => {
-                                            const isHidden = userHiddenNodes.has(node.id);
-                                            // Determine node status color
-                                            const statusColor = node.ring === 0 ? 'bg-purple-500' : 'bg-cyan-500';
-
-                                            return (
-                                                <div key={node.id} className="flex items-center gap-2 px-3 py-1.5 hover:bg-white/5 pl-9 border-l-2 border-transparent hover:border-cyan-500/30 group transition-colors">
-                                                    <input
-                                                        type="checkbox"
-                                                        checked={!isHidden}
-                                                        onChange={() => {
-                                                            const newSet = new Set(userHiddenNodes);
-                                                            if (newSet.has(node.id)) newSet.delete(node.id); else newSet.add(node.id);
-                                                            setUserHiddenNodes(newSet);
-                                                        }}
-                                                        className="rounded border-gray-700 bg-gray-800 accent-cyan-500 w-3.5 h-3.5 cursor-pointer opacity-70 group-hover:opacity-100 transition-opacity"
-                                                    />
-                                                    <span className={`text-xs truncate transition-all flex-1 ${isHidden ? 'text-gray-600 line-through' : 'text-gray-400 group-hover:text-white'}`} title={node.name}>
-                                                        {node.name}
-                                                    </span>
-                                                </div>
-                                            );
-                                        })}
+                                {/* Layout Settings Sliders */}
+                                <div className="space-y-2 pt-2">
+                                    <div>
+                                        <div className="flex justify-between text-xs text-gray-400 mb-1">
+                                            <span>Espacement</span>
+                                            <span>{layoutParams.nodeSpacing}</span>
+                                        </div>
+                                        <input
+                                            type="range" min="10" max="150" step="5"
+                                            value={layoutParams.nodeSpacing}
+                                            onChange={(e) => setLayoutParams(p => ({ ...p, nodeSpacing: parseInt(e.target.value) }))}
+                                            className="w-full accent-cyan-500 bg-gray-700 h-1 rounded appearance-none"
+                                        />
                                     </div>
-                                )}
+                                    <div>
+                                        <div className="flex justify-between text-xs text-gray-400 mb-1">
+                                            <span>Taille</span>
+                                            <span>{layoutParams.nodeSize}x</span>
+                                        </div>
+                                        <input
+                                            type="range" min="0.5" max="2" step="0.1"
+                                            value={layoutParams.nodeSize}
+                                            onChange={(e) => {
+                                                const val = parseFloat(e.target.value);
+                                                setLayoutParams(p => ({ ...p, nodeSize: val }));
+                                                setNodeSizeScale(val);
+                                            }}
+                                            className="w-full accent-cyan-500 bg-gray-700 h-1 rounded appearance-none"
+                                        />
+                                    </div>
+
+                                    {/* Grid Specific */}
+                                    {layoutMode === 'grid' && (
+                                        <div>
+                                            <div className="flex justify-between text-xs text-gray-400 mb-1">
+                                                <span>Colonnes</span>
+                                                <span>{layoutParams.gridCols === 0 ? 'Auto' : layoutParams.gridCols}</span>
+                                            </div>
+                                            <input
+                                                type="range" min="0" max="20" step="1"
+                                                value={layoutParams.gridCols}
+                                                onChange={(e) => setLayoutParams(p => ({ ...p, gridCols: parseInt(e.target.value) }))}
+                                                className="w-full accent-cyan-500 bg-gray-700 h-1 rounded appearance-none"
+                                            />
+                                        </div>
+                                    )}
+
+                                    {/* Hierarchical Specific */}
+                                    {layoutMode === 'hierarchical' && (
+                                        <>
+                                            <div>
+                                                <div className="flex justify-between text-xs text-gray-400 mb-1">
+                                                    <span>Hauteur niveau</span>
+                                                    <span>{layoutParams.levelHeight}px</span>
+                                                </div>
+                                                <input
+                                                    type="range" min="10" max="300" step="10"
+                                                    value={layoutParams.levelHeight}
+                                                    onChange={(e) => setLayoutParams(p => ({ ...p, levelHeight: parseInt(e.target.value) }))}
+                                                    className="w-full accent-cyan-500 bg-gray-700 h-1 rounded appearance-none"
+                                                />
+                                            </div>
+                                            <div>
+                                                <div className="flex justify-between text-xs text-gray-400 mb-1">
+                                                    <span>Niveaux max</span>
+                                                    <span>{layoutParams.maxLevels}</span>
+                                                </div>
+                                                <input
+                                                    type="range" min="1" max="10" step="1"
+                                                    value={layoutParams.maxLevels}
+                                                    onChange={(e) => setLayoutParams(p => ({ ...p, maxLevels: parseInt(e.target.value) }))}
+                                                    className="w-full accent-cyan-500 bg-gray-700 h-1 rounded appearance-none"
+                                                />
+                                            </div>
+                                        </>
+                                    )}
+
+                                    {/* Organic Specific */}
+                                    {layoutMode === 'organic' && (
+                                        <div>
+                                            <div className="flex justify-between text-xs text-gray-400 mb-1">
+                                                <span>Force</span>
+                                                <span>{layoutParams.organicStrength}</span>
+                                            </div>
+                                            <input
+                                                type="range" min="10" max="500" step="10"
+                                                value={layoutParams.organicStrength}
+                                                onChange={(e) => setLayoutParams(p => ({ ...p, organicStrength: parseInt(e.target.value) }))}
+                                                className="w-full accent-cyan-500 bg-gray-700 h-1 rounded appearance-none"
+                                            />
+                                        </div>
+                                    )}
+                                </div>
                             </div>
-                        );
-                    })}
-                </div>
-            </div>
 
-            {/* Zoom controls */}
-            <div className="absolute bottom-8 left-4 flex gap-2">
-                <button
-                    onClick={() => setZoom(z => Math.min(3, z * 1.2))}
-                    className="bg-gray-800 hover:bg-gray-700 text-white px-3 py-1 rounded text-sm"
-                >
-                    +
-                </button>
-                <button
-                    onClick={() => setZoom(z => Math.max(0.5, z / 1.2))}
-                    className="bg-gray-800 hover:bg-gray-700 text-white px-3 py-1 rounded text-sm"
-                >
-                    -
-                </button>
-                <button
-                    onClick={() => { setZoom(1); setPan({ x: 0, y: 0 }); }}
-                    className="bg-gray-800 hover:bg-gray-700 text-white px-3 py-1 rounded text-sm"
-                >
-                    Reset
-                </button>
-                <span className="text-gray-500 text-xs ml-2 self-center">{Math.round(zoom * 100)}%</span>
-            </div>
+                            {/* Divider */}
+                            <div className="h-px bg-gray-700/50" />
 
-            <div className="absolute bottom-8 right-4 text-right text-gray-400 text-sm">
-                <p>🎯 1er clic: sélectionner | 2ème clic: analyser le lien IA</p>
-                {/* Node colors legend */}
-                <div className="text-xs mt-1 flex flex-wrap gap-2 justify-end">
-                    <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-red-500"></span>Pathologie</span>
-                    <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-blue-500"></span>Symptôme</span>
-                    <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-green-500"></span>Traitement</span>
-                    <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-orange-500"></span>Médicament</span>
-                </div>
-                {/* Edge colors legend */}
-                <div className="text-xs mt-1 flex flex-wrap gap-2 justify-end">
-                    <span>🟢 Sympt→Patho</span>
-                    <span>🟠 Sympt→Médic</span>
-                    <span>🔴 Médic↔Médic</span>
-                    <span>☠️ Contre-indic</span>
-                </div>
-                <p className="text-xs mt-1 text-purple-400">🖱️ Double-clic: définir comme centre</p>
-            </div>
+                            {/* Actions Category */}
+                            <div className="space-y-2">
+                                <div className="text-xs font-semibold text-gray-400 uppercase tracking-wider px-1">⚡ Actions</div>
+                                <div className="grid grid-cols-2 gap-2">
+                                    {onSaveGraph && (
+                                        <button
+                                            onClick={() => setShowSaveModal(true)}
+                                            className="flex items-center gap-2 p-2 rounded-lg bg-emerald-900/30 text-emerald-400 hover:bg-emerald-900/50 transition-colors text-xs"
+                                        >
+                                            <Save className="w-4 h-4" />
+                                            Sauvegarder
+                                        </button>
+                                    )}
+                                    <button
+                                        onClick={() => setShowLoadModal(true)}
+                                        className="flex items-center gap-2 p-2 rounded-lg bg-blue-900/30 text-blue-400 hover:bg-blue-900/50 transition-colors text-xs"
+                                    >
+                                        <FolderOpen className="w-4 h-4" />
+                                        Charger
+                                    </button>
+                                    <button
+                                        onClick={() => setShowExplorer(!showExplorer)}
+                                        className={`flex items-center gap-2 p-2 rounded-lg transition-colors text-xs ${showExplorer ? 'bg-purple-600 text-white' : 'bg-gray-800 text-gray-400 hover:bg-gray-700'}`}
+                                    >
+                                        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
+                                        </svg>
+                                        Explorateur
+                                    </button>
+                                    <button
+                                        onClick={() => setShowHiddenPanel(!showHiddenPanel)}
+                                        className={`flex items-center gap-2 p-2 rounded-lg transition-colors text-xs ${showHiddenPanel ? 'bg-amber-600 text-white' : 'bg-gray-800 text-gray-400 hover:bg-gray-700'}`}
+                                    >
+                                        <EyeOff className="w-4 h-4" />
+                                        Masqués ({hiddenNodes.size})
+                                    </button>
+                                </div>
+                            </div>
 
-            {/* Tooltip on hover */}
+                            {/* Divider */}
+                            <div className="h-px bg-gray-700/50" />
+
+                            {/* Selection Tools Category via Unified Menu */}
+                            <div className="space-y-2">
+                                <div className="text-xs font-semibold text-gray-400 uppercase tracking-wider px-1">👆 Sélection</div>
+                                <div className="grid grid-cols-4 gap-2">
+                                    <button
+                                        onClick={() => setSelectionMode('cursor')}
+                                        className={`p-2 rounded-lg transition-colors ${selectionMode === 'cursor' ? 'bg-purple-600 text-white' : 'bg-gray-800 text-gray-400 hover:bg-gray-700'}`}
+                                        title="Curseur"
+                                    >
+                                        <MousePointer2 className="w-4 h-4 mx-auto" />
+                                    </button>
+                                    <button
+                                        onClick={() => setSelectionMode('rectangle')}
+                                        className={`p-2 rounded-lg transition-colors ${selectionMode === 'rectangle' ? 'bg-cyan-600 text-white' : 'bg-gray-800 text-gray-400 hover:bg-gray-700'}`}
+                                        title="Rectangle"
+                                    >
+                                        <Square className="w-4 h-4 mx-auto" />
+                                    </button>
+                                    <button
+                                        onClick={() => setSelectionMode('circle')}
+                                        className={`p-2 rounded-lg transition-colors ${selectionMode === 'circle' ? 'bg-cyan-600 text-white' : 'bg-gray-800 text-gray-400 hover:bg-gray-700'}`}
+                                        title="Cercle"
+                                    >
+                                        <CircleIcon className="w-4 h-4 mx-auto" />
+                                    </button>
+                                    <button
+                                        onClick={() => setSelectionMode('lasso')}
+                                        className={`p-2 rounded-lg transition-colors ${selectionMode === 'lasso' ? 'bg-cyan-600 text-white' : 'bg-gray-800 text-gray-400 hover:bg-gray-700'}`}
+                                        title="Lasso"
+                                    >
+                                        <Lasso className="w-4 h-4 mx-auto" />
+                                    </button>
+                                </div>
+                            </div>
+
+                            {/* Divider */}
+                            <div className="h-px bg-gray-700/50" />
+
+                            {/* View Category */}
+                            <div className="space-y-2">
+                                <div className="text-xs font-semibold text-gray-400 uppercase tracking-wider px-1">👁️ Vue</div>
+                                <div className="flex items-center gap-2">
+                                    <button
+                                        onClick={() => setZoom(z => Math.min(3, z * 1.2))}
+                                        className="flex-1 p-2 rounded-lg bg-gray-800 text-gray-300 hover:bg-gray-700 transition-colors text-sm font-medium"
+                                    >
+                                        +
+                                    </button>
+                                    <span className="text-gray-400 text-xs w-12 text-center">{Math.round(zoom * 100)}%</span>
+                                    <button
+                                        onClick={() => setZoom(z => Math.max(0.5, z / 1.2))}
+                                        className="flex-1 p-2 rounded-lg bg-gray-800 text-gray-300 hover:bg-gray-700 transition-colors text-sm font-medium"
+                                    >
+                                        −
+                                    </button>
+                                    <button
+                                        onClick={() => { setZoom(1); setPan({ x: 0, y: 0 }); }}
+                                        className="p-2 rounded-lg bg-gray-800 text-gray-400 hover:bg-gray-700 transition-colors text-xs"
+                                    >
+                                        Reset
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                )}
+            </DraggablePanel>
+
+
+            {/* Save Graph Modal */}
             {
-                hoveredNode && (
-                    <div
-                        className="absolute pointer-events-none z-50 bg-gray-900/95 border border-gray-600 rounded-lg px-4 py-3 shadow-xl max-w-xs"
-                        style={{
-                            left: tooltipPos.x,
-                            top: tooltipPos.y,
-                            transform: 'translateX(-50%)'
-                        }}
-                    >
-                        <div className="flex items-center gap-2 mb-2">
-                            <span
-                                className="w-3 h-3 rounded-full"
-                                style={{ backgroundColor: LANE_COLORS[hoveredNode.lane] || RING_COLORS[hoveredNode.ring] || '#94a3b8' }}
-                            />
-                            <span className="font-bold text-white text-sm">{hoveredNode.name}</span>
-                        </div>
-                        <div className="text-xs text-gray-300 space-y-1">
-                            <p><span className="text-gray-500">Type:</span> {hoveredNode.node_type || hoveredNode.lane}</p>
-                            <p><span className="text-gray-500">Anneau:</span> {hoveredNode.ring}</p>
-                            <p><span className="text-gray-500">Score:</span> {(hoveredNode.proximity_score * 100).toFixed(0)}%</p>
-                        </div>
-                        <div className="mt-2 pt-2 border-t border-gray-700 text-xs text-purple-400">
-                            Double-clic → nouveau centre
+                showSaveModal && (
+                    <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+                        <div
+                            className="bg-gray-900 border border-emerald-500/50 rounded-xl p-6 w-96 shadow-2xl relative"
+                            onMouseDown={(e) => e.stopPropagation()}
+                            onPointerDown={(e) => e.stopPropagation()}
+                            onWheel={(e) => e.stopPropagation()}
+                        >
+                            <button
+                                onClick={() => setShowSaveModal(false)}
+                                className="absolute top-4 right-4 text-gray-500 hover:text-white"
+                            >
+                                <X className="w-4 h-4" />
+                            </button>
+
+                            <div className="flex items-center gap-3 mb-6">
+                                <div className="w-10 h-10 rounded-full bg-emerald-900/50 flex items-center justify-center border border-emerald-500/30">
+                                    <Save className="w-5 h-5 text-emerald-400" />
+                                </div>
+                                <h3 className="text-lg font-bold text-white">Sauvegarder le Graphe</h3>
+                            </div>
+
+                            <div className="space-y-4">
+                                <div>
+                                    <label className="block text-xs font-medium text-gray-400 mb-1">Nom du graphe</label>
+                                    <input
+                                        type="text"
+                                        value={saveGraphName}
+                                        onChange={(e) => setSaveGraphName(e.target.value)}
+                                        placeholder="Ex: Analyse Cardiovasculaire"
+                                        className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-emerald-500 transition-colors"
+                                        autoFocus
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-xs font-medium text-gray-400 mb-1">Description (optionnelle)</label>
+                                    <textarea
+                                        value={saveDescription}
+                                        onChange={(e) => setSaveDescription(e.target.value)}
+                                        placeholder="Notes sur cette session..."
+                                        className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-emerald-500 transition-colors h-20 resize-none"
+                                    />
+                                </div>
+
+                                <button
+                                    onClick={handleSaveConfirm}
+                                    disabled={!saveGraphName.trim()}
+                                    className="w-full mt-2 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 disabled:opacity-50 disabled:cursor-not-allowed text-white font-medium py-2 rounded-lg transition-all shadow-lg shadow-emerald-900/20"
+                                >
+                                    Sauvegarder
+                                </button>
+                            </div>
                         </div>
                     </div>
                 )
             }
 
+            {/* Load Graph Modal */}
+            {
+                showLoadModal && (
+                    <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+                        <div
+                            className="bg-gray-900 border border-blue-500/50 rounded-xl p-6 w-[500px] max-h-[80%] overflow-hidden flex flex-col shadow-2xl relative"
+                            onMouseDown={(e) => e.stopPropagation()}
+                            onPointerDown={(e) => e.stopPropagation()}
+                            onWheel={(e) => e.stopPropagation()}
+                        >
+                            <button
+                                onClick={() => setShowLoadModal(false)}
+                                className="absolute top-4 right-4 text-gray-500 hover:text-white"
+                            >
+                                <X className="w-4 h-4" />
+                            </button>
+
+                            <div className="flex items-center gap-2 mb-4">
+                                <FolderOpen className="w-5 h-5 text-blue-400" />
+                                <h3 className="text-lg font-semibold text-white">Charger un Graphe</h3>
+                            </div>
+
+                            <div className="relative mb-4">
+                                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-500" />
+                                <input
+                                    type="text"
+                                    placeholder="Rechercher par nom ou description..."
+                                    className="w-full bg-gray-800 border border-gray-700 rounded-lg py-2 pl-10 pr-4 text-sm text-gray-200 focus:outline-none focus:border-blue-500/50"
+                                    value={loadSearchQuery}
+                                    onChange={(e) => setLoadSearchQuery(e.target.value)}
+                                />
+                            </div>
+
+                            <div className="flex-1 overflow-y-auto space-y-2 pr-2 custom-scrollbar">
+                                {isLoadingGraphs ? (
+                                    <div className="flex justify-center p-8"><Loader2 className="w-6 h-6 animate-spin text-blue-500" /></div>
+                                ) : savedGraphs.filter(g =>
+                                    g.name?.toLowerCase().includes(loadSearchQuery.toLowerCase()) ||
+                                    g.description?.toLowerCase().includes(loadSearchQuery.toLowerCase())
+                                ).length === 0 ? (
+                                    <div className="text-center p-8 text-gray-500 text-sm">Aucun graphe trouvé</div>
+                                ) : (
+                                    savedGraphs.filter(g =>
+                                        g.name?.toLowerCase().includes(loadSearchQuery.toLowerCase()) ||
+                                        g.description?.toLowerCase().includes(loadSearchQuery.toLowerCase())
+                                    ).map(graph => (
+                                        <div
+                                            key={graph.id}
+                                            onClick={() => handleLoadGraph(graph)}
+                                            className="p-3 border border-gray-800 rounded-lg hover:bg-blue-900/20 hover:border-blue-500/30 cursor-pointer transition-all group"
+                                        >
+                                            <div className="flex justify-between items-start">
+                                                <div>
+                                                    <h4 className="text-sm font-medium text-blue-300 group-hover:text-blue-200">{graph.name}</h4>
+                                                    <p className="text-xs text-gray-500 line-clamp-1 mt-0.5">{graph.description || 'Sans description'}</p>
+                                                </div>
+                                                <span className="text-[10px] text-gray-600">
+                                                    {new Date(graph.updated_at || graph.created_at).toLocaleDateString()}
+                                                </span>
+                                            </div>
+                                        </div>
+                                    ))
+                                )}
+                            </div>
+                        </div>
+                    </div>
+                )
+            }
+
+            {/* Sidebar Explorer - Draggable panel with visibility toggle */}
+            {showExplorer && (
+                <DraggablePanel
+                    initialPosition={{ x: 10, y: 60 }}
+                    handleClass="explorer-drag-handle"
+                    className="z-40"
+                    resizable
+                    minimizable
+                    title="Explorateur"
+                >
+                    <div
+                        className="h-full w-full bg-gray-950/95 border-r border-gray-800 shadow-2xl flex flex-col"
+                        onWheel={(e) => e.stopPropagation()}
+                    >
+                        {/* Header with drag handle */}
+                        <div className="p-4 border-b border-gray-800 flex justify-between items-center bg-gray-900/50 explorer-drag-handle cursor-grab active:cursor-grabbing">
+                            <h2 className="text-lg font-bold text-white flex items-center gap-2">
+                                <GripHorizontal className="w-4 h-4 text-gray-500" />
+                                Explorateur
+                            </h2>
+                            <button onClick={() => setShowExplorer(false)} className="text-gray-500 hover:text-white transition-colors">✕</button>
+                        </div>
+
+                        {/* Content List - Scrollable flex column */}
+                        <div
+                            className="flex-1 overflow-y-auto p-4 min-h-0 flex flex-col gap-3"
+                        >
+                            {/* Render Categories */}
+                            {Array.from(new Set(data.knowledge_graph.nodes.map(n => n.node_type || 'Inconnu'))).sort().map(type => {
+                                const nodesOfType = data.knowledge_graph.nodes.filter(n => (n.node_type || 'Inconnu') === type).sort((a, b) => a.name.localeCompare(b.name));
+                                const isCollapsed = collapsedCategories.has(type);
+
+                                return (
+                                    <div key={type} className="border border-gray-800 rounded bg-gray-900/30 overflow-hidden">
+                                        <div className="flex items-center gap-2 p-2 hover:bg-white/5 transition-colors">
+                                            <button
+                                                onClick={() => {
+                                                    const newSet = new Set(collapsedCategories);
+                                                    if (isCollapsed) newSet.delete(type); else newSet.add(type);
+                                                    setCollapsedCategories(newSet);
+                                                }}
+                                                className="text-gray-400 hover:text-white transition-colors p-1"
+                                            >
+                                                <svg className={`w-4 h-4 transition-transform duration-200 ${isCollapsed ? '-rotate-90' : 'rotate-0'}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                                                </svg>
+                                            </button>
+
+                                            <input
+                                                type="checkbox"
+                                                checked={!hiddenNodeTypes.has(type.toUpperCase())}
+                                                onChange={() => {
+                                                    const newSet = new Set(hiddenNodeTypes);
+                                                    const typeKey = type.toUpperCase();
+                                                    if (newSet.has(typeKey)) newSet.delete(typeKey); else newSet.add(typeKey);
+                                                    setHiddenNodeTypes(newSet);
+                                                }}
+                                                className="rounded border-gray-600 bg-gray-800 accent-cyan-500 w-4 h-4 cursor-pointer"
+                                            />
+
+                                            <span className="text-xs font-semibold text-gray-300 flex-1 truncate uppercase tracking-wider">{type}</span>
+                                            <span className="text-[10px] text-gray-500 bg-gray-800 px-1.5 py-0.5 rounded font-mono border border-gray-700">{nodesOfType.length}</span>
+                                        </div>
+
+                                        {/* Node List - Scrollable within each category */}
+                                        {!isCollapsed && (
+                                            <div className="border-t border-gray-800/50 bg-black/20 animate-in slide-in-from-top-1 duration-200 max-h-[200px] overflow-y-auto">
+                                                {nodesOfType.map(node => {
+                                                    // Determine node status color
+                                                    const statusColor = node.ring === 0 ? 'bg-purple-500' : 'bg-cyan-500';
+
+                                                    return (
+                                                        <div key={node.id} className="flex items-center gap-2 px-3 py-1.5 hover:bg-white/5 pl-9 border-l-2 border-transparent hover:border-cyan-500/30 group transition-colors">
+                                                            <input
+                                                                type="checkbox"
+                                                                checked={!hiddenNodes.has(node.id)}
+                                                                onChange={() => {
+                                                                    const newSet = new Set(hiddenNodes);
+                                                                    if (newSet.has(node.id)) newSet.delete(node.id); else newSet.add(node.id);
+                                                                    setHiddenNodes(newSet);
+                                                                }}
+                                                                className="rounded border-gray-700 bg-gray-800 accent-cyan-500 w-3.5 h-3.5 cursor-pointer opacity-70 group-hover:opacity-100 transition-opacity"
+                                                            />
+                                                            <span className={`text-xs truncate transition-all flex-1 ${hiddenNodes.has(node.id) ? 'text-gray-600 line-through' : 'text-gray-400 group-hover:text-white'}`} title={node.name}>
+                                                                {node.name}
+                                                            </span>
+                                                        </div>
+                                                    );
+                                                })}
+                                            </div>
+                                        )}
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    </div>
+                </DraggablePanel>
+            )}
+
+            {/* Hidden Elements Panel */}
+            {showHiddenPanel && (
+                <div
+                    className="absolute bottom-20 left-20 bg-gray-900/95 border border-amber-500/30 rounded-lg p-4 shadow-xl backdrop-blur w-72 z-35 flex flex-col max-h-[60vh]"
+                    onPointerDown={(e) => e.stopPropagation()}
+                    onWheel={(e) => e.stopPropagation()}
+                >
+                    <div className="flex justify-between items-center mb-4">
+                        <h3 className="text-sm font-semibold text-amber-400 flex items-center gap-2">
+                            <EyeOff className="w-4 h-4" />
+                            Éléments masqués
+                        </h3>
+                        <button onClick={() => setShowHiddenPanel(false)} className="text-gray-500 hover:text-white">✕</button>
+                    </div>
+
+                    <div className="flex-1 overflow-y-auto space-y-4 pr-1 custom-scrollbar">
+                        {/* Hidden Types */}
+                        {hiddenNodeTypes.size > 0 && (
+                            <div>
+                                <p className="text-[10px] uppercase tracking-wider text-gray-500 font-bold mb-2">Catégories ({hiddenNodeTypes.size})</p>
+                                <div className="space-y-1">
+                                    {Array.from(hiddenNodeTypes).map(type => (
+                                        <div key={type} className="flex items-center justify-between gap-2 bg-gray-800/50 px-2 py-1.5 rounded group">
+                                            <span className="text-xs text-gray-300 truncate">{type}</span>
+                                            <button
+                                                onClick={() => {
+                                                    const newSet = new Set(hiddenNodeTypes);
+                                                    newSet.delete(type);
+                                                    setHiddenNodeTypes(newSet);
+                                                }}
+                                                className="text-[10px] text-amber-400/70 hover:text-amber-400 transition-colors opacity-0 group-hover:opacity-100"
+                                            >
+                                                Restaurer
+                                            </button>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
+
+                        {/* Hidden Nodes */}
+                        {hiddenNodes.size > 0 && (
+                            <div>
+                                <p className="text-[10px] uppercase tracking-wider text-gray-500 font-bold mb-2">Nœuds ({hiddenNodes.size})</p>
+                                <div className="space-y-1">
+                                    {Array.from(hiddenNodes).map(id => {
+                                        const node = data.knowledge_graph.nodes.find(n => n.id === id);
+                                        return (
+                                            <div key={id} className="flex items-center justify-between gap-2 bg-gray-800/50 px-2 py-1.5 rounded group">
+                                                <span className="text-xs text-gray-300 truncate">{node?.name || id}</span>
+                                                <button
+                                                    onClick={() => {
+                                                        const newSet = new Set(hiddenNodes);
+                                                        newSet.delete(id);
+                                                        setHiddenNodes(newSet);
+                                                    }}
+                                                    className="text-[10px] text-amber-400/70 hover:text-amber-400 transition-colors opacity-0 group-hover:opacity-100"
+                                                >
+                                                    Restaurer
+                                                </button>
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            </div>
+                        )}
+
+                        {hiddenNodes.size === 0 && hiddenNodeTypes.size === 0 && (
+                            <div className="text-center py-6">
+                                <p className="text-gray-500 text-xs italic">Aucun élément masqué</p>
+                            </div>
+                        )}
+                    </div>
+
+                    {(hiddenNodes.size > 0 || hiddenNodeTypes.size > 0) && (
+                        <div className="mt-4 pt-3 border-t border-gray-800">
+                            <button
+                                onClick={() => {
+                                    setHiddenNodes(new Set());
+                                    setHiddenNodeTypes(new Set());
+                                }}
+                                className="w-full py-1.5 bg-amber-600/20 hover:bg-amber-600/30 text-amber-400 text-xs font-semibold rounded transition-all border border-amber-600/30"
+                            >
+                                Restaurer tout
+                            </button>
+                        </div>
+                    )}
+                </div>
+            )
+            }
+
+            {/* Zoom controls removed - now in unified menu */}
+
+            {/* Legend removed per user request */}
+
+            {/* Tooltip removed - hovered node now comes to foreground instead */}
+
             {/* NODE ACTION MODAL */}
             {
                 showNodeActionModal && actionNode && (
                     <div
-                        className="absolute inset-0 bg-black/50 flex items-center justify-center z-50"
+                        className="fixed inset-0 bg-black/50 flex items-center justify-center z-[100]"
                         onClick={() => setShowNodeActionModal(false)}
                     >
                         <div
@@ -2389,57 +2851,112 @@ function SVGFallback({ data, animationTime, onEdgeClick, onSetCentral, newlySpaw
                 )
             }
 
-            {/* MULTI-SELECT MODE BAR */}
+            {/* SELECTION ACTION PANEL - Centered on screen */}
             {
-                multiSelectMode && (
-                    <div className="absolute bottom-4 left-1/2 transform -translate-x-1/2 z-40 bg-gray-800/95 rounded-xl border border-green-500/50 px-6 py-4 shadow-xl backdrop-blur-sm">
-                        <div className="flex items-center gap-4">
-                            <div className="text-white">
-                                <span className="text-green-400 font-bold">{selectedNodesForAnalysis.size}</span> nœuds sélectionnés
+                multiSelectedNodeIds.size > 0 && (
+                    <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-[100] animate-in fade-in duration-200"
+                        onClick={(e) => {
+                            if (e.target === e.currentTarget) {
+                                setMultiSelectedNodeIds(new Set());
+                            }
+                        }}
+                    >
+                        <div
+                            className="bg-gray-900/95 backdrop-blur-md border border-purple-500/30 rounded-xl p-4 shadow-2xl w-64 animate-in zoom-in-95 duration-200"
+                            onPointerDown={(e) => e.stopPropagation()}
+                            onMouseDown={(e) => e.stopPropagation()}
+                            onClick={(e) => e.stopPropagation()}
+                        >
+                            <div className="flex justify-between items-center mb-4 border-b border-gray-700 pb-2">
+                                <span className="text-white font-medium flex items-center gap-2">
+                                    <span className="bg-purple-600/20 text-purple-400 px-2 py-0.5 rounded text-xs border border-purple-600/30">
+                                        {multiSelectedNodeIds.size}
+                                    </span>
+                                    Sélection
+                                </span>
+                                <button
+                                    onClick={() => setMultiSelectedNodeIds(new Set())}
+                                    className="text-gray-500 hover:text-white transition-colors"
+                                >
+                                    <X className="w-4 h-4" />
+                                </button>
                             </div>
-                            <div className="h-6 w-px bg-gray-600" />
-                            <button
-                                onClick={() => {
-                                    if (selectedNodesForAnalysis.size >= 2) {
-                                        // Get nodes for analysis
+
+                            <div className="flex flex-col gap-2">
+                                {/* Group Action */}
+                                <button
+                                    onClick={() => {
+                                        // Pick the first node as center for now
+                                        const centerId = Array.from(multiSelectedNodeIds)[0];
+                                        if (onStartGroupCreation) {
+                                            onStartGroupCreation(centerId);
+                                            // Add others
+                                            const others = Array.from(multiSelectedNodeIds).filter(id => id !== centerId);
+                                            // This requires logic to add multiple, currently one by one
+                                            // For now, let's just trigger the mode
+                                        }
+                                    }}
+                                    className="flex items-center gap-3 px-3 py-2 bg-gray-800 hover:bg-gray-700/80 rounded-lg text-white text-sm transition-all text-left"
+                                >
+                                    <span className="text-lg">📦</span>
+                                    <span>Créer un groupe</span>
+                                </button>
+
+                                {/* Analyze Action */}
+                                <button
+                                    onClick={() => {
                                         const nodesToAnalyze = data.knowledge_graph.nodes.filter(n =>
-                                            selectedNodesForAnalysis.has(n.id)
+                                            multiSelectedNodeIds.has(n.id)
                                         );
                                         if (nodesToAnalyze.length >= 2) {
-                                            // Create synthetic multi-node edge for analysis
                                             const syntheticEdge: RingEdge = {
                                                 id: `multi-${Date.now()}`,
                                                 source: nodesToAnalyze[0].id,
                                                 target: nodesToAnalyze[nodesToAnalyze.length - 1].id,
-                                                relationship: `Analyse multi-noeuds: ${nodesToAnalyze.map(n => n.name).join(' ↔ ')}`,
+                                                relationship: `Analyse multi-noeuds`,
                                                 evidence_grade: 'D',
                                                 translation_gap: false,
                                                 weight: 0.5
                                             };
-                                            // Pass ALL selected nodes for comprehensive analysis
                                             onEdgeClick(syntheticEdge, nodesToAnalyze[0], nodesToAnalyze[nodesToAnalyze.length - 1], nodesToAnalyze);
                                         }
-                                    }
-                                    setMultiSelectMode(false);
-                                    setSelectedNodesForAnalysis(new Set());
-                                }}
-                                disabled={selectedNodesForAnalysis.size < 2}
-                                className="px-4 py-2 bg-green-600 hover:bg-green-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white font-medium rounded-lg transition-colors flex items-center gap-2"
-                            >
-                                <Sparkles className="w-4 h-4" />
-                                Lancer l'analyse
-                            </button>
-                            <button
-                                onClick={() => {
-                                    setMultiSelectMode(false);
-                                    setSelectedNodesForAnalysis(new Set());
-                                }}
-                                className="px-3 py-2 text-gray-400 hover:text-white transition-colors"
-                            >
-                                ✕
-                            </button>
+                                    }}
+                                    disabled={multiSelectedNodeIds.size < 2}
+                                    className="flex items-center gap-3 px-3 py-2 bg-gray-800 hover:bg-gray-700/80 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg text-white text-sm transition-all text-left"
+                                >
+                                    <Sparkles className="w-4 h-4 text-amber-400" />
+                                    <span>Analyser le lien</span>
+                                </button>
+
+                                {/* Hide Action */}
+                                <button
+                                    onClick={() => {
+                                        const newHidden = new Set(hiddenNodes);
+                                        multiSelectedNodeIds.forEach(id => newHidden.add(id));
+                                        setHiddenNodes(newHidden);
+                                        setMultiSelectedNodeIds(new Set());
+                                    }}
+                                    className="flex items-center gap-3 px-3 py-2 bg-gray-800 hover:bg-gray-700/80 rounded-lg text-white text-sm transition-all text-left"
+                                >
+                                    <span className="text-lg">👁️‍🗨️</span>
+                                    <span>Masquer</span>
+                                </button>
+
+                                {/* Delete Action */}
+                                <button
+                                    onClick={() => {
+                                        if (onRemoveNodes) {
+                                            onRemoveNodes(Array.from(multiSelectedNodeIds));
+                                            setMultiSelectedNodeIds(new Set());
+                                        }
+                                    }}
+                                    className="flex items-center gap-3 px-3 py-2 bg-red-900/20 hover:bg-red-900/40 border border-red-500/20 rounded-lg text-red-200 text-sm transition-all text-left mt-2"
+                                >
+                                    <span className="text-lg">🗑️</span>
+                                    <span>Supprimer du Graphe</span>
+                                </button>
+                            </div>
                         </div>
-                        <p className="text-xs text-gray-400 mt-2">Cliquez sur les nœuds pour les sélectionner</p>
                     </div>
                 )
             }
@@ -2488,9 +3005,8 @@ function SVGFallback({ data, animationTime, onEdgeClick, onSetCentral, newlySpaw
     );
 }
 
-// ============================================
-// ENHANCED GLOWING NODE (smooth with shadows)
-// ============================================
+// [SECTION:THREE]
+// [SUB:THREE.MESHES]
 
 interface GlowNodeProps {
     node: RingNode;
@@ -2735,9 +3251,7 @@ function RingCircle({ ring, radius, animationTime }: { ring: number; radius: num
     );
 }
 
-// ============================================
-// LINK EXPLANATION MODAL
-// ============================================
+// [SECTION:MODALS]
 
 interface LinkModalProps {
     isOpen: boolean;
@@ -3044,7 +3558,35 @@ Fournis:
                                                     : 'bg-gray-700/50 text-gray-200 border border-gray-600/30'
                                                     }`}
                                             >
-                                                {msg.content}
+                                                {msg.role === 'assistant' ? (
+                                                    <div
+                                                        className="prose prose-sm prose-invert max-w-none leading-relaxed"
+                                                        style={{
+                                                            whiteSpace: 'pre-wrap',
+                                                            lineHeight: '1.7'
+                                                        }}
+                                                        dangerouslySetInnerHTML={{
+                                                            __html: msg.content
+                                                                // Convert markdown bold **text** to <strong>
+                                                                .replace(/\*\*([^*]+)\*\*/g, '<strong class="text-cyan-300 font-semibold">$1</strong>')
+                                                                // Convert markdown italic *text* to <em>
+                                                                .replace(/(?<!\*)\*([^*]+)\*(?!\*)/g, '<em class="text-gray-300">$1</em>')
+                                                                // Convert bullet points * to proper list items with spacing
+                                                                .replace(/^\* /gm, '<div class="mt-2 pl-2">• ')
+                                                                .replace(/• ([^<]*?)(?=<div|$)/g, '• $1</div>')
+                                                                // Add space after emoji at start of paragraphs
+                                                                .replace(/([🧬🩺⚠️✅❌💊🔬🦠❓🔗🛡️⛔☠️])\s/g, '$1 ')
+                                                                // Add spacing for paragraph separation
+                                                                .replace(/\n\n/g, '<div class="my-3"></div>')
+                                                                // Single line breaks with margin
+                                                                .replace(/\n/g, '<br class="my-1"/>')
+                                                                // Add space after numbered list items
+                                                                .replace(/(\d+\.)\s/g, '<div class="mt-2 pl-2">$1 ')
+                                                        }}
+                                                    />
+                                                ) : (
+                                                    msg.content
+                                                )}
                                             </div>
                                         </div>
                                     ))
@@ -3409,7 +3951,7 @@ function GraphInteractiveChat({
     if (!isOpen) return null;
 
     return (
-        <div className="absolute bottom-4 right-4 z-50">
+        <div className="z-50 chat-drag-handle">
             {/* Toggle button */}
             {!isExpanded && (
                 <button
@@ -3425,7 +3967,7 @@ function GraphInteractiveChat({
             {isExpanded && (
                 <div className="w-[380px] bg-gray-900/95 backdrop-blur-md rounded-xl border border-purple-500/30 shadow-2xl overflow-hidden">
                     {/* Header */}
-                    <div className="p-3 bg-gradient-to-r from-purple-900/50 to-indigo-900/50 border-b border-gray-700/50 flex items-center justify-between">
+                    <div className="p-3 bg-gradient-to-r from-purple-900/50 to-indigo-900/50 border-b border-gray-700/50 flex items-center justify-between chat-drag-handle cursor-grab active:cursor-grabbing">
                         <div className="flex items-center gap-2">
                             <div className="w-8 h-8 bg-purple-600/30 rounded-lg flex items-center justify-center">
                                 <Sparkles className="w-4 h-4 text-purple-400" />
@@ -3479,7 +4021,34 @@ function GraphInteractiveChat({
                                             : 'bg-gray-800/60 text-gray-200 border border-gray-600/30'
                                             }`}
                                     >
-                                        {msg.content}
+                                        {msg.role === 'assistant' ? (
+                                            <div
+                                                className="prose prose-sm prose-invert max-w-none leading-relaxed"
+                                                style={{
+                                                    whiteSpace: 'pre-wrap',
+                                                    lineHeight: '1.6'
+                                                }}
+                                                dangerouslySetInnerHTML={{
+                                                    __html: msg.content
+                                                        // Convert markdown bold **text** to <strong>
+                                                        .replace(/\*\*([^*]+)\*\*/g, '<strong class="text-cyan-300">$1</strong>')
+                                                        // Convert markdown italic *text* to <em>
+                                                        .replace(/(?<!\*)\*([^*]+)\*(?!\*)/g, '<em class="text-gray-300">$1</em>')
+                                                        // Convert bullet points * to proper list items with spacing
+                                                        .replace(/^\* /gm, '<br/>• ')
+                                                        // Add space after emoji at start of paragraphs
+                                                        .replace(/([🧬🩺⚠️✅❌💊🔬🦠❓🔗])\s/g, '$1 ')
+                                                        // Add double line break for paragraph separation
+                                                        .replace(/\n\n/g, '<br/><br/>')
+                                                        // Single line breaks
+                                                        .replace(/\n/g, '<br/>')
+                                                        // Add space after numbered list items
+                                                        .replace(/(\d+\.)\s/g, '<br/>$1 ')
+                                                }}
+                                            />
+                                        ) : (
+                                            msg.content
+                                        )}
                                     </div>
                                 </div>
                             ))
@@ -3520,9 +4089,8 @@ function GraphInteractiveChat({
     );
 }
 
-// ============================================
-// MAIN MODAL
-// ============================================
+// [SECTION:PANELS]
+// [SUB:PANELS.SIGNALS]
 
 interface RadialRingsModalProps {
     isOpen: boolean;
@@ -3532,6 +4100,7 @@ interface RadialRingsModalProps {
     mode?: 'THERAPY' | 'SAFETY' | 'ETIOLOGY' | 'RELAPSE';
     context?: Record<string, any>;
     onSave?: (savedGraph: any) => void;
+    onLoad?: (savedGraph: any) => void;
     initialData?: RadialRingsData;
     initialViewState?: any;
 }
@@ -3544,9 +4113,12 @@ export default function RadialRingsModal({
     mode = 'ETIOLOGY',
     context,
     onSave,
+    onLoad,
     initialData,
     initialViewState
 }: RadialRingsModalProps) {
+    // [SECTION:STATE]
+    // [SUB:STATE.LOCAL]
     // Support both single pathology and array of pathologies
     const allPathologies = pathologies.length > 0 ? pathologies : (pathology ? [pathology] : []);
     const primaryPathology = allPathologies[0] || '';
@@ -3604,29 +4176,54 @@ export default function RadialRingsModal({
     const [hiddenNodes, setHiddenNodes] = useState<Set<string>>(new Set()); // Individual node hiding
     const [customNodePositions, setCustomNodePositions] = useState<Map<string, { x: number, y: number }>>(new Map()); // Chat-controlled positions
 
+    // Lifted view state
+    const [layoutMode, setLayoutMode] = useState<'radial' | 'grid' | 'hierarchical' | 'organic'>('radial');
+    const [layoutParams, setLayoutParams] = useState({
+        gridCols: 0,
+        nodeSpacing: nodeSpacing,
+        nodeSize: nodeSizeScale,
+        levelHeight: 180,
+        organicStrength: 350,
+        maxLevels: 5
+    });
+    const [zoom, setZoom] = useState(1);
+    const [pan, setPan] = useState({ x: 0, y: 0 });
+    const [showLayoutSettings, setShowLayoutSettings] = useState(false);
+    const [showExplorer, setShowExplorer] = useState(true);
+    const [collapsedCategories, setCollapsedCategories] = useState<Set<string>>(new Set());
+
     // Initialize state from initialViewState if provided
     useEffect(() => {
         if (initialViewState) {
-            if (initialViewState.layoutParams) {
-                // We might need to lift layoutParams state up or handle it here if it was exposed
-                // Assuming layoutParams state exists or we interact with setters if exposed
-            }
+            if (initialViewState.layoutMode) setLayoutMode(initialViewState.layoutMode);
+            if (initialViewState.layoutParams) setLayoutParams(initialViewState.layoutParams);
+            if (initialViewState.zoom) setZoom(initialViewState.zoom);
+            if (initialViewState.pan) setPan(initialViewState.pan);
+            if (initialViewState.showLayoutSettings !== undefined) setShowLayoutSettings(initialViewState.showLayoutSettings);
+
             if (initialViewState.hiddenNodes) setHiddenNodes(new Set(initialViewState.hiddenNodes as string[]));
+            if (initialViewState.hiddenNodeTypes) setHiddenNodeTypes(new Set(initialViewState.hiddenNodeTypes as string[]));
+            if (initialViewState.hiddenRelationTypes) setHiddenRelationTypes(new Set(initialViewState.hiddenRelationTypes as string[]));
+            if (initialViewState.nodeGroups) {
+                const map = new Map<string, Set<string>>();
+                Object.entries(initialViewState.nodeGroups).forEach(([k, v]: [string, any]) => {
+                    map.set(k, new Set(v));
+                });
+                setNodeGroups(map);
+            }
             if (initialViewState.customNodePositions) {
                 const map = new Map<string, { x: number, y: number }>();
                 Object.entries(initialViewState.customNodePositions).forEach(([k, v]: [string, any]) => map.set(k, v));
                 setCustomNodePositions(map);
             }
-            if (initialViewState.cameraPosition) {
-                // If we had camera control exposed, we'd set it here
-            }
+            if (initialViewState.nodeSpacing) setNodeSpacing(initialViewState.nodeSpacing);
+            if (initialViewState.nodeSize) setNodeSizeScale(initialViewState.nodeSize);
         }
     }, [initialViewState]);
 
-    // ============================================
-    // DEEP ANALYSIS FEATURE
+    // [SECTION:DATA]
+    // [SUB:DATA.FETCH]
     // Analyze graph and highlight optimal treatment schema in gold
-    // ============================================
     const [isDeepAnalyzing, setIsDeepAnalyzing] = useState(false);
     const [deepAnalysisMode, setDeepAnalysisMode] = useState(false);
     const [goldenNodeIds, setGoldenNodeIds] = useState<Set<string>>(new Set());
@@ -3791,8 +4388,7 @@ IMPORTANT: Retourne UNIQUEMENT les IDs des nœuds qui forment le schéma thérap
 
             if (jsonMatch) {
                 const parsed = JSON.parse(jsonMatch[0]);
-                const optimalIds = new Set(parsed.optimal_node_ids || []);
-
+                const optimalIds = new Set<string>(parsed.optimal_node_ids || []);
                 setGoldenNodeIds(optimalIds);
                 setDeepAnalysisResult(parsed.treatment_summary || 'Schéma thérapeutique optimal identifié');
                 setDeepAnalysisMode(true);
@@ -3899,6 +4495,8 @@ IMPORTANT: Retourne UNIQUEMENT les IDs des nœuds qui forment le schéma thérap
         return Array.from(types).sort();
     }, [data]);
 
+    // [SECTION:LAYOUT]
+    // [SUB:LAYOUT.RADIAL]
     const filteredGraphData = useMemo(() => {
         if (!data) return { nodes: [], edges: [] };
 
@@ -3971,12 +4569,22 @@ IMPORTANT: Retourne UNIQUEMENT les IDs des nœuds qui forment le schéma thérap
         if (isOpen && allPathologies.length > 0) {
             setCentralNode(primaryPathology);
             if (initialData) {
-                setData(initialData);
+                // Determine if initialData is the full object or just knowledge_graph
+                if (initialData.knowledge_graph) {
+                    setData(initialData);
+                } else {
+                    // Fallback for older saves that only had KG
+                    setData({
+                        knowledge_graph: initialData as any,
+                        micro_signals: [],
+                        hypotheses: []
+                    });
+                }
                 setFromCache(true);
                 // Also trigger rapid "spawn" effect for loaded nodes so they appear
-                if (initialData.knowledge_graph?.nodes) {
-                    // Ensure nodes are in queue or just set visible immediately
-                    setVisibleNodeCount(initialData.knowledge_graph.nodes.length);
+                const nodes = initialData.knowledge_graph?.nodes || (initialData as any).nodes;
+                if (nodes) {
+                    setVisibleNodeCount(nodes.length);
                 }
             } else {
                 fetchData(allPathologies);
@@ -3996,9 +4604,11 @@ IMPORTANT: Retourne UNIQUEMENT les IDs des nœuds qui forment le schéma thérap
         return () => { if (animationRef.current) cancelAnimationFrame(animationRef.current); };
     }, [data, isPaused, isOpen]);
 
+    // [SECTION:ANIMATIONS]
+    // [SUB:ANIMATIONS.TRANSITIONS]
     // Progressive node reveal: nodes appear one by one for holographic effect
     useEffect(() => {
-        if (!data?.knowledge_graph.nodes.length) return;
+        if (!data?.knowledge_graph?.nodes?.length) return;
 
         // Clear any existing interval
         if (revealIntervalRef.current) {
@@ -4215,25 +4825,45 @@ IMPORTANT: Retourne UNIQUEMENT les IDs des nœuds qui forment le schéma thérap
         }
     };
 
+    // [SECTION:INTERACTIONS]
+    // [SUB:INTERACTIONS.SELECTION]
     // Expand graph progressively from a node (MIND MAP BEHAVIOR)
     // Uses deep-research-graph for comprehensive expansion with progressive animation
     const [isExpanding, setIsExpanding] = useState(false);
     const [expandingNodeName, setExpandingNodeName] = useState<string | null>(null);
 
-    const handleSetCentral = async (nodeId: string) => {
+    const handleSetCentral = async (identifier: string) => {
         if (!data) return;
-        const node = data.knowledge_graph.nodes.find(n => n.id === nodeId);
-        if (!node) return;
+
+        // 1. Find the node (try ID first, then Case-Insensitive Name)
+        let node = data.knowledge_graph.nodes.find(n => n.id === identifier);
+        if (!node) {
+            node = data.knowledge_graph.nodes.find(n =>
+                n.name.toLowerCase() === identifier.toLowerCase() ||
+                n.name.toLowerCase().includes(identifier.toLowerCase())
+            );
+        }
+
+        if (!node) {
+            console.error(`[RadialRingsModal] Node not found for identifier: ${identifier}`);
+            return;
+        }
+
+        // 2. Clear UI selections/focus for fresh expansion
+        setMultiSelectedNodeIds(new Set());
+        setHighlightedNodeIds(new Set());
+        setFocusMode(false);
+        setFilterSelectedNodeId(null);
+        setSelectedNodeId(node.id);
 
         setIsExpanding(true);
         setExpandingNodeName(node.name);
-        // NOTE: Do NOT set isLoading here - we want to keep the graph visible during expansion
 
         try {
             // Prepare existing nodes for cross-link analysis
-            // Send node names and types so Claude can identify relevant cross-links
+            const nodeId = node.id;
             const existingNodesForCrossLink = data.knowledge_graph.nodes
-                .filter(n => n.id !== nodeId) // Exclude the node we're expanding from
+                .filter(n => n.id !== nodeId)
                 .map(n => ({
                     name: n.name,
                     node_type: n.node_type || n.lane || 'UNKNOWN'
@@ -4241,14 +4871,12 @@ IMPORTANT: Retourne UNIQUEMENT les IDs des nœuds qui forment le schéma thérap
 
             console.log(`[EXPAND] Sending ${existingNodesForCrossLink.length} existing nodes for cross-link analysis`);
 
-            // Call deep-research-graph for comprehensive expansion
             const response = await supabase.functions.invoke('deep-research-graph', {
                 body: {
                     topic: node.name,
                     max_nodes: 100,
                     include_pubmed: true,
                     include_fda: true,
-                    // NEW: Send existing nodes for cross-link analysis
                     existing_nodes: existingNodesForCrossLink
                 }
             });
@@ -4258,16 +4886,13 @@ IMPORTANT: Retourne UNIQUEMENT les IDs des nœuds qui forment le schéma thérap
             const result = response.data;
             console.log('[EXPAND] Deep research result:', result);
 
-            // Map node types to rings
-            // Map node types to rings - Consistent with transformNode
             // Transform new nodes using centralized logic
             const newNodes: RingNode[] = result.nodes.map((n: any) => {
-                n.parent_pathology = node.parent_pathology; // Interit parent pathology
+                n.parent_pathology = node.parent_pathology;
                 return transformNode(n, allPathologies, primaryPathology);
             });
 
             // Build maps for resolving node references
-            // Claude may reference nodes by ID (c0, d1, s1) or by name (for cross-links to existing nodes)
             const newNodeIdToName = new Map<string, string>();
             const newNodeNameToId = new Map<string, string>();
             newNodes.forEach(n => {
@@ -4286,11 +4911,9 @@ IMPORTANT: Retourne UNIQUEMENT les IDs des nœuds qui forment le schéma thérap
 
             // Transform new edges with cross-link resolution
             const newEdges: RingEdge[] = result.edges.map((e: any) => {
-                // Resolve source: could be an ID (c0, d1) or a node name (for cross-links)
                 let sourceId = e.source_id;
                 let targetId = e.target_id;
 
-                // Try to resolve by name if the ID doesn't match a new node
                 if (!newNodeIdToName.has(sourceId)) {
                     const resolvedId = allNodeNameToId.get(sourceId.toLowerCase());
                     if (resolvedId) sourceId = resolvedId;
@@ -4319,19 +4942,13 @@ IMPORTANT: Retourne UNIQUEMENT les IDs des nœuds qui forment le schéma thérap
             let currentNodes = [...data.knowledge_graph.nodes];
             let currentEdges = [...data.knowledge_graph.edges];
 
-            // Clear any previous spawn markers
             setNewlySpawnedNodes(new Set());
 
-            // Add nodes one by one with visible streaming delay
-            // ONLY use edges from Claude API - no automatic RELATED_TO edges
             for (let i = 0; i < nodesToAdd.length; i++) {
                 const newNode = nodesToAdd[i];
                 currentNodes = [...currentNodes, newNode];
-
-                // Mark this node as newly spawned for cosmic animation
                 setNewlySpawnedNodes(prev => new Set([...prev, newNode.id]));
 
-                // Add ONLY edges from Claude that now have both endpoints (real semantic links)
                 const currentNodeIds = new Set(currentNodes.map(n => n.id));
                 const relevantEdges = newEdges.filter(e =>
                     currentNodeIds.has(e.source) &&
@@ -4342,23 +4959,20 @@ IMPORTANT: Retourne UNIQUEMENT les IDs des nœuds qui forment le schéma thérap
                 );
 
                 if (relevantEdges.length > 0) {
-                    console.log(`[EXPAND] Adding ${relevantEdges.length} semantic edges from Claude`);
+                    currentEdges = [...currentEdges, ...relevantEdges];
                 }
-                currentEdges = [...currentEdges, ...relevantEdges];
 
-                // Update state to trigger re-render (progressive appearance)
                 setData({
                     ...data,
                     knowledge_graph: { nodes: currentNodes, edges: currentEdges }
                 });
 
-                // STREAMING DELAY: 120ms per node for visible cosmic spawn effect
                 if (i < nodesToAdd.length - 1) {
                     await new Promise(resolve => setTimeout(resolve, 120));
                 }
             }
 
-            // FINAL PASS: Add any remaining cross-links that may have been missed
+            // FINAL PASS
             const finalNodeIds = new Set(currentNodes.map(n => n.id));
             const remainingCrossLinks = newEdges.filter(e =>
                 finalNodeIds.has(e.source) &&
@@ -4369,7 +4983,6 @@ IMPORTANT: Retourne UNIQUEMENT les IDs des nœuds qui forment le schéma thérap
             );
 
             if (remainingCrossLinks.length > 0) {
-                console.log(`[EXPAND] Final pass: Adding ${remainingCrossLinks.length} remaining cross-links`);
                 currentEdges = [...currentEdges, ...remainingCrossLinks];
                 setData({
                     ...data,
@@ -4377,18 +4990,11 @@ IMPORTANT: Retourne UNIQUEMENT les IDs des nœuds qui forment le schéma thérap
                 });
             }
 
-            // Clear spawn markers after 2 seconds (cosmic glow fades)
-            setTimeout(() => {
-                setNewlySpawnedNodes(new Set());
-            }, 2000);
-
-            // Update central node display
+            setTimeout(() => setNewlySpawnedNodes(new Set()), 2000);
             setCentralNode(node.name);
-            console.log(`[EXPAND] Added ${nodesToAdd.length} nodes with cosmic streaming`);
 
         } catch (err) {
             console.error('[EXPAND] Error:', err);
-            // Fallback to full reload if expansion fails
             setCentralNode(node.name);
             await fetchData([node.name]);
         } finally {
@@ -4402,14 +5008,15 @@ IMPORTANT: Retourne UNIQUEMENT les IDs des nœuds qui forment le schéma thérap
         setSelectedEdge(edge);
         setSelectedEdgeSource(source);
         setSelectedEdgeTarget(target);
-        setMultiNodesForAnalysis(multiNodes || []);
-        setShowLinkModal(true);
+        setMultiNodesForAnalysis(multiNodes || (source && target ? [source, target] : []));
+        setShowLinkModal(!!edge || (!!multiNodes && multiNodes.length > 1));
     };
 
     const handleReplay = () => {
         setAnimationTime(0);
         startTimeRef.current = 0;
         setIsPaused(false);
+        setNewlySpawnedNodes(new Set());
     };
 
     const handleClose = useCallback(() => {
@@ -4419,592 +5026,587 @@ IMPORTANT: Retourne UNIQUEMENT les IDs des nœuds qui forment le schéma thérap
         onClose();
     }, [onClose]);
 
+    // Handlers for Multi-Selection Actions (passed to SVGFallback)
+    const handleHideNodes = useCallback((nodeIds: string[]) => {
+        const nextHidden = new Set(hiddenNodes);
+        nodeIds.forEach(id => nextHidden.add(id));
+        setHiddenNodes(nextHidden);
+    }, [hiddenNodes]);
+
+    const handleRemoveNodes = useCallback((nodeIds: string[]) => {
+        if (!data) return;
+
+        // Remove from data structure
+        const nodesToRemove = new Set(nodeIds);
+        const newNodes = data.knowledge_graph.nodes.filter(n => !nodesToRemove.has(n.id));
+
+        // Remove connected edges
+        const newEdges = data.knowledge_graph.edges.filter(e =>
+            !nodesToRemove.has(typeof e.source === 'object' ? (e.source as any).id : e.source) &&
+            !nodesToRemove.has(typeof e.target === 'object' ? (e.target as any).id : e.target)
+        );
+
+        setData({
+            ...data,
+            knowledge_graph: { nodes: newNodes, edges: newEdges }
+        });
+
+        // Clean up selection (if managed here, though SVGFallback manages its own selection)
+        // If the central node is removed, we might need to reset view or pick a new center
+        if (centralNodeId && nodesToRemove.has(centralNodeId)) {
+            // Logic to handle central node removal? For now, let's just leave it empty or console warn
+            console.warn("Removed central node!");
+        }
+    }, [data, centralNodeId]);
+
+    // [SECTION:RENDER]
     if (!isOpen) return null;
 
     return (
-        <div className="fixed inset-0 z-50">
-            <div className="absolute inset-0 bg-black" onClick={handleClose} />
+        <PanelRegistryProvider>
+            <div className="fixed inset-0 z-50">
+                <div className="absolute inset-0 bg-black" onClick={handleClose} />
 
-            <div className="relative w-full h-full">
-                {/* Header - Responsive */}
-                <div className="absolute top-2 sm:top-4 left-2 sm:left-4 right-2 sm:right-4 z-20 flex justify-between items-start gap-2">
-                    <div className="bg-gray-900/95 rounded-lg sm:rounded-xl border border-gray-700/50 p-2 sm:p-4 backdrop-blur-sm max-w-[60%] sm:max-w-none">
-                        <h2 className="text-sm sm:text-xl font-bold text-white flex items-center gap-1 sm:gap-2">
-                            🕸️ <span className="hidden xs:inline">Mind Map</span> Sémantique
-                        </h2>
-                        <p className="text-purple-400 text-xs sm:text-sm mt-0.5 sm:mt-1 truncate">{centralNode}</p>
-                        {data && (() => {
-                            // Calculate unique counts matching SVGFallback deduplication
-                            const seenNodeIds = new Set<string>();
-                            const uniqueNodeCount = data.knowledge_graph.nodes.filter(n => {
-                                if (seenNodeIds.has(n.id)) return false;
-                                seenNodeIds.add(n.id);
-                                return true;
-                            }).length;
-
-                            const seenEdgeKeys = new Set<string>();
-                            const uniqueEdgeCount = data.knowledge_graph.edges.filter(e => {
-                                const key = [e.source, e.target].sort().join('-');
-                                if (seenEdgeKeys.has(key)) return false;
-                                seenEdgeKeys.add(key);
-                                return true;
-                            }).length;
-
-                            return (
-                                <div className="flex gap-2 sm:gap-3 mt-1 sm:mt-2 text-[10px] sm:text-xs">
-                                    <span className="text-green-400">{uniqueNodeCount} nœuds</span>
-                                    <span className="text-blue-400">{uniqueEdgeCount} liens</span>
-                                </div>
-                            );
-                        })()}
-                        {/* Hide help text on mobile */}
-                        <div className="hidden md:block text-gray-500 text-xs mt-2 space-y-0.5">
-                            <p>🖱️ <span className="text-gray-400">1 clic</span> = sélectionner + voir connexions</p>
-                            <p>🖱️ <span className="text-gray-400">2ème clic</span> = analyse IA du lien</p>
-                            <p>🖱️ <span className="text-gray-400">Double-clic</span> = ajouter des nœuds liés</p>
-                        </div>
-                    </div>
-
-                    {/* Control buttons - Responsive */}
-                    <div className="flex gap-1 sm:gap-2">
-                        <button onClick={handleReplay} className="bg-gray-800/90 hover:bg-gray-700 text-white p-1.5 sm:p-2.5 rounded-lg touch-manipulation" title="Rejouer">
-                            <RotateCcw className="w-4 h-4 sm:w-5 sm:h-5" />
-                        </button>
-                        <button onClick={() => setIsPaused(!isPaused)} className="bg-gray-800/90 hover:bg-gray-700 text-white p-1.5 sm:p-2.5 rounded-lg touch-manipulation" title={isPaused ? 'Lecture' : 'Pause'}>
-                            {isPaused ? <Play className="w-4 h-4 sm:w-5 sm:h-5" /> : <Pause className="w-4 h-4 sm:w-5 sm:h-5" />}
-                        </button>
-                        <button onClick={handleClose} className="bg-red-600/90 hover:bg-red-500 text-white p-1.5 sm:p-2.5 rounded-lg touch-manipulation" title="Fermer">
+                <div
+                    className="relative w-full h-full"
+                >
+                    {/* Minimal Control Bar - Top right */}
+                    <DraggablePanel className="absolute top-20 sm:top-24 right-4 sm:right-6 z-30 flex gap-2">
+                        {onSave && (
+                            <button
+                                onClick={() => onSave(data)}
+                                className="bg-gray-800/90 hover:bg-gray-700 text-white p-2 sm:p-2.5 rounded-lg touch-manipulation"
+                                title="Sauvegarder le graphe"
+                            >
+                                <Save className="w-4 h-4 sm:w-5 sm:h-5" />
+                            </button>
+                        )}
+                        <button onClick={handleClose} className="bg-red-600/90 hover:bg-red-500 text-white p-2 sm:p-2.5 rounded-lg touch-manipulation" title="Fermer">
                             <X className="w-4 h-4 sm:w-5 sm:h-5" />
                         </button>
-                    </div>
-                </div>
+                    </DraggablePanel>
 
-                {/* Groups Panel - Left Side - Responsive */}
-                {nodeGroups.size > 0 && (
-                    <div className="absolute top-20 sm:top-28 left-1 sm:left-4 z-20 bg-gray-900/95 rounded-lg sm:rounded-xl border border-amber-500/30 p-2 sm:p-3 text-[10px] sm:text-xs min-w-[140px] sm:min-w-[180px] max-w-[160px] sm:max-w-[220px] max-h-[40vh] sm:max-h-[60vh] overflow-y-auto backdrop-blur-sm">
-                        <div className="flex items-center gap-2 mb-3 pb-2 border-b border-gray-700/50">
-                            <span className="text-lg">📦</span>
-                            <h3 className="text-white font-medium">Groupes ({nodeGroups.size})</h3>
-                        </div>
 
-                        <div className="space-y-2">
-                            {Array.from(nodeGroups.entries()).map(([centerId, members]) => {
-                                const centerNode = data?.knowledge_graph.nodes.find(n => n.id === centerId);
-                                const centerName = centerNode?.name || centerId;
+                    {nodeGroups.size > 0 && (
+                        <DraggablePanel
+                            initialPosition={{ x: 340, y: 20 }}
+                            handleClass="groups-drag-handle"
+                            className="z-20 shadow-2xl"
+                        >
+                            <div className="bg-gray-900/95 rounded-lg sm:rounded-xl border border-amber-500/30 p-2 sm:p-3 text-[10px] sm:text-xs min-w-[140px] sm:min-w-[180px] max-w-[160px] sm:max-w-[220px] max-h-[40vh] sm:max-h-[60vh] overflow-y-auto backdrop-blur-sm">
+                                <div className="flex items-center gap-2 mb-3 pb-2 border-b border-gray-700/50 groups-drag-handle cursor-grab active:cursor-grabbing">
+                                    <GripHorizontal className="w-4 h-4 text-amber-500/50" />
+                                    <span className="text-base">📦</span>
+                                    <h3 className="text-white font-medium">Groupes ({nodeGroups.size})</h3>
+                                </div>
+                            </div>
 
-                                return (
-                                    <div
-                                        key={centerId}
-                                        className="bg-gray-800/80 rounded-lg p-2 border border-gray-700/50 hover:border-amber-500/50 transition-colors"
-                                    >
-                                        <div className="flex items-center justify-between gap-2">
-                                            <div className="flex-1 min-w-0">
-                                                <div className="text-white font-medium text-[11px] truncate" title={centerName}>
-                                                    🎯 {centerName}
+                            <div className="space-y-2">
+                                {Array.from(nodeGroups.entries()).map(([centerId, members]) => {
+                                    const centerNode = data?.knowledge_graph.nodes.find(n => n.id === centerId);
+                                    const centerName = centerNode?.name || centerId;
+
+                                    return (
+                                        <div
+                                            key={centerId}
+                                            className="bg-gray-800/80 rounded-lg p-2 border border-gray-700/50 hover:border-amber-500/50 transition-colors"
+                                        >
+                                            <div className="flex items-center justify-between gap-2">
+                                                <div className="flex-1 min-w-0">
+                                                    <div className="text-white font-medium text-[11px] truncate" title={centerName}>
+                                                        🎯 {centerName}
+                                                    </div>
+                                                    <div className="text-gray-400 text-[10px]">
+                                                        {members.size} nœud{members.size > 1 ? 's' : ''} groupé{members.size > 1 ? 's' : ''}
+                                                    </div>
                                                 </div>
-                                                <div className="text-gray-400 text-[10px]">
-                                                    {members.size} nœud{members.size > 1 ? 's' : ''} groupé{members.size > 1 ? 's' : ''}
+                                            </div>
+
+                                            {/* Group members list */}
+                                            {members.size > 0 && (
+                                                <div className="mt-2 pt-2 border-t border-gray-700/50">
+                                                    <div className="text-[9px] text-gray-500 mb-1">Membres:</div>
+                                                    <div className="flex flex-wrap gap-1">
+                                                        {Array.from(members).slice(0, 5).map(memberId => {
+                                                            const memberNode = data?.knowledge_graph.nodes.find(n => n.id === memberId);
+                                                            return (
+                                                                <span
+                                                                    key={memberId}
+                                                                    className="px-1.5 py-0.5 bg-gray-700 rounded text-[9px] text-gray-300 truncate max-w-[80px]"
+                                                                    title={memberNode?.name || memberId}
+                                                                >
+                                                                    {memberNode?.name?.slice(0, 10) || memberId.slice(0, 8)}...
+                                                                </span>
+                                                            );
+                                                        })}
+                                                        {members.size > 5 && (
+                                                            <span className="px-1.5 py-0.5 bg-gray-600 rounded text-[9px] text-gray-400">
+                                                                +{members.size - 5}
+                                                            </span>
+                                                        )}
+                                                    </div>
                                                 </div>
+                                            )}
+
+                                            {/* Action buttons */}
+                                            <div className="flex gap-1 mt-2">
+                                                <button
+                                                    onClick={() => startGroupCreation(centerId)}
+                                                    className="flex-1 px-2 py-1 bg-green-600/30 hover:bg-green-600/50 text-green-300 text-[9px] rounded transition-colors"
+                                                    title="Ajouter des nœuds"
+                                                >
+                                                    ➕ Ajouter
+                                                </button>
+                                                <button
+                                                    onClick={() => dissolveGroup(centerId)}
+                                                    className="flex-1 px-2 py-1 bg-red-600/30 hover:bg-red-600/50 text-red-300 text-[9px] rounded transition-colors"
+                                                    title="Dissoudre le groupe"
+                                                >
+                                                    💔 Dissoudre
+                                                </button>
                                             </div>
                                         </div>
+                                    );
+                                })}
+                            </div>
 
-                                        {/* Group members list */}
-                                        {members.size > 0 && (
-                                            <div className="mt-2 pt-2 border-t border-gray-700/50">
-                                                <div className="text-[9px] text-gray-500 mb-1">Membres:</div>
-                                                <div className="flex flex-wrap gap-1">
-                                                    {Array.from(members).slice(0, 5).map(memberId => {
-                                                        const memberNode = data?.knowledge_graph.nodes.find(n => n.id === memberId);
-                                                        return (
-                                                            <span
-                                                                key={memberId}
-                                                                className="px-1.5 py-0.5 bg-gray-700 rounded text-[9px] text-gray-300 truncate max-w-[80px]"
-                                                                title={memberNode?.name || memberId}
-                                                            >
-                                                                {memberNode?.name?.slice(0, 10) || memberId.slice(0, 8)}...
-                                                            </span>
-                                                        );
-                                                    })}
-                                                    {members.size > 5 && (
-                                                        <span className="px-1.5 py-0.5 bg-gray-600 rounded text-[9px] text-gray-400">
-                                                            +{members.size - 5}
-                                                        </span>
-                                                    )}
-                                                </div>
+                            <div className="mt-3 pt-2 border-t border-gray-700/50 text-[9px] text-gray-500">
+                                💡 Déplacez le nœud central pour bouger tout le groupe
+                            </div>
+                        </DraggablePanel>
+                    )}
+
+                    {/* Right Sidebar - Wider and shorter - Controlled by showExplorer */}
+                    {showExplorer && (
+                        <DraggablePanel
+                            initialPosition={{ x: window.innerWidth - 320, y: 130 }}
+                            handleClass="filter-drag-handle"
+                            className="z-30"
+                            resizable
+                            minimizable
+                            title="Filtres"
+                        >
+                            <div
+                                className="h-full w-full bg-gray-900/95 rounded-lg sm:rounded-xl border border-gray-700/50 text-[10px] sm:text-xs backdrop-blur-sm flex flex-col overflow-hidden"
+                                onWheel={(e) => e.stopPropagation()}
+                            >
+                                {/* Draggable Header */}
+                                <div className="filter-drag-handle flex-shrink-0 cursor-grab active:cursor-grabbing flex items-center justify-between p-2 sm:p-3 border-b border-gray-700/50">
+                                    <div className="flex items-center gap-2 text-gray-400">
+                                        <GripHorizontal className="w-3 h-3" />
+                                        <span className="uppercase tracking-wider text-[10px]">Filtres</span>
+                                    </div>
+                                    <button onClick={() => setShowExplorer(false)} className="text-gray-500 hover:text-white transition-colors text-sm">✕</button>
+                                </div>
+
+                                {/* Scrollable Content */}
+                                <div className="flex-1 overflow-y-auto overflow-x-hidden p-2 sm:p-3 min-h-0">
+                                    {/* Node Search */}
+                                    <div className="mb-3 relative">
+                                        <div className="relative">
+                                            <Search className="w-3.5 h-3.5 absolute left-2 top-1.5 text-gray-500" />
+                                            <input
+                                                type="text"
+                                                placeholder="Rechercher..."
+                                                value={searchQuery}
+                                                onChange={(e) => setSearchQuery(e.target.value)}
+                                                className="w-full bg-gray-800 border border-gray-700 rounded-lg py-1 pl-7 pr-2 text-white text-[10px] focus:ring-1 focus:ring-purple-500 outline-none"
+                                            />
+                                        </div>
+
+                                        {/* Search Results Dropdown */}
+                                        {searchQuery && (
+                                            <div className="absolute top-full left-0 right-0 mt-1 bg-gray-800 rounded-lg border border-gray-700 shadow-xl z-50 overflow-hidden">
+                                                {searchResults.length > 0 ? (
+                                                    searchResults.map(node => (
+                                                        <button
+                                                            key={node.id}
+                                                            onClick={() => handleSearchSelect(node.id)}
+                                                            className="w-full text-left px-3 py-2 hover:bg-gray-700 text-gray-300 transition-colors flex items-center gap-2 border-b border-gray-700/50 last:border-0"
+                                                        >
+                                                            <div className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: NODE_TYPE_COLORS[node.node_type || ''] || '#fff' }} />
+                                                            <span className="truncate">{node.name}</span>
+                                                        </button>
+                                                    ))
+                                                ) : (
+                                                    <div className="px-3 py-2 text-gray-500 text-center italic">Aucun résultat</div>
+                                                )}
                                             </div>
                                         )}
+                                    </div>
 
-                                        {/* Action buttons */}
-                                        <div className="flex gap-1 mt-2">
+                                    {/* Streaming Indicator */}
+                                    {isLoading && data && (
+                                        <div className="flex items-center gap-2 mb-3 bg-indigo-500/10 p-2 rounded-lg border border-indigo-500/20">
+                                            <span className="relative flex h-2 w-2">
+                                                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-cyan-400 opacity-75"></span>
+                                                <span className="relative inline-flex rounded-full h-2 w-2 bg-cyan-500"></span>
+                                            </span>
+                                            <span className="text-cyan-400 font-bold animate-pulse">En direct...</span>
+                                        </div>
+                                    )}
+
+                                    {/* Focus Mode Toggle */}
+                                    <div className="border-t border-gray-700/50 pt-2 mt-2">
+                                        <label className="flex items-center gap-2 cursor-pointer">
+                                            <input
+                                                type="checkbox"
+                                                checked={focusMode}
+                                                onChange={(e) => setFocusMode(e.target.checked)}
+                                                className="w-3.5 h-3.5 rounded border-gray-600 bg-gray-800 text-purple-600 focus:ring-purple-500 focus:ring-offset-0"
+                                            />
+                                            <span className="text-gray-400 text-[10px]">🔦 Mode focus</span>
+                                        </label>
+                                        <p className="text-[9px] text-gray-500 mt-1">Assombrit les nœuds non-connectés</p>
+                                    </div>
+
+                                    {/* Node Type Filters */}
+                                    <div className="border-t border-gray-700/50 pt-2 mt-2">
+                                        <div className="flex justify-between items-center mb-2">
+                                            <div className="text-gray-500 uppercase tracking-wider text-[10px]">Types de nœuds</div>
                                             <button
-                                                onClick={() => startGroupCreation(centerId)}
-                                                className="flex-1 px-2 py-1 bg-green-600/30 hover:bg-green-600/50 text-green-300 text-[9px] rounded transition-colors"
-                                                title="Ajouter des nœuds"
+                                                onClick={() => {
+                                                    const allTypes = ['Médicament', 'Traitement', 'Symptôme', 'Pathologie', 'Complication', 'Analyses', 'Suggestion'];
+                                                    const allHidden = allTypes.every(t => hiddenNodeTypes.has(t));
+                                                    if (allHidden) {
+                                                        // Tout sélectionner (vider le set)
+                                                        setHiddenNodeTypes(new Set());
+                                                    } else {
+                                                        // Tout désélectionner (tout cacher)
+                                                        setHiddenNodeTypes(new Set(allTypes));
+                                                    }
+                                                }}
+                                                className="text-[9px] text-purple-400 hover:text-purple-300 transition-colors"
                                             >
-                                                ➕ Ajouter
+                                                {['Médicament', 'Traitement', 'Symptôme', 'Pathologie', 'Complication', 'Analyses', 'Suggestion'].every(t => hiddenNodeTypes.has(t))
+                                                    ? '☑ Tout sélectionner'
+                                                    : '☐ Tout désélectionner'}
+                                            </button>
+                                        </div>
+                                        <div className="grid gap-1.5" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(100px, 1fr))' }}>
+                                            {['Médicament', 'Traitement', 'Symptôme', 'Pathologie', 'Complication', 'Analyses', 'Suggestion'].map(type => (
+                                                <label
+                                                    key={type}
+                                                    className={`flex items-center gap-2 px-2 py-1 rounded text-[9px] cursor-pointer transition-all ${!hiddenNodeTypes.has(type)
+                                                        ? 'bg-gray-800/50 text-gray-300'
+                                                        : 'bg-gray-900/30 text-gray-600 opacity-50'
+                                                        }`}
+                                                >
+                                                    <input
+                                                        type="checkbox"
+                                                        checked={!hiddenNodeTypes.has(type)}
+                                                        onChange={() => toggleNodeType(type)}
+                                                        className="w-3 h-3 rounded border-gray-600 bg-gray-800 text-purple-600 focus:ring-purple-500 focus:ring-offset-0"
+                                                    />
+                                                    <span
+                                                        className="w-2 h-2 rounded-full"
+                                                        style={{ backgroundColor: !hiddenNodeTypes.has(type) ? (NODE_TYPE_COLORS[getNodeTypes(type)[0]] || '#94a3b8') : '#6b7280' }}
+                                                    />
+                                                    <span className={hiddenNodeTypes.has(type) ? 'line-through' : ''}>{type}</span>
+                                                </label>
+                                            ))}
+                                        </div>
+                                    </div>
+
+                                    {/* Relation Type Filters (Dynamic) */}
+                                    <div className="border-t border-gray-700/50 pt-2 mt-2">
+                                        <div className="flex justify-between items-center mb-2">
+                                            <div className="text-gray-500 uppercase tracking-wider text-[10px]">Types de relations</div>
+                                            {availableRelationTypes.length > 0 && (
+                                                <button
+                                                    onClick={() => {
+                                                        const allHidden = availableRelationTypes.every(t => hiddenRelationTypes.has(t));
+                                                        if (allHidden) {
+                                                            // Tout sélectionner (vider le set)
+                                                            setHiddenRelationTypes(new Set());
+                                                        } else {
+                                                            // Tout désélectionner (tout cacher)
+                                                            setHiddenRelationTypes(new Set(availableRelationTypes));
+                                                        }
+                                                    }}
+                                                    className="text-[9px] text-purple-400 hover:text-purple-300 transition-colors"
+                                                >
+                                                    {availableRelationTypes.every(t => hiddenRelationTypes.has(t))
+                                                        ? '☑ Tout sélectionner'
+                                                        : '☐ Tout désélectionner'}
+                                                </button>
+                                            )}
+                                        </div>
+                                        <div className="grid gap-1.5 max-h-[200px] overflow-y-auto" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))' }}>
+                                            {availableRelationTypes.map(type => {
+                                                // Determine color
+                                                let color = '#94a3b8'; // default slate
+                                                const t = type.toUpperCase();
+                                                if (t.includes('TREAT') || t.includes('IMPROVE') || t.includes('VACCIN') || t.includes('DIAGNOS')) color = '#22c55e'; // Green
+                                                else if (t.includes('SIDE') || t.includes('EFFECT') || t.includes('CAUSE')) color = '#f97316'; // Orange
+                                                else if (t.includes('CONTRA') || t.includes('DANGER') || t.includes('INTERACT')) color = '#ef4444'; // Red
+                                                else if (t.includes('MILD') || t.includes('RISK')) color = '#eab308'; // Yellow
+
+                                                return (
+                                                    <label
+                                                        key={type}
+                                                        className={`flex items-center gap-2 px-2 py-1 rounded text-[9px] cursor-pointer transition-all ${!hiddenRelationTypes.has(type)
+                                                            ? 'bg-gray-800/50 text-gray-300'
+                                                            : 'bg-gray-900/30 text-gray-600 opacity-50'
+                                                            }`}
+                                                    >
+                                                        <input
+                                                            type="checkbox"
+                                                            checked={!hiddenRelationTypes.has(type)}
+                                                            onChange={() => toggleRelationType(type)}
+                                                            className="w-3 h-3 rounded border-gray-600 bg-gray-800 text-purple-600 focus:ring-purple-500 focus:ring-offset-0"
+                                                        />
+                                                        <div
+                                                            className="w-3 h-0.5"
+                                                            style={{ backgroundColor: !hiddenRelationTypes.has(type) ? color : '#6b7280' }}
+                                                        />
+                                                        <span className={`truncate ${hiddenRelationTypes.has(type) ? 'line-through' : ''}`} title={type}>{type}</span>
+                                                    </label>
+                                                );
+                                            })}
+                                            {availableRelationTypes.length === 0 && (
+                                                <div className="text-[9px] text-gray-600 italic px-2">Aucune relation</div>
+                                            )}
+                                        </div>
+                                    </div>
+
+                                    {/* Edge Filter Toggle */}
+                                    <div className="border-t border-gray-700/50 pt-2 mt-2">
+                                        <div className="text-gray-500 uppercase tracking-wider text-[10px] mb-2">Filtre liens</div>
+                                        <div className="flex flex-col gap-1">
+                                            <button
+                                                onClick={() => setEdgeFilterMode('all')}
+                                                className={`px-2 py-1 rounded text-[10px] transition-all text-left ${edgeFilterMode === 'all'
+                                                    ? 'bg-purple-600 text-white'
+                                                    : 'bg-gray-800 text-gray-400 hover:bg-gray-700'
+                                                    }`}
+                                            >
+                                                🔗 Tous les liens
                                             </button>
                                             <button
-                                                onClick={() => dissolveGroup(centerId)}
-                                                className="flex-1 px-2 py-1 bg-red-600/30 hover:bg-red-600/50 text-red-300 text-[9px] rounded transition-colors"
-                                                title="Dissoudre le groupe"
+                                                onClick={() => setEdgeFilterMode('central-only')}
+                                                className={`px-2 py-1 rounded text-[10px] transition-all text-left ${edgeFilterMode === 'central-only'
+                                                    ? 'bg-purple-600 text-white'
+                                                    : 'bg-gray-800 text-gray-400 hover:bg-gray-700'
+                                                    }`}
                                             >
-                                                💔 Dissoudre
+                                                🎯 Nœud central
+                                            </button>
+                                            <button
+                                                onClick={() => setEdgeFilterMode('selected-only')}
+                                                className={`px-2 py-1 rounded text-[10px] transition-all text-left ${edgeFilterMode === 'selected-only'
+                                                    ? 'bg-purple-600 text-white'
+                                                    : 'bg-gray-800 text-gray-400 hover:bg-gray-700'
+                                                    }`}
+                                            >
+                                                👆 Nœud sélectionné
                                             </button>
                                         </div>
                                     </div>
-                                );
-                            })}
-                        </div>
 
-                        <div className="mt-3 pt-2 border-t border-gray-700/50 text-[9px] text-gray-500">
-                            💡 Déplacez le nœud central pour bouger tout le groupe
-                        </div>
-                    </div>
-                )}
-
-                {/* Semantic Legend - Responsive */}
-                <div className="absolute top-20 sm:top-28 right-1 sm:right-4 z-20 bg-gray-900/95 rounded-lg sm:rounded-xl border border-gray-700/50 p-2 sm:p-3 text-[10px] sm:text-xs max-w-[140px] sm:max-w-[200px] max-h-[50vh] sm:max-h-[80vh] overflow-y-auto overflow-x-visible backdrop-blur-sm">
-
-                    {/* Node Search */}
-                    <div className="mb-3 relative">
-                        <div className="relative">
-                            <Search className="w-3.5 h-3.5 absolute left-2 top-1.5 text-gray-500" />
-                            <input
-                                type="text"
-                                placeholder="Rechercher..."
-                                value={searchQuery}
-                                onChange={(e) => setSearchQuery(e.target.value)}
-                                className="w-full bg-gray-800 border border-gray-700 rounded-lg py-1 pl-7 pr-2 text-white text-[10px] focus:ring-1 focus:ring-purple-500 outline-none"
-                            />
-                        </div>
-
-                        {/* Search Results Dropdown */}
-                        {searchQuery && (
-                            <div className="absolute top-full left-0 right-0 mt-1 bg-gray-800 rounded-lg border border-gray-700 shadow-xl z-50 overflow-hidden">
-                                {searchResults.length > 0 ? (
-                                    searchResults.map(node => (
-                                        <button
-                                            key={node.id}
-                                            onClick={() => handleSearchSelect(node.id)}
-                                            className="w-full text-left px-3 py-2 hover:bg-gray-700 text-gray-300 transition-colors flex items-center gap-2 border-b border-gray-700/50 last:border-0"
-                                        >
-                                            <div className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: NODE_TYPE_COLORS[node.node_type || ''] || '#fff' }} />
-                                            <span className="truncate">{node.name}</span>
-                                        </button>
-                                    ))
-                                ) : (
-                                    <div className="px-3 py-2 text-gray-500 text-center italic">Aucun résultat</div>
-                                )}
-                            </div>
-                        )}
-                    </div>
-
-                    {/* Streaming Indicator */}
-                    {isLoading && data && (
-                        <div className="flex items-center gap-2 mb-3 bg-indigo-500/10 p-2 rounded-lg border border-indigo-500/20">
-                            <span className="relative flex h-2 w-2">
-                                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-cyan-400 opacity-75"></span>
-                                <span className="relative inline-flex rounded-full h-2 w-2 bg-cyan-500"></span>
-                            </span>
-                            <span className="text-cyan-400 font-bold animate-pulse">En direct...</span>
-                        </div>
-                    )}
-
-                    {/* Focus Mode Toggle */}
-                    <div className="border-t border-gray-700/50 pt-2 mt-2">
-                        <label className="flex items-center gap-2 cursor-pointer">
-                            <input
-                                type="checkbox"
-                                checked={focusMode}
-                                onChange={(e) => setFocusMode(e.target.checked)}
-                                className="w-3.5 h-3.5 rounded border-gray-600 bg-gray-800 text-purple-600 focus:ring-purple-500 focus:ring-offset-0"
-                            />
-                            <span className="text-gray-400 text-[10px]">🔦 Mode focus</span>
-                        </label>
-                        <p className="text-[9px] text-gray-500 mt-1">Assombrit les nœuds non-connectés</p>
-                    </div>
-
-                    {/* View Controls */}
-                    <div className="border-t border-gray-700/50 pt-2 mt-2">
-                        <div className="text-gray-500 uppercase tracking-wider text-[10px] mb-2">Affichage</div>
-
-                        {/* Density Slider */}
-                        <div className="mb-2">
-                            <div className="flex justify-between text-[10px] text-gray-400 mb-1">
-                                <span>Espacement</span>
-                                <span>{Math.round(nodeSpacing)}</span>
-                            </div>
-                            <input
-                                type="range"
-                                min="20"
-                                max="200"
-                                value={nodeSpacing}
-                                onChange={(e) => setNodeSpacing(Number(e.target.value))}
-                                className="w-full h-1 bg-gray-700 rounded-lg appearance-none cursor-pointer"
-                            />
-                        </div>
-
-                        {/* Size Slider */}
-                        <div className="mb-2">
-                            <div className="flex justify-between text-[10px] text-gray-400 mb-1">
-                                <span>Taille</span>
-                                <span>{nodeSizeScale.toFixed(1)}x</span>
-                            </div>
-                            <input
-                                type="range"
-                                min="0.5"
-                                max="2.0"
-                                step="0.1"
-                                value={nodeSizeScale}
-                                onChange={(e) => setNodeSizeScale(Number(e.target.value))}
-                                className="w-full h-1 bg-gray-700 rounded-lg appearance-none cursor-pointer"
-                            />
-                        </div>
-                    </div>
-
-                    {/* Node Type Filters */}
-                    <div className="border-t border-gray-700/50 pt-2 mt-2">
-                        <div className="flex justify-between items-center mb-2">
-                            <div className="text-gray-500 uppercase tracking-wider text-[10px]">Types de nœuds</div>
-                            <button
-                                onClick={() => {
-                                    const allTypes = ['Médicament', 'Traitement', 'Symptôme', 'Pathologie', 'Complication', 'Analyses', 'Suggestion'];
-                                    const allHidden = allTypes.every(t => hiddenNodeTypes.has(t));
-                                    if (allHidden) {
-                                        // Tout sélectionner (vider le set)
-                                        setHiddenNodeTypes(new Set());
-                                    } else {
-                                        // Tout désélectionner (tout cacher)
-                                        setHiddenNodeTypes(new Set(allTypes));
-                                    }
-                                }}
-                                className="text-[9px] text-purple-400 hover:text-purple-300 transition-colors"
-                            >
-                                {['Médicament', 'Traitement', 'Symptôme', 'Pathologie', 'Complication', 'Analyses', 'Suggestion'].every(t => hiddenNodeTypes.has(t))
-                                    ? '☑ Tout sélectionner'
-                                    : '☐ Tout désélectionner'}
-                            </button>
-                        </div>
-                        <div className="grid grid-cols-1 gap-1">
-                            {['Médicament', 'Traitement', 'Symptôme', 'Pathologie', 'Complication', 'Analyses', 'Suggestion'].map(type => (
-                                <label
-                                    key={type}
-                                    className={`flex items-center gap-2 px-2 py-1 rounded text-[9px] cursor-pointer transition-all ${!hiddenNodeTypes.has(type)
-                                        ? 'bg-gray-800/50 text-gray-300'
-                                        : 'bg-gray-900/30 text-gray-600 opacity-50'
-                                        }`}
-                                >
-                                    <input
-                                        type="checkbox"
-                                        checked={!hiddenNodeTypes.has(type)}
-                                        onChange={() => toggleNodeType(type)}
-                                        className="w-3 h-3 rounded border-gray-600 bg-gray-800 text-purple-600 focus:ring-purple-500 focus:ring-offset-0"
-                                    />
-                                    <span
-                                        className="w-2 h-2 rounded-full"
-                                        style={{ backgroundColor: !hiddenNodeTypes.has(type) ? (NODE_TYPE_COLORS[getNodeTypes(type)[0]] || '#94a3b8') : '#6b7280' }}
-                                    />
-                                    <span className={hiddenNodeTypes.has(type) ? 'line-through' : ''}>{type}</span>
-                                </label>
-                            ))}
-                        </div>
-                    </div>
-
-                    {/* Relation Type Filters (Dynamic) */}
-                    <div className="border-t border-gray-700/50 pt-2 mt-2">
-                        <div className="flex justify-between items-center mb-2">
-                            <div className="text-gray-500 uppercase tracking-wider text-[10px]">Types de relations</div>
-                            {availableRelationTypes.length > 0 && (
-                                <button
-                                    onClick={() => {
-                                        const allHidden = availableRelationTypes.every(t => hiddenRelationTypes.has(t));
-                                        if (allHidden) {
-                                            // Tout sélectionner (vider le set)
-                                            setHiddenRelationTypes(new Set());
-                                        } else {
-                                            // Tout désélectionner (tout cacher)
-                                            setHiddenRelationTypes(new Set(availableRelationTypes));
-                                        }
-                                    }}
-                                    className="text-[9px] text-purple-400 hover:text-purple-300 transition-colors"
-                                >
-                                    {availableRelationTypes.every(t => hiddenRelationTypes.has(t))
-                                        ? '☑ Tout sélectionner'
-                                        : '☐ Tout désélectionner'}
-                                </button>
-                            )}
-                        </div>
-                        <div className="grid grid-cols-1 gap-1 max-h-[200px] overflow-y-auto">
-                            {availableRelationTypes.map(type => {
-                                // Determine color
-                                let color = '#94a3b8'; // default slate
-                                const t = type.toUpperCase();
-                                if (t.includes('TREAT') || t.includes('IMPROVE') || t.includes('VACCIN') || t.includes('DIAGNOS')) color = '#22c55e'; // Green
-                                else if (t.includes('SIDE') || t.includes('EFFECT') || t.includes('CAUSE')) color = '#f97316'; // Orange
-                                else if (t.includes('CONTRA') || t.includes('DANGER') || t.includes('INTERACT')) color = '#ef4444'; // Red
-                                else if (t.includes('MILD') || t.includes('RISK')) color = '#eab308'; // Yellow
-
-                                return (
-                                    <label
-                                        key={type}
-                                        className={`flex items-center gap-2 px-2 py-1 rounded text-[9px] cursor-pointer transition-all ${!hiddenRelationTypes.has(type)
-                                            ? 'bg-gray-800/50 text-gray-300'
-                                            : 'bg-gray-900/30 text-gray-600 opacity-50'
-                                            }`}
-                                    >
-                                        <input
-                                            type="checkbox"
-                                            checked={!hiddenRelationTypes.has(type)}
-                                            onChange={() => toggleRelationType(type)}
-                                            className="w-3 h-3 rounded border-gray-600 bg-gray-800 text-purple-600 focus:ring-purple-500 focus:ring-offset-0"
-                                        />
-                                        <div
-                                            className="w-3 h-0.5"
-                                            style={{ backgroundColor: !hiddenRelationTypes.has(type) ? color : '#6b7280' }}
-                                        />
-                                        <span className={`truncate ${hiddenRelationTypes.has(type) ? 'line-through' : ''}`} title={type}>{type}</span>
-                                    </label>
-                                );
-                            })}
-                            {availableRelationTypes.length === 0 && (
-                                <div className="text-[9px] text-gray-600 italic px-2">Aucune relation</div>
-                            )}
-                        </div>
-                    </div>
-
-                    {/* Edge Filter Toggle */}
-                    <div className="border-t border-gray-700/50 pt-2 mt-2">
-                        <div className="text-gray-500 uppercase tracking-wider text-[10px] mb-2">Filtre liens</div>
-                        <div className="flex flex-col gap-1">
-                            <button
-                                onClick={() => setEdgeFilterMode('all')}
-                                className={`px-2 py-1 rounded text-[10px] transition-all text-left ${edgeFilterMode === 'all'
-                                    ? 'bg-purple-600 text-white'
-                                    : 'bg-gray-800 text-gray-400 hover:bg-gray-700'
-                                    }`}
-                            >
-                                🔗 Tous les liens
-                            </button>
-                            <button
-                                onClick={() => setEdgeFilterMode('central-only')}
-                                className={`px-2 py-1 rounded text-[10px] transition-all text-left ${edgeFilterMode === 'central-only'
-                                    ? 'bg-purple-600 text-white'
-                                    : 'bg-gray-800 text-gray-400 hover:bg-gray-700'
-                                    }`}
-                            >
-                                🎯 Nœud central
-                            </button>
-                            <button
-                                onClick={() => setEdgeFilterMode('selected-only')}
-                                className={`px-2 py-1 rounded text-[10px] transition-all text-left ${edgeFilterMode === 'selected-only'
-                                    ? 'bg-purple-600 text-white'
-                                    : 'bg-gray-800 text-gray-400 hover:bg-gray-700'
-                                    }`}
-                            >
-                                👆 Nœud sélectionné
-                            </button>
-                        </div>
-                    </div>
-
-                    {/* Comorbidity Pathology Filter - only show if multiple pathologies */}
-                    {isComorbidityMode && allPathologies.length > 1 && (
-                        <div className="border-t border-gray-700/50 pt-2 mt-2">
-                            <p className="text-[10px] font-medium text-amber-400 mb-2">⚠️ Filtre Comorbidités</p>
-                            <div className="flex flex-col gap-1.5">
-                                {allPathologies.map((pathology, idx) => (
-                                    <label key={idx} className="flex items-center gap-2 cursor-pointer">
-                                        <input
-                                            type="checkbox"
-                                            checked={activePathologies.has(pathology)}
-                                            onChange={(e) => {
-                                                const newSet = new Set(activePathologies);
-                                                if (e.target.checked) {
-                                                    newSet.add(pathology);
-                                                } else {
-                                                    newSet.delete(pathology);
+                                    {/* Comorbidity Pathology Filter - only show if multiple pathologies */}
+                                    {isComorbidityMode && allPathologies.length > 1 && (
+                                        <div className="border-t border-gray-700/50 pt-2 mt-2">
+                                            <p className="text-[10px] font-medium text-amber-400 mb-2">⚠️ Filtre Comorbidités</p>
+                                            <div className="flex flex-col gap-1.5">
+                                                {allPathologies.map((pathology, idx) => (
+                                                    <label key={idx} className="flex items-center gap-2 cursor-pointer">
+                                                        <input
+                                                            type="checkbox"
+                                                            checked={activePathologies.has(pathology)}
+                                                            onChange={(e) => {
+                                                                const newSet = new Set(activePathologies);
+                                                                if (e.target.checked) {
+                                                                    newSet.add(pathology);
+                                                                } else {
+                                                                    newSet.delete(pathology);
+                                                                }
+                                                                setActivePathologies(newSet);
+                                                            }}
+                                                            className="w-3.5 h-3.5 rounded border-gray-600 bg-gray-800 text-red-600 focus:ring-red-500 focus:ring-offset-0"
+                                                        />
+                                                        <span className="text-gray-300 text-[10px]">{pathology}</span>
+                                                    </label>
+                                                ))}
+                                            </div>
+                                            <p className="text-[9px] text-gray-500 mt-1.5">
+                                                {activePathologies.size === allPathologies.length
+                                                    ? '✅ Liens d\'interaction visibles'
+                                                    : `${activePathologies.size}/${allPathologies.length} pathologies`
                                                 }
-                                                setActivePathologies(newSet);
-                                            }}
-                                            className="w-3.5 h-3.5 rounded border-gray-600 bg-gray-800 text-red-600 focus:ring-red-500 focus:ring-offset-0"
-                                        />
-                                        <span className="text-gray-300 text-[10px]">{pathology}</span>
-                                    </label>
-                                ))}
+                                            </p>
+                                        </div>
+                                    )}
+                                </div>
+                                {/* End Scrollable Content */}
                             </div>
-                            <p className="text-[9px] text-gray-500 mt-1.5">
-                                {activePathologies.size === allPathologies.length
-                                    ? '✅ Liens d\'interaction visibles'
-                                    : `${activePathologies.size}/${allPathologies.length} pathologies`
-                                }
-                            </p>
-                        </div>
+                        </DraggablePanel>
                     )}
-                </div>
 
-                {/* Loading */}
-                {/* Futuristic Loading Animation - Electric Circuit Theme */}
-                {/* Show when loading AND graph has minimal content (placeholder only) */}
-                {isLoading && (!data || data.knowledge_graph.nodes.length <= 1) && (
-                    <div className="absolute inset-0 flex items-center justify-center bg-gray-900 z-30 overflow-hidden">
-                        {/* Canvas-based Matrix Rain Background */}
-                        <MatrixBackground />
+                    {/* Loading */}
+                    {/* Futuristic Loading Animation - Electric Circuit Theme */}
+                    {/* Show when loading AND graph has minimal content (placeholder only) */}
+                    {isLoading && (!data || data.knowledge_graph.nodes.length <= 1) && (
+                        <div className="absolute inset-0 flex items-center justify-center bg-gray-900 z-30 overflow-hidden">
+                            {/* Canvas-based Matrix Rain Background */}
+                            <MatrixBackground />
 
-                        {/* Radar Sweep Effect - Submarine Style */}
-                        <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                            <div
-                                className="absolute"
-                                style={{
-                                    width: '100%',
-                                    height: '100%',
-                                    background: 'conic-gradient(from 0deg, transparent 0deg, transparent 340deg, rgba(6, 182, 212, 0.4) 355deg, rgba(34, 211, 238, 0.6) 360deg)',
-                                    animation: 'radarSweep 3s linear infinite',
-                                    borderRadius: '50%',
-                                    maxWidth: '600px',
-                                    maxHeight: '600px',
-                                }}
-                            />
-                            {/* Radar rings */}
-                            {[1, 2, 3, 4].map(i => (
+                            {/* Radar Sweep Effect - Submarine Style */}
+                            <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
                                 <div
-                                    key={i}
-                                    className="absolute border border-cyan-500/20 rounded-full"
+                                    className="absolute"
                                     style={{
-                                        width: `${i * 25}%`,
-                                        height: `${i * 25}%`,
-                                        maxWidth: `${i * 150}px`,
-                                        maxHeight: `${i * 150}px`,
+                                        width: '100%',
+                                        height: '100%',
+                                        background: 'conic-gradient(from 0deg, transparent 0deg, transparent 340deg, rgba(6, 182, 212, 0.4) 355deg, rgba(34, 211, 238, 0.6) 360deg)',
+                                        animation: 'radarSweep 3s linear infinite',
+                                        borderRadius: '50%',
+                                        maxWidth: '600px',
+                                        maxHeight: '600px',
                                     }}
                                 />
-                            ))}
-                            {/* Center dot */}
-                            <div className="absolute w-3 h-3 bg-cyan-400 rounded-full animate-pulse"
-                                style={{ boxShadow: '0 0 20px rgba(34, 211, 238, 0.8)' }}
-                            />
-                        </div>
-
-                        {/* Subtle CRT Scanlines */}
-                        <div
-                            className="absolute inset-0 pointer-events-none opacity-10"
-                            style={{
-                                background: 'repeating-linear-gradient(0deg, transparent 0px, transparent 2px, rgba(0,0,0,0.3) 2px, rgba(0,0,0,0.3) 4px)'
-                            }}
-                        />
-
-                        {/* Background grid pattern */}
-                        <div className="absolute inset-0 opacity-20">
-                            <svg width="100%" height="100%">
-                                <defs>
-                                    <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
-                                        <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#3b82f6" strokeWidth="0.5" />
-                                    </pattern>
-                                </defs>
-                                <rect width="100%" height="100%" fill="url(#grid)" />
-                            </svg>
-                        </div>
-
-                        {/* Neural Network Background */}
-                        <div className="absolute inset-0 overflow-hidden pointer-events-none">
-                            <svg width="100%" height="100%" className="opacity-30">
-                                <defs>
-                                    <filter id="networkGlow" x="-50%" y="-50%" width="200%" height="200%">
-                                        <feGaussianBlur stdDeviation="2" result="blur" />
-                                        <feMerge>
-                                            <feMergeNode in="blur" />
-                                            <feMergeNode in="SourceGraphic" />
-                                        </feMerge>
-                                    </filter>
-                                </defs>
-                                {/* Network nodes and connections */}
-                                {[
-                                    { x: 50, y: 80, connections: [[120, 150], [80, 180]] },
-                                    { x: 120, y: 150, connections: [[200, 120], [180, 200]] },
-                                    { x: 80, y: 180, connections: [[150, 220]] },
-                                    { x: 200, y: 120, connections: [[280, 90], [260, 180]] },
-                                    { x: 280, y: 90, connections: [[350, 130]] },
-                                    { x: 260, y: 180, connections: [[320, 220]] },
-                                    { x: 350, y: 130, connections: [[400, 100]] },
-                                    { x: 320, y: 220, connections: [[380, 260]] },
-                                    { x: 400, y: 100, connections: [] },
-                                    { x: 380, y: 260, connections: [] },
-                                    { x: 150, y: 220, connections: [[220, 280]] },
-                                    { x: 220, y: 280, connections: [[300, 300]] },
-                                    { x: 300, y: 300, connections: [] },
-                                    { x: 30, y: 200, connections: [[80, 180]] },
-                                    { x: 420, y: 200, connections: [[380, 260]] },
-                                ].map((node, i) => (
-                                    <g key={i}>
-                                        {node.connections.map((target, j) => (
-                                            <line
-                                                key={j}
-                                                x1={node.x}
-                                                y1={node.y}
-                                                x2={target[0]}
-                                                y2={target[1]}
-                                                stroke="#0891b2"
-                                                strokeWidth="0.5"
-                                                opacity="0.4"
-                                                filter="url(#networkGlow)"
-                                            />
-                                        ))}
-                                        <circle
-                                            cx={node.x}
-                                            cy={node.y}
-                                            r="4"
-                                            fill="#0e7490"
-                                            filter="url(#networkGlow)"
-                                            opacity="0.6"
-                                        >
-                                            <animate attributeName="opacity" values="0.3;0.8;0.3" dur={`${2 + i * 0.3}s`} repeatCount="indefinite" />
-                                        </circle>
-                                    </g>
+                                {/* Radar rings */}
+                                {[1, 2, 3, 4].map(i => (
+                                    <div
+                                        key={i}
+                                        className="absolute border border-cyan-500/20 rounded-full"
+                                        style={{
+                                            width: `${i * 25}%`,
+                                            height: `${i * 25}%`,
+                                            maxWidth: `${i * 150}px`,
+                                            maxHeight: `${i * 150}px`,
+                                        }}
+                                    />
                                 ))}
-                            </svg>
-                        </div>
+                                {/* Center dot */}
+                                <div className="absolute w-3 h-3 bg-cyan-400 rounded-full animate-pulse"
+                                    style={{ boxShadow: '0 0 20px rgba(34, 211, 238, 0.8)' }}
+                                />
+                            </div>
 
-                        {/* 3D Rotating Realistic Brain with Intense Neon */}
-                        <div className="relative z-10" style={{ perspective: '1000px' }}>
-                            <svg
-                                width="320"
-                                height="280"
-                                viewBox="0 0 320 280"
+                            {/* Subtle CRT Scanlines */}
+                            <div
+                                className="absolute inset-0 pointer-events-none opacity-10"
                                 style={{
-                                    animation: 'rotateBrain 10s ease-in-out infinite',
-                                    transformStyle: 'preserve-3d',
-                                    filter: 'drop-shadow(0 0 30px rgba(6, 182, 212, 0.6)) drop-shadow(0 0 60px rgba(6, 182, 212, 0.3))'
+                                    background: 'repeating-linear-gradient(0deg, transparent 0px, transparent 2px, rgba(0,0,0,0.3) 2px, rgba(0,0,0,0.3) 4px)'
                                 }}
-                            >
-                                <defs>
-                                    {/* Intense cyan neon glow */}
-                                    <filter id="brainNeon" x="-100%" y="-100%" width="300%" height="300%">
-                                        <feGaussianBlur stdDeviation="3" result="blur1" />
-                                        <feGaussianBlur stdDeviation="6" result="blur2" />
-                                        <feGaussianBlur stdDeviation="12" result="blur3" />
-                                        <feMerge>
-                                            <feMergeNode in="blur3" />
-                                            <feMergeNode in="blur2" />
-                                            <feMergeNode in="blur1" />
-                                            <feMergeNode in="SourceGraphic" />
-                                        </feMerge>
-                                    </filter>
+                            />
 
-                                    {/* Brain inner glow gradient */}
-                                    <radialGradient id="brainInnerGlow" cx="40%" cy="40%" r="70%">
-                                        <stop offset="0%" stopColor="#22d3ee" stopOpacity="0.15" />
-                                        <stop offset="50%" stopColor="#0891b2" stopOpacity="0.08" />
-                                        <stop offset="100%" stopColor="#0e7490" stopOpacity="0.02" />
-                                    </radialGradient>
+                            {/* Background grid pattern */}
+                            <div className="absolute inset-0 opacity-20">
+                                <svg width="100%" height="100%">
+                                    <defs>
+                                        <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+                                            <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#3b82f6" strokeWidth="0.5" />
+                                        </pattern>
+                                    </defs>
+                                    <rect width="100%" height="100%" fill="url(#grid)" />
+                                </svg>
+                            </div>
 
-                                    {/* Electric pulse gradient */}
-                                    <linearGradient id="pulseGrad" x1="0%" y1="0%" x2="100%" y2="0%">
-                                        <stop offset="0%" stopColor="#22d3ee" stopOpacity="0" />
-                                        <stop offset="50%" stopColor="#67e8f9" stopOpacity="1" />
-                                        <stop offset="100%" stopColor="#22d3ee" stopOpacity="0" />
-                                    </linearGradient>
-                                </defs>
+                            {/* Neural Network Background */}
+                            <div className="absolute inset-0 overflow-hidden pointer-events-none">
+                                <svg width="100%" height="100%" className="opacity-30">
+                                    <defs>
+                                        <filter id="networkGlow" x="-50%" y="-50%" width="200%" height="200%">
+                                            <feGaussianBlur stdDeviation="2" result="blur" />
+                                            <feMerge>
+                                                <feMergeNode in="blur" />
+                                                <feMergeNode in="SourceGraphic" />
+                                            </feMerge>
+                                        </filter>
+                                    </defs>
+                                    {/* Network nodes and connections */}
+                                    {[
+                                        { x: 50, y: 80, connections: [[120, 150], [80, 180]] },
+                                        { x: 120, y: 150, connections: [[200, 120], [180, 200]] },
+                                        { x: 80, y: 180, connections: [[150, 220]] },
+                                        { x: 200, y: 120, connections: [[280, 90], [260, 180]] },
+                                        { x: 280, y: 90, connections: [[350, 130]] },
+                                        { x: 260, y: 180, connections: [[320, 220]] },
+                                        { x: 350, y: 130, connections: [[400, 100]] },
+                                        { x: 320, y: 220, connections: [[380, 260]] },
+                                        { x: 400, y: 100, connections: [] },
+                                        { x: 380, y: 260, connections: [] },
+                                        { x: 150, y: 220, connections: [[220, 280]] },
+                                        { x: 220, y: 280, connections: [[300, 300]] },
+                                        { x: 300, y: 300, connections: [] },
+                                        { x: 30, y: 200, connections: [[80, 180]] },
+                                        { x: 420, y: 200, connections: [[380, 260]] },
+                                    ].map((node, i) => (
+                                        <g key={i}>
+                                            {node.connections.map((target, j) => (
+                                                <line
+                                                    key={j}
+                                                    x1={node.x}
+                                                    y1={node.y}
+                                                    x2={target[0]}
+                                                    y2={target[1]}
+                                                    stroke="#0891b2"
+                                                    strokeWidth="0.5"
+                                                    opacity="0.4"
+                                                    filter="url(#networkGlow)"
+                                                />
+                                            ))}
+                                            <circle
+                                                cx={node.x}
+                                                cy={node.y}
+                                                r="4"
+                                                fill="#0e7490"
+                                                filter="url(#networkGlow)"
+                                                opacity="0.6"
+                                            >
+                                                <animate attributeName="opacity" values="0.3;0.8;0.3" dur={`${2 + i * 0.3}s`} repeatCount="indefinite" />
+                                            </circle>
+                                        </g>
+                                    ))}
+                                </svg>
+                            </div>
 
-                                {/* Brain silhouette fill */}
-                                <path
-                                    d="M 160 30
+                            {/* 3D Rotating Realistic Brain with Intense Neon */}
+                            <div className="relative z-10" style={{ perspective: '1000px' }}>
+                                <svg
+                                    width="320"
+                                    height="280"
+                                    viewBox="0 0 320 280"
+                                    style={{
+                                        animation: 'rotateBrain 10s ease-in-out infinite',
+                                        transformStyle: 'preserve-3d',
+                                        filter: 'drop-shadow(0 0 30px rgba(6, 182, 212, 0.6)) drop-shadow(0 0 60px rgba(6, 182, 212, 0.3))'
+                                    }}
+                                >
+                                    <defs>
+                                        {/* Intense cyan neon glow */}
+                                        <filter id="brainNeon" x="-100%" y="-100%" width="300%" height="300%">
+                                            <feGaussianBlur stdDeviation="3" result="blur1" />
+                                            <feGaussianBlur stdDeviation="6" result="blur2" />
+                                            <feGaussianBlur stdDeviation="12" result="blur3" />
+                                            <feMerge>
+                                                <feMergeNode in="blur3" />
+                                                <feMergeNode in="blur2" />
+                                                <feMergeNode in="blur1" />
+                                                <feMergeNode in="SourceGraphic" />
+                                            </feMerge>
+                                        </filter>
+
+                                        {/* Brain inner glow gradient */}
+                                        <radialGradient id="brainInnerGlow" cx="40%" cy="40%" r="70%">
+                                            <stop offset="0%" stopColor="#22d3ee" stopOpacity="0.15" />
+                                            <stop offset="50%" stopColor="#0891b2" stopOpacity="0.08" />
+                                            <stop offset="100%" stopColor="#0e7490" stopOpacity="0.02" />
+                                        </radialGradient>
+
+                                        {/* Electric pulse gradient */}
+                                        <linearGradient id="pulseGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+                                            <stop offset="0%" stopColor="#22d3ee" stopOpacity="0" />
+                                            <stop offset="50%" stopColor="#67e8f9" stopOpacity="1" />
+                                            <stop offset="100%" stopColor="#22d3ee" stopOpacity="0" />
+                                        </linearGradient>
+                                    </defs>
+
+                                    {/* Brain silhouette fill */}
+                                    <path
+                                        d="M 160 30
                                        C 100 30, 50 60, 35 100
                                        C 20 140, 25 170, 35 195
                                        C 45 220, 70 235, 90 245
@@ -5018,690 +5620,653 @@ IMPORTANT: Retourne UNIQUEMENT les IDs des nœuds qui forment le schéma thérap
                                        C 315 170, 320 140, 305 100
                                        C 290 60, 240 30, 180 30
                                        C 175 28, 165 28, 160 30 Z"
-                                    fill="url(#brainInnerGlow)"
-                                    stroke="#22d3ee"
-                                    strokeWidth="2.5"
-                                    filter="url(#brainNeon)"
-                                >
-                                    <animate attributeName="stroke-opacity" values="0.7;1;0.7" dur="2s" repeatCount="indefinite" />
-                                </path>
+                                        fill="url(#brainInnerGlow)"
+                                        stroke="#22d3ee"
+                                        strokeWidth="2.5"
+                                        filter="url(#brainNeon)"
+                                    >
+                                        <animate attributeName="stroke-opacity" values="0.7;1;0.7" dur="2s" repeatCount="indefinite" />
+                                    </path>
 
-                                {/* Temporal lobe (bottom left) */}
-                                <path
-                                    d="M 75 200 C 60 210, 50 230, 65 245 C 80 255, 100 250, 115 245"
-                                    fill="none" stroke="#22d3ee" strokeWidth="2" filter="url(#brainNeon)" opacity="0.9"
-                                />
+                                    {/* Temporal lobe (bottom left) */}
+                                    <path
+                                        d="M 75 200 C 60 210, 50 230, 65 245 C 80 255, 100 250, 115 245"
+                                        fill="none" stroke="#22d3ee" strokeWidth="2" filter="url(#brainNeon)" opacity="0.9"
+                                    />
 
-                                {/* Cerebellum (back bottom) */}
-                                <path
-                                    d="M 240 235 Q 260 250, 280 235 Q 295 220, 285 200"
-                                    fill="none" stroke="#22d3ee" strokeWidth="2" filter="url(#brainNeon)" opacity="0.8"
-                                />
-                                <path
-                                    d="M 250 225 Q 265 235, 275 225"
-                                    fill="none" stroke="#06b6d4" strokeWidth="1.5" filter="url(#brainNeon)" opacity="0.6"
-                                />
+                                    {/* Cerebellum (back bottom) */}
+                                    <path
+                                        d="M 240 235 Q 260 250, 280 235 Q 295 220, 285 200"
+                                        fill="none" stroke="#22d3ee" strokeWidth="2" filter="url(#brainNeon)" opacity="0.8"
+                                    />
+                                    <path
+                                        d="M 250 225 Q 265 235, 275 225"
+                                        fill="none" stroke="#06b6d4" strokeWidth="1.5" filter="url(#brainNeon)" opacity="0.6"
+                                    />
 
-                                {/* Gyri and Sulci - Detailed brain folds */}
-                                {/* Top section */}
-                                <path d="M 80 80 Q 110 60, 140 75 Q 170 90, 200 70 Q 230 55, 260 75" fill="none" stroke="#22d3ee" strokeWidth="2" filter="url(#brainNeon)" opacity="0.9" />
-                                <path d="M 70 105 Q 100 85, 130 100 Q 160 115, 190 95 Q 220 80, 255 95" fill="none" stroke="#06b6d4" strokeWidth="1.8" filter="url(#brainNeon)" opacity="0.85" />
+                                    {/* Gyri and Sulci - Detailed brain folds */}
+                                    {/* Top section */}
+                                    <path d="M 80 80 Q 110 60, 140 75 Q 170 90, 200 70 Q 230 55, 260 75" fill="none" stroke="#22d3ee" strokeWidth="2" filter="url(#brainNeon)" opacity="0.9" />
+                                    <path d="M 70 105 Q 100 85, 130 100 Q 160 115, 190 95 Q 220 80, 255 95" fill="none" stroke="#06b6d4" strokeWidth="1.8" filter="url(#brainNeon)" opacity="0.85" />
 
-                                {/* Middle section */}
-                                <path d="M 55 130 Q 85 115, 120 130 Q 155 145, 190 125 Q 225 110, 265 125" fill="none" stroke="#22d3ee" strokeWidth="2" filter="url(#brainNeon)" opacity="0.9" />
-                                <path d="M 50 155 Q 80 140, 115 155 Q 150 170, 185 150 Q 220 135, 270 150" fill="none" stroke="#06b6d4" strokeWidth="1.8" filter="url(#brainNeon)" opacity="0.8" />
+                                    {/* Middle section */}
+                                    <path d="M 55 130 Q 85 115, 120 130 Q 155 145, 190 125 Q 225 110, 265 125" fill="none" stroke="#22d3ee" strokeWidth="2" filter="url(#brainNeon)" opacity="0.9" />
+                                    <path d="M 50 155 Q 80 140, 115 155 Q 150 170, 185 150 Q 220 135, 270 150" fill="none" stroke="#06b6d4" strokeWidth="1.8" filter="url(#brainNeon)" opacity="0.8" />
 
-                                {/* Lower section */}
-                                <path d="M 55 180 Q 90 165, 125 180 Q 160 195, 195 175 Q 230 160, 280 175" fill="none" stroke="#22d3ee" strokeWidth="1.8" filter="url(#brainNeon)" opacity="0.85" />
-                                <path d="M 70 205 Q 105 190, 140 205 Q 175 220, 210 200 Q 245 185, 285 195" fill="none" stroke="#06b6d4" strokeWidth="1.5" filter="url(#brainNeon)" opacity="0.75" />
+                                    {/* Lower section */}
+                                    <path d="M 55 180 Q 90 165, 125 180 Q 160 195, 195 175 Q 230 160, 280 175" fill="none" stroke="#22d3ee" strokeWidth="1.8" filter="url(#brainNeon)" opacity="0.85" />
+                                    <path d="M 70 205 Q 105 190, 140 205 Q 175 220, 210 200 Q 245 185, 285 195" fill="none" stroke="#06b6d4" strokeWidth="1.5" filter="url(#brainNeon)" opacity="0.75" />
 
-                                {/* Frontal lobe details */}
-                                <path d="M 45 95 Q 50 80, 65 75" fill="none" stroke="#67e8f9" strokeWidth="1.5" filter="url(#brainNeon)" opacity="0.7" />
-                                <path d="M 40 120 Q 45 105, 55 100" fill="none" stroke="#67e8f9" strokeWidth="1.5" filter="url(#brainNeon)" opacity="0.6" />
-                                <path d="M 38 145 Q 42 130, 50 125" fill="none" stroke="#67e8f9" strokeWidth="1.5" filter="url(#brainNeon)" opacity="0.5" />
+                                    {/* Frontal lobe details */}
+                                    <path d="M 45 95 Q 50 80, 65 75" fill="none" stroke="#67e8f9" strokeWidth="1.5" filter="url(#brainNeon)" opacity="0.7" />
+                                    <path d="M 40 120 Q 45 105, 55 100" fill="none" stroke="#67e8f9" strokeWidth="1.5" filter="url(#brainNeon)" opacity="0.6" />
+                                    <path d="M 38 145 Q 42 130, 50 125" fill="none" stroke="#67e8f9" strokeWidth="1.5" filter="url(#brainNeon)" opacity="0.5" />
 
-                                {/* Occipital lobe details (back) */}
-                                <path d="M 290 95 Q 300 90, 295 105" fill="none" stroke="#67e8f9" strokeWidth="1.5" filter="url(#brainNeon)" opacity="0.7" />
-                                <path d="M 295 120 Q 305 115, 302 135" fill="none" stroke="#67e8f9" strokeWidth="1.5" filter="url(#brainNeon)" opacity="0.6" />
-                                <path d="M 300 150 Q 310 155, 305 170" fill="none" stroke="#67e8f9" strokeWidth="1.5" filter="url(#brainNeon)" opacity="0.5" />
+                                    {/* Occipital lobe details (back) */}
+                                    <path d="M 290 95 Q 300 90, 295 105" fill="none" stroke="#67e8f9" strokeWidth="1.5" filter="url(#brainNeon)" opacity="0.7" />
+                                    <path d="M 295 120 Q 305 115, 302 135" fill="none" stroke="#67e8f9" strokeWidth="1.5" filter="url(#brainNeon)" opacity="0.6" />
+                                    <path d="M 300 150 Q 310 155, 305 170" fill="none" stroke="#67e8f9" strokeWidth="1.5" filter="url(#brainNeon)" opacity="0.5" />
 
-                                {/* Central sulcus */}
-                                <path d="M 180 45 Q 175 80, 185 120 Q 190 160, 175 200" fill="none" stroke="#0891b2" strokeWidth="1.2" filter="url(#brainNeon)" opacity="0.5" />
+                                    {/* Central sulcus */}
+                                    <path d="M 180 45 Q 175 80, 185 120 Q 190 160, 175 200" fill="none" stroke="#0891b2" strokeWidth="1.2" filter="url(#brainNeon)" opacity="0.5" />
 
-                                {/* Electric pulses traveling through brain */}
-                                <circle r="3" fill="#67e8f9" filter="url(#brainNeon)">
-                                    <animateMotion dur="3s" repeatCount="indefinite">
-                                        <mpath href="#pulse-path-1" />
-                                    </animateMotion>
-                                    <animate attributeName="opacity" values="0;1;1;0" dur="3s" repeatCount="indefinite" />
-                                </circle>
-                                <path id="pulse-path-1" d="M 80 80 Q 140 100, 200 70 Q 260 50, 280 95" fill="none" stroke="none" />
-
-                                <circle r="2" fill="#22d3ee" filter="url(#brainNeon)">
-                                    <animateMotion dur="2.5s" repeatCount="indefinite" begin="0.8s">
-                                        <mpath href="#pulse-path-2" />
-                                    </animateMotion>
-                                    <animate attributeName="opacity" values="0;1;1;0" dur="2.5s" repeatCount="indefinite" begin="0.8s" />
-                                </circle>
-                                <path id="pulse-path-2" d="M 55 155 Q 120 170, 185 150 Q 250 130, 290 160" fill="none" stroke="none" />
-
-                                <circle r="2.5" fill="#a5f3fc" filter="url(#brainNeon)">
-                                    <animateMotion dur="4s" repeatCount="indefinite" begin="1.5s">
-                                        <mpath href="#pulse-path-3" />
-                                    </animateMotion>
-                                    <animate attributeName="opacity" values="0;1;1;0" dur="4s" repeatCount="indefinite" begin="1.5s" />
-                                </circle>
-                                <path id="pulse-path-3" d="M 70 205 Q 140 220, 210 200 Q 260 180, 285 195" fill="none" stroke="none" />
-
-                                {/* Synapse sparks */}
-                                {[[100, 90], [160, 85], [220, 75], [90, 145], [150, 160], [210, 140], [130, 210], [190, 195]].map((pos, i) => (
-                                    <circle key={i} cx={pos[0]} cy={pos[1]} r="2" fill="#a5f3fc" filter="url(#brainNeon)">
-                                        <animate attributeName="r" values="1;3;1" dur={`${0.5 + i * 0.1}s`} repeatCount="indefinite" begin={`${i * 0.15}s`} />
-                                        <animate attributeName="opacity" values="0.3;1;0.3" dur={`${0.5 + i * 0.1}s`} repeatCount="indefinite" begin={`${i * 0.15}s`} />
+                                    {/* Electric pulses traveling through brain */}
+                                    <circle r="3" fill="#67e8f9" filter="url(#brainNeon)">
+                                        <animateMotion dur="3s" repeatCount="indefinite">
+                                            <mpath href="#pulse-path-1" />
+                                        </animateMotion>
+                                        <animate attributeName="opacity" values="0;1;1;0" dur="3s" repeatCount="indefinite" />
                                     </circle>
-                                ))}
-                            </svg>
+                                    <path id="pulse-path-1" d="M 80 80 Q 140 100, 200 70 Q 260 50, 280 95" fill="none" stroke="none" />
 
-                            {/* Loading text with futuristic progress bar */}
-                            <LoadingProgressBar />
-                        </div>
+                                    <circle r="2" fill="#22d3ee" filter="url(#brainNeon)">
+                                        <animateMotion dur="2.5s" repeatCount="indefinite" begin="0.8s">
+                                            <mpath href="#pulse-path-2" />
+                                        </animateMotion>
+                                        <animate attributeName="opacity" values="0;1;1;0" dur="2.5s" repeatCount="indefinite" begin="0.8s" />
+                                    </circle>
+                                    <path id="pulse-path-2" d="M 55 155 Q 120 170, 185 150 Q 250 130, 290 160" fill="none" stroke="none" />
 
-                        {/* Original electric circuit SVG - now below the brain */}
-                        <div className="absolute bottom-10 left-1/2 transform -translate-x-1/2 opacity-30">
-                            <svg width="200" height="80" viewBox="0 0 200 80">
-                                <defs>
-                                    {/* Electric glow filter */}
-                                    <filter id="electricGlow" x="-50%" y="-50%" width="200%" height="200%">
-                                        <feGaussianBlur stdDeviation="3" result="glow" />
-                                        <feMerge>
-                                            <feMergeNode in="glow" />
-                                            <feMergeNode in="glow" />
-                                            <feMergeNode in="SourceGraphic" />
-                                        </feMerge>
-                                    </filter>
+                                    <circle r="2.5" fill="#a5f3fc" filter="url(#brainNeon)">
+                                        <animateMotion dur="4s" repeatCount="indefinite" begin="1.5s">
+                                            <mpath href="#pulse-path-3" />
+                                        </animateMotion>
+                                        <animate attributeName="opacity" values="0;1;1;0" dur="4s" repeatCount="indefinite" begin="1.5s" />
+                                    </circle>
+                                    <path id="pulse-path-3" d="M 70 205 Q 140 220, 210 200 Q 260 180, 285 195" fill="none" stroke="none" />
 
-                                    {/* Animated gradient for electric paths */}
-                                    <linearGradient id="electricPath" x1="0%" y1="0%" x2="100%" y2="0%">
-                                        <stop offset="0%" stopColor="#06b6d4" stopOpacity="0">
-                                            <animate attributeName="offset" values="-1;1" dur="1.5s" repeatCount="indefinite" />
-                                        </stop>
-                                        <stop offset="50%" stopColor="#a855f7" stopOpacity="1">
-                                            <animate attributeName="offset" values="-0.5;1.5" dur="1.5s" repeatCount="indefinite" />
-                                        </stop>
-                                        <stop offset="100%" stopColor="#06b6d4" stopOpacity="0">
-                                            <animate attributeName="offset" values="0;2" dur="1.5s" repeatCount="indefinite" />
-                                        </stop>
-                                    </linearGradient>
-
-                                    {/* Radial pulse */}
-                                    <radialGradient id="nodePulse" cx="50%" cy="50%" r="50%">
-                                        <stop offset="0%" stopColor="#a855f7" stopOpacity="1" />
-                                        <stop offset="100%" stopColor="#06b6d4" stopOpacity="0" />
-                                    </radialGradient>
-                                </defs>
-
-                                {/* Outer rotating ring */}
-                                <circle cx="150" cy="150" r="120" fill="none" stroke="#1e3a5f" strokeWidth="1" strokeDasharray="8 4">
-                                    <animateTransform attributeName="transform" type="rotate" from="0 150 150" to="360 150 150" dur="20s" repeatCount="indefinite" />
-                                </circle>
-
-                                {/* Middle rotating ring */}
-                                <circle cx="150" cy="150" r="90" fill="none" stroke="#3b82f6" strokeWidth="1.5" strokeDasharray="12 6" opacity="0.6">
-                                    <animateTransform attributeName="transform" type="rotate" from="360 150 150" to="0 150 150" dur="15s" repeatCount="indefinite" />
-                                </circle>
-
-                                {/* Inner pulsing ring */}
-                                <circle cx="150" cy="150" r="60" fill="none" stroke="#a855f7" strokeWidth="2" opacity="0.8">
-                                    <animate attributeName="r" values="55;65;55" dur="2s" repeatCount="indefinite" />
-                                    <animate attributeName="opacity" values="0.5;1;0.5" dur="2s" repeatCount="indefinite" />
-                                </circle>
-
-                                {/* Electric connection lines */}
-                                {/* Line 1: Top-left to center */}
-                                <path d="M 60 60 Q 100 80 150 150" fill="none" stroke="url(#electricPath)" strokeWidth="2" filter="url(#electricGlow)">
-                                    <animate attributeName="stroke-dasharray" values="0 200;200 0" dur="2s" repeatCount="indefinite" />
-                                </path>
-
-                                {/* Line 2: Top-right to center */}
-                                <path d="M 240 60 Q 200 80 150 150" fill="none" stroke="url(#electricPath)" strokeWidth="2" filter="url(#electricGlow)">
-                                    <animate attributeName="stroke-dasharray" values="0 200;200 0" dur="2.3s" repeatCount="indefinite" />
-                                </path>
-
-                                {/* Line 3: Bottom-left to center */}
-                                <path d="M 60 240 Q 100 220 150 150" fill="none" stroke="url(#electricPath)" strokeWidth="2" filter="url(#electricGlow)">
-                                    <animate attributeName="stroke-dasharray" values="0 200;200 0" dur="1.8s" repeatCount="indefinite" />
-                                </path>
-
-                                {/* Line 4: Bottom-right to center */}
-                                <path d="M 240 240 Q 200 220 150 150" fill="none" stroke="url(#electricPath)" strokeWidth="2" filter="url(#electricGlow)">
-                                    <animate attributeName="stroke-dasharray" values="0 200;200 0" dur="2.5s" repeatCount="indefinite" />
-                                </path>
-
-                                {/* Circuit path - horizontal */}
-                                <path d="M 30 150 L 70 150 L 80 140 L 100 160 L 120 150 L 130 150" fill="none" stroke="#22d3ee" strokeWidth="1.5" opacity="0.6">
-                                    <animate attributeName="stroke-dasharray" values="0 150;150 0;150 0" dur="3s" repeatCount="indefinite" />
-                                </path>
-                                <path d="M 170 150 L 180 150 L 190 160 L 210 140 L 220 150 L 270 150" fill="none" stroke="#22d3ee" strokeWidth="1.5" opacity="0.6">
-                                    <animate attributeName="stroke-dasharray" values="0 150;150 0;150 0" dur="3s" repeatCount="indefinite" begin="0.5s" />
-                                </path>
-
-                                {/* Outer nodes (corners) */}
-                                {/* Node 1: Top-left */}
-                                <circle cx="60" cy="60" r="8" fill="#1e1b4b" stroke="#a855f7" strokeWidth="2">
-                                    <animate attributeName="r" values="6;10;6" dur="1.5s" repeatCount="indefinite" />
-                                </circle>
-                                <circle cx="60" cy="60" r="4" fill="#a855f7">
-                                    <animate attributeName="opacity" values="0.5;1;0.5" dur="1.5s" repeatCount="indefinite" />
-                                </circle>
-
-                                {/* Node 2: Top-right */}
-                                <circle cx="240" cy="60" r="8" fill="#1e1b4b" stroke="#06b6d4" strokeWidth="2">
-                                    <animate attributeName="r" values="6;10;6" dur="1.5s" repeatCount="indefinite" begin="0.3s" />
-                                </circle>
-                                <circle cx="240" cy="60" r="4" fill="#06b6d4">
-                                    <animate attributeName="opacity" values="0.5;1;0.5" dur="1.5s" repeatCount="indefinite" begin="0.3s" />
-                                </circle>
-
-                                {/* Node 3: Bottom-left */}
-                                <circle cx="60" cy="240" r="8" fill="#1e1b4b" stroke="#22c55e" strokeWidth="2">
-                                    <animate attributeName="r" values="6;10;6" dur="1.5s" repeatCount="indefinite" begin="0.6s" />
-                                </circle>
-                                <circle cx="60" cy="240" r="4" fill="#22c55e">
-                                    <animate attributeName="opacity" values="0.5;1;0.5" dur="1.5s" repeatCount="indefinite" begin="0.6s" />
-                                </circle>
-
-                                {/* Node 4: Bottom-right */}
-                                <circle cx="240" cy="240" r="8" fill="#1e1b4b" stroke="#f97316" strokeWidth="2">
-                                    <animate attributeName="r" values="6;10;6" dur="1.5s" repeatCount="indefinite" begin="0.9s" />
-                                </circle>
-                                <circle cx="240" cy="240" r="4" fill="#f97316">
-                                    <animate attributeName="opacity" values="0.5;1;0.5" dur="1.5s" repeatCount="indefinite" begin="0.9s" />
-                                </circle>
-
-                                {/* Center node - main pulsing core */}
-                                <circle cx="150" cy="150" r="25" fill="url(#nodePulse)" filter="url(#electricGlow)">
-                                    <animate attributeName="r" values="20;30;20" dur="2s" repeatCount="indefinite" />
-                                </circle>
-                                <circle cx="150" cy="150" r="15" fill="#1e1b4b" stroke="#a855f7" strokeWidth="3">
-                                    <animate attributeName="stroke-width" values="2;4;2" dur="1s" repeatCount="indefinite" />
-                                </circle>
-                                <circle cx="150" cy="150" r="8" fill="#a855f7">
-                                    <animate attributeName="r" values="6;10;6" dur="1s" repeatCount="indefinite" />
-                                </circle>
-
-                                {/* Orbiting particles */}
-                                <circle cx="150" cy="90" r="3" fill="#22d3ee" filter="url(#electricGlow)">
-                                    <animateTransform attributeName="transform" type="rotate" from="0 150 150" to="360 150 150" dur="3s" repeatCount="indefinite" />
-                                </circle>
-                                <circle cx="150" cy="210" r="2" fill="#a855f7" filter="url(#electricGlow)">
-                                    <animateTransform attributeName="transform" type="rotate" from="180 150 150" to="540 150 150" dur="4s" repeatCount="indefinite" />
-                                </circle>
-                                <circle cx="90" cy="150" r="2.5" fill="#22c55e" filter="url(#electricGlow)">
-                                    <animateTransform attributeName="transform" type="rotate" from="90 150 150" to="450 150 150" dur="3.5s" repeatCount="indefinite" />
-                                </circle>
-
-                                {/* Electric sparks at connection points */}
-                                <circle cx="110" cy="110" r="2" fill="#fff">
-                                    <animate attributeName="opacity" values="0;1;0" dur="0.3s" repeatCount="indefinite" />
-                                    <animate attributeName="r" values="1;3;1" dur="0.3s" repeatCount="indefinite" />
-                                </circle>
-                                <circle cx="190" cy="110" r="2" fill="#fff">
-                                    <animate attributeName="opacity" values="0;1;0" dur="0.4s" repeatCount="indefinite" begin="0.15s" />
-                                    <animate attributeName="r" values="1;3;1" dur="0.4s" repeatCount="indefinite" begin="0.15s" />
-                                </circle>
-                                <circle cx="110" cy="190" r="2" fill="#fff">
-                                    <animate attributeName="opacity" values="0;1;0" dur="0.35s" repeatCount="indefinite" begin="0.1s" />
-                                    <animate attributeName="r" values="1;3;1" dur="0.35s" repeatCount="indefinite" begin="0.1s" />
-                                </circle>
-                                <circle cx="190" cy="190" r="2" fill="#fff">
-                                    <animate attributeName="opacity" values="0;1;0" dur="0.45s" repeatCount="indefinite" begin="0.2s" />
-                                    <animate attributeName="r" values="1;3;1" dur="0.45s" repeatCount="indefinite" begin="0.2s" />
-                                </circle>
-                            </svg>
-
-                            {/* Loading text with futuristic progress bar */}
-                            <LoadingProgressBar />
-                        </div>
-
-                        {/* Floating particles background */}
-                        <div className="absolute inset-0 pointer-events-none overflow-hidden">
-                            {[...Array(20)].map((_, i) => (
-                                <div
-                                    key={i}
-                                    className="absolute w-1 h-1 rounded-full bg-purple-500/40"
-                                    style={{
-                                        left: `${Math.random() * 100}%`,
-                                        top: `${Math.random() * 100}%`,
-                                        animation: `float ${3 + Math.random() * 4}s ease-in-out infinite`,
-                                        animationDelay: `${Math.random() * 2}s`
-                                    }}
-                                />
-                            ))}
-                        </div>
-                    </div>
-                )}
-
-                {/* Expansion overlay - shows on top of graph during node addition */}
-                {isExpanding && (
-                    <div className="absolute top-4 left-1/2 transform -translate-x-1/2 z-40 bg-gray-900/90 backdrop-blur-sm rounded-full px-6 py-3 border border-purple-500/50 shadow-xl">
-                        <div className="flex items-center gap-3">
-                            <Loader2 className="w-5 h-5 text-purple-400 animate-spin" />
-                            <span className="text-white text-sm">Expansion depuis <span className="text-purple-400 font-medium">{expandingNodeName}</span>...</span>
-                        </div>
-                    </div>
-                )}
-                {/* Error */}
-                {error && (
-                    <div className="absolute inset-0 flex items-center justify-center bg-gray-900 z-30">
-                        <div className="bg-red-900/50 border border-red-500 rounded-xl p-8 text-center">
-                            <p className="text-red-400">Erreur: {error}</p>
-                            <button onClick={() => fetchData(allPathologies)} className="mt-4 bg-red-600 text-white px-4 py-2 rounded-lg">Réessayer</button>
-                        </div>
-                    </div>
-                )}
-
-                {/* Show graph when: not initial loading, no error, has data, OR during expansion */}
-                {((!isLoading && !error && data) || (isExpanding && data)) && (
-                    <SVGFallback
-                        data={displayData || data}
-                        animationTime={animationTime}
-                        onEdgeClick={handleEdgeSelect}
-                        onSetCentral={handleSetCentral}
-                        newlySpawnedNodes={newlySpawnedNodes}
-                        edgeFilterMode={edgeFilterMode}
-                        centralNodeId={data.knowledge_graph.nodes.find(n => n.ring === 0)?.id || null}
-                        filterSelectedNodeId={filterSelectedNodeId}
-                        focusMode={focusMode}
-                        activePathologies={activePathologies}
-                        visibleNodeCount={visibleNodeCount}
-                        nodeSpacing={nodeSpacing}
-                        nodeSize={nodeSizeScale}
-                        hiddenNodeTypes={hiddenNodeTypes}
-                        hiddenRelationTypes={hiddenRelationTypes}
-                        hiddenNodes={hiddenNodes}
-                        getNodeTypes={getNodeTypes}
-                        nodeGroups={nodeGroups}
-                        groupCreationMode={groupCreationMode}
-                        currentGroupCenter={currentGroupCenter}
-                        onAddToGroup={addNodeToGroup}
-                        onStartGroupCreation={startGroupCreation}
-                        onFinishGroupCreation={finishGroupCreation}
-                        onDissolveGroup={dissolveGroup}
-                        customNodePositions={customNodePositions}
-                        deepAnalysisMode={deepAnalysisMode}
-                        goldenNodeIds={goldenNodeIds}
-                        onSaveGraph={onSave}
-                    />
-                )}
-
-                {/* ========================================== */}
-                {/* DEEP ANALYSIS BUTTON & UI */}
-                {/* ========================================== */}
-                {data && !isLoading && !error && (
-                    <>
-                        {/* Deep Analysis Button */}
-                        {!deepAnalysisMode && !isDeepAnalyzing && (
-                            <button
-                                onClick={handleDeepAnalysis}
-                                className="absolute top-4 right-4 z-50 bg-gradient-to-r from-amber-500 via-yellow-500 to-amber-600 hover:from-amber-400 hover:via-yellow-400 hover:to-amber-500 text-black font-bold px-4 py-2.5 rounded-xl shadow-lg shadow-amber-500/30 flex items-center gap-2 transition-all hover:scale-105 active:scale-95"
-                                title="Analyser le graphe pour identifier le schéma de traitement optimal"
-                            >
-                                <svg className="w-5 h-5 animate-pulse" fill="currentColor" viewBox="0 0 20 20">
-                                    <path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z" />
+                                    {/* Synapse sparks */}
+                                    {[[100, 90], [160, 85], [220, 75], [90, 145], [150, 160], [210, 140], [130, 210], [190, 195]].map((pos, i) => (
+                                        <circle key={i} cx={pos[0]} cy={pos[1]} r="2" fill="#a5f3fc" filter="url(#brainNeon)">
+                                            <animate attributeName="r" values="1;3;1" dur={`${0.5 + i * 0.1}s`} repeatCount="indefinite" begin={`${i * 0.15}s`} />
+                                            <animate attributeName="opacity" values="0.3;1;0.3" dur={`${0.5 + i * 0.1}s`} repeatCount="indefinite" begin={`${i * 0.15}s`} />
+                                        </circle>
+                                    ))}
                                 </svg>
-                                Analyse Approfondie
-                            </button>
-                        )}
 
-                        {/* Loading Animation Overlay */}
-                        {isDeepAnalyzing && (
-                            <div className="absolute inset-0 z-50 flex flex-col items-center justify-center bg-black/70 backdrop-blur-sm">
-                                <div className="relative">
-                                    {/* Scanning animation rings */}
-                                    <div className="w-32 h-32 rounded-full border-4 border-amber-500/30 animate-ping absolute inset-0" />
-                                    <div className="w-32 h-32 rounded-full border-2 border-amber-400/50 animate-spin" style={{ animationDuration: '3s' }} />
-                                    <div className="absolute inset-0 flex items-center justify-center">
-                                        <div className="w-16 h-16 bg-gradient-to-br from-amber-400 to-yellow-500 rounded-full animate-pulse flex items-center justify-center shadow-lg shadow-amber-500/50">
-                                            <svg className="w-8 h-8 text-black" fill="currentColor" viewBox="0 0 20 20">
-                                                <path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z" />
-                                            </svg>
+                                {/* Loading text with futuristic progress bar */}
+                                <LoadingProgressBar />
+                            </div>
+
+                            {/* Original electric circuit SVG - now below the brain */}
+                            <div className="absolute bottom-10 left-1/2 transform -translate-x-1/2 opacity-30">
+                                <svg width="200" height="80" viewBox="0 0 200 80">
+                                    <defs>
+                                        {/* Electric glow filter */}
+                                        <filter id="electricGlow" x="-50%" y="-50%" width="200%" height="200%">
+                                            <feGaussianBlur stdDeviation="3" result="glow" />
+                                            <feMerge>
+                                                <feMergeNode in="glow" />
+                                                <feMergeNode in="glow" />
+                                                <feMergeNode in="SourceGraphic" />
+                                            </feMerge>
+                                        </filter>
+
+                                        {/* Animated gradient for electric paths */}
+                                        <linearGradient id="electricPath" x1="0%" y1="0%" x2="100%" y2="0%">
+                                            <stop offset="0%" stopColor="#06b6d4" stopOpacity="0">
+                                                <animate attributeName="offset" values="-1;1" dur="1.5s" repeatCount="indefinite" />
+                                            </stop>
+                                            <stop offset="50%" stopColor="#a855f7" stopOpacity="1">
+                                                <animate attributeName="offset" values="-0.5;1.5" dur="1.5s" repeatCount="indefinite" />
+                                            </stop>
+                                            <stop offset="100%" stopColor="#06b6d4" stopOpacity="0">
+                                                <animate attributeName="offset" values="0;2" dur="1.5s" repeatCount="indefinite" />
+                                            </stop>
+                                        </linearGradient>
+
+                                        {/* Radial pulse */}
+                                        <radialGradient id="nodePulse" cx="50%" cy="50%" r="50%">
+                                            <stop offset="0%" stopColor="#a855f7" stopOpacity="1" />
+                                            <stop offset="100%" stopColor="#06b6d4" stopOpacity="0" />
+                                        </radialGradient>
+                                    </defs>
+
+                                    {/* Outer rotating ring */}
+                                    <circle cx="150" cy="150" r="120" fill="none" stroke="#1e3a5f" strokeWidth="1" strokeDasharray="8 4">
+                                        <animateTransform attributeName="transform" type="rotate" from="0 150 150" to="360 150 150" dur="20s" repeatCount="indefinite" />
+                                    </circle>
+
+                                    {/* Middle rotating ring */}
+                                    <circle cx="150" cy="150" r="90" fill="none" stroke="#3b82f6" strokeWidth="1.5" strokeDasharray="12 6" opacity="0.6">
+                                        <animateTransform attributeName="transform" type="rotate" from="360 150 150" to="0 150 150" dur="15s" repeatCount="indefinite" />
+                                    </circle>
+
+                                    {/* Inner pulsing ring */}
+                                    <circle cx="150" cy="150" r="60" fill="none" stroke="#a855f7" strokeWidth="2" opacity="0.8">
+                                        <animate attributeName="r" values="55;65;55" dur="2s" repeatCount="indefinite" />
+                                        <animate attributeName="opacity" values="0.5;1;0.5" dur="2s" repeatCount="indefinite" />
+                                    </circle>
+
+                                    {/* Electric connection lines */}
+                                    {/* Line 1: Top-left to center */}
+                                    <path d="M 60 60 Q 100 80 150 150" fill="none" stroke="url(#electricPath)" strokeWidth="2" filter="url(#electricGlow)">
+                                        <animate attributeName="stroke-dasharray" values="0 200;200 0" dur="2s" repeatCount="indefinite" />
+                                    </path>
+
+                                    {/* Line 2: Top-right to center */}
+                                    <path d="M 240 60 Q 200 80 150 150" fill="none" stroke="url(#electricPath)" strokeWidth="2" filter="url(#electricGlow)">
+                                        <animate attributeName="stroke-dasharray" values="0 200;200 0" dur="2.3s" repeatCount="indefinite" />
+                                    </path>
+
+                                    {/* Line 3: Bottom-left to center */}
+                                    <path d="M 60 240 Q 100 220 150 150" fill="none" stroke="url(#electricPath)" strokeWidth="2" filter="url(#electricGlow)">
+                                        <animate attributeName="stroke-dasharray" values="0 200;200 0" dur="1.8s" repeatCount="indefinite" />
+                                    </path>
+
+                                    {/* Line 4: Bottom-right to center */}
+                                    <path d="M 240 240 Q 200 220 150 150" fill="none" stroke="url(#electricPath)" strokeWidth="2" filter="url(#electricGlow)">
+                                        <animate attributeName="stroke-dasharray" values="0 200;200 0" dur="2.5s" repeatCount="indefinite" />
+                                    </path>
+
+                                    {/* Circuit path - horizontal */}
+                                    <path d="M 30 150 L 70 150 L 80 140 L 100 160 L 120 150 L 130 150" fill="none" stroke="#22d3ee" strokeWidth="1.5" opacity="0.6">
+                                        <animate attributeName="stroke-dasharray" values="0 150;150 0;150 0" dur="3s" repeatCount="indefinite" />
+                                    </path>
+                                    <path d="M 170 150 L 180 150 L 190 160 L 210 140 L 220 150 L 270 150" fill="none" stroke="#22d3ee" strokeWidth="1.5" opacity="0.6">
+                                        <animate attributeName="stroke-dasharray" values="0 150;150 0;150 0" dur="3s" repeatCount="indefinite" begin="0.5s" />
+                                    </path>
+
+                                    {/* Outer nodes (corners) */}
+                                    {/* Node 1: Top-left */}
+                                    <circle cx="60" cy="60" r="8" fill="#1e1b4b" stroke="#a855f7" strokeWidth="2">
+                                        <animate attributeName="r" values="6;10;6" dur="1.5s" repeatCount="indefinite" />
+                                    </circle>
+                                    <circle cx="60" cy="60" r="4" fill="#a855f7">
+                                        <animate attributeName="opacity" values="0.5;1;0.5" dur="1.5s" repeatCount="indefinite" />
+                                    </circle>
+
+                                    {/* Node 2: Top-right */}
+                                    <circle cx="240" cy="60" r="8" fill="#1e1b4b" stroke="#06b6d4" strokeWidth="2">
+                                        <animate attributeName="r" values="6;10;6" dur="1.5s" repeatCount="indefinite" begin="0.3s" />
+                                    </circle>
+                                    <circle cx="240" cy="60" r="4" fill="#06b6d4">
+                                        <animate attributeName="opacity" values="0.5;1;0.5" dur="1.5s" repeatCount="indefinite" begin="0.3s" />
+                                    </circle>
+
+                                    {/* Node 3: Bottom-left */}
+                                    <circle cx="60" cy="240" r="8" fill="#1e1b4b" stroke="#22c55e" strokeWidth="2">
+                                        <animate attributeName="r" values="6;10;6" dur="1.5s" repeatCount="indefinite" begin="0.6s" />
+                                    </circle>
+                                    <circle cx="60" cy="240" r="4" fill="#22c55e">
+                                        <animate attributeName="opacity" values="0.5;1;0.5" dur="1.5s" repeatCount="indefinite" begin="0.6s" />
+                                    </circle>
+
+                                    {/* Node 4: Bottom-right */}
+                                    <circle cx="240" cy="240" r="8" fill="#1e1b4b" stroke="#f97316" strokeWidth="2">
+                                        <animate attributeName="r" values="6;10;6" dur="1.5s" repeatCount="indefinite" begin="0.9s" />
+                                    </circle>
+                                    <circle cx="240" cy="240" r="4" fill="#f97316">
+                                        <animate attributeName="opacity" values="0.5;1;0.5" dur="1.5s" repeatCount="indefinite" begin="0.9s" />
+                                    </circle>
+
+                                    {/* Center node - main pulsing core */}
+                                    <circle cx="150" cy="150" r="25" fill="url(#nodePulse)" filter="url(#electricGlow)">
+                                        <animate attributeName="r" values="20;30;20" dur="2s" repeatCount="indefinite" />
+                                    </circle>
+                                    <circle cx="150" cy="150" r="15" fill="#1e1b4b" stroke="#a855f7" strokeWidth="3">
+                                        <animate attributeName="stroke-width" values="2;4;2" dur="1s" repeatCount="indefinite" />
+                                    </circle>
+                                    <circle cx="150" cy="150" r="8" fill="#a855f7">
+                                        <animate attributeName="r" values="6;10;6" dur="1s" repeatCount="indefinite" />
+                                    </circle>
+
+                                    {/* Orbiting particles */}
+                                    <circle cx="150" cy="90" r="3" fill="#22d3ee" filter="url(#electricGlow)">
+                                        <animateTransform attributeName="transform" type="rotate" from="0 150 150" to="360 150 150" dur="3s" repeatCount="indefinite" />
+                                    </circle>
+                                    <circle cx="150" cy="210" r="2" fill="#a855f7" filter="url(#electricGlow)">
+                                        <animateTransform attributeName="transform" type="rotate" from="180 150 150" to="540 150 150" dur="4s" repeatCount="indefinite" />
+                                    </circle>
+                                    <circle cx="90" cy="150" r="2.5" fill="#22c55e" filter="url(#electricGlow)">
+                                        <animateTransform attributeName="transform" type="rotate" from="90 150 150" to="450 150 150" dur="3.5s" repeatCount="indefinite" />
+                                    </circle>
+
+                                    {/* Electric sparks at connection points */}
+                                    <circle cx="110" cy="110" r="2" fill="#fff">
+                                        <animate attributeName="opacity" values="0;1;0" dur="0.3s" repeatCount="indefinite" />
+                                        <animate attributeName="r" values="1;3;1" dur="0.3s" repeatCount="indefinite" />
+                                    </circle>
+                                    <circle cx="190" cy="110" r="2" fill="#fff">
+                                        <animate attributeName="opacity" values="0;1;0" dur="0.4s" repeatCount="indefinite" begin="0.15s" />
+                                        <animate attributeName="r" values="1;3;1" dur="0.4s" repeatCount="indefinite" begin="0.15s" />
+                                    </circle>
+                                    <circle cx="110" cy="190" r="2" fill="#fff">
+                                        <animate attributeName="opacity" values="0;1;0" dur="0.35s" repeatCount="indefinite" begin="0.1s" />
+                                        <animate attributeName="r" values="1;3;1" dur="0.35s" repeatCount="indefinite" begin="0.1s" />
+                                    </circle>
+                                    <circle cx="190" cy="190" r="2" fill="#fff">
+                                        <animate attributeName="opacity" values="0;1;0" dur="0.45s" repeatCount="indefinite" begin="0.2s" />
+                                        <animate attributeName="r" values="1;3;1" dur="0.45s" repeatCount="indefinite" begin="0.2s" />
+                                    </circle>
+                                </svg>
+
+                                {/* Loading text with futuristic progress bar */}
+                                <LoadingProgressBar />
+                            </div>
+
+                            {/* Floating particles background */}
+                            <div className="absolute inset-0 pointer-events-none overflow-hidden">
+                                {[...Array(20)].map((_, i) => (
+                                    <div
+                                        key={i}
+                                        className="absolute w-1 h-1 rounded-full bg-purple-500/40"
+                                        style={{
+                                            left: `${Math.random() * 100}%`,
+                                            top: `${Math.random() * 100}%`,
+                                            animation: `float ${3 + Math.random() * 4}s ease-in-out infinite`,
+                                            animationDelay: `${Math.random() * 2}s`
+                                        }}
+                                    />
+                                ))}
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Expansion overlay - shows on top of graph during node addition */}
+                    {isExpanding && (
+                        <div className="absolute top-4 left-1/2 transform -translate-x-1/2 z-40 bg-gray-900/90 backdrop-blur-sm rounded-full px-6 py-3 border border-purple-500/50 shadow-xl">
+                            <div className="flex items-center gap-3">
+                                <Loader2 className="w-5 h-5 text-purple-400 animate-spin" />
+                                <span className="text-white text-sm">Expansion depuis <span className="text-purple-400 font-medium">{expandingNodeName}</span>...</span>
+                            </div>
+                        </div>
+                    )}
+                    {/* Error */}
+                    {error && (
+                        <div className="absolute inset-0 flex items-center justify-center bg-gray-900 z-30">
+                            <div className="bg-red-900/50 border border-red-500 rounded-xl p-8 text-center">
+                                <p className="text-red-400">Erreur: {error}</p>
+                                <button onClick={() => fetchData(allPathologies)} className="mt-4 bg-red-600 text-white px-4 py-2 rounded-lg">Réessayer</button>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Show graph when: not initial loading, no error, has data, OR during expansion */}
+                    {((!isLoading && !error && data) || (isExpanding && data)) && (
+                        <SVGFallback
+                            data={displayData || data}
+                            animationTime={animationTime}
+                            onEdgeClick={handleEdgeSelect}
+                            onSetCentral={handleSetCentral}
+                            newlySpawnedNodes={newlySpawnedNodes}
+                            edgeFilterMode={edgeFilterMode}
+                            centralNodeId={data.knowledge_graph.nodes.find(n => n.ring === 0)?.id || null}
+                            filterSelectedNodeId={filterSelectedNodeId}
+                            focusMode={focusMode}
+                            activePathologies={activePathologies}
+                            visibleNodeCount={visibleNodeCount}
+                            nodeSpacing={nodeSpacing}
+                            nodeSize={nodeSizeScale}
+                            hiddenNodeTypes={hiddenNodeTypes}
+                            hiddenRelationTypes={hiddenRelationTypes}
+                            hiddenNodes={hiddenNodes}
+                            getNodeTypes={getNodeTypes}
+                            nodeGroups={nodeGroups}
+                            groupCreationMode={groupCreationMode}
+                            currentGroupCenter={currentGroupCenter}
+                            onAddToGroup={addNodeToGroup}
+                            onStartGroupCreation={startGroupCreation}
+                            onFinishGroupCreation={finishGroupCreation}
+                            onDissolveGroup={dissolveGroup}
+                            customNodePositions={customNodePositions}
+                            deepAnalysisMode={deepAnalysisMode}
+                            goldenNodeIds={goldenNodeIds}
+                            onSaveGraph={onSave}
+                            onRemoveNodes={handleRemoveNodes}
+                            multiSelectedNodeIds={multiSelectedNodeIds}
+                            setMultiSelectedNodeIds={setMultiSelectedNodeIds}
+                            selectionMode={selectionMode}
+                            setSelectionMode={setSelectionMode}
+                            layoutMode={layoutMode}
+                            setLayoutMode={setLayoutMode}
+                            layoutParams={layoutParams}
+                            setLayoutParams={setLayoutParams}
+                            zoom={zoom}
+                            setZoom={setZoom}
+                            pan={pan}
+                            setPan={setPan}
+                            showLayoutSettings={showLayoutSettings}
+                            setShowLayoutSettings={setShowLayoutSettings}
+                            collapsedCategories={collapsedCategories}
+                            setCollapsedCategories={setCollapsedCategories}
+                            onLoadGraph={onLoad}
+                            showExplorer={showExplorer}
+                            setShowExplorer={setShowExplorer}
+                        />
+                    )}
+
+                    {/* ========================================== */}
+                    {/* DEEP ANALYSIS BUTTON & UI */}
+                    {/* ========================================== */}
+                    {data && !isLoading && !error && (
+                        <>
+                            {/* Deep Analysis Button */}
+                            {!deepAnalysisMode && !isDeepAnalyzing && (
+                                <button
+                                    onClick={handleDeepAnalysis}
+                                    className="absolute top-20 sm:top-24 left-1/2 -translate-x-1/2 z-30 bg-gradient-to-r from-amber-500 via-yellow-500 to-amber-600 hover:from-amber-400 hover:via-yellow-400 hover:to-amber-500 text-black font-bold px-4 py-2.5 rounded-xl shadow-lg shadow-amber-500/30 flex items-center gap-2 transition-all hover:scale-105 active:scale-95"
+                                    title="Analyser le graphe pour identifier le schéma de traitement optimal"
+
+                                >
+                                    <svg className="w-5 h-5 animate-pulse" fill="currentColor" viewBox="0 0 20 20">
+                                        <path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z" />
+                                    </svg>
+                                    Analyse Approfondie
+                                </button>
+                            )}
+
+                            {/* Loading Animation Overlay */}
+                            {isDeepAnalyzing && (
+                                <div className="absolute inset-0 z-50 flex flex-col items-center justify-center bg-black/70 backdrop-blur-sm">
+                                    <div className="relative">
+                                        {/* Scanning animation rings */}
+                                        <div className="w-32 h-32 rounded-full border-4 border-amber-500/30 animate-ping absolute inset-0" />
+                                        <div className="w-32 h-32 rounded-full border-2 border-amber-400/50 animate-spin" style={{ animationDuration: '3s' }} />
+                                        <div className="absolute inset-0 flex items-center justify-center">
+                                            <div className="w-16 h-16 bg-gradient-to-br from-amber-400 to-yellow-500 rounded-full animate-pulse flex items-center justify-center shadow-lg shadow-amber-500/50">
+                                                <svg className="w-8 h-8 text-black" fill="currentColor" viewBox="0 0 20 20">
+                                                    <path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z" />
+                                                </svg>
+                                            </div>
                                         </div>
                                     </div>
+                                    <p className="mt-8 text-lg font-semibold text-amber-400 animate-pulse">
+                                        Analyse en cours...
+                                    </p>
+                                    <p className="mt-2 text-sm text-gray-400">
+                                        Identification du schéma thérapeutique optimal
+                                    </p>
                                 </div>
-                                <p className="mt-8 text-lg font-semibold text-amber-400 animate-pulse">
-                                    Analyse en cours...
-                                </p>
-                                <p className="mt-2 text-sm text-gray-400">
-                                    Identification du schéma thérapeutique optimal
-                                </p>
-                            </div>
-                        )}
+                            )}
 
-                        {/* SELECTION TOOLBAR */}
-                        <div className="absolute top-4 left-1/2 -translate-x-1/2 bg-gray-900/90 backdrop-blur border border-gray-700 rounded-lg p-1.5 flex gap-1 shadow-xl z-20"
-                            onPointerDown={(e) => e.stopPropagation()}>
-                            <button
-                                onClick={() => setSelectionMode('cursor')}
-                                className={`p-2 rounded-md transition-all ${selectionMode === 'cursor' ? 'bg-purple-600 text-white shadow-lg shadow-purple-900/20' : 'text-gray-400 hover:text-gray-200 hover:bg-gray-800'}`}
-                                title="Curseur (Déplacement)"
-                            >
-                                <MousePointer2 className="w-4 h-4" />
-                            </button>
-                            <div className="w-[1px] bg-gray-700 mx-1 my-1" />
-                            <button
-                                onClick={() => setSelectionMode('rectangle')}
-                                className={`p-2 rounded-md transition-all ${selectionMode === 'rectangle' ? 'bg-cyan-600 text-white shadow-lg shadow-cyan-900/20' : 'text-gray-400 hover:text-gray-200 hover:bg-gray-800'}`}
-                                title="Sélection Rectangle"
-                            >
-                                <Square className="w-4 h-4" />
-                            </button>
-                            <button
-                                onClick={() => setSelectionMode('circle')}
-                                className={`p-2 rounded-md transition-all ${selectionMode === 'circle' ? 'bg-cyan-600 text-white shadow-lg shadow-cyan-900/20' : 'text-gray-400 hover:text-gray-200 hover:bg-gray-800'}`}
-                                title="Sélection Cercle"
-                            >
-                                <CircleIcon className="w-4 h-4" />
-                            </button>
-                            <button
-                                onClick={() => setSelectionMode('lasso')}
-                                className={`p-2 rounded-md transition-all ${selectionMode === 'lasso' ? 'bg-cyan-600 text-white shadow-lg shadow-cyan-900/20' : 'text-gray-400 hover:text-gray-200 hover:bg-gray-800'}`}
-                                title="Sélection Lasso"
-                            >
-                                <Lasso className="w-4 h-4" />
-                            </button>
-                        </div>
 
-                        {/* SELECTION OVERLAY (SVG) */}
-                        {isSelecting && selectionPoints.length > 0 && (
-                            <div className="absolute inset-0 pointer-events-none z-30">
-                                <svg width="100%" height="100%" style={{ filter: 'drop-shadow(0 0 4px #06b6d4)' }}>
-                                    {selectionMode === 'lasso' && (
-                                        <polyline
-                                            points={selectionPoints.map(p => `${p.x},${p.y}`).join(' ')}
-                                            fill="rgba(6, 182, 212, 0.1)"
-                                            stroke="#06b6d4"
-                                            strokeWidth="2"
-                                            strokeDasharray="4 2"
-                                        />
-                                    )}
-                                    {selectionMode === 'rectangle' && selectionStartRef.current && (
-                                        <rect
-                                            x={Math.min(selectionStartRef.current.x, selectionPoints[selectionPoints.length - 1].x)}
-                                            y={Math.min(selectionStartRef.current.y, selectionPoints[selectionPoints.length - 1].y)}
-                                            width={Math.abs(selectionPoints[selectionPoints.length - 1].x - selectionStartRef.current.x)}
-                                            height={Math.abs(selectionPoints[selectionPoints.length - 1].y - selectionStartRef.current.y)}
-                                            fill="rgba(6, 182, 212, 0.1)"
-                                            stroke="#06b6d4"
-                                            strokeWidth="2"
-                                            strokeDasharray="4 2"
-                                        />
-                                    )}
-                                    {selectionMode === 'circle' && selectionStartRef.current && (
-                                        <circle
-                                            cx={selectionStartRef.current.x}
-                                            cy={selectionStartRef.current.y}
-                                            r={Math.sqrt(Math.pow(selectionPoints[selectionPoints.length - 1].x - selectionStartRef.current.x, 2) + Math.pow(selectionPoints[selectionPoints.length - 1].y - selectionStartRef.current.y, 2))}
-                                            fill="rgba(6, 182, 212, 0.1)"
-                                            stroke="#06b6d4"
-                                            strokeWidth="2"
-                                            strokeDasharray="4 2"
-                                        />
-                                    )}
-                                </svg>
-                            </div>
-                        )}
 
-                        {/* Deep Analysis Result Panel */}
-                        {deepAnalysisMode && deepAnalysisResult && (
-                            <div className="absolute top-4 right-4 z-50 max-w-sm bg-gradient-to-br from-amber-900/90 to-amber-800/90 backdrop-blur-md border border-amber-500/50 rounded-xl p-4 shadow-xl shadow-amber-500/20">
-                                <div className="flex items-center gap-3 mb-3">
-                                    <div className="w-10 h-10 bg-gradient-to-br from-amber-400 to-yellow-500 rounded-full flex items-center justify-center shadow-lg shadow-amber-500/50">
-                                        <svg className="w-5 h-5 text-black" fill="currentColor" viewBox="0 0 20 20">
-                                            <path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z" />
-                                        </svg>
+                            {/* Deep Analysis Result Panel */}
+                            {deepAnalysisMode && deepAnalysisResult && (
+                                <DraggablePanel className="absolute top-4 right-4 z-50 max-w-sm">
+                                    <div className="bg-gradient-to-br from-amber-900/90 to-amber-800/90 backdrop-blur-md border border-amber-500/50 rounded-xl p-4 shadow-xl shadow-amber-500/20">
+                                        <div className="flex items-center gap-3 mb-3">
+                                            <div className="w-10 h-10 bg-gradient-to-br from-amber-400 to-yellow-500 rounded-full flex items-center justify-center shadow-lg shadow-amber-500/50">
+                                                <svg className="w-5 h-5 text-black" fill="currentColor" viewBox="0 0 20 20">
+                                                    <path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z" />
+                                                </svg>
+                                            </div>
+                                            <div>
+                                                <h4 className="text-amber-400 font-bold text-sm">Schéma Optimal</h4>
+                                                <p className="text-amber-200/70 text-xs">{goldenNodeIds.size} nœuds identifiés</p>
+                                            </div>
+                                        </div>
+                                        <p className="text-sm text-amber-100 mb-3 leading-relaxed">{deepAnalysisResult}</p>
+                                        <button
+                                            onClick={exitDeepAnalysisMode}
+                                            className="w-full bg-amber-600/50 hover:bg-amber-500/50 text-amber-100 text-sm py-2 rounded-lg transition-colors"
+                                        >
+                                            Fermer l'analyse
+                                        </button>
                                     </div>
-                                    <div>
-                                        <h4 className="text-amber-400 font-bold text-sm">Schéma Optimal</h4>
-                                        <p className="text-amber-200/70 text-xs">{goldenNodeIds.size} nœuds identifiés</p>
-                                    </div>
-                                </div>
-                                <p className="text-sm text-amber-100 mb-3 leading-relaxed">{deepAnalysisResult}</p>
-                                <button
-                                    onClick={exitDeepAnalysisMode}
-                                    className="w-full bg-amber-600/50 hover:bg-amber-500/50 text-amber-100 text-sm py-2 rounded-lg transition-colors"
-                                >
-                                    Fermer l'analyse
-                                </button>
-                            </div>
-                        )}
-                    </>
-                )}
+                                </DraggablePanel>
+                            )}
+                        </>
+                    )}
 
-                {/* Signals */}
-                {data && <SignalPanel signals={data.micro_signals} />}
+                    {/* Signals */}
+                    {data && <SignalPanel signals={data.micro_signals} />}
 
-                {/* Graph Interactive Chat */}
-                {data && (
-                    <GraphInteractiveChat
-                        isOpen={!isLoading && !error}
-                        graphNodes={data.knowledge_graph.nodes}
-                        graphEdges={data.knowledge_graph.edges}
-                        pathology={pathology}
-                        onCreateGroup={(nodeType, groupName) => {
-                            // Find all nodes of the given type and create a group
-                            const matchingNodes = data.knowledge_graph.nodes.filter(
-                                n => n.node_type?.toUpperCase().includes(nodeType.toUpperCase()) ||
-                                    n.node_type?.toLowerCase().includes(nodeType.toLowerCase())
-                            );
-                            console.log(`[Graph Chat] Creating group for type "${nodeType}", found ${matchingNodes.length} nodes`);
-                            if (matchingNodes.length > 0) {
-                                // Use atomic group creation
-                                createGroupWithNodes(
-                                    matchingNodes[0].id,
-                                    matchingNodes.map(n => n.id)
-                                );
-                            }
-                        }}
-                        onFilterVisibility={(nodeName) => {
-                            // Find the node and show only connected nodes
-                            const node = data.knowledge_graph.nodes.find(
-                                n => n.name.toLowerCase().includes(nodeName.toLowerCase())
-                            );
-                            console.log(`[Graph Chat] Filtering visibility for "${nodeName}", found: ${node?.name}`);
-                            if (node) {
-                                // Enable focus mode on this node
-                                setSelectedNodeId(node.id);
-                                setFocusMode(true);
-                                // Calculate highlighted (connected) nodes
-                                const connectedIds = new Set<string>();
-                                data.knowledge_graph.edges.forEach(edge => {
-                                    const s = typeof edge.source === 'object' ? (edge.source as any).id : edge.source;
-                                    const t = typeof edge.target === 'object' ? (edge.target as any).id : edge.target;
-                                    if (s === node.id) connectedIds.add(String(t));
-                                    if (t === node.id) connectedIds.add(String(s));
-                                });
-                                setHighlightedNodeIds(connectedIds);
-                            }
-                        }}
-                        onAddNode={(nodeName) => {
-                            // Trigger expansion with the new node name as concept
-                            handleSetCentral(nodeName);
-                        }}
-                        onHighlightNode={(nodeName) => {
-                            // Find and highlight the node
-                            const node = data.knowledge_graph.nodes.find(
-                                n => n.name.toLowerCase().includes(nodeName.toLowerCase())
-                            );
-                            if (node) {
-                                setFilterSelectedNodeId(node.id);
-                            }
-                        }}
-                        onResetView={() => {
-                            // Reset all filters
-                            setFilterSelectedNodeId(null);
-                            setEdgeFilterMode('all');
-                            setHiddenNodeTypes(new Set());
-                            setHiddenRelationTypes(new Set());
-                            setHiddenNodes(new Set());
-                            setFocusMode(false);
-                            setHighlightedNodeIds(new Set());
-                            // Dissolve all groups
-                            nodeGroups.forEach((_, centerId) => dissolveGroup(centerId));
-                        }}
-                        onShowOnlyNodes={(nodeNames) => {
-                            // Show only the specified nodes, hide all others
-                            const visibleNodeIds = new Set<string>();
-                            nodeNames.forEach(name => {
-                                const node = data.knowledge_graph.nodes.find(
-                                    n => n.name.toLowerCase().includes(name.toLowerCase())
-                                );
-                                if (node) visibleNodeIds.add(node.id);
-                            });
-                            // Hide all nodes NOT in the visible set
-                            const toHide = new Set<string>();
-                            data.knowledge_graph.nodes.forEach(n => {
-                                if (!visibleNodeIds.has(n.id)) toHide.add(n.id);
-                            });
-                            setHiddenNodes(toHide);
-                            console.log(`[Graph Chat] Showing only ${visibleNodeIds.size} nodes, hiding ${toHide.size}`);
-                        }}
-                        onShowOnlyNodeTypes={(nodeTypes) => {
-                            // Show only the specified node types
-                            const allTypes = new Set(data.knowledge_graph.nodes.map(n => n.node_type?.toUpperCase()));
-                            const typesToShow = new Set(nodeTypes.map(t => t.toUpperCase()));
-                            const typesToHide = new Set<string>();
-                            allTypes.forEach(t => {
-                                if (t && !typesToShow.has(t)) typesToHide.add(t);
-                            });
-                            setHiddenNodeTypes(typesToHide);
-                            console.log(`[Graph Chat] Showing types: ${Array.from(typesToShow).join(', ')}`);
-                        }}
-                        onHideNodes={(nodeNames) => {
-                            // Hide the specified nodes
-                            const toHide = new Set(hiddenNodes);
-                            nodeNames.forEach(name => {
-                                const node = data.knowledge_graph.nodes.find(
-                                    n => n.name.toLowerCase().includes(name.toLowerCase())
-                                );
-                                if (node) toHide.add(node.id);
-                            });
-                            setHiddenNodes(toHide);
-                            console.log(`[Graph Chat] Hiding ${nodeNames.length} nodes`);
-                        }}
-                        onArrangeLayout={(layout) => {
-                            console.log(`[Graph Chat] Arranging layout: ${layout}`);
-
-                            if (layout === 'corners' || layout === 'grid') {
-                                // Group nodes by type
-                                const nodesByType = new Map<string, RingNode[]>();
-                                data.knowledge_graph.nodes.forEach(n => {
-                                    const type = n.node_type || 'OTHER';
-                                    if (!nodesByType.has(type)) nodesByType.set(type, []);
-                                    nodesByType.get(type)!.push(n);
-                                });
-
-                                // Define corner positions (SVG coordination: center is 300, total is 600)
-                                const corners = [
-                                    { x: 100, y: 100 },  // Top-left
-                                    { x: 500, y: 100 },  // Top-right
-                                    { x: 100, y: 500 },  // Bottom-left
-                                    { x: 500, y: 500 },  // Bottom-right
-                                    { x: 300, y: 100 },  // Top-center
-                                    { x: 300, y: 500 },  // Bottom-center
-                                    { x: 100, y: 300 },  // Left-center
-                                    { x: 500, y: 300 },  // Right-center
-                                ];
-
-                                const newPositions = new Map<string, { x: number, y: number }>();
-                                const types = Array.from(nodesByType.keys());
-
-                                types.forEach((type, typeIndex) => {
-                                    const nodes = nodesByType.get(type)!;
-                                    const corner = corners[typeIndex % corners.length];
-                                    const nodeCount = nodes.length;
-
-                                    // Arrange nodes in a grid around the corner
-                                    const cols = Math.ceil(Math.sqrt(nodeCount));
-                                    const spacing = 30;
-
-                                    nodes.forEach((node, nodeIndex) => {
-                                        const row = Math.floor(nodeIndex / cols);
-                                        const col = nodeIndex % cols;
-                                        newPositions.set(node.id, {
-                                            x: corner.x + (col - cols / 2) * spacing,
-                                            y: corner.y + (row - Math.ceil(nodeCount / cols) / 2) * spacing
+                    {/* Graph Interactive Chat - Fixed bottom right */}
+                    {data && (
+                        <div
+                            className="fixed z-50"
+                            style={{
+                                bottom: '60px',
+                                right: '20px'
+                            }}
+                        >
+                            <GraphInteractiveChat
+                                isOpen={!isLoading && !error}
+                                graphNodes={data.knowledge_graph.nodes}
+                                graphEdges={data.knowledge_graph.edges}
+                                pathology={pathology}
+                                onCreateGroup={(nodeType, groupName) => {
+                                    // Find all nodes of the given type and create a group
+                                    const matchingNodes = data.knowledge_graph.nodes.filter(
+                                        n => n.node_type?.toUpperCase().includes(nodeType.toUpperCase()) ||
+                                            n.node_type?.toLowerCase().includes(nodeType.toLowerCase())
+                                    );
+                                    console.log(`[Graph Chat] Creating group for type "${nodeType}", found ${matchingNodes.length} nodes`);
+                                    if (matchingNodes.length > 0) {
+                                        // Use atomic group creation
+                                        createGroupWithNodes(
+                                            matchingNodes[0].id,
+                                            matchingNodes.map(n => n.id)
+                                        );
+                                    }
+                                }}
+                                onFilterVisibility={(nodeName) => {
+                                    // Find the node and show only connected nodes
+                                    const node = data.knowledge_graph.nodes.find(
+                                        n => n.name.toLowerCase().includes(nodeName.toLowerCase())
+                                    );
+                                    console.log(`[Graph Chat] Filtering visibility for "${nodeName}", found: ${node?.name}`);
+                                    if (node) {
+                                        // Enable focus mode on this node
+                                        setSelectedNodeId(node.id);
+                                        setFocusMode(true);
+                                        // Calculate highlighted (connected) nodes
+                                        const connectedIds = new Set<string>();
+                                        data.knowledge_graph.edges.forEach(edge => {
+                                            const s = typeof edge.source === 'object' ? (edge.source as any).id : edge.source;
+                                            const t = typeof edge.target === 'object' ? (edge.target as any).id : edge.target;
+                                            if (s === node.id) connectedIds.add(String(t));
+                                            if (t === node.id) connectedIds.add(String(s));
                                         });
+                                        setHighlightedNodeIds(connectedIds);
+                                    }
+                                }}
+                                onAddNode={(nodeName) => {
+                                    // Trigger expansion with the new node name as concept
+                                    handleSetCentral(nodeName);
+                                }}
+                                onHighlightNode={(nodeName) => {
+                                    // Find and highlight the node
+                                    const node = data.knowledge_graph.nodes.find(
+                                        n => n.name.toLowerCase().includes(nodeName.toLowerCase())
+                                    );
+                                    if (node) {
+                                        setFilterSelectedNodeId(node.id);
+                                    }
+                                }}
+                                onResetView={() => {
+                                    // Reset all filters
+                                    setFilterSelectedNodeId(null);
+                                    setEdgeFilterMode('all');
+                                    setHiddenNodeTypes(new Set());
+                                    setHiddenRelationTypes(new Set());
+                                    setHiddenNodes(new Set());
+                                    setFocusMode(false);
+                                    setHighlightedNodeIds(new Set());
+                                    // Dissolve all groups
+                                    nodeGroups.forEach((_, centerId) => dissolveGroup(centerId));
+                                }}
+                                onShowOnlyNodes={(nodeNames) => {
+                                    // Show only the specified nodes, hide all others
+                                    const visibleNodeIds = new Set<string>();
+                                    nodeNames.forEach(name => {
+                                        const node = data.knowledge_graph.nodes.find(
+                                            n => n.name.toLowerCase().includes(name.toLowerCase())
+                                        );
+                                        if (node) visibleNodeIds.add(node.id);
                                     });
-                                });
+                                    // Hide all nodes NOT in the visible set
+                                    const toHide = new Set<string>();
+                                    data.knowledge_graph.nodes.forEach(n => {
+                                        if (!visibleNodeIds.has(n.id)) toHide.add(n.id);
+                                    });
+                                    setHiddenNodes(toHide);
+                                    console.log(`[Graph Chat] Showing only ${visibleNodeIds.size} nodes, hiding ${toHide.size}`);
+                                }}
+                                onShowOnlyNodeTypes={(nodeTypes) => {
+                                    // Show only the specified node types
+                                    const allTypes = new Set(data.knowledge_graph.nodes.map(n => n.node_type?.toUpperCase()));
+                                    const typesToShow = new Set(nodeTypes.map(t => t.toUpperCase()));
+                                    const typesToHide = new Set<string>();
+                                    allTypes.forEach(t => {
+                                        if (t && !typesToShow.has(t)) typesToHide.add(t);
+                                    });
+                                    setHiddenNodeTypes(typesToHide);
+                                    console.log(`[Graph Chat] Showing types: ${Array.from(typesToShow).join(', ')}`);
+                                }}
+                                onHideNodes={(nodeNames) => {
+                                    // Hide the specified nodes
+                                    const toHide = new Set(hiddenNodes);
+                                    nodeNames.forEach(name => {
+                                        const node = data.knowledge_graph.nodes.find(
+                                            n => n.name.toLowerCase().includes(name.toLowerCase())
+                                        );
+                                        if (node) toHide.add(node.id);
+                                    });
+                                    setHiddenNodes(toHide);
+                                    console.log(`[Graph Chat] Hiding ${nodeNames.length} nodes`);
+                                }}
+                                onArrangeLayout={(layout) => {
+                                    console.log(`[Graph Chat] Arranging layout: ${layout}`);
 
-                                setCustomNodePositions(newPositions);
-                                console.log(`[Graph Chat] Positioned ${newPositions.size} nodes in ${types.length} corners`);
-                            } else if (layout === 'radial') {
-                                // Reset to default radial layout
-                                setCustomNodePositions(new Map());
-                                console.log(`[Graph Chat] Reset to radial layout`);
-                            }
-                        }}
-                        onAutoGroupByType={() => {
-                            // Create groups for each node type
-                            const nodesByType = new Map<string, RingNode[]>();
-                            data.knowledge_graph.nodes.forEach(n => {
-                                const type = n.node_type || 'OTHER';
-                                if (!nodesByType.has(type)) nodesByType.set(type, []);
-                                nodesByType.get(type)!.push(n);
-                            });
-                            // Create groups
-                            nodesByType.forEach((nodes, type) => {
-                                if (nodes.length > 1) {
-                                    createGroupWithNodes(nodes[0].id, nodes.map(n => n.id));
-                                }
-                            });
-                            console.log(`[Graph Chat] Created ${nodesByType.size} groups by type`);
-                        }}
-                        onHideGroup={(groupName) => {
-                            // Hide all nodes in a group (by name matching)
-                            const typeName = groupName.toUpperCase();
-                            const toHide = new Set(hiddenNodes);
-                            data.knowledge_graph.nodes.forEach(n => {
-                                if (n.node_type?.toUpperCase().includes(typeName)) {
-                                    toHide.add(n.id);
-                                }
-                            });
-                            setHiddenNodes(toHide);
-                            console.log(`[Graph Chat] Hiding group "${groupName}"`);
-                        }}
-                        onShowOnlyGroup={(groupName) => {
-                            // Show only nodes in a specific group
-                            const typeName = groupName.toUpperCase();
-                            const toHide = new Set<string>();
-                            data.knowledge_graph.nodes.forEach(n => {
-                                if (!n.node_type?.toUpperCase().includes(typeName)) {
-                                    toHide.add(n.id);
-                                }
-                            });
-                            setHiddenNodes(toHide);
-                            console.log(`[Graph Chat] Showing only group "${groupName}"`);
-                        }}
-                        onSetCentral={(nodeName) => {
-                            // Set a node as central and regenerate the graph
-                            console.log(`[Graph Chat] Setting "${nodeName}" as central node`);
-                            handleSetCentral(nodeName);
-                        }}
-                    />
-                )}
+                                    if (layout === 'corners' || layout === 'grid') {
+                                        // Group nodes by type
+                                        const nodesByType = new Map<string, RingNode[]>();
+                                        data.knowledge_graph.nodes.forEach(n => {
+                                            const type = n.node_type || 'OTHER';
+                                            if (!nodesByType.has(type)) nodesByType.set(type, []);
+                                            nodesByType.get(type)!.push(n);
+                                        });
+
+                                        // Define corner positions (SVG coordination: center is 300, total is 600)
+                                        const corners = [
+                                            { x: 100, y: 100 },  // Top-left
+                                            { x: 500, y: 100 },  // Top-right
+                                            { x: 100, y: 500 },  // Bottom-left
+                                            { x: 500, y: 500 },  // Bottom-right
+                                            { x: 300, y: 100 },  // Top-center
+                                            { x: 300, y: 500 },  // Bottom-center
+                                            { x: 100, y: 300 },  // Left-center
+                                            { x: 500, y: 300 },  // Right-center
+                                        ];
+
+                                        const newPositions = new Map<string, { x: number, y: number }>();
+                                        const types = Array.from(nodesByType.keys());
+
+                                        types.forEach((type, typeIndex) => {
+                                            const nodes = nodesByType.get(type)!;
+                                            const corner = corners[typeIndex % corners.length];
+                                            const nodeCount = nodes.length;
+
+                                            // Arrange nodes in a grid around the corner
+                                            const cols = Math.ceil(Math.sqrt(nodeCount));
+                                            const spacing = 30;
+
+                                            nodes.forEach((node, nodeIndex) => {
+                                                const row = Math.floor(nodeIndex / cols);
+                                                const col = nodeIndex % cols;
+                                                newPositions.set(node.id, {
+                                                    x: corner.x + (col - cols / 2) * spacing,
+                                                    y: corner.y + (row - Math.ceil(nodeCount / cols) / 2) * spacing
+                                                });
+                                            });
+                                        });
+
+                                        setCustomNodePositions(newPositions);
+                                        console.log(`[Graph Chat] Positioned ${newPositions.size} nodes in ${types.length} corners`);
+                                    } else if (layout === 'radial') {
+                                        // Reset to default radial layout
+                                        setCustomNodePositions(new Map());
+                                        console.log(`[Graph Chat] Reset to radial layout`);
+                                    }
+                                }}
+                                onAutoGroupByType={() => {
+                                    // Create groups for each node type
+                                    const nodesByType = new Map<string, RingNode[]>();
+                                    data.knowledge_graph.nodes.forEach(n => {
+                                        const type = n.node_type || 'OTHER';
+                                        if (!nodesByType.has(type)) nodesByType.set(type, []);
+                                        nodesByType.get(type)!.push(n);
+                                    });
+                                    // Create groups
+                                    nodesByType.forEach((nodes, type) => {
+                                        if (nodes.length > 1) {
+                                            createGroupWithNodes(nodes[0].id, nodes.map(n => n.id));
+                                        }
+                                    });
+                                    console.log(`[Graph Chat] Created ${nodesByType.size} groups by type`);
+                                }}
+                                onHideGroup={(groupName) => {
+                                    // Hide all nodes in a group (by name matching)
+                                    const typeName = groupName.toUpperCase();
+                                    const toHide = new Set(hiddenNodes);
+                                    data.knowledge_graph.nodes.forEach(n => {
+                                        if (n.node_type?.toUpperCase().includes(typeName)) {
+                                            toHide.add(n.id);
+                                        }
+                                    });
+                                    setHiddenNodes(toHide);
+                                    console.log(`[Graph Chat] Hiding group "${groupName}"`);
+                                }}
+                                onShowOnlyGroup={(groupName) => {
+                                    // Show only nodes in a specific group
+                                    const typeName = groupName.toUpperCase();
+                                    const toHide = new Set<string>();
+                                    data.knowledge_graph.nodes.forEach(n => {
+                                        if (!n.node_type?.toUpperCase().includes(typeName)) {
+                                            toHide.add(n.id);
+                                        }
+                                    });
+                                    setHiddenNodes(toHide);
+                                    console.log(`[Graph Chat] Showing only group "${groupName}"`);
+                                }}
+                                onSetCentral={(nodeName) => {
+                                    // Set a node as central and regenerate the graph
+                                    console.log(`[Graph Chat] Setting "${nodeName}" as central node`);
+                                    handleSetCentral(nodeName);
+                                }}
+                            />
+                        </div>
+                    )}
+                </div>
+
+                {/* Link Explanation Modal */}
+                <LinkExplanationModal
+                    isOpen={showLinkModal}
+                    onClose={() => setShowLinkModal(false)}
+                    edge={selectedEdge}
+                    sourceNode={selectedEdgeSource}
+                    targetNode={selectedEdgeTarget}
+                    multiNodes={multiNodesForAnalysis}
+                    pathology={pathology}
+                    onSetCentral={handleSetCentral}
+                />
             </div>
-
-            {/* Link Explanation Modal */}
-            <LinkExplanationModal
-                isOpen={showLinkModal}
-                onClose={() => setShowLinkModal(false)}
-                edge={selectedEdge}
-                sourceNode={selectedEdgeSource}
-                targetNode={selectedEdgeTarget}
-                multiNodes={multiNodesForAnalysis}
-                pathology={pathology}
-                onSetCentral={handleSetCentral}
-            />
-        </div>
+        </PanelRegistryProvider>
     );
 }
+
+// [SECTION:EXPORTS]
+

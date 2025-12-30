@@ -1,4 +1,5 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import { callAI } from "../_shared/ai-client.ts";
 
 const corsHeaders = {
     "Access-Control-Allow-Origin": "*",
@@ -31,11 +32,6 @@ interface AdversarialReview {
 }
 
 async function performAdversarialReview(hypothesis: Hypothesis, evidenceContext?: string): Promise<AdversarialReview> {
-    const anthropicKey = Deno.env.get("ANTHROPIC_API_KEY");
-    if (!anthropicKey) {
-        throw new Error("ANTHROPIC_API_KEY not configured");
-    }
-
     const systemPrompt = `Tu es un expert critique en méthodologie scientifique et en revue systématique.
 Ton rôle est d'identifier les FAIBLESSES, BIAIS et LIMITATIONS d'une hypothèse médicale.
 
@@ -90,30 +86,16 @@ ${evidenceContext}` : ''}
 Analyse critique en JSON:`;
 
     try {
-        const response = await fetch('https://api.anthropic.com/v1/messages', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'x-api-key': anthropicKey,
-                'anthropic-version': '2023-06-01'
-            },
-            body: JSON.stringify({
-                model: 'claude-sonnet-4-20250514',
-                max_tokens: 2048,
-                messages: [
-                    { role: 'user', content: userPrompt }
-                ],
-                system: systemPrompt
-            })
-        });
+        const aiResponse = await callAI(
+            systemPrompt,
+            userPrompt,
+            {
+                model: 'claude-3-5-sonnet-20240620',
+                maxTokens: 2048
+            }
+        );
 
-        if (!response.ok) {
-            const error = await response.text();
-            throw new Error(`Claude API error: ${error}`);
-        }
-
-        const data = await response.json();
-        const content = data.content?.[0]?.text || '';
+        const content = aiResponse.text || '';
 
         // Parse JSON from response
         const jsonMatch = content.match(/\{[\s\S]*\}/);
@@ -132,7 +114,7 @@ Analyse critique en JSON:`;
             };
         }
 
-        throw new Error('Could not parse JSON from Claude response');
+        throw new Error('Could not parse JSON from AI response');
     } catch (error) {
         console.error('Adversarial review error:', error);
         throw error;

@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { callAI } from "../_shared/ai-client.ts";
 
 const corsHeaders = {
     "Access-Control-Allow-Origin": "*",
@@ -145,27 +146,16 @@ Analyse CHAQUE étape du raisonnement et vérifie sa validité scientifique.
 Sois particulièrement vigilant sur les affirmations pharmacologiques (transporteurs, enzymes, interactions).`;
 
     try {
-        const response = await fetch("https://api.anthropic.com/v1/messages", {
-            method: "POST",
-            headers: {
-                "x-api-key": claudeApiKey,
-                "anthropic-version": "2023-06-01",
-                "content-type": "application/json",
-            },
-            body: JSON.stringify({
+        const aiResponse = await callAI(
+            systemPrompt,
+            userPrompt,
+            {
                 model: "claude-sonnet-4-20250514",
-                max_tokens: 4096,
-                system: systemPrompt,
-                messages: [{ role: "user", content: userPrompt }],
-            }),
-        });
+                maxTokens: 4096
+            }
+        );
 
-        if (!response.ok) {
-            throw new Error(`Claude API error: ${response.status}`);
-        }
-
-        const result = await response.json();
-        const content = result.content[0]?.text || "";
+        const content = aiResponse.text || "";
 
         // Parse JSON response
         const jsonMatch = content.match(/\{[\s\S]*\}/);
@@ -199,14 +189,8 @@ serve(async (req) => {
     }
 
     try {
-        const CLAUDE_API_KEY = Deno.env.get("CLAUDE_API_KEY");
         const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
         const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-
-        if (!CLAUDE_API_KEY) {
-            throw new Error("CLAUDE_API_KEY is not configured");
-        }
-
         const supabase = createClient(supabaseUrl, supabaseKey);
         const { discoveryId } = await req.json();
 
@@ -234,7 +218,7 @@ serve(async (req) => {
             .eq('id', discoveryId);
 
         // Step 1: AI cross-check validation
-        const aiValidations = await validateWithAI(discovery, CLAUDE_API_KEY);
+        const aiValidations = await validateWithAI(discovery, "");
 
         // Step 2: PubMed verification for each claim
         const ncbiApiKey = Deno.env.get("NCBI_API_KEY");

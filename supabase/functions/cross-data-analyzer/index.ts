@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { callAI } from "../_shared/ai-client.ts";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -651,45 +652,18 @@ Base tes analyses sur les indications officielles, les contre-indications, la li
 
 Réponds UNIQUEMENT en français avec le JSON demandé. GÉNÈRE LE MAXIMUM DE LIENS PERTINENTS!`;
 
-    console.log('Appel de Claude AI pour l\'analyse cross-data...');
+    console.log('Appel de l\'IA pour l\'analyse cross-data...');
 
-    const CLAUDE_API_KEY = Deno.env.get('CLAUDE_API_KEY');
-    if (!CLAUDE_API_KEY) {
-      throw new Error('CLAUDE_API_KEY non configurée');
-    }
-
-    const aiResponse = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'x-api-key': CLAUDE_API_KEY,
-        'anthropic-version': '2023-06-01',
-        'content-type': 'application/json',
-      },
-      body: JSON.stringify({
-        model: 'claude-opus-4-5-20251101', // Claude Opus 4.5 - Performance maximale
-        max_tokens: 8000,
-        messages: [
-          { role: 'user', content: systemPrompt + "\n\n" + userPrompt + "\n\nGénère maintenant le JSON avec TOUS les liens pertinents. Réfléchis bien à chaque relation médicale avant de répondre." }
-        ]
-      }),
-    });
-
-    if (!aiResponse.ok) {
-      const errorText = await aiResponse.text();
-      console.error('Erreur API Claude:', aiResponse.status, errorText);
-
-      if (aiResponse.status === 429) {
-        return new Response(
-          JSON.stringify({ error: 'Limite de requêtes atteinte. Veuillez réessayer dans quelques instants.' }),
-          { status: 429, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-        );
+    const aiResult = await callAI(
+      systemPrompt,
+      userPrompt + "\n\nGénère maintenant le JSON avec TOUS les liens pertinents. Réfléchis bien à chaque relation médicale avant de répondre.",
+      {
+        model: 'claude-3-5-sonnet-20240620',
+        maxTokens: 8000,
       }
+    );
 
-      throw new Error(`Erreur API Claude: ${aiResponse.status}`);
-    }
-
-    const aiData = await aiResponse.json();
-    const content = aiData.content?.[0]?.text;
+    const content = aiResult.text;
 
     if (!content) {
       throw new Error('Aucun contenu dans la réponse Claude');

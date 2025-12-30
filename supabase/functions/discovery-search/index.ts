@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { callAI, streamAI } from "../_shared/ai-client.ts";
 
 const corsHeaders = {
     "Access-Control-Allow-Origin": "*",
@@ -24,6 +25,7 @@ interface StreamEvent {
     content?: string;
     discovery?: any;
     warning?: string;
+    sources?: any[];
 }
 
 // Evidence levels taxonomy (GRADE-like)
@@ -242,16 +244,8 @@ serve(async (req) => {
 
         const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
         const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-        const anthropicApiKey = Deno.env.get("ANTHROPIC_API_KEY");
         const ncbiApiKey = Deno.env.get("NCBI_API_KEY");
         const supabase = createClient(supabaseUrl, supabaseKey);
-
-        if (!anthropicApiKey) {
-            return new Response(
-                JSON.stringify({ error: "ANTHROPIC_API_KEY not configured" }),
-                { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-            );
-        }
 
         const encoder = new TextEncoder();
         const stream = new ReadableStream({
@@ -398,10 +392,10 @@ serve(async (req) => {
                     });
 
                     // ============================================
-                    // PHASE 7: CLAUDE OPUS ANALYSIS
+                    // PHASE 7: CLAUDE SONNET ANALYSIS
                     // ============================================
 
-                    sendEvent({ type: 'step_update', step: { id: 7, status: 'running', details: '🧠 Analyse Claude Opus (evidence-based)...', source: 'Anthropic' } });
+                    sendEvent({ type: 'step_update', step: { id: 7, status: 'running', details: '🧠 Analyse Claude Sonnet (evidence-based)...', source: 'Anthropic' } });
 
                     // Build evidence context with citations
                     const evidenceContext = `
@@ -440,38 +434,22 @@ ${customPrompt || `Analyse complète de ${targetName} ${conditionTerm ? `dans le
 RAPPEL: Tu DOIS citer chaque source (PMID/NCT). Aucune affirmation sans preuve. Niveau d'évidence obligatoire.
 `;
 
-                    const claudeResponse = await fetch("https://api.anthropic.com/v1/messages", {
-                        method: "POST",
-                        headers: {
-                            "Content-Type": "application/json",
-                            "x-api-key": anthropicApiKey,
-                            "anthropic-version": "2023-06-01"
+                    const aiResult = await streamAI(
+                        SYSTEM_PROMPT,
+                        evidenceContext,
+                        (chunk) => {
+                            sendEvent({ type: 'text', content: chunk });
                         },
-                        body: JSON.stringify({
-                            model: "claude-opus-4-5-20250514", // Claude Opus 4.5 - Most powerful
-                            max_tokens: 12000,
-                            temperature: 0.1, // Very low for factual accuracy
-                            system: SYSTEM_PROMPT,
-                            messages: [{ role: "user", content: evidenceContext }]
-                        })
-                    });
+                        {
+                            model: "claude-3-5-sonnet-20240620",
+                            maxTokens: 12000,
+                            temperature: 0.1,
+                        }
+                    );
 
-                    if (!claudeResponse.ok) {
-                        const err = await claudeResponse.text();
-                        console.error("Claude error:", err);
-                        throw new Error(`Claude: ${claudeResponse.status}`);
-                    }
+                    const textContent = aiResult.text;
 
-                    const claudeData = await claudeResponse.json();
-                    let textContent = "";
-                    for (const block of claudeData.content || []) {
-                        if (block.type === "text") textContent += block.text;
-                    }
-
-                    sendEvent({ type: 'step_update', step: { id: 7, status: 'completed', details: '✅ Analyse terminée', source: 'Claude Opus' } });
-
-                    // Send analysis
-                    sendEvent({ type: 'text', content: textContent });
+                    sendEvent({ type: 'step_update', step: { id: 7, status: 'completed', details: '✅ Analyse terminée', source: 'Claude Sonnet' } });
 
                     // Extract discoveries
                     const discoveries: any[] = [];

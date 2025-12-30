@@ -58,49 +58,51 @@ Medical professional aesthetic - Dark theme with cyan/teal accent
     --success-foreground: 0 0% 100%;
     --warning: 38 92% 50%;
     --warning-foreground: 222 47% 11%;
-    --info: 199 89% 48%;
-    --info-foreground: 222 47% 11%;
+    /* NexusMed Redesign Tokens */
+    --nexus-bg-dark: 222 47% 4%;
+    --nexus-cyan: 188 91% 50%;
+    --nexus-purple: 263 90% 64%;
+    --nexus-magenta: 302 82% 56%;
+
+    /* Design Reference Tokens */
+    --bg-color: #020617;
+    --text-color: #e2e8f0;
+    --accent-color: #22d3ee;
+  }
+
+  .light-theme,
+  [data-theme='light'] {
+    --bg-color: #f8fafc;
+    --text-color: #0f172a;
+    --accent-color: #0891b2;
   }
 
   .dark {
-    /* Dark Mode - Deep Space Glass */
-    --background: 222 47% 11%;
-    --foreground: 210 40% 98%;
+    /* NexusMed Dark Theme - Deep Navy */
+    --background: 222 47% 4%;
+    --foreground: 215 25% 90%;
 
-    --card: 222 47% 13%;
-    --card-foreground: 210 40% 98%;
+    --card: 222 47% 6%;
+    --card-foreground: 215 25% 90%;
 
-    --popover: 222 47% 15%;
-    --popover-foreground: 210 40% 98%;
+    --popover: 222 47% 6%;
+    --popover-foreground: 215 25% 90%;
 
-    --primary: 174 72% 56%;
-    /* Turquoise fluo pour le sombre */
-    --primary-foreground: 222 47% 11%;
+    --primary: 188 91% 50%;
+    --primary-foreground: 222 47% 4%;
 
-    --secondary: 222 30% 18%;
-    --secondary-foreground: 210 40% 98%;
+    --secondary: 222 47% 10%;
+    --secondary-foreground: 215 25% 90%;
 
-    --muted: 222 30% 20%;
-    --muted-foreground: 215 20% 65%;
+    --muted: 222 47% 12%;
+    --muted-foreground: 215 25% 60%;
 
-    --accent: 174 72% 56%;
-    --accent-foreground: 222 47% 11%;
+    --accent: 188 91% 50%;
+    --accent-foreground: 222 47% 4%;
 
-    --destructive: 0 62% 50%;
-    --destructive-foreground: 210 40% 98%;
-
-    --border: 222 30% 22%;
-    --input: 222 30% 18%;
-    --ring: 174 72% 56%;
-
-    --sidebar-background: 222 47% 9%;
-    --sidebar-foreground: 210 40% 98%;
-    --sidebar-primary: 174 72% 56%;
-    --sidebar-primary-foreground: 222 47% 11%;
-    --sidebar-accent: 222 30% 15%;
-    --sidebar-accent-foreground: 210 40% 98%;
-    --sidebar-border: 222 30% 18%;
-    --sidebar-ring: 174 72% 56%;
+    --border: 215 25% 15%;
+    --input: 215 25% 15%;
+    --ring: 188 91% 50%;
   }
 }
 
@@ -111,16 +113,157 @@ Medical professional aesthetic - Dark theme with cyan/teal accent
 
   body {
     @apply bg-background text-foreground antialiased;
+    font-family: 'Exo 2', 'Inter', sans-serif;
   }
 
-  /* Smooth scrolling */
-  html {
-    scroll-behavior: smooth;
+  h1,
+  h2,
+  h3,
+  .nexus-header {
+    font-family: 'Orbitron', 'Michroma', sans-serif;
+    letter-spacing: 0.05em;
+    font-weight: 700;
+  }
+
+  h1 {
+    font-size: 2.5rem;
+    line-height: 1.1;
+  }
+
+  h2 {
+    font-size: 1.75rem;
+    line-height: 1.2;
+  }
+
+  h3 {
+    font-size: 1.25rem;
+    line-height: 1.3;
+  }
+
+  .nexus-hero-title {
+    font-family: 'Michroma', 'Orbitron', sans-serif;
+    font-size: clamp(2rem, 6vw, 4rem);
+    text-transform: uppercase;
+    letter-spacing: 0.02em;
+    line-height: 1.1;
   }
 }
 
 /* Custom utility classes */
 @layer utilities {
+  .nexus-card {
+    background: rgba(2, 6, 23, 0.6);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border: 1px solid rgba(34, 211, 238, 0.1);
+    border-radius: 1rem;
+    overflow: hidden;
+    box-shadow: 0 4px 30px rgba(0, 0, 0, 0.3);
+    transition: all 0.3s ease;
+  }
+
+  .nexus-card:hover {
+    border-color: rgba(34, 211, 238, 0.25);
+    box-shadow: 0 8px 40px rgba(34, 211, 238, 0.1);
+  }
+
+  .nexus-card-light {
+    background: rgba(255, 255, 255, 0.85);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border: 1px solid rgba(8, 145, 178, 0.15);
+    border-radius: 1rem;
+    overflow: hidden;
+    box-shadow: 0 4px 30px rgba(0, 0, 0, 0.08);
+    transition: all 0.3s ease;
+  }
+
+  .nexus-card-light:hover {
+    border-color: rgba(8, 145, 178, 0.3);
+    box-shadow: 0 8px 40px rgba(8, 145, 178, 0.12);
+  }
+
+  /* Research Card Style (matching reference) */
+  .research-card {
+    background: rgba(2, 6, 23, 0.7);
+    backdrop-filter: blur(16px);
+    border: 1px solid rgba(255, 255, 255, 0.05);
+    border-radius: 0.75rem;
+    padding: 1.5rem;
+    transition: all 0.3s ease;
+  }
+
+  .research-card:hover {
+    border-color: rgba(34, 211, 238, 0.2);
+    transform: translateY(-2px);
+  }
+
+  .light .research-card,
+  [data-theme='light'] .research-card {
+    background: rgba(255, 255, 255, 0.9);
+    border: 1px solid rgba(0, 0, 0, 0.06);
+  }
+
+  /* Relevance Badge */
+  .relevance-badge {
+    background: rgba(34, 211, 238, 0.15);
+    border: 1px solid rgba(34, 211, 238, 0.3);
+    color: #22d3ee;
+    font-size: 0.65rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    padding: 0.25rem 0.5rem;
+    border-radius: 0.25rem;
+  }
+
+  .light .relevance-badge,
+  [data-theme='light'] .relevance-badge {
+    background: rgba(8, 145, 178, 0.1);
+    border: 1px solid rgba(8, 145, 178, 0.25);
+    color: #0891b2;
+  }
+
+  /* Tag Pills */
+  .tag-pill {
+    background: rgba(34, 211, 238, 0.1);
+    border: 1px solid rgba(34, 211, 238, 0.2);
+    color: #67e8f9;
+    font-size: 0.65rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    padding: 0.2rem 0.6rem;
+    border-radius: 0.25rem;
+  }
+
+  .light .tag-pill,
+  [data-theme='light'] .tag-pill {
+    background: rgba(8, 145, 178, 0.08);
+    border: 1px solid rgba(8, 145, 178, 0.15);
+    color: #0891b2;
+  }
+
+  .nexus-border-glow {
+    box-shadow: 0 0 15px hsl(var(--nexus-cyan) / 0.2);
+  }
+
+  .nexus-text-glow {
+    text-shadow: 0 0 10px hsl(var(--nexus-cyan) / 0.5);
+  }
+
+  .nexus-gradient-text {
+    background: linear-gradient(to right, hsl(188 91% 50%), hsl(263 90% 64%), hsl(302 82% 56%));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+
+
+  .nexus-initiate-button {
+    @apply bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-bold uppercase tracking-widest px-8 py-3 rounded shadow-lg shadow-blue-500/20 active:scale-95 transition-all;
+  }
+
   .text-gradient {
     @apply bg-gradient-to-r from-primary to-accent bg-clip-text text-transparent;
   }
@@ -144,7 +287,18 @@ Medical professional aesthetic - Dark theme with cyan/teal accent
   }
 
   ::-webkit-scrollbar-thumb {
-    @apply bg-primary/20 hover:bg-primary/40 rounded-full transition-colors;
+    background: #1e293b;
+    border-radius: 10px;
+    transition: background 0.3s ease;
+  }
+
+  .light-theme ::-webkit-scrollbar-thumb,
+  [data-theme='light'] ::-webkit-scrollbar-thumb {
+    background: #cbd5e1;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: #22d3ee;
   }
 
   .glow-primary {
@@ -161,6 +315,77 @@ Medical professional aesthetic - Dark theme with cyan/teal accent
     padding-left: env(safe-area-inset-left);
     padding-right: env(safe-area-inset-right);
     padding-bottom: env(safe-area-inset-bottom);
+  }
+
+  /* NexusMed Refinement Utilities */
+  .hologram-glow {
+    box-shadow: 0 0 15px rgba(34, 211, 238, 0.3), inset 0 0 10px rgba(34, 211, 238, 0.1);
+  }
+
+  .light-theme .hologram-glow,
+  [data-theme='light'] .hologram-glow {
+    box-shadow: 0 0 15px rgba(8, 145, 178, 0.2), inset 0 0 10px rgba(8, 145, 178, 0.05);
+  }
+
+  .scanline {
+    width: 100%;
+    height: 2px;
+    background: rgba(34, 211, 238, 0.2);
+    position: absolute;
+    top: 0;
+    left: 0;
+    animation: scan-move 4s linear infinite;
+    pointer-events: none;
+  }
+
+  .glass-panel-nexus {
+    background: rgba(15, 23, 42, 0.6);
+    backdrop-filter: blur(12px);
+    border: 1px solid rgba(34, 211, 238, 0.2);
+  }
+
+  .light-theme .glass-panel-nexus,
+  [data-theme='light'] .glass-panel-nexus {
+    background: rgba(255, 255, 255, 0.7);
+    backdrop-filter: blur(12px);
+    border: 1px solid rgba(8, 145, 178, 0.15);
+  }
+
+  .nexus-data-stream {
+    background-image: linear-gradient(0deg, transparent 24%, rgba(var(--nexus-cyan), .05) 25%, rgba(var(--nexus-cyan), .05) 26%, transparent 27%, transparent 74%, rgba(var(--nexus-cyan), .05) 75%, rgba(var(--nexus-cyan), .05) 76%, transparent 77%, transparent), linear-gradient(90deg, transparent 24%, rgba(var(--nexus-cyan), .05) 25%, rgba(var(--nexus-cyan), .05) 26%, transparent 27%, transparent 74%, rgba(var(--nexus-cyan), .05) 75%, rgba(var(--nexus-cyan), .05) 76%, transparent 77%, transparent);
+    background-size: 50px 50px;
+    position: relative;
+  }
+
+  .nexus-data-stream::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(transparent, rgba(var(--nexus-bg-dark), 0.8));
+    pointer-events: none;
+  }
+
+  .nexus-scan-line-active {
+    position: relative;
+    overflow: hidden;
+  }
+
+  .nexus-scan-line-active::after {
+    content: "";
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: linear-gradient(to bottom, transparent 0%, rgba(var(--nexus-cyan), 0.1) 50%, transparent 100%);
+    animation: scan-move 4s linear infinite;
+    pointer-events: none;
+  }
+
+  .nexus-ticker-scroll {
+    display: inline-block;
+    white-space: nowrap;
+    animation: ticker-scroll 30s linear infinite;
   }
 }
 

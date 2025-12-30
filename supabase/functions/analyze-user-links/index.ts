@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { callAI } from "../_shared/ai-client.ts";
 
 const corsHeaders = {
     "Access-Control-Allow-Origin": "*",
@@ -12,13 +13,8 @@ serve(async (req) => {
     }
 
     try {
-        const CLAUDE_API_KEY = Deno.env.get("CLAUDE_API_KEY");
         const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
         const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-
-        if (!CLAUDE_API_KEY) {
-            throw new Error("CLAUDE_API_KEY is not configured");
-        }
 
         const supabase = createClient(supabaseUrl, supabaseKey);
         const authHeader = req.headers.get('Authorization');
@@ -95,29 +91,17 @@ ${linksContext}
 
 Fournis une analyse détaillée de chaque lien.`;
 
-        // Call Claude API
-        const aiResponse = await fetch("https://api.anthropic.com/v1/messages", {
-            method: "POST",
-            headers: {
-                "x-api-key": CLAUDE_API_KEY,
-                "anthropic-version": "2023-06-01",
-                "content-type": "application/json",
-            },
-            body: JSON.stringify({
-                model: "claude-sonnet-4-20250514",
-                max_tokens: 4096,
-                system: systemPrompt,
-                messages: [{ role: "user", content: userPrompt }],
-            }),
-        });
+        // Call AI API
+        const aiResult = await callAI(
+            systemPrompt,
+            userPrompt,
+            {
+                model: "claude-3-5-sonnet-20240620",
+                maxTokens: 4096,
+            }
+        );
 
-        if (!aiResponse.ok) {
-            const errorText = await aiResponse.text();
-            throw new Error(`Claude API error: ${aiResponse.status} - ${errorText}`);
-        }
-
-        const aiResult = await aiResponse.json();
-        const content = aiResult.content[0]?.text || "";
+        const content = aiResult.text || "";
 
         // Parse JSON response
         const jsonMatch = content.match(/\{[\s\S]*\}/);

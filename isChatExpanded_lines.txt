@@ -1,0 +1,5 @@
+﻿3047:     const [isChatExpanded, setIsChatExpanded] = useState(false);
+3055:             setIsChatExpanded(false);
+3299:                         onClick={() => setIsChatExpanded(!isChatExpanded)}
+3304:                             {isChatExpanded ? 'Fermer le chat' : '💬 Des questions sur cette analyse ?'}
+3309:                     {isChatExpanded && (

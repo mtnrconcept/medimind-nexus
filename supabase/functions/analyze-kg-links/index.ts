@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { streamAI } from "../_shared/ai-client.ts";
 
 const corsHeaders = {
     "Access-Control-Allow-Origin": "*",
@@ -30,13 +31,8 @@ serve(async (req) => {
     }
 
     try {
-        const CLAUDE_API_KEY = Deno.env.get("CLAUDE_API_KEY");
         const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
         const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-
-        if (!CLAUDE_API_KEY) {
-            throw new Error("CLAUDE_API_KEY is not configured");
-        }
 
         // Get auth token from request
         const authHeader = req.headers.get("Authorization");
@@ -199,75 +195,28 @@ Pour chaque insight, structure ta réponse ainsi:
 
 Sois rigoureux mais créatif. Cherche des connexions non évidentes.`;
 
-        // Call Claude Opus 4.5 with streaming
-        const response = await fetch("https://api.anthropic.com/v1/messages", {
-            method: "POST",
-            headers: {
-                "x-api-key": CLAUDE_API_KEY,
-                "anthropic-version": "2023-06-01",
-                "content-type": "application/json",
-            },
-            body: JSON.stringify({
-                model: "claude-opus-4-5-20251101",
-                max_tokens: 8192,
-                stream: true,
-                system: systemPrompt,
-                messages: [
-                    {
-                        role: "user",
-                        content: `Analyse les liens suivants et génère des pistes de recherche:\n\n${analysisContext}`
-                    }
-                ],
-            }),
-        });
-
-        if (!response.ok) {
-            const errorText = await response.text();
-            console.error("Claude API error:", response.status, errorText);
-            throw new Error(`Claude API error: ${response.status}`);
-        }
-
-        // Stream the response
-        const reader = response.body!.getReader();
+        // Call AI with streaming and Gemini fallback
         const encoder = new TextEncoder();
-        const decoder = new TextDecoder();
-        let fullText = "";
-
         const stream = new ReadableStream({
             async start(controller) {
                 try {
-                    let buffer = "";
-                    while (true) {
-                        const { done, value } = await reader.read();
-                        if (done) break;
-
-                        buffer += decoder.decode(value, { stream: true });
-                        const lines = buffer.split("\n");
-                        buffer = lines.pop() || "";
-
-                        for (const line of lines) {
-                            if (line.startsWith("data: ")) {
-                                const jsonStr = line.slice(6).trim();
-                                if (jsonStr === "[DONE]") continue;
-
-                                try {
-                                    const data = JSON.parse(jsonStr);
-                                    if (data.type === "content_block_delta" && data.delta?.text) {
-                                        const text = data.delta.text;
-                                        fullText += text;
-
-                                        // Format compatible for frontend
-                                        const chunk = {
-                                            choices: [{ delta: { content: text } }]
-                                        };
-                                        controller.enqueue(encoder.encode(`data: ${JSON.stringify(chunk)}\n\n`));
-                                    }
-                                } catch (e) {
-                                    // Ignore parsing errors
-                                }
-                            }
+                    const aiResponse = await streamAI(
+                        systemPrompt,
+                        `Analyse les liens suivants et génère des pistes de recherche:\n\n${analysisContext}`,
+                        (text) => {
+                            // Format compatible for frontend
+                            const chunk = {
+                                choices: [{ delta: { content: text } }]
+                            };
+                            controller.enqueue(encoder.encode(`data: ${JSON.stringify(chunk)}\n\n`));
+                        },
+                        {
+                            model: "claude-opus-4-5-20251101",
+                            maxTokens: 8192
                         }
-                    }
+                    );
+
+                    const fullText = aiResponse.text;
 
                     // Parse research leads from the full text
                     const jsonMatch = fullText.match(/```json\s*([\s\S]*?)\s*```/);

@@ -3,6 +3,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { getOpenFDAComprehensiveData } from "./openfda-api.ts";
 import { getDrugBankComprehensiveData } from "./drugbank-api.ts";
 import { exhaustiveOpenFDAAdverseEvents, exhaustivePubMedSearch } from "./exhaustive-search.ts";
+import { streamAI } from "../_shared/ai-client.ts";
 
 const corsHeaders = {
     "Access-Control-Allow-Origin": "*",
@@ -498,13 +499,10 @@ async function performScientificAnalysis(
     request: AnalysisRequest,
     evidence: ScientificEvidence[],
     kgInsights: any[],
-    supabase: any
-): Promise<AnalysisResponse> {
-
-    const anthropicApiKey = Deno.env.get("ANTHROPIC_API_KEY");
-    if (!anthropicApiKey) {
-        throw new Error("ANTHROPIC_API_KEY not configured");
-    }
+    supabase: any,
+    onChunk: (text: string) => void
+): Promise<any> {
+    // API keys for AI are handled by streamAI
 
     // Build comprehensive context
     let userPrompt = `# CONTEXTE D'ANALYSE\n\n`;
@@ -585,35 +583,19 @@ async function performScientificAnalysis(
 
     userPrompt += `\n# INSTRUCTIONS\n\nEffectue une analyse scientifique approfondie selon le type demandé (${request.analysis_type}). Génère des hypothèses falsifiables avec scores de plausibilité. Cite toutes les sources. Réponds en JSON.`;
 
-    // Call Claude Opus with STREAMING
-    const claudeResponse = await fetch("https://api.anthropic.com/v1/messages", {
-        method: "POST",
-        headers: {
-            "Content-Type": "application/json",
-            "x-api-key": anthropicApiKey,
-            "anthropic-version": "2023-06-01"
-        },
-        body: JSON.stringify({
+    const aiResponse = await streamAI(
+        SYSTEM_PROMPT,
+        userPrompt,
+        onChunk,
+        {
             model: "claude-3-opus-20240229",
-            max_tokens: 8000,
-            temperature: 0.2,
-            stream: true, // ENABLE STREAMING
-            system: SYSTEM_PROMPT,
-            messages: [
-                { role: "user", content: userPrompt }
-            ]
-        })
-    });
+            maxTokens: 8000,
+            temperature: 0.2
+        }
+    );
 
-    if (!claudeResponse.ok) {
-        const errorText = await claudeResponse.text();
-        console.error("Claude API error:", errorText);
-        throw new Error(`Claude API error: ${claudeResponse.status}`);
-    }
-
-    // Return streaming response (will be handled by caller)
     return {
-        stream: claudeResponse.body,
+        text: aiResponse.text,
         userPrompt,
         evidence,
         kgInsights
@@ -751,51 +733,20 @@ serve(async (req) => {
                     sendProgress('🤖 Génération de l\'analyse avec Claude Opus...');
 
                     // Perform scientific analysis with Claude (get stream)
-                    const streamData = await performScientificAnalysis(request, allEvidence, kgInsights, supabase);
-
-                    // Stream Claude's response
-                    const reader = streamData.stream.getReader();
-                    const decoder = new TextDecoder();
-                    let buffer = '';
-
-                    while (true) {
-                        const { done, value } = await reader.read();
-                        if (done) break;
-
-                        buffer += decoder.decode(value, { stream: true });
-                        const lines = buffer.split('\n');
-                        buffer = lines.pop() || '';
-
-                        for (const line of lines) {
-                            if (line.startsWith('data: ')) {
-                                const data = line.slice(6);
-                                if (data === '[DONE]') continue;
-
-                                try {
-                                    const parsed = JSON.parse(data);
-
-                                    // Send text deltas to client in real-time
-                                    if (parsed.type === 'content_block_delta') {
-                                        const text = parsed.delta?.text;
-                                        if (text) {
-                                            sendEvent({
-                                                type: 'text_delta',
-                                                content: text
-                                            });
-                                        }
-                                    }
-
-                                    // Handle message completion
-                                    if (parsed.type === 'message_stop') {
-                                        sendEvent({ type: 'done' });
-                                    }
-                                } catch (e) {
-                                    // Ignore parse errors for streaming chunks
-                                }
-                            }
+                    await performScientificAnalysis(
+                        request,
+                        allEvidence,
+                        kgInsights,
+                        supabase,
+                        (text) => {
+                            sendEvent({
+                                type: 'text_delta',
+                                content: text
+                            });
                         }
-                    }
+                    );
 
+                    sendEvent({ type: 'done' });
                     controller.close();
                 } catch (error) {
                     console.error('Streaming error:', error);

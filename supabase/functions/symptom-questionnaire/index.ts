@@ -1,4 +1,5 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import { callAI } from "../_shared/ai-client.ts";
 
 const corsHeaders = {
     'Access-Control-Allow-Origin': '*',
@@ -32,10 +33,6 @@ serve(async (req) => {
     try {
         const { conversationHistory, identifiedSymptoms, initialSymptom }: QuestionnaireRequest = await req.json();
 
-        const CLAUDE_API_KEY = Deno.env.get('CLAUDE_API_KEY');
-        if (!CLAUDE_API_KEY) {
-            throw new Error('CLAUDE_API_KEY non configurée');
-        }
 
         const currentSymptoms = identifiedSymptoms || [];
 
@@ -93,40 +90,19 @@ Tu DOIS répondre UNIQUEMENT en JSON valide:
             }
         }
 
-        console.log('Questionnaire - Appel Claude API...');
+        console.log('Questionnaire - Appel AI...');
 
-        const aiResponse = await fetch('https://api.anthropic.com/v1/messages', {
-            method: 'POST',
-            headers: {
-                'x-api-key': CLAUDE_API_KEY,
-                'anthropic-version': '2023-06-01',
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
+        const aiResult = await callAI(
+            systemPrompt,
+            messages,
+            {
                 model: 'claude-sonnet-4-20250514',
-                max_tokens: 1024,
-                system: systemPrompt,
-                messages: messages,
-                temperature: 0.5,
-            }),
-        });
-
-        if (!aiResponse.ok) {
-            const errorText = await aiResponse.text();
-            console.error('Erreur API Claude:', aiResponse.status, errorText);
-
-            if (aiResponse.status === 429) {
-                return new Response(
-                    JSON.stringify({ error: 'Limite de requêtes atteinte. Réessayez dans quelques instants.' }),
-                    { status: 429, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-                );
+                maxTokens: 1024,
+                temperature: 0.5
             }
+        );
 
-            throw new Error(`Erreur API Claude: ${aiResponse.status}`);
-        }
-
-        const aiData = await aiResponse.json();
-        const content = aiData.content?.[0]?.text;
+        const content = aiResult.text;
 
         if (!content) {
             throw new Error('Aucun contenu dans la réponse IA');

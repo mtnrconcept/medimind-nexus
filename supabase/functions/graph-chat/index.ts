@@ -1,4 +1,5 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import { callAI } from "../_shared/ai-client.ts";
 
 /**
  * GRAPH CHAT - Chat IA pour le Knowledge Graph
@@ -190,13 +191,7 @@ serve(async (req) => {
             );
         }
 
-        const claudeApiKey = Deno.env.get("CLAUDE_API_KEY") || Deno.env.get("ANTHROPIC_API_KEY");
-        if (!claudeApiKey) {
-            return new Response(
-                JSON.stringify({ error: "ANTHROPIC_API_KEY not configured" }),
-                { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-            );
-        }
+        // API keys are handled by callAI
 
         console.log(`[GRAPH-CHAT] Mode: ${request.mode}, Message: ${request.message.substring(0, 50)}...`);
 
@@ -271,34 +266,17 @@ Réponds en JSON valide.`;
         // Add current message
         messages.push({ role: 'user', content: userMessage });
 
-        // Call Claude
-        const claudeResponse = await fetch("https://api.anthropic.com/v1/messages", {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/json",
-                "x-api-key": claudeApiKey,
-                "anthropic-version": "2023-06-01"
-            },
-            body: JSON.stringify({
-                model: "claude-sonnet-4-20250514",
-                max_tokens: 2000,
-                temperature: 0.4,
-                system: systemPrompt,
-                messages
-            })
-        });
+        // Call AI with Gemini fallback
+        const aiResponse = await callAI(
+            systemPrompt,
+            userMessage,
+            {
+                model: "claude-3-5-sonnet-20240620",
+                temperature: 0.4
+            }
+        );
 
-        if (!claudeResponse.ok) {
-            const err = await claudeResponse.text();
-            console.error("[GRAPH-CHAT] Claude error:", err);
-            throw new Error(`Claude API error: ${claudeResponse.status}`);
-        }
-
-        const claudeData = await claudeResponse.json();
-        let textContent = "";
-        for (const block of claudeData.content || []) {
-            if (block.type === "text") textContent += block.text;
-        }
+        let textContent = aiResponse.text;
 
         // For graph_command mode, parse the action
         let response: any = { message: textContent };

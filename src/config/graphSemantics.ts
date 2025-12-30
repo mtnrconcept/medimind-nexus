@@ -54,9 +54,51 @@ export const NODE_TYPE_COLORS: Record<string, string> = {
     EVIDENCE: '#8b5cf6',     // Violet - Evidence/Suggestions
     LIFESTYLE: '#8b5cf6',    // Violet - Style de vie/Suggestions
     SUGGESTION: '#8b5cf6',   // Violet - Suggestions
+    ANALYSIS: '#8b5cf6',     // Violet - Analyses avancées
 };
 
-// Semantic edge type colors based on relationship semantics
+// ============================================
+// NEW: LABEL STATE COLORS (STATE) - Qualification/status
+// ============================================
+export const LABEL_STATE_COLORS: Record<string, { color: string; halo: string; haloOpacity: number }> = {
+    VALIDATED: { color: '#22c55e', halo: '#22c55e', haloOpacity: 0.3 },    // Vert - Validé/Recommandé
+    SUBOPTIMAL: { color: '#3b82f6', halo: '#3b82f6', haloOpacity: 0.25 },  // Bleu - Suboptimal
+    MONITORING: { color: '#eab308', halo: '#eab308', haloOpacity: 0.3 },   // Jaune - À surveiller
+    HIGH_RISK: { color: '#f97316', halo: '#f97316', haloOpacity: 0.35 },   // Orange - Risque élevé
+    CONTRAINDICATED: { color: '#ef4444', halo: '#ef4444', haloOpacity: 0.4 }, // Rouge - Interdit/CI
+    HYPOTHESIS: { color: '#8b5cf6', halo: '#8b5cf6', haloOpacity: 0.2 },   // Violet - Hypothèse
+    NEUTRAL: { color: '#9ca3af', halo: '#9ca3af', haloOpacity: 0.15 },     // Gris - Neutre
+};
+
+// ============================================
+// NEW: EDGE RELATION STYLES (RELATION/RISK)
+// ============================================
+export const EDGE_RELATION_STYLES: Record<string, {
+    color: string;
+    dashArray?: string;
+    isDangerous?: boolean;
+    width: number;
+    icon: string;
+    priority: number;
+    animated?: boolean;
+}> = {
+    // Safe/Beneficial relations
+    TREATS_NO_SE: { color: '#22c55e', width: 2, icon: '✅', priority: 1 },
+    TREATS_PARTIAL: { color: '#3b82f6', dashArray: '5,3', width: 2, icon: '🔹', priority: 2 },
+    PREVENTIVE: { color: '#14b8a6', width: 1.5, icon: '🛡️', priority: 1 },
+    MEASURES: { color: '#8b5cf6', dashArray: '3,3', width: 1.5, icon: '📊', priority: 1 },
+    ASSOCIATED: { color: '#9ca3af', dashArray: '2,2', width: 1, icon: '🔗', priority: 0 },
+
+    // Warning relations
+    SIDE_EFFECT: { color: '#eab308', width: 2, icon: '⚠️', priority: 3 },
+    POSSIBLE_SE: { color: '#f59e0b', dashArray: '4,2', width: 1.5, icon: '❓', priority: 2 },
+
+    // Danger relations
+    CONTRAINDICATION: { color: '#f97316', width: 3, icon: '⛔', priority: 4, isDangerous: true },
+    CRITICAL_CI: { color: '#ef4444', width: 4, icon: '☠️', priority: 10, isDangerous: true, animated: true },
+};
+
+// Semantic edge type colors based on relationship semantics (legacy support)
 export const EDGE_TYPE_COLORS: Record<string, { color: string; dashArray?: string; isDangerous?: boolean }> = {
     // Relations positives (Vert)
     TREATS: { color: '#22c55e' },
@@ -98,3 +140,36 @@ export const TIMING = {
     LINK_DURATION: 0.8,
     NODE_DURATION: 0.3,
 };
+
+// ============================================
+// HELPER FUNCTIONS
+// ============================================
+
+/**
+ * Get the appropriate color for a node based on its type
+ */
+export function getNodeColorByType(nodeType: string): string {
+    return NODE_TYPE_COLORS[nodeType.toUpperCase()] || NODE_TYPE_COLORS.SUGGESTION;
+}
+
+/**
+ * Get label state styling (color + halo)
+ */
+export function getLabelStateStyle(labelState: string): { color: string; halo: string; haloOpacity: number } {
+    return LABEL_STATE_COLORS[labelState.toUpperCase()] || LABEL_STATE_COLORS.NEUTRAL;
+}
+
+/**
+ * Get edge relation styling
+ */
+export function getEdgeRelationStyle(edgeRelation: string): {
+    color: string;
+    dashArray?: string;
+    isDangerous?: boolean;
+    width: number;
+    icon: string;
+    priority: number;
+    animated?: boolean;
+} {
+    return EDGE_RELATION_STYLES[edgeRelation.toUpperCase()] || EDGE_RELATION_STYLES.ASSOCIATED;
+}

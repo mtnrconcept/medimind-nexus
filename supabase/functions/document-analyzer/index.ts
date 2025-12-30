@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { callAI, AIMessage } from "../_shared/ai-client.ts";
 
 const corsHeaders = {
     'Access-Control-Allow-Origin': '*',
@@ -187,195 +188,189 @@ async function analyzeWithClaude(
     imageBase64?: string,
     mimeType?: string
 ): Promise<ExtractedMedicalData> {
-    const CLAUDE_API_KEY = Deno.env.get("CLAUDE_API_KEY");
-
-    if (!CLAUDE_API_KEY) {
-        throw new Error("CLAUDE_API_KEY is not configured");
-    }
-
     const systemPrompt = `Tu es un expert médical en extraction de données structurées depuis des documents médicaux.
-Analyse le document ou l'image fournie (ordonnance, compte-rendu, photo de boîte de médicament, analyse biologique, imagerie) et extrais TOUTES les informations médicales pertinentes de façon EXHAUSTIVE.
+        Analyse le document ou l'image fournie (ordonnance, compte-rendu, photo de boîte de médicament, analyse biologique, imagerie) et extrais TOUTES les informations médicales pertinentes de façon EXHAUSTIVE.
 
 ## MÉTHODOLOGIE D'EXTRACTION PAR TYPE DE DOCUMENT
 
-### 📦 PHOTOS DE MÉDICAMENTS/BOÎTES:
-- **Nom commercial exact** (ex: "Ezetimib-Rosuvastatin-Mepha", "Clopidogrel Sandoz eco")
-- **Dosage complet** (ex: "10mg/10mg", "75mg", "5/12.5mg")
-- **Posologie** si visible sur l'étiquette pharmacie (ex: "1 comprimé le soir", "Avaler 1 comprimé le matin")
-- **Laboratoire/Fabricant** (ex: Sandoz, Mepha, Bayer)
-- **Nom du patient** si visible sur l'étiquette
-- **Date de péremption** si visible
+### 📦 PHOTOS DE MÉDICAMENTS / BOÎTES:
+- ** Nom commercial exact ** (ex: "Ezetimib-Rosuvastatin-Mepha", "Clopidogrel Sandoz eco")
+- ** Dosage complet ** (ex: "10mg/10mg", "75mg", "5/12.5mg")
+- ** Posologie ** si visible sur l'étiquette pharmacie (ex: "1 comprimé le soir", "Avaler 1 comprimé le matin")
+        - ** Laboratoire / Fabricant ** (ex: Sandoz, Mepha, Bayer)
+- ** Nom du patient ** si visible sur l'étiquette
+        - ** Date de péremption ** si visible
 
-### 🧪 ANALYSES BIOLOGIQUES (LABORATOIRE):
+### 🧪 ANALYSES BIOLOGIQUES(LABORATOIRE):
 Extrais CHAQUE paramètre avec précision:
-- **Nom du test** (ex: "Hémoglobine", "Créatinine", "HbA1c", "Cholestérol LDL")
-- **Valeur numérique** avec décimales
-- **Unité** (g/L, mmol/L, %, U/L, µmol/L, G/L, T/L, etc.)
-- **Valeurs de référence** (ex: "136-145", "<190", ">1.00")
-- **Statut** : "normal" si dans les normes, "high" si au-dessus, "low" si en dessous, "critical" si très anormal
-- **Catégorie**: 
-  - "hematology" (NFS, hémoglobine, hématocrite, plaquettes, leucocytes)
-  - "chemistry" (électrolytes, créatinine, urée, glucose)
-  - "lipid" (cholestérol, triglycérides, HDL, LDL)
-  - "liver" (ALAT, ASAT, GGT, bilirubine)
-  - "renal" (créatinine, DFG, urée, urates)
-  - "diabetes" (glucose, HbA1c)
-  - "cardiac" (CK, troponine, BNP)
-  - "thyroid", "coagulation", "inflammation", etc.
-- **Date du prélèvement**
-- **Laboratoire** (ex: Viollier, Dianalabs)
+- ** Nom du test ** (ex: "Hémoglobine", "Créatinine", "HbA1c", "Cholestérol LDL")
+- ** Valeur numérique ** avec décimales
+        - ** Unité ** (g / L, mmol / L, %, U / L, µmol / L, G / L, T / L, etc.)
+        - ** Valeurs de référence ** (ex: "136-145", "<190", ">1.00")
+- ** Statut ** : "normal" si dans les normes, "high" si au - dessus, "low" si en dessous, "critical" si très anormal
+        - ** Catégorie **:
+    - "hematology"(NFS, hémoglobine, hématocrite, plaquettes, leucocytes)
+        - "chemistry"(électrolytes, créatinine, urée, glucose)
+        - "lipid"(cholestérol, triglycérides, HDL, LDL)
+        - "liver"(ALAT, ASAT, GGT, bilirubine)
+        - "renal"(créatinine, DFG, urée, urates)
+        - "diabetes"(glucose, HbA1c)
+        - "cardiac"(CK, troponine, BNP)
+        - "thyroid", "coagulation", "inflammation", etc.
+- ** Date du prélèvement **
+- ** Laboratoire ** (ex: Viollier, Dianalabs)
 
 ### 🩻 IMAGERIE MÉDICALE:
-- **Type d'examen** (Scanner/CT, IRM, Radiographie, Échographie, Coronarographie)
-- **Région anatomique** (Cœur, Thorax, Abdomen, etc.)
-- **Date de l'examen**
-- **Médecin prescripteur** et **radiologue/médecin interprétant**
-- **Centre d'imagerie**
-- **Indication/Motif**
-- **Technique** (produit de contraste, DLP, appareil)
-- **SCORES QUANTITATIFS** - TRÈS IMPORTANT:
-  - Score calcique Agatston (ex: 739.15)
-  - Fraction d'éjection (FE%)
-  - Volumes ventriculaires (VG, VD en ml/m²)
-  - Épaisseur parois (septum, paroi latérale en mm)
-  - Masse myocardique (g/m²)
-- **Conclusion/Résultats principaux**
+- ** Type d'examen** (Scanner/CT, IRM, Radiographie, Échographie, Coronarographie)
+        - ** Région anatomique ** (Cœur, Thorax, Abdomen, etc.)
+            - ** Date de l'examen**
+                - ** Médecin prescripteur ** et ** radiologue / médecin interprétant **
+- ** Centre d'imagerie**
+        - ** Indication / Motif **
+- ** Technique ** (produit de contraste, DLP, appareil)
+- ** SCORES QUANTITATIFS ** - TRÈS IMPORTANT:
+    - Score calcique Agatston(ex: 739.15)
+        - Fraction d'éjection (FE%)
+            - Volumes ventriculaires(VG, VD en ml / m²)
+                - Épaisseur parois(septum, paroi latérale en mm)
+                    - Masse myocardique(g / m²)
+                        - ** Conclusion / Résultats principaux **
 
 ### 👨‍⚕️ CONSULTATIONS:
-- **Date** (format YYYY-MM-DD)
-- **Nom du médecin** (Dr. Prénom NOM)
-- **Spécialité** (Cardiologue, Néphrologue, Généraliste, etc.)
-- **Établissement/Cabinet**
-- **Motif de consultation**
-- **Texte complet/Conclusion**
-- **Plan de traitement** (nouveau traitement, ajustements)
-- **Date de suivi prévue** (prochain RDV)
+- ** Date ** (format YYYY - MM - DD)
+- ** Nom du médecin ** (Dr.Prénom NOM)
+- ** Spécialité ** (Cardiologue, Néphrologue, Généraliste, etc.)
+        - ** Établissement / Cabinet **
+- ** Motif de consultation **
+- ** Texte complet / Conclusion **
+- ** Plan de traitement ** (nouveau traitement, ajustements)
+- ** Date de suivi prévue ** (prochain RDV)
 
-### 🏥 ANTÉCÉDENTS MÉDICAUX (medicalHistory):
-**Synonymes**: "antécédents", "ATCD", "historique médical", "antécédents personnels", "histoire de la maladie"
-**Catégories à identifier**:
-- **disease**: maladies chroniques/passées (diabète, hypertension, cancer, insuffisance rénale...)
-- **surgery**: chirurgies/opérations (appendicectomie, pontage, pose de stent, prothèse...)
-- **hospitalization**: hospitalisations (pneumonie, AVC, infarctus, chute...)
-- **injury**: traumatismes/accidents (fracture, entorse, brûlure...)
-Pour chaque entrée: titre, description, date début/fin, sévérité (mild/moderate/severe/critical), médecin traitant, établissement, is_ongoing (chronique=true)
+### 🏥 ANTÉCÉDENTS MÉDICAUX(medicalHistory):
+** Synonymes **: "antécédents", "ATCD", "historique médical", "antécédents personnels", "histoire de la maladie"
+        ** Catégories à identifier **:
+- ** disease **: maladies chroniques / passées(diabète, hypertension, cancer, insuffisance rénale...)
+        - ** surgery **: chirurgies / opérations(appendicectomie, pontage, pose de stent, prothèse...)
+            - ** hospitalization **: hospitalisations(pneumonie, AVC, infarctus, chute...)
+                - ** injury **: traumatismes / accidents(fracture, entorse, brûlure...)
+Pour chaque entrée: titre, description, date début / fin, sévérité(mild / moderate / severe / critical), médecin traitant, établissement, is_ongoing(chronique = true)
 
-### 👨‍👩‍👧‍👦 ANTÉCÉDENTS FAMILIAUX (familyHistory):
-**Synonymes**: "ATCD familiaux", "antécédents familiaux", "famille", "hérédité"
+### 👨‍👩‍👧‍👦 ANTÉCÉDENTS FAMILIAUX(familyHistory):
+** Synonymes **: "ATCD familiaux", "antécédents familiaux", "famille", "hérédité"
 Extraire pour chaque membre:
-- **relationship**: father/mother/brother/sister/maternal_grandmother/paternal_grandfather/maternal_aunt/paternal_uncle/child
-- **condition**: pathologie (cancer, diabète, maladie cardiaque, AVC, Alzheimer...)
-- **age_at_diagnosis**: âge au diagnostic
-- **is_deceased**: décédé(e) true/false
-- **age_at_death**: âge au décès
-- **cause_of_death**: cause du décès
+- ** relationship **: father / mother / brother / sister / maternal_grandmother / paternal_grandfather / maternal_aunt / paternal_uncle / child
+        - ** condition **: pathologie(cancer, diabète, maladie cardiaque, AVC, Alzheimer...)
+            - ** age_at_diagnosis **: âge au diagnostic
+                - ** is_deceased **: décédé(e) true / false
+                    - ** age_at_death **: âge au décès
+                        - ** cause_of_death **: cause du décès
 
-### 🚬 MODE DE VIE (lifestyle):
-**Synonymes**: "habitudes", "hygiène de vie", "mode de vie"
-- **Tabac**:
-  - smoking_status: "never" (jamais fumé), "former" (ancien fumeur, sevré), "occasional" (occasionnel), "current" (fumeur actif)
-  - cigarettes_per_day, years_smoking, quit_date
-- **Alcool**:
-  - alcohol_status: "none", "occasional" (social), "moderate" (régulier modéré), "heavy" (important)
-  - drinks_per_week
-- **Activité physique**:
-  - physical_activity_level: "sedentary", "light", "moderate", "active", "very_active"
-  - exercise_hours_per_week
-- **Alimentation**: diet_type (végétarien, méditerranéen, sans gluten, etc.)
-- **Sommeil**: sleep_hours_average, sleep_quality (poor/fair/good/excellent)
+### 🚬 MODE DE VIE(lifestyle):
+** Synonymes **: "habitudes", "hygiène de vie", "mode de vie"
+        - ** Tabac **:
+    - smoking_status: "never"(jamais fumé), "former"(ancien fumeur, sevré), "occasional"(occasionnel), "current"(fumeur actif)
+        - cigarettes_per_day, years_smoking, quit_date
+        - ** Alcool **:
+    - alcohol_status: "none", "occasional"(social), "moderate"(régulier modéré), "heavy"(important)
+        - drinks_per_week
+        - ** Activité physique **:
+    - physical_activity_level: "sedentary", "light", "moderate", "active", "very_active"
+        - exercise_hours_per_week
+        - ** Alimentation **: diet_type(végétarien, méditerranéen, sans gluten, etc.)
+            - ** Sommeil **: sleep_hours_average, sleep_quality(poor / fair / good / excellent)
 
-### 👥 FACTEURS SOCIAUX (socialFactors):
-**Synonymes**: "situation sociale", "contexte social", "profession"
-- living_situation (seul, en couple, chez famille, institution)
-- employment_status (actif, retraité, chômage, invalidité)
-- occupation (profession)
-- marital_status (célibataire, marié, veuf, divorcé)
-- children_count
-- social_support (bon, limité, isolé)
+### 👥 FACTEURS SOCIAUX(socialFactors):
+** Synonymes **: "situation sociale", "contexte social", "profession"
+        - living_situation(seul, en couple, chez famille, institution)
+        - employment_status(actif, retraité, chômage, invalidité)
+        - occupation(profession)
+        - marital_status(célibataire, marié, veuf, divorcé)
+        - children_count
+        - social_support(bon, limité, isolé)
 
-### 🩺 INFORMATIONS PATIENT (si visible):
-- Nom complet
-- Date de naissance
-- Adresse
-- Numéro AVS/Assurance
+### 🩺 INFORMATIONS PATIENT(si visible):
+    - Nom complet
+        - Date de naissance
+            - Adresse
+            - Numéro AVS / Assurance
 
 ## RÈGLES CRITIQUES:
-1. Sois EXHAUSTIF - extrais TOUS les paramètres biologiques, pas seulement les anormaux
-2. Dates au format YYYY-MM-DD
-3. Convertis les valeurs si nécessaire mais garde la précision
-4. Pour les bilans avec plusieurs pages, indique clairement (page 1/2, etc.)
-5. Identifie les ALERTES: IRC, diabète, dyslipidémie, scores élevés
-6. Pour les médicaments combinés, sépare les substances si possible
-7. Les SYNONYMES sont importants: ATCD = antécédents, HTA = hypertension, etc.
+    1. Sois EXHAUSTIF - extrais TOUS les paramètres biologiques, pas seulement les anormaux
+    2. Dates au format YYYY - MM - DD
+    3. Convertis les valeurs si nécessaire mais garde la précision
+    4. Pour les bilans avec plusieurs pages, indique clairement(page 1 / 2, etc.)
+    5. Identifie les ALERTES: IRC, diabète, dyslipidémie, scores élevés
+    6. Pour les médicaments combinés, sépare les substances si possible
+    7. Les SYNONYMES sont importants: ATCD = antécédents, HTA = hypertension, etc.
 
-## FORMAT DE RÉPONSE (JSON STRICT):
-{
-  "medications": [
-    {"name": "Nom complet du médicament", "dosage": "dosage exact", "frequency": "posologie si connue", "route": "oral/injectable/etc", "start_date": "YYYY-MM-DD", "laboratory": "Fabricant"}
-  ],
-  "diagnoses": [
-    {"name": "Pathologie détectée", "icd_code": "code CIM si applicable", "date": "YYYY-MM-DD", "type": "disease|surgery|hospitalization|injury", "status": "active|chronic|resolved"}
-  ],
-  "consultations": [
-    {"date": "YYYY-MM-DD", "specialty": "spécialité", "physician_name": "Dr. Nom", "reason": "motif", "conclusion": "résumé", "facility": "établissement", "treatment_plan": "plan de traitement", "follow_up_date": "YYYY-MM-DD"}
-  ],
-  "labResults": [
-    {"name": "Nom du test", "value": "valeur", "unit": "unité", "reference_range": "normes", "status": "normal|high|low|critical", "category": "catégorie", "date": "YYYY-MM-DD"}
-  ],
-  "vitalSigns": {"blood_pressure_sys": 0, "blood_pressure_dia": 0, "heart_rate": 0, "temperature": 0.0, "weight": 0, "height": 0, "oxygen_saturation": 0},
-  "allergies": [{"allergen": "nom", "type": "medication|food|environmental|other", "severity": "mild|moderate|severe", "reaction": "description"}],
-  "vaccinations": [{"vaccine_name": "nom", "date": "YYYY-MM-DD", "lot_number": "lot"}],
-  "imaging": {
-    "type": "Type examen", 
-    "body_region": "Région", 
-    "findings": "Résultats détaillés", 
-    "conclusion": "Conclusion", 
-    "date": "YYYY-MM-DD",
-    "scores": {
-      "agatston_score": null,
-      "ejection_fraction": null,
-      "lv_mass": null
-    },
-    "physician_name": "Médecin",
-    "facility": "Centre"
-  },
-  "medicalHistory": [
-    {"category": "disease|surgery|hospitalization|injury|other", "title": "Nom", "description": "Détails", "start_date": "YYYY-MM-DD", "end_date": "YYYY-MM-DD", "severity": "mild|moderate|severe|critical", "treating_physician": "Dr.", "treating_facility": "Hôpital", "is_ongoing": false}
-  ],
-  "familyHistory": [
-    {"relationship": "father|mother|brother|sister|...", "condition": "Pathologie", "age_at_diagnosis": 55, "is_deceased": false, "age_at_death": null, "cause_of_death": null}
-  ],
-  "lifestyle": {
-    "smoking_status": "never|former|occasional|current",
-    "cigarettes_per_day": 0,
-    "alcohol_status": "none|occasional|moderate|heavy",
-    "drinks_per_week": 0,
-    "physical_activity_level": "sedentary|light|moderate|active|very_active",
-    "diet_type": "type d'alimentation",
-    "sleep_hours_average": 7,
-    "sleep_quality": "poor|fair|good|excellent"
-  },
-  "socialFactors": {
-    "living_situation": "seul|couple|famille",
-    "employment_status": "actif|retraité|chômage",
-    "occupation": "profession",
-    "marital_status": "célibataire|marié|veuf|divorcé",
-    "children_count": 0,
-    "social_support": "bon|limité|isolé"
-  },
-  "mentalHealth": {"mood": "humeur", "anxiety": "niveau", "sleep": "qualité", "diagnosis": "diagnostic"},
-  "reproductiveHealth": {"pregnancy_status": "statut", "lmp": "DDR"},
-  "patientInfo": {"name": "nom si visible", "birth_date": "YYYY-MM-DD", "address": "adresse"},
-  "dates": {"document_date": "YYYY-MM-DD"},
-  "documentType": "ordonnance|compte_rendu|imagerie|analyse_biologique|certificat|lettre|autre",
-  "alerts": ["Liste des alertes cliniques importantes détectées"],
-  "notes": "Résumé global et observations importantes"
-}
+## FORMAT DE RÉPONSE(JSON STRICT):
+    {
+        "medications": [
+            { "name": "Nom complet du médicament", "dosage": "dosage exact", "frequency": "posologie si connue", "route": "oral/injectable/etc", "start_date": "YYYY-MM-DD", "laboratory": "Fabricant" }
+        ],
+            "diagnoses": [
+                { "name": "Pathologie détectée", "icd_code": "code CIM si applicable", "date": "YYYY-MM-DD", "type": "disease|surgery|hospitalization|injury", "status": "active|chronic|resolved" }
+            ],
+                "consultations": [
+                    { "date": "YYYY-MM-DD", "specialty": "spécialité", "physician_name": "Dr. Nom", "reason": "motif", "conclusion": "résumé", "facility": "établissement", "treatment_plan": "plan de traitement", "follow_up_date": "YYYY-MM-DD" }
+                ],
+                    "labResults": [
+                        { "name": "Nom du test", "value": "valeur", "unit": "unité", "reference_range": "normes", "status": "normal|high|low|critical", "category": "catégorie", "date": "YYYY-MM-DD" }
+                    ],
+                        "vitalSigns": { "blood_pressure_sys": 0, "blood_pressure_dia": 0, "heart_rate": 0, "temperature": 0.0, "weight": 0, "height": 0, "oxygen_saturation": 0 },
+        "allergies": [{ "allergen": "nom", "type": "medication|food|environmental|other", "severity": "mild|moderate|severe", "reaction": "description" }],
+            "vaccinations": [{ "vaccine_name": "nom", "date": "YYYY-MM-DD", "lot_number": "lot" }],
+                "imaging": {
+            "type": "Type examen",
+                "body_region": "Région",
+                    "findings": "Résultats détaillés",
+                        "conclusion": "Conclusion",
+                            "date": "YYYY-MM-DD",
+                                "scores": {
+                "agatston_score": null,
+                    "ejection_fraction": null,
+                        "lv_mass": null
+            },
+            "physician_name": "Médecin",
+                "facility": "Centre"
+        },
+        "medicalHistory": [
+            { "category": "disease|surgery|hospitalization|injury|other", "title": "Nom", "description": "Détails", "start_date": "YYYY-MM-DD", "end_date": "YYYY-MM-DD", "severity": "mild|moderate|severe|critical", "treating_physician": "Dr.", "treating_facility": "Hôpital", "is_ongoing": false }
+        ],
+            "familyHistory": [
+                { "relationship": "father|mother|brother|sister|...", "condition": "Pathologie", "age_at_diagnosis": 55, "is_deceased": false, "age_at_death": null, "cause_of_death": null }
+            ],
+                "lifestyle": {
+            "smoking_status": "never|former|occasional|current",
+                "cigarettes_per_day": 0,
+                    "alcohol_status": "none|occasional|moderate|heavy",
+                        "drinks_per_week": 0,
+                            "physical_activity_level": "sedentary|light|moderate|active|very_active",
+                                "diet_type": "type d'alimentation",
+                                    "sleep_hours_average": 7,
+                                        "sleep_quality": "poor|fair|good|excellent"
+        },
+        "socialFactors": {
+            "living_situation": "seul|couple|famille",
+                "employment_status": "actif|retraité|chômage",
+                    "occupation": "profession",
+                        "marital_status": "célibataire|marié|veuf|divorcé",
+                            "children_count": 0,
+                                "social_support": "bon|limité|isolé"
+        },
+        "mentalHealth": { "mood": "humeur", "anxiety": "niveau", "sleep": "qualité", "diagnosis": "diagnostic" },
+        "reproductiveHealth": { "pregnancy_status": "statut", "lmp": "DDR" },
+        "patientInfo": { "name": "nom si visible", "birth_date": "YYYY-MM-DD", "address": "adresse" },
+        "dates": { "document_date": "YYYY-MM-DD" },
+        "documentType": "ordonnance|compte_rendu|imagerie|analyse_biologique|certificat|lettre|autre",
+            "alerts": ["Liste des alertes cliniques importantes détectées"],
+                "notes": "Résumé global et observations importantes"
+    }
 
-NOTE: Omets les champs vides/null mais sois le plus exhaustif possible sur les données présentes.
+    NOTE: Omets les champs vides / null mais sois le plus exhaustif possible sur les données présentes.
 `;
 
-    let messages;
+    let messages: AIMessage[];
 
     if (contentType === 'image' && imageBase64 && mimeType) {
         messages = [{
@@ -398,34 +393,23 @@ NOTE: Omets les champs vides/null mais sois le plus exhaustif possible sur les d
     } else {
         messages = [{
             role: "user",
-            content: `Analyse ce document médical et extrait les données en JSON.\n\nContenu:\n${content}`
+            content: `Analyse ce document médical et extrait les données en JSON.\n\nContenu: \n${content} `
         }];
     }
 
-    const response = await fetch("https://api.anthropic.com/v1/messages", {
-        method: "POST",
-        headers: {
-            "x-api-key": CLAUDE_API_KEY,
-            "anthropic-version": "2023-06-01",
-            "content-type": "application/json",
-        },
-        body: JSON.stringify({
-            model: "claude-opus-4-5-20251101",
-            max_tokens: 4096,
-            system: systemPrompt,
-            messages: messages,
-        }),
-    });
+    const aiResult = await callAI(
+        systemPrompt,
+        messages,
+        {
+            model: "claude-3-5-sonnet-20240620",
+            maxTokens: 4096,
+        }
+    );
 
-    if (!response.ok) {
-        throw new Error(`Claude API error: ${response.status} ${await response.text()}`);
-    }
-
-    const result = await response.json();
-    const textContent = result.content?.[0]?.text || '{}';
+    const textContent = aiResult.text || '{}';
 
     let jsonStr = textContent;
-    const jsonMatch = textContent.match(/```(?:json)?\s*([\s\S]*?)```/);
+    const jsonMatch = textContent.match(/```(?: json) ?\s * ([\s\S] *?)```/);
     if (jsonMatch) {
         jsonStr = jsonMatch[1].trim();
     }
@@ -433,7 +417,7 @@ NOTE: Omets les champs vides/null mais sois le plus exhaustif possible sur les d
     try {
         return JSON.parse(jsonStr);
     } catch (e) {
-        console.error("Failed to parse Claude response as JSON:", textContent);
+        console.error("Failed to parse AI response as JSON:", textContent);
         return { notes: textContent };
     }
 }
@@ -505,15 +489,15 @@ async function autoIntegrateData(
                             // So 'medication_name' probably DOES NOT EXIST or is not the foreign key.
 
                             // Let's use standard fields we saw in ExtractedData and typical schema
-                            notes: `Dosage: ${med.dosage || '?'} - Fréq: ${med.frequency || '?'}`,
+                            notes: `Dosage: ${med.dosage || '?'} - Fréq: ${med.frequency || '?'} `,
                             start_date: med.start_date || today,
                             is_active: true
                         });
-                        integrated.push(`Médicament: ${med.name}`);
+                        integrated.push(`Médicament: ${med.name} `);
                     }
                 }
             } catch (e: any) {
-                errors.push(`Medication ${med.name}: ${e.message}`);
+                errors.push(`Medication ${med.name}: ${e.message} `);
             }
         }
     }
@@ -539,10 +523,10 @@ async function autoIntegrateData(
                         is_chronic: diag.status === 'chronic',
                         notes: 'Extrait via AI'
                     });
-                    integrated.push(`Diagnostic: ${diag.name}`);
+                    integrated.push(`Diagnostic: ${diag.name} `);
                 }
             } catch (e: any) {
-                errors.push(`Diagnosis ${diag.name}: ${e.message}`);
+                errors.push(`Diagnosis ${diag.name}: ${e.message} `);
             }
         }
     }
@@ -563,9 +547,9 @@ async function autoIntegrateData(
                     follow_up_date: cons.follow_up_date || null,
                     notes: 'Extrait via AI'
                 });
-                integrated.push(`Consultation: ${cons.date} - ${cons.specialty}`);
+                integrated.push(`Consultation: ${cons.date} - ${cons.specialty} `);
             } catch (e: any) {
-                errors.push(`Consultation: ${e.message}`);
+                errors.push(`Consultation: ${e.message} `);
             }
         }
     } else if (extractedData.documentType === 'compte_rendu' && extractedData.dates?.document_date) {
@@ -596,11 +580,11 @@ async function autoIntegrateData(
                     value: isNaN(numValue) ? null : numValue,
                     unit: lab.unit,
                     is_abnormal: lab.status === 'high' || lab.status === 'low' || lab.status === 'critical',
-                    notes: lab.status ? `Statut: ${lab.status}` : null
+                    notes: lab.status ? `Statut: ${lab.status} ` : null
                 });
-                integrated.push(`Labo: ${lab.name}`);
+                integrated.push(`Labo: ${lab.name} `);
             } catch (e: any) {
-                errors.push(`Labo ${lab.name}: ${e.message}`);
+                errors.push(`Labo ${lab.name}: ${e.message} `);
             }
         }
     }
@@ -612,7 +596,7 @@ async function autoIntegrateData(
             try {
                 await supabase.from('patient_clinical_data').insert({
                     patient_id: patientId,
-                    recorded_at: extractedData.dates?.document_date ? `${extractedData.dates.document_date}T12:00:00Z` : now,
+                    recorded_at: extractedData.dates?.document_date ? `${extractedData.dates.document_date} T12:00:00Z` : now,
                     systolic_bp: vs.blood_pressure_sys,
                     diastolic_bp: vs.blood_pressure_dia,
                     heart_rate: vs.heart_rate,
@@ -624,7 +608,7 @@ async function autoIntegrateData(
                 });
                 integrated.push('Constantes vitales');
             } catch (e: any) {
-                errors.push(`Vitals: ${e.message}`);
+                errors.push(`Vitals: ${e.message} `);
             }
         }
     }
@@ -639,9 +623,9 @@ async function autoIntegrateData(
                     vaccination_date: vacc.date || today,
                     lot_number: vacc.lot_number
                 });
-                integrated.push(`Vaccin: ${vacc.vaccine_name}`);
+                integrated.push(`Vaccin: ${vacc.vaccine_name} `);
             } catch (e: any) {
-                errors.push(`Vaccin: ${e.message}`);
+                errors.push(`Vaccin: ${e.message} `);
             }
         }
     }
@@ -656,7 +640,7 @@ async function autoIntegrateData(
                 const scores = extractedData.imaging.scores;
                 const scoreLines = [];
                 if (scores.agatston_score !== undefined && scores.agatston_score !== null) {
-                    scoreLines.push(`Score Agatston: ${scores.agatston_score}`);
+                    scoreLines.push(`Score Agatston: ${scores.agatston_score} `);
                 }
                 if (scores.ejection_fraction !== undefined && scores.ejection_fraction !== null) {
                     scoreLines.push(`Fraction d'éjection: ${scores.ejection_fraction}%`);

@@ -1,4 +1,5 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import { callAI } from "../_shared/ai-client.ts";
 
 const corsHeaders = {
     "Access-Control-Allow-Origin": "*",
@@ -127,10 +128,7 @@ serve(async (req) => {
             );
         }
 
-        const anthropicApiKey = Deno.env.get("ANTHROPIC_API_KEY");
-        if (!anthropicApiKey) {
-            throw new Error("ANTHROPIC_API_KEY not configured");
-        }
+        // API keys are handled by callAI
 
         // Build user prompt from unified context
         let userPrompt = request.unified_context.ai_prompt_context || JSON.stringify(request.unified_context, null, 2);
@@ -141,38 +139,18 @@ serve(async (req) => {
 
         userPrompt += `\n\n## Instructions\nAnalyse ce contexte patient et génère:\n1. Des hypothèses falsifiables avec scores de plausibilité\n2. Des recommandations d'adaptation de traitement\n3. Des signaux faibles à surveiller\n4. Un plan de surveillance`;
 
-        // Call Claude
-        const claudeResponse = await fetch("https://api.anthropic.com/v1/messages", {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/json",
-                "x-api-key": anthropicApiKey,
-                "anthropic-version": "2023-06-01"
-            },
-            body: JSON.stringify({
-                model: "claude-3-5-sonnet-20241022", // Sonnet for hypothesis generation
-                max_tokens: 8000,
-                temperature: 0.3, // Lower temperature for more consistent output
-                system: SYSTEM_PROMPT,
-                messages: [
-                    { role: "user", content: userPrompt }
-                ]
-            })
-        });
-
-        if (!claudeResponse.ok) {
-            const errorText = await claudeResponse.text();
-            console.error("Claude API error:", errorText);
-            throw new Error(`Claude API error: ${claudeResponse.status}`);
-        }
-
-        const claudeData = await claudeResponse.json();
-        let textContent = "";
-        for (const block of claudeData.content || []) {
-            if (block.type === "text") {
-                textContent += block.text;
+        // Call AI with Gemini fallback
+        const aiResponse = await callAI(
+            SYSTEM_PROMPT,
+            userPrompt,
+            {
+                model: "claude-3-5-sonnet-20241022",
+                maxTokens: 8000,
+                temperature: 0.3
             }
-        }
+        );
+
+        let textContent = aiResponse.text;
 
         // Parse JSON from response
         let parsedResult;

@@ -1,6 +1,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { getOpenFDAComprehensiveData } from "./openfda-api.ts";
+import { callAI } from "../_shared/ai-client.ts";
 
 const corsHeaders = {
     "Access-Control-Allow-Origin": "*",
@@ -221,11 +222,8 @@ serve(async (req) => {
             )
             .join('\n');
 
-        // 5. Call Claude for correlation analysis
-        const claudeApiKey = Deno.env.get("ANTHROPIC_API_KEY");
-        if (!claudeApiKey) {
-            throw new Error("ANTHROPIC_API_KEY not configured");
-        }
+        // 5. Call AI for correlation analysis
+        const systemPrompt = "Tu es un pharmacologue clinicien expert en pharmacovigilance.";
 
         const analysisPrompt = `Tu es un pharmacologue clinicien expert en pharmacovigilance avec accès à la base FDA FAERS (19.7M d'événements indésirables). Analyse ces données patient pour détecter des effets secondaires médicamenteux potentiels.
 
@@ -258,27 +256,16 @@ Réponds UNIQUEMENT en JSON valide avec ce format:
   ]
 }`;
 
-        const claudeResponse = await fetch("https://api.anthropic.com/v1/messages", {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/json",
-                "x-api-key": claudeApiKey,
-                "anthropic-version": "2023-06-01"
-            },
-            body: JSON.stringify({
-                model: "claude-sonnet-4-20250514",
-                max_tokens: 2000,
-                messages: [{ role: "user", content: analysisPrompt }]
-            })
-        });
+        const aiResult = await callAI(
+            systemPrompt,
+            analysisPrompt,
+            {
+                model: "claude-3-5-sonnet-20240620",
+                maxTokens: 2000,
+            }
+        );
 
-        if (!claudeResponse.ok) {
-            const errorText = await claudeResponse.text();
-            throw new Error(`Claude API error: ${errorText}`);
-        }
-
-        const claudeData = await claudeResponse.json();
-        const aiResponseText = claudeData.content?.[0]?.text || "";
+        const aiResponseText = aiResult.text;
 
         // Parse AI response
         let aiAlerts: any[] = [];

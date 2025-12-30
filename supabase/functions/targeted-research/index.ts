@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { streamAI } from "../_shared/ai-client.ts";
 
 /**
  * TARGETED RESEARCH - Recherche Ciblée
@@ -17,13 +18,13 @@ const corsHeaders = {
     "Access-Control-Allow-Origin": "*",
     "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
-
 interface StreamEvent {
     type: 'step_update' | 'text' | 'discovery' | 'sources' | 'warning' | 'done';
     step?: { id: number; status: string; details?: string; source?: string };
     content?: string;
     discovery?: any;
     warning?: string;
+    sources?: any[];
 }
 
 // Evidence levels from config
@@ -257,16 +258,9 @@ serve(async (req) => {
 
         const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
         const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-        const claudeApiKey = Deno.env.get("CLAUDE_API_KEY") || Deno.env.get("ANTHROPIC_API_KEY");
         const ncbiApiKey = Deno.env.get("NCBI_API_KEY");
+        // API keys for AI are handled by callAI/streamAI
         const supabase = createClient(supabaseUrl, supabaseKey);
-
-        if (!claudeApiKey) {
-            return new Response(
-                JSON.stringify({ error: "CLAUDE_API_KEY not configured" }),
-                { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-            );
-        }
 
         console.log(`[TARGETED-RESEARCH] Query: ${query}`);
 
@@ -336,33 +330,20 @@ ${pubmedArticles.map((a: any) => `- [PMID:${a.pmid}] "${a.title}" (${a.year}) - 
 RAPPEL: Réponds en JSON valide. Cite chaque source (PMID). Niveau d'évidence obligatoire pour chaque claim.
 `;
 
-                    const claudeResponse = await fetch("https://api.anthropic.com/v1/messages", {
-                        method: "POST",
-                        headers: {
-                            "Content-Type": "application/json",
-                            "x-api-key": claudeApiKey,
-                            "anthropic-version": "2023-06-01"
+                    const aiResponse = await streamAI(
+                        SYSTEM_PROMPT,
+                        evidenceContext,
+                        () => {
+                            // Keeping original behavior of waiting for full response
                         },
-                        body: JSON.stringify({
+                        {
                             model: "claude-sonnet-4-20250514",
-                            max_tokens: 8000,
-                            temperature: 0.3,
-                            system: SYSTEM_PROMPT,
-                            messages: [{ role: "user", content: evidenceContext }]
-                        })
-                    });
+                            maxTokens: 8000,
+                            temperature: 0.3
+                        }
+                    );
 
-                    if (!claudeResponse.ok) {
-                        const err = await claudeResponse.text();
-                        console.error("Claude error:", err);
-                        throw new Error(`Claude: ${claudeResponse.status}`);
-                    }
-
-                    const claudeData = await claudeResponse.json();
-                    let textContent = "";
-                    for (const block of claudeData.content || []) {
-                        if (block.type === "text") textContent += block.text;
-                    }
+                    const textContent = aiResponse.text;
 
                     sendEvent({ type: 'step_update', step: { id: 3, status: 'completed', details: '✅ Analyse terminée', source: 'Claude' } });
 

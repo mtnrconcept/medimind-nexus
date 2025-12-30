@@ -1613,6 +1613,47 @@ export type Database = {
           },
         ]
       }
+      saved_graphs: {
+        Row: {
+          id: string
+          user_id: string
+          name: string
+          description: string | null
+          graph_data: Json
+          view_state: Json
+          created_at: string | null
+          updated_at: string | null
+        }
+        Insert: {
+          id?: string
+          user_id: string
+          name: string
+          description?: string | null
+          graph_data?: Json
+          view_state?: Json
+          created_at?: string | null
+          updated_at?: string | null
+        }
+        Update: {
+          id?: string
+          user_id?: string
+          name?: string
+          description?: string | null
+          graph_data?: Json
+          view_state?: Json
+          created_at?: string | null
+          updated_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "saved_graphs_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          }
+        ]
+      }
     }
     Views: {
       [_ in never]: never

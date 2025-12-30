@@ -1,0 +1,7 @@
+{
+  "name": "NexusMed AI - Futuristic Medical Research",
+  "description": "A cutting-edge medical research platform featuring holographic UI, 3D molecular visualizations, and Gemini-powered clinical synthesis.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}

@@ -1,6 +1,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import FirecrawlApp from "https://esm.sh/@mendable/firecrawl-js@1.0.0";
+import { callAI } from "../_shared/ai-client.ts";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -66,13 +67,10 @@ serve(async (req) => {
     const supabaseUrl = Deno.env.get('SUPABASE_URL');
     const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
 
-    const claudeApiKey = Deno.env.get('CLAUDE_API_KEY');
-
     if (!firecrawlApiKey) throw new Error('FIRECRAWL_API_KEY non configurée');
-    if (!claudeApiKey) throw new Error('CLAUDE_API_KEY non configurée');
 
-    // Helper pour appeler Claude
-    async function extractWithClaude(markdown: string, type: 'medication' | 'pathology'): Promise<any> {
+    // Helper pour appeler l'IA (callAI gère Anthropic -> Gemini fallback)
+    async function extractWithAI(markdown: string, type: 'medication' | 'pathology'): Promise<any> {
       const systemPrompt = type === 'medication'
         ? "Tu es un expert pharmacologue suisse. Extrais les données structurées de cette notice de médicament (Compendium.ch) en JSON strict."
         : "Tu es un médecin expert. Extrais les données structurées de cette page médicale en JSON strict.";
@@ -107,28 +105,19 @@ serve(async (req) => {
       Contenu Markdown:
       ${markdown.substring(0, 50000)} (tronqué si trop long)`;
 
-      const response = await fetch('https://api.anthropic.com/v1/messages', {
-        method: 'POST',
-        headers: {
-          'x-api-key': claudeApiKey!,
-          'anthropic-version': '2023-06-01',
-          'content-type': 'application/json'
-        },
-        body: JSON.stringify({
-          model: 'claude-opus-4-5-20251101',
-          max_tokens: 4000,
-          messages: [{ role: 'user', content: userPrompt }]
-        })
-      });
+      const aiResponse = await callAI(
+        systemPrompt,
+        userPrompt,
+        {
+          model: 'claude-3-5-sonnet-20240620', // Optimisé
+          maxTokens: 4000,
+          temperature: 0
+        }
+      );
 
-      if (!response.ok) {
-        throw new Error(`Claude API Error: ${await response.text()}`);
-      }
+      const content = aiResponse.text;
 
-      const data = await response.json();
-      const content = data.content[0].text;
-
-      // Extraction du JSON depuis la réponse (parfois Claude ajoute du texte autour)
+      // Extraction du JSON depuis la réponse
       const jsonMatch = content.match(/\{[\s\S]*\}/);
       if (jsonMatch) {
         return JSON.parse(jsonMatch[0]);
@@ -541,8 +530,8 @@ serve(async (req) => {
       const markdown = scrapeResult.markdown || '';
       console.log('Contenu médicament extrait, longueur:', markdown.length);
 
-      // Extraction des données par Claude AI
-      const extractedData = await extractWithClaude(markdown, 'medication');
+      // Extraction des données par l'IA
+      const extractedData = await extractWithAI(markdown, 'medication');
       console.log('Données extraites:', extractedData.medication?.name);
 
       const stats = {
@@ -771,8 +760,8 @@ serve(async (req) => {
       const markdown = scrapeResult.markdown || '';
       console.log('Contenu extrait, longueur:', markdown.length);
 
-      // Extraction des données par Claude AI
-      const extractedData = await extractWithClaude(markdown, 'pathology');
+      // Extraction des données par l'IA
+      const extractedData = await extractWithAI(markdown, 'pathology');
       console.log('Données extraites:', extractedData.pathology?.name);
 
       // Insérer les données dans la base

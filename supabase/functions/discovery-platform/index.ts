@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { streamAI } from "../_shared/ai-client.ts";
 
 const corsHeaders = {
     "Access-Control-Allow-Origin": "*",
@@ -387,14 +388,6 @@ function extractClaimTags(text: string): string[] {
 // ============================================
 
 async function generateHypotheses(evidencePack: EvidencePack, onChunk?: (text: string) => void): Promise<Hypothesis[]> {
-    const anthropicKey = Deno.env.get("ANTHROPIC_API_KEY");
-    const openaiKey = Deno.env.get("OPENAI_API_KEY");
-
-    if (!anthropicKey && !openaiKey) {
-        console.error("Neither ANTHROPIC_API_KEY nor OPENAI_API_KEY configured");
-        return [];
-    }
-
     const systemPrompt = `Tu es un expert scientifique médical chargé de générer un RAPPORT DE RECHERCHE COMMITTEE-GRADE sur une hypothèse thérapeutique.
 
 FORMAT DE SORTIE - JSON strict:
@@ -530,7 +523,6 @@ CONTRAINTE CRITIQUE:
 
 GÉNÈRE UN RAPPORT AUDIT - READY POUR COMITÉ SCIENTIFIQUE / IRB.`;
 
-
     const userPrompt = `GÉNÈRE UN RAPPORT COMMITTEE - GRADE basé sur les preuves ci - dessous.
 
         CONTEXTE:
@@ -562,74 +554,20 @@ ${(() => {
 Retourne JSON strict selon le format spécifié.`;
 
     try {
-        let content = '';
-
-        // Try Anthropic first if available
-        if (anthropicKey) {
-            console.log('Using Claude API for hypothesis generation');
-            try {
-                console.log('Using Claude Opus 4.5 with streaming...');
-                const response = await fetch('https://api.anthropic.com/v1/messages', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'x-api-key': anthropicKey,
-                        'anthropic-version': '2023-06-01'
-                    },
-                    body: JSON.stringify({
-                        model: 'claude-opus-4-20250514',
-                        max_tokens: 30000,  // Increased to handle committee-grade structure
-                        stream: true,
-                        messages: [
-                            { role: 'user', content: userPrompt }
-                        ],
-                        system: systemPrompt
-                    })
-                });
-
-                if (response.ok && response.body) {
-                    // Read streaming response
-                    const reader = response.body.getReader();
-                    const decoder = new TextDecoder();
-                    let buffer = '';
-
-                    while (true) {
-                        const { done, value } = await reader.read();
-                        if (done) break;
-
-                        buffer += decoder.decode(value, { stream: true });
-
-                        // Process SSE events
-                        const lines = buffer.split('\n');
-                        buffer = lines.pop() || ''; // Keep incomplete line
-
-                        for (const line of lines) {
-                            if (line.startsWith('data: ')) {
-                                const data = line.slice(6);
-                                if (data === '[DONE]') continue;
-
-                                try {
-                                    const event = JSON.parse(data);
-                                    if (event.type === 'content_block_delta' && event.delta?.text) {
-                                        const text = event.delta.text;
-                                        content += text;
-                                        if (onChunk) onChunk(text);
-                                    }
-                                } catch (e) {
-                                    // Skip invalid JSON chunks
-                                }
-                            }
-                        }
-                    }
-                    console.log('Claude streaming complete. Content length:', content.length);
-                } else {
-                    const errorText = await response.text();
-                    console.error('Claude API error status:', response.status, 'Error:', errorText);
-                }
-            } catch (claudeError) {
-                console.error('Claude API fetch error:', claudeError);
+        // Call AI with streaming and Gemini fallback
+        const aiResponse = await streamAI(
+            systemPrompt,
+            userPrompt,
+            (text) => {
+                if (onChunk) onChunk(text);
+            },
+            {
+                model: 'claude-opus-4-20250514',
+                maxTokens: 30000
             }
-        }
+        );
+
+        let content = aiResponse.text;
 
         // Fallback to OpenAI if Claude failed or not available (omitted for stream mode simplicity)
 

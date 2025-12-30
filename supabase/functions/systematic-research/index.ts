@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { callAI } from "../_shared/ai-client.ts";
 import { getOpenFDAComprehensiveData } from "./openfda-api.ts";
 import { getDrugBankComprehensiveData } from "./drugbank-api.ts";
 
@@ -19,7 +20,6 @@ const corsHeaders = {
     "Access-Control-Allow-Origin": "*",
     "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
-
 interface StreamEvent {
     type: 'step_update' | 'text' | 'hypothesis' | 'evidence_synthesis' | 'gap_analysis' | 'sources' | 'done';
     step?: { id: number; status: string; details?: string; source?: string };
@@ -27,6 +27,7 @@ interface StreamEvent {
     hypothesis?: any;
     evidence_synthesis?: any;
     gap_analysis?: any;
+    sources?: any[];
 }
 
 // SYSTEMATIC MODE SYSTEM PROMPT (~4000 tokens)
@@ -480,16 +481,8 @@ serve(async (req) => {
 
         const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
         const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-        const claudeApiKey = Deno.env.get("CLAUDE_API_KEY") || Deno.env.get("ANTHROPIC_API_KEY");
         const ncbiApiKey = Deno.env.get("NCBI_API_KEY");
         const supabase = createClient(supabaseUrl, supabaseKey);
-
-        if (!claudeApiKey) {
-            return new Response(
-                JSON.stringify({ error: "CLAUDE_API_KEY not configured" }),
-                { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-            );
-        }
 
         console.log(`[SYSTEMATIC-RESEARCH] Topic: ${topic}`);
 
@@ -677,35 +670,19 @@ Cite TOUTES les sources (PMID, NCT, Guidelines).
                     // Start with cheaper model (Sonnet) for initial analysis
                     let initialStrategy = selectModelStrategy(false); // Start conservative
 
-                    sendEvent({ type: 'step_update', step: { id: 6, status: 'running', details: `🧠 Analyse initiale (${initialStrategy.model})...`, source: 'Anthropic' } });
+                    sendEvent({ type: 'step_update', step: { id: 6, status: 'running', details: `🧠 Analyse initiale (${initialStrategy.model})...`, source: 'AI' } });
 
-                    let claudeResponse = await fetch("https://api.anthropic.com/v1/messages", {
-                        method: "POST",
-                        headers: {
-                            "Content-Type": "application/json",
-                            "x-api-key": claudeApiKey,
-                            "anthropic-version": "2023-06-01"
-                        },
-                        body: JSON.stringify({
+                    const initialAIResponse = await callAI(
+                        SYSTEM_PROMPT,
+                        comprehensiveContext,
+                        {
                             model: initialStrategy.model,
-                            max_tokens: initialStrategy.maxTokens,
-                            temperature: 0.2,
-                            system: SYSTEM_PROMPT,
-                            messages: [{ role: "user", content: comprehensiveContext }]
-                        })
-                    });
+                            maxTokens: initialStrategy.maxTokens,
+                            temperature: 0.2
+                        }
+                    );
 
-                    if (!claudeResponse.ok) {
-                        const err = await claudeResponse.text();
-                        console.error("Claude error:", err);
-                        throw new Error(`Claude: ${claudeResponse.status}`);
-                    }
-
-                    const claudeData = await claudeResponse.json();
-                    let textContent = "";
-                    for (const block of claudeData.content || []) {
-                        if (block.type === "text") textContent += block.text;
-                    }
+                    let textContent = initialAIResponse.text || "";
 
                     // DETECT NOVELTY from initial analysis
                     const noveltyDetection = detectNovelty(textContent);
@@ -727,31 +704,23 @@ Cite TOUTES les sources (PMID, NCT, Guidelines).
                         console.log(`[MODEL UPGRADE] ${initialStrategy.model} -> ${upgradeStrategy.model} (${upgradeStrategy.rationale})`);
 
                         // Re-run with upgraded model and max tokens
-                        const upgradeResponse = await fetch("https://api.anthropic.com/v1/messages", {
-                            method: "POST",
-                            headers: {
-                                "Content-Type": "application/json",
-                                "x-api-key": claudeApiKey,
-                                "anthropic-version": "2023-06-01"
-                            },
-                            body: JSON.stringify({
-                                model: upgradeStrategy.model,
-                                max_tokens: upgradeStrategy.maxTokens,
-                                temperature: 0.2,
-                                system: SYSTEM_PROMPT,
-                                messages: [{ role: "user", content: comprehensiveContext }]
-                            })
-                        });
+                        try {
+                            const upgradeAIResponse = await callAI(
+                                SYSTEM_PROMPT,
+                                comprehensiveContext,
+                                {
+                                    model: upgradeStrategy.model,
+                                    maxTokens: upgradeStrategy.maxTokens,
+                                    temperature: 0.2
+                                }
+                            );
 
-                        if (upgradeResponse.ok) {
-                            const upgradeData = await upgradeResponse.json();
-                            textContent = ""; // Replace with upgraded analysis
-                            for (const block of upgradeData.content || []) {
-                                if (block.type === "text") textContent += block.text;
+                            if (upgradeAIResponse.text) {
+                                textContent = upgradeAIResponse.text;
+                                console.log(`[MODEL UPGRADE SUCCESS] Used ${upgradeStrategy.maxTokens} tokens for comprehensive discovery analysis`);
                             }
-                            console.log(`[MODEL UPGRADE SUCCESS] Used ${upgradeStrategy.maxTokens} tokens for comprehensive discovery analysis`);
-                        } else {
-                            console.error("Upgrade analysis failed, using initial analysis");
+                        } catch (upgradeError) {
+                            console.error("Upgrade analysis failed, using initial analysis:", upgradeError);
                         }
                     }
 

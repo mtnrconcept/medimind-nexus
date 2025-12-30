@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { callAI } from "../_shared/ai-client.ts";
 
 /**
  * NEURAL KNOWLEDGE GRAPH - Embedding & Network Initialization
@@ -48,29 +49,20 @@ async function generateEmbedding(text: string, apiKey?: string): Promise<number[
 }
 
 // Alternative: Use Claude for embeddings via description generation
-async function generateNodeDescription(node: any, claudeApiKey: string): Promise<string> {
+// Alternative: Use AI for descriptions via description generation
+async function generateNodeDescription(node: any): Promise<string> {
     try {
-        const response = await fetch("https://api.anthropic.com/v1/messages", {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/json",
-                "x-api-key": claudeApiKey,
-                "anthropic-version": "2023-06-01"
-            },
-            body: JSON.stringify({
-                model: "claude-sonnet-4-20250514",
-                max_tokens: 200,
-                messages: [{
-                    role: "user",
-                    content: `Generate a concise medical description for embedding about: "${node.name}" (type: ${node.node_type}). Include key medical properties, mechanisms, and relationships. Keep it under 100 words.`
-                }]
-            })
-        });
+        const aiResponse = await callAI(
+            "Tu es un expert médical. Génère des descriptions concises.",
+            `Generate a concise medical description for embedding about: "${node.name}" (type: ${node.node_type}). Include key medical properties, mechanisms, and relationships. Keep it under 100 words.`,
+            {
+                model: "claude-3-5-sonnet-20240620",
+                maxTokens: 200,
+                temperature: 0.3
+            }
+        );
 
-        if (!response.ok) return node.name;
-
-        const data = await response.json();
-        return data.content?.[0]?.text || node.name;
+        return aiResponse.text || node.name;
     } catch (e) {
         return node.name;
     }
@@ -87,7 +79,6 @@ serve(async (req) => {
         const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
         const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
         const openaiKey = Deno.env.get("OPENAI_API_KEY");
-        const claudeKey = Deno.env.get("CLAUDE_API_KEY") || Deno.env.get("ANTHROPIC_API_KEY");
         const supabase = createClient(supabaseUrl, supabaseKey);
 
         let result: any = {};

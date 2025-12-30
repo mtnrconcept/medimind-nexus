@@ -1,4 +1,5 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import { callAI } from "../_shared/ai-client.ts";
 
 const corsHeaders = {
     "Access-Control-Allow-Origin": "*",
@@ -131,20 +132,36 @@ const EVIDENCE_PATTERNS = {
     }
 };
 
+// Node types for the color system (WHAT)
+type NodeType = 'MEDICATION' | 'TREATMENT' | 'SYMPTOM' | 'PATHOLOGY' | 'COMPLICATION' | 'ANALYSIS' | 'SUGGESTION';
+
+// Label states for qualification (STATE)
+type LabelState = 'VALIDATED' | 'SUBOPTIMAL' | 'MONITORING' | 'HIGH_RISK' | 'CONTRAINDICATED' | 'HYPOTHESIS' | 'NEUTRAL';
+
+// Edge relations for links (RELATION/RISK)
+type EdgeRelation = 'TREATS_NO_SE' | 'TREATS_PARTIAL' | 'PREVENTIVE' | 'MEASURES' | 'SIDE_EFFECT' | 'POSSIBLE_SE' | 'CONTRAINDICATION' | 'CRITICAL_CI' | 'ASSOCIATED';
+
 interface Entity {
     text: string;
-    type: string;
+    type: string;              // Legacy type from NER
+    node_type: NodeType;       // New: color system node type
+    label_state: LabelState;   // New: qualification state
     start: number;
     end: number;
     confidence: number;
+    risk_score?: number;       // New: risk level 0-1
+    priority_score?: number;   // New: combined priority 0-1
 }
 
 interface Relation {
-    subject: Entity;
-    predicate: string;
-    object: Entity;
+    subject: Entity | { text: string };
+    predicate: string;         // Legacy predicate
+    edge_relation: EdgeRelation; // New: typed edge relation
+    object: Entity | { text: string };
     evidence_text: string;
     confidence: number;
+    risk_level?: number;       // New: 0-5 scale
+    is_critical?: boolean;     // New: CI_CRITICAL flag
 }
 
 interface EvidenceLevel {
@@ -153,13 +170,24 @@ interface EvidenceLevel {
     indicators: string[];
 }
 
+interface ScoringOutput {
+    confidence_score: number;
+    risk_score: number;
+    action_score: number;
+    priority_score: number;
+}
+
 interface ExtractionResult {
     entities: Entity[];
     relations: Relation[];
     evidence_level: EvidenceLevel;
+    scoring?: ScoringOutput;   // New: global scoring
     summary: {
         entity_counts: Record<string, number>;
         relation_counts: Record<string, number>;
+        node_type_counts?: Record<string, number>;   // New
+        label_state_counts?: Record<string, number>; // New
+        edge_relation_counts?: Record<string, number>; // New
     };
 }
 
@@ -179,12 +207,16 @@ function extractEntitiesSimple(text: string): Entity[] {
 
                 if (!seen.has(key) && entityText.length > 1) {
                     seen.add(key);
+                    const nodeType = mapToNodeType(type);
                     entities.push({
                         text: entityText,
                         type,
+                        node_type: nodeType,
+                        label_state: 'NEUTRAL', // Default, will be refined later
                         start: match.index,
                         end: match.index + entityText.length,
-                        confidence: 0.7
+                        confidence: 0.7,
+                        risk_score: 0.1
                     });
                 }
             }
@@ -222,12 +254,18 @@ function extractRelations(text: string, entities: Entity[]): Relation[] {
                                 ? [sentenceEntities[i], sentenceEntities[j]]
                                 : [sentenceEntities[j], sentenceEntities[i]];
 
+                            const edgeRelation = mapToEdgeRelation(relationType, 0.6);
                             relations.push({
                                 subject,
                                 predicate: relationType,
+                                edge_relation: edgeRelation,
                                 object,
                                 evidence_text: sentence.trim(),
-                                confidence: 0.6
+                                confidence: 0.6,
+                                risk_level: edgeRelation === 'CRITICAL_CI' ? 5 :
+                                    edgeRelation === 'CONTRAINDICATION' ? 4 :
+                                        edgeRelation === 'SIDE_EFFECT' ? 2 : 1,
+                                is_critical: edgeRelation === 'CRITICAL_CI'
                             });
                         }
                     }
@@ -267,51 +305,207 @@ function classifyEvidenceLevel(text: string): EvidenceLevel {
     };
 }
 
-// Claude-enhanced extraction for complex cases
-async function extractWithClaude(text: string): Promise<ExtractionResult | null> {
-    const anthropicKey = Deno.env.get("ANTHROPIC_API_KEY");
-    if (!anthropicKey) return null;
+// Map legacy types to new NodeType system
+function mapToNodeType(legacyType: string): NodeType {
+    const mapping: Record<string, NodeType> = {
+        'DRUG': 'MEDICATION',
+        'MEDICATION': 'MEDICATION',
+        'TREATMENT': 'TREATMENT',
+        'THERAPY': 'TREATMENT',
+        'DISEASE': 'PATHOLOGY',
+        'PATHOLOGY': 'PATHOLOGY',
+        'PHENOTYPE': 'SYMPTOM',
+        'SYMPTOM': 'SYMPTOM',
+        'COMPLICATION': 'COMPLICATION',
+        'SIDE_EFFECT': 'COMPLICATION',
+        'GENE': 'ANALYSIS',
+        'PROTEIN': 'ANALYSIS',
+        'PATHWAY': 'ANALYSIS',
+        'MOLECULE': 'ANALYSIS',
+        'CELL_TYPE': 'ANALYSIS'
+    };
+    return mapping[legacyType.toUpperCase()] || 'SUGGESTION';
+}
 
-    const systemPrompt = `Tu es un expert en extraction d'informations biomédicales.
-Analyse le texte et extrait:
-1. ENTITÉS: gènes, protéines, maladies, médicaments, voies de signalisation, phénotypes
-2. RELATIONS: inhibition, activation, association, causalité, traitement
-3. NIVEAU DE PREUVE: meta-analyse, essai clinique, in vivo, in vitro
+// Map legacy predicates to EdgeRelation
+function mapToEdgeRelation(predicate: string, confidence: number): EdgeRelation {
+    const mapping: Record<string, EdgeRelation> = {
+        'TREATS': confidence > 0.8 ? 'TREATS_NO_SE' : 'TREATS_PARTIAL',
+        'INHIBITS': 'TREATS_PARTIAL',
+        'ACTIVATES': 'ASSOCIATED',
+        'CAUSES': 'SIDE_EFFECT',
+        'BIOMARKER_FOR': 'MEASURES',
+        'ASSOCIATED_WITH': 'ASSOCIATED',
+        'REGULATES': 'ASSOCIATED',
+        'BINDS': 'ASSOCIATED',
+        'PREVENTS': 'PREVENTIVE',
+        'CONTRAINDICATES': 'CONTRAINDICATION',
+        'CRITICAL_CI': 'CRITICAL_CI'
+    };
+    return mapping[predicate.toUpperCase()] || 'ASSOCIATED';
+}
+
+// Infer label state based on context
+function inferLabelState(entityType: NodeType, relations: Relation[]): LabelState {
+    // Check if entity is involved in any critical/high-risk relations
+    const hasHighRisk = relations.some(r =>
+        r.edge_relation === 'CRITICAL_CI' || r.edge_relation === 'CONTRAINDICATION'
+    );
+    if (hasHighRisk) return 'CONTRAINDICATED';
+
+    const hasSideEffect = relations.some(r =>
+        r.edge_relation === 'SIDE_EFFECT'
+    );
+    if (hasSideEffect) return 'MONITORING';
+
+    const hasTreatment = relations.some(r =>
+        r.edge_relation === 'TREATS_NO_SE' || r.edge_relation === 'TREATS_PARTIAL'
+    );
+    if (hasTreatment) return 'VALIDATED';
+
+    // Default based on entity type
+    if (entityType === 'SUGGESTION') return 'HYPOTHESIS';
+    return 'NEUTRAL';
+}
+
+// Calculate scoring for extraction result
+function calculateExtractedScoring(entities: Entity[], relations: Relation[]): ScoringOutput {
+    let totalConfidence = 0;
+    let totalRisk = 0;
+    let count = 0;
+
+    // Aggregate from entities
+    for (const entity of entities) {
+        totalConfidence += entity.confidence;
+        totalRisk += entity.risk_score || 0;
+        count++;
+    }
+
+    // Check for critical edges
+    const hasCritical = relations.some(r => r.edge_relation === 'CRITICAL_CI');
+    const hasContraindication = relations.some(r => r.edge_relation === 'CONTRAINDICATION');
+
+    const avgConfidence = count > 0 ? totalConfidence / count : 0.5;
+    let riskScore = count > 0 ? totalRisk / count : 0;
+
+    // Boost risk for critical relations
+    if (hasCritical) riskScore = Math.max(riskScore, 0.9);
+    else if (hasContraindication) riskScore = Math.max(riskScore, 0.7);
+
+    const actionScore = riskScore * (1 - avgConfidence);
+    const priorityScore = (riskScore * 0.4) + (actionScore * 0.4) + ((1 - avgConfidence) * 0.2);
+
+    return {
+        confidence_score: avgConfidence,
+        risk_score: riskScore,
+        action_score: actionScore,
+        priority_score: priorityScore
+    };
+}
+
+// AI-enhanced extraction for complex cases (Claude with Gemini fallback)
+async function extractWithAI(text: string): Promise<ExtractionResult | null> {
+    const systemPrompt = `Tu es un expert en extraction d'informations biomédicales pour un graphe de connaissances médical.
+
+Analyse le texte et extrait avec le NOUVEAU SYSTÈME DE COULEURS:
+
+1. ENTITÉS avec:
+   - text: le texte de l'entité
+   - type: GENE|PROTEIN|DRUG|DISEASE|PATHWAY|PHENOTYPE|MOLECULE|CELL_TYPE
+   - node_type: MEDICATION|TREATMENT|SYMPTOM|PATHOLOGY|COMPLICATION|ANALYSIS|SUGGESTION
+   - label_state: VALIDATED|SUBOPTIMAL|MONITORING|HIGH_RISK|CONTRAINDICATED|HYPOTHESIS|NEUTRAL
+   - confidence: 0.0-1.0
+
+2. RELATIONS avec:
+   - subject/object: texte de l'entité
+   - predicate: INHIBITS|ACTIVATES|CAUSES|TREATS|ASSOCIATED_WITH|PREVENTS|CONTRAINDICATES
+   - edge_relation: TREATS_NO_SE|TREATS_PARTIAL|PREVENTIVE|MEASURES|SIDE_EFFECT|POSSIBLE_SE|CONTRAINDICATION|CRITICAL_CI|ASSOCIATED
+   - risk_level: 0-5 (0=safe, 5=critical danger)
+   - confidence: 0.0-1.0
+
+3. NIVEAU DE PREUVE: meta_analysis|clinical|in_vivo|in_vitro|unknown
+
+Règles de qualification (label_state):
+- VALIDATED: traitement prouvé efficace, recommandé
+- SUBOPTIMAL: fonctionne mais pas idéal
+- MONITORING: nécessite surveillance
+- HIGH_RISK: risque élevé mais utilisable
+- CONTRAINDICATED: interdit, danger
+- HYPOTHESIS: en cours de validation
+- NEUTRAL: information neutre
+
+Règles de relation (edge_relation):
+- TREATS_NO_SE: traite sans effet indésirable
+- TREATS_PARTIAL: traite partiellement
+- PREVENTIVE: prévient
+- MEASURES: mesure/diagnostique
+- SIDE_EFFECT: cause un effet indésirable
+- POSSIBLE_SE: peut causer un effet indésirable
+- CONTRAINDICATION: contre-indication
+- CRITICAL_CI: contre-indication critique (danger mortel)
+- ASSOCIATED: simplement associé
 
 FORMAT JSON strict:
 {
-  "entities": [{"text": "...", "type": "GENE|PROTEIN|DRUG|DISEASE|PATHWAY|PHENOTYPE", "confidence": 0.0-1.0}],
-  "relations": [{"subject": "...", "predicate": "INHIBITS|ACTIVATES|CAUSES|TREATS|ASSOCIATED_WITH", "object": "...", "confidence": 0.0-1.0}],
-  "evidence_level": {"level": "meta_analysis|clinical|in_vivo|in_vitro|unknown", "strength": 1-5}
+  "entities": [{"text": "...", "type": "...", "node_type": "...", "label_state": "...", "confidence": 0.0-1.0}],
+  "relations": [{"subject": "...", "predicate": "...", "edge_relation": "...", "object": "...", "risk_level": 0-5, "confidence": 0.0-1.0}],
+  "evidence_level": {"level": "...", "strength": 1-5}
 }`;
 
     try {
-        const response = await fetch('https://api.anthropic.com/v1/messages', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'x-api-key': anthropicKey,
-                'anthropic-version': '2023-06-01'
-            },
-            body: JSON.stringify({
-                model: 'claude-sonnet-4-20250514',
-                max_tokens: 2048,
-                messages: [{ role: 'user', content: `Extrait les entités et relations de ce texte:\n\n${text.slice(0, 3000)}` }],
-                system: systemPrompt
-            })
-        });
+        const aiResponse = await callAI(
+            systemPrompt,
+            `Extrait les entités et relations avec le système de couleurs de ce texte:\n\n${text.slice(0, 3000)}`,
+            { model: 'claude-3-5-sonnet-20240620' }
+        );
 
-        if (!response.ok) return null;
-
-        const data = await response.json();
-        const content = data.content?.[0]?.text || '';
-
+        const content = aiResponse.text;
         const jsonMatch = content.match(/\{[\s\S]*\}/);
         if (jsonMatch) {
-            return JSON.parse(jsonMatch[0]);
+            const parsed = JSON.parse(jsonMatch[0]);
+
+            // Ensure all entities have new fields
+            const entities: Entity[] = (parsed.entities || []).map((e: any) => ({
+                text: e.text,
+                type: e.type || 'UNKNOWN',
+                node_type: e.node_type || mapToNodeType(e.type || 'UNKNOWN'),
+                label_state: e.label_state || 'NEUTRAL',
+                start: 0,
+                end: 0,
+                confidence: e.confidence || 0.7,
+                risk_score: e.label_state === 'CONTRAINDICATED' ? 0.9 :
+                    e.label_state === 'HIGH_RISK' ? 0.7 :
+                        e.label_state === 'MONITORING' ? 0.4 : 0.1
+            }));
+
+            // Ensure all relations have new fields
+            const relations: Relation[] = (parsed.relations || []).map((r: any) => ({
+                subject: { text: r.subject },
+                predicate: r.predicate || 'ASSOCIATED_WITH',
+                edge_relation: r.edge_relation || mapToEdgeRelation(r.predicate || 'ASSOCIATED_WITH', r.confidence || 0.5),
+                object: { text: r.object },
+                evidence_text: '',
+                confidence: r.confidence || 0.7,
+                risk_level: r.risk_level ?? (r.edge_relation === 'CRITICAL_CI' ? 5 : r.edge_relation === 'CONTRAINDICATION' ? 4 : 1),
+                is_critical: r.edge_relation === 'CRITICAL_CI'
+            }));
+
+            return {
+                entities,
+                relations,
+                evidence_level: parsed.evidence_level || { level: 'unknown', strength: 0, indicators: [] },
+                scoring: calculateExtractedScoring(entities, relations),
+                summary: {
+                    entity_counts: {},
+                    relation_counts: {},
+                    node_type_counts: {},
+                    label_state_counts: {},
+                    edge_relation_counts: {}
+                }
+            };
         }
     } catch (e) {
-        console.error('Claude extraction error:', e);
+        console.error('AI extraction error:', e);
     }
 
     return null;
@@ -412,20 +606,20 @@ serve(async (req) => {
                 result = pythonResult;
             } else if (use_claude) {
                 // Fallback to Claude
-                const claudeResult = await extractWithClaude(text);
-                if (claudeResult) {
+                const aiResult = await extractWithAI(text);
+                if (aiResult) {
                     result = {
-                        ...claudeResult,
+                        ...aiResult,
                         summary: {
                             entity_counts: {},
                             relation_counts: {}
                         }
                     };
-                    for (const entity of claudeResult.entities || []) {
+                    for (const entity of aiResult.entities || []) {
                         result.summary.entity_counts[entity.type] =
                             (result.summary.entity_counts[entity.type] || 0) + 1;
                     }
-                    for (const relation of claudeResult.relations || []) {
+                    for (const relation of aiResult.relations || []) {
                         result.summary.relation_counts[relation.predicate] =
                             (result.summary.relation_counts[relation.predicate] || 0) + 1;
                     }
@@ -456,10 +650,10 @@ serve(async (req) => {
                 };
             }
         } else if (use_claude) {
-            const claudeResult = await extractWithClaude(text);
-            if (claudeResult) {
+            const aiResult = await extractWithAI(text);
+            if (aiResult) {
                 result = {
-                    ...claudeResult,
+                    ...aiResult,
                     summary: {
                         entity_counts: {},
                         relation_counts: {}
@@ -467,13 +661,13 @@ serve(async (req) => {
                 };
 
                 // Count entities
-                for (const entity of claudeResult.entities || []) {
+                for (const entity of aiResult.entities || []) {
                     result.summary.entity_counts[entity.type] =
                         (result.summary.entity_counts[entity.type] || 0) + 1;
                 }
 
                 // Count relations
-                for (const relation of claudeResult.relations || []) {
+                for (const relation of aiResult.relations || []) {
                     result.summary.relation_counts[relation.predicate] =
                         (result.summary.relation_counts[relation.predicate] || 0) + 1;
                 }

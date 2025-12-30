@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { streamAI } from "../_shared/ai-client.ts";
 
 const corsHeaders = {
     "Access-Control-Allow-Origin": "*",
@@ -39,13 +40,8 @@ serve(async (req) => {
     }
 
     try {
-        const CLAUDE_API_KEY = Deno.env.get("CLAUDE_API_KEY");
         const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
         const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-
-        if (!CLAUDE_API_KEY) {
-            throw new Error("CLAUDE_API_KEY is not configured");
-        }
 
         const supabase = createClient(supabaseUrl, supabaseKey);
 
@@ -272,84 +268,28 @@ Pour chaque découverte potentielle, génère une **Discovery Card** au format:
 
 Commence ton analyse maintenant. Montre tout ton raisonnement étape par étape.`;
 
-        // Call Claude with streaming
-        const response = await fetch("https://api.anthropic.com/v1/messages", {
-            method: "POST",
-            headers: {
-                "x-api-key": CLAUDE_API_KEY,
-                "anthropic-version": "2023-06-01",
-                "content-type": "application/json",
-            },
-            body: JSON.stringify({
-                model: "claude-opus-4-5-20251101",
-                max_tokens: 8192,
-                stream: true,
-                system: systemPrompt,
-                messages: [
-                    {
-                        role: "user",
-                        content: `Voici le Contexte Global et les Entités Cibles (Issues des APIs):\n\n${kgContext}\n\nAnalyse ces données en les croisant avec ton savoir encyclopédique mondial (PubMed, OpenFDA, Guidelines). Ne t'arrête pas aux arêtes existantes: cherche des relations non-documentées en utilisant ta connaissance de la pharmacologie moléculaire et des essais cliniques.`
-                    }
-                ],
-            }),
-        });
-
-        if (!response.ok) {
-            if (response.status === 429) {
-                return new Response(JSON.stringify({ error: "Rate limit exceeded" }), {
-                    status: 429,
-                    headers: { ...corsHeaders, "Content-Type": "application/json" },
-                });
-            }
-            const errorText = await response.text();
-            console.error("Claude API error:", response.status, errorText);
-            return new Response(JSON.stringify({ error: "Claude API error" }), {
-                status: 500,
-                headers: { ...corsHeaders, "Content-Type": "application/json" },
-            });
-        }
-
-        // Stream the response and collect full text
-        const reader = response.body!.getReader();
         const encoder = new TextEncoder();
-        const decoder = new TextDecoder();
-        let fullText = "";
 
         const stream = new ReadableStream({
             async start(controller) {
                 try {
-                    let buffer = "";
-                    while (true) {
-                        const { done, value } = await reader.read();
-                        if (done) break;
-
-                        buffer += decoder.decode(value, { stream: true });
-                        const lines = buffer.split("\n");
-                        buffer = lines.pop() || "";
-
-                        for (const line of lines) {
-                            if (line.startsWith("data: ")) {
-                                const jsonStr = line.slice(6).trim();
-                                if (jsonStr === "[DONE]") continue;
-
-                                try {
-                                    const data = JSON.parse(jsonStr);
-                                    if (data.type === "content_block_delta" && data.delta?.text) {
-                                        const text = data.delta.text;
-                                        fullText += text;
-
-                                        // Format compatible OpenAI pour le frontend
-                                        const chunk = {
-                                            choices: [{ delta: { content: text } }]
-                                        };
-                                        controller.enqueue(encoder.encode(`data: ${JSON.stringify(chunk)}\n\n`));
-                                    }
-                                } catch (e) {
-                                    // Ignore parsing errors for partial JSON
-                                }
-                            }
+                    const aiResponse = await streamAI(
+                        systemPrompt,
+                        `Voici le Contexte Global et les Entités Cibles (Issues des APIs):\n\n${kgContext}\n\nAnalyse ces données en les croisant avec ton savoir encyclopédique mondial (PubMed, OpenFDA, Guidelines). Ne t'arrête pas aux arêtes existantes: cherche des relations non-documentées en utilisant ta connaissance de la pharmacologie moléculaire et des essais cliniques.`,
+                        (text) => {
+                            // Format compatible OpenAI pour le frontend
+                            const chunk = {
+                                choices: [{ delta: { content: text } }]
+                            };
+                            controller.enqueue(encoder.encode(`data: ${JSON.stringify(chunk)}\n\n`));
+                        },
+                        {
+                            model: "claude-3-5-sonnet-20240620",
+                            maxTokens: 8192,
                         }
-                    }
+                    );
+
+                    const fullText = aiResponse.text;
 
                     // Parse and save discoveries from the full text
                     const jsonMatch = fullText.match(/```json\s*([\s\S]*?)\s*```/);
@@ -377,7 +317,7 @@ Commence ton analyse maintenant. Montre tout ton raisonnement étape par étape.
                                             severity_score: severityScore,
                                             plausibility_score: plausibilityScore,
                                             status: 'raw_signal',
-                                            sources: [{ type: 'cde_analysis', model: 'claude-opus-4-5' }],
+                                            sources: [{ type: 'cde_analysis', model: 'claude-3-5-sonnet' }],
                                             recommended_actions: discovery.recommended_actions || [],
                                         });
 
@@ -398,6 +338,7 @@ Commence ton analyse maintenant. Montre tout ton raisonnement étape par étape.
                     controller.enqueue(encoder.encode("data: [DONE]\n\n"));
                     controller.close();
                 } catch (e) {
+                    console.error("Stream error:", e);
                     controller.error(e);
                 }
             },

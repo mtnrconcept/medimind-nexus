@@ -20,6 +20,10 @@ import {
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 import RadialRingsModal from '@/components/cde/RadialRingsModal';
+import { useTheme } from 'next-themes';
+import { cn } from '@/lib/utils';
+import DNAVisualizer from '@/components/nexus/DNAVisualizer';
+
 
 // ============================================
 // TYPES
@@ -166,8 +170,8 @@ interface KnowledgeNode {
     id: string;
     label: string;
     type: string;
-    x?: number;
-    y?: number;
+    x: number;
+    y: number;
 }
 
 interface KnowledgeEdge {
@@ -203,10 +207,6 @@ interface ExtractionResult {
     entities: ExtractedEntity[];
     relations: ExtractedRelation[];
     evidence_level: EvidenceLevel;
-    summary: {
-        entity_counts: Record<string, number>;
-        relation_counts: Record<string, number>;
-    };
     summary: {
         entity_counts: Record<string, number>;
         relation_counts: Record<string, number>;
@@ -2415,6 +2415,7 @@ function AlertsPanel() {
 function SavedGraphsPanel({ onLoad, refreshTrigger }: { onLoad: (graph: SavedGraph) => void, refreshTrigger?: number }) {
     const [savedGraphs, setSavedGraphs] = useState<SavedGraph[]>([]);
     const [isLoading, setIsLoading] = useState(false);
+    const [searchQuery, setSearchQuery] = useState('');
 
     const fetchSavedGraphs = useCallback(async () => {
         setIsLoading(true);
@@ -2456,23 +2457,41 @@ function SavedGraphsPanel({ onLoad, refreshTrigger }: { onLoad: (graph: SavedGra
         }
     };
 
+    const filteredGraphs = savedGraphs.filter(g =>
+        g.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        (g.description && g.description.toLowerCase().includes(searchQuery.toLowerCase()))
+    );
+
     return (
         <Card className="h-full">
             <CardHeader className="pb-2">
-                <CardTitle className="text-sm font-semibold flex items-center gap-2">
-                    <Brain className="h-4 w-4 text-purple-600" />
-                    Mes Graphes
-                </CardTitle>
+                <div className="flex items-center justify-between">
+                    <CardTitle className="text-sm font-semibold flex items-center gap-2">
+                        <Brain className="h-4 w-4 text-purple-600" />
+                        Mes Graphes
+                    </CardTitle>
+                    <div className="relative w-32">
+                        <Search className="absolute left-2 top-2.5 h-3 w-3 text-slate-400" />
+                        <Input
+                            placeholder="Rechercher..."
+                            className="h-8 pl-7 text-[10px]"
+                            value={searchQuery}
+                            onChange={(e) => setSearchQuery(e.target.value)}
+                        />
+                    </div>
+                </div>
             </CardHeader>
             <CardContent>
                 <ScrollArea className="h-[200px]">
                     {isLoading ? (
                         <div className="flex justify-center p-4"><Loader2 className="animate-spin text-purple-600" /></div>
-                    ) : savedGraphs.length === 0 ? (
-                        <div className="text-center text-xs text-slate-500 p-4">Aucun graphe sauvegardé</div>
+                    ) : filteredGraphs.length === 0 ? (
+                        <div className="text-center text-xs text-slate-500 p-4">
+                            {searchQuery ? 'Aucun résultat' : 'Aucun graphe sauvegardé'}
+                        </div>
                     ) : (
                         <div className="space-y-2">
-                            {savedGraphs.map(graph => (
+                            {filteredGraphs.map(graph => (
                                 <div
                                     key={graph.id}
                                     className="p-2 border rounded-lg hover:bg-purple-50 dark:hover:bg-purple-900/20 cursor-pointer transition-colors group relative"
@@ -2504,12 +2523,155 @@ function SavedGraphsPanel({ onLoad, refreshTrigger }: { onLoad: (graph: SavedGra
     );
 }
 
+const NexusHeader = () => {
+    const { theme } = useTheme();
+    return (
+        <div className={cn(
+            "flex items-center justify-between px-6 py-4 backdrop-blur-md border-b sticky top-0 z-50",
+            theme === 'dark'
+                ? "bg-[#020617]/80 border-white/5"
+                : "bg-white/80 border-slate-200/50"
+        )}>
+            <div className="flex items-center gap-8">
+                <div className="flex items-center gap-3">
+                    <div className={cn(
+                        "w-10 h-10 rounded-lg flex items-center justify-center font-black text-lg",
+                        theme === 'dark'
+                            ? "bg-cyan-500/20 border border-cyan-500/40 text-cyan-400"
+                            : "bg-cyan-600/10 border border-cyan-600/30 text-cyan-600"
+                    )}>
+                        N
+                    </div>
+                    <div>
+                        <h1 className={cn(
+                            "text-lg font-bold tracking-tight",
+                            theme === 'dark' ? "text-cyan-400" : "text-cyan-600"
+                        )}>NEXUS<span className={theme === 'dark' ? "text-slate-300" : "text-slate-700"}>MED</span></h1>
+                        <p className={cn(
+                            "text-[10px] -mt-0.5 font-mono",
+                            theme === 'dark' ? "text-slate-500" : "text-slate-400"
+                        )}>NODE ID: BIO-ANALYTICS</p>
+                    </div>
+                </div>
+                <nav className="hidden md:flex items-center gap-1">
+                    {['Archive', 'Laboratories', 'Switch Visualizer', 'Synthetics'].map((item, i) => (
+                        <button
+                            key={item}
+                            className={cn(
+                                "px-4 py-2 text-xs uppercase tracking-widest rounded-md transition-all",
+                                i === 0
+                                    ? (theme === 'dark' ? "text-cyan-400 underline underline-offset-4" : "text-cyan-600 underline underline-offset-4")
+                                    : (theme === 'dark' ? "text-slate-400 hover:text-cyan-400 hover:bg-white/5" : "text-slate-500 hover:text-cyan-600 hover:bg-slate-100")
+                            )}
+                        >
+                            {item}
+                        </button>
+                    ))}
+                </nav>
+            </div>
+            <div className="flex items-center gap-4">
+                <div className="flex items-center gap-2 text-right">
+                    <p className={cn(
+                        "text-[10px] uppercase tracking-widest",
+                        theme === 'dark' ? "text-slate-500" : "text-slate-400"
+                    )}>ENCRYPTION ACTIVE</p>
+                    <p className="text-[10px] text-green-500 font-bold uppercase tracking-widest">SYNCED</p>
+                </div>
+                <button className={cn(
+                    "w-10 h-10 rounded-full flex items-center justify-center transition-all",
+                    theme === 'dark'
+                        ? "bg-slate-800 border border-white/10 text-slate-400 hover:text-cyan-400 hover:border-cyan-500/30"
+                        : "bg-slate-100 border border-slate-200 text-slate-500 hover:text-cyan-600 hover:border-cyan-500/30"
+                )}>
+                    <Zap className="h-4 w-4" />
+                </button>
+            </div>
+        </div>
+    );
+};
+
+const NexusHero = () => {
+    const { theme } = useTheme();
+    return (
+        <div className="relative py-16 md:py-24 flex flex-col items-center justify-center overflow-hidden">
+            {/* Background glows */}
+            <div className={cn(
+                "absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] rounded-full blur-[150px] pointer-events-none",
+                theme === 'dark' ? "bg-cyan-500/8" : "bg-cyan-500/5"
+            )} />
+            <div className={cn(
+                "absolute top-1/4 right-1/4 w-[400px] h-[400px] rounded-full blur-[120px] pointer-events-none",
+                theme === 'dark' ? "bg-purple-500/5" : "bg-purple-500/3"
+            )} />
+
+            {/* DNA Visualizer background */}
+            <div className="absolute inset-0 flex items-center justify-start pl-12 opacity-30 pointer-events-none">
+                <DNAVisualizer />
+            </div>
+
+            {/* Hero content */}
+            <div className="relative z-10 text-center space-y-6 max-w-4xl mx-auto px-6">
+                <h2 className="nexus-hero-title">
+                    <span className={theme === 'dark' ? "text-white" : "text-slate-800"}>DECODING THE</span>
+                    <br />
+                    <span className="nexus-gradient-text nexus-text-glow">GENOMIC FRONTIER</span>
+                </h2>
+            </div>
+        </div>
+    );
+};
+
+const NexusStatusBar = () => {
+    const { theme } = useTheme();
+    return (
+        <div className={cn(
+            "fixed bottom-0 left-0 right-0 h-8 backdrop-blur-md border-t flex items-center justify-between px-6 z-50 overflow-hidden",
+            theme === 'dark'
+                ? "bg-[#020617]/90 border-white/5"
+                : "bg-white/90 border-slate-200"
+        )}>
+            <div className="flex items-center gap-6">
+                <div className="flex items-center gap-2">
+                    <div className="w-1.5 h-1.5 bg-green-500 rounded-full animate-pulse" />
+                    <span className={cn(
+                        "text-[9px] uppercase tracking-widest font-semibold",
+                        theme === 'dark' ? "text-slate-400" : "text-slate-500"
+                    )}>CORE STATUS: OPTIMAL</span>
+                </div>
+                <div className={cn("h-3 w-px", theme === 'dark' ? "bg-white/10" : "bg-slate-300")} />
+                <span className={cn(
+                    "text-[9px] uppercase tracking-widest",
+                    theme === 'dark' ? "text-slate-500" : "text-slate-400"
+                )}>ENCRYPTION: AES-256-QUANTUM</span>
+                <div className={cn("h-3 w-px", theme === 'dark' ? "bg-white/10" : "bg-slate-300")} />
+                <span className={cn(
+                    "text-[9px] uppercase tracking-widest",
+                    theme === 'dark' ? "text-slate-500" : "text-slate-400"
+                )}>NETWORK: LIFI-V6</span>
+            </div>
+            <div className="flex items-center gap-6 font-mono">
+                <span className={cn(
+                    "text-[9px] uppercase tracking-widest",
+                    theme === 'dark' ? "text-slate-400" : "text-slate-500"
+                )}>GLOBAL HEALTH INDEX: 92.4%</span>
+                <span className={cn(
+                    "text-[9px] uppercase tracking-widest",
+                    theme === 'dark' ? "text-slate-600" : "text-slate-400"
+                )}>© 2024 NEXUSMED AI</span>
+            </div>
+        </div>
+    );
+};
+
+
 // ============================================
 // MAIN PAGE COMPONENT
 // ============================================
 
 const DiscoveryPlatform = () => {
     const { t } = useAutoTranslation();
+    const { theme } = useTheme();
+
 
     // State
     const [stats, setStats] = useState({ articles: 256, hypotheses: 14, trials: 32 });
@@ -2552,6 +2714,9 @@ const DiscoveryPlatform = () => {
     const [savedGraphToLoad, setSavedGraphToLoad] = useState<SavedGraph | null>(null);
     const [isRadialModalOpen, setIsRadialModalOpen] = useState(false);
     const [refreshSavedGraphs, setRefreshSavedGraphs] = useState(0);
+
+    // Update query specifically for search bar
+    const [searchInput, setSearchInput] = useState('');
 
     // Toggle hypothesis comparison
     const handleToggleCompare = useCallback((id: string) => {
@@ -2827,11 +2992,11 @@ const DiscoveryPlatform = () => {
 
             // Polling fallback (in case Realtime misses events)
             const pollInterval = setInterval(async () => {
-                const { data: job, error } = await supabase
-                    .from('hypothesis_generation_jobs')
+                const { data: job, error } = await (supabase
+                    .from('hypothesis_generation_jobs' as any)
                     .select('*')
                     .eq('id', jobId)
-                    .single();
+                    .single()) as any;
 
                 if (!error && job) {
                     handleJobUpdate(job);
@@ -2858,11 +3023,11 @@ const DiscoveryPlatform = () => {
                     jobChannel.unsubscribe();
 
                     // Fetch the generated hypothesis
-                    const { data: hypothesis, error: hypError } = await supabase
-                        .from('discovery_hypotheses')
+                    const { data: hypothesis, error: hypError } = await (supabase
+                        .from('discovery_hypotheses' as any)
                         .select('*')
                         .eq('id', job.hypothesis_id)
-                        .single();
+                        .single()) as any;
 
                     if (hypError || !hypothesis) {
                         toast.error('Erreur lors de la récupération de l\'hypothèse');
@@ -2873,8 +3038,8 @@ const DiscoveryPlatform = () => {
                     // Add hypothesis to state
                     const newHypothesis: Hypothesis = {
                         id: hypothesis.id,
-                        hypothesis_id: hypothesis.hypothesis_id,
-                        statement: hypothesis.statement,
+                        hypothesis_id: hypothesis.hypothesis_id || `H-${Date.now()}`,
+                        statement: hypothesis.statement || '',
                         executive_summary: hypothesis.executive_summary,
                         clinical_scope: hypothesis.clinical_scope,
                         rival_hypotheses: hypothesis.rival_hypotheses,
@@ -2888,8 +3053,8 @@ const DiscoveryPlatform = () => {
                         risks_confounders: hypothesis.risks_confounders || [],
                         evidence_citations: hypothesis.evidence_citations || [],
                         scores: hypothesis.scores || { novelty: 0, plausibility: 0, strength: 0, feasibility: 0, impact: 0, total: 0 },
-                        status: hypothesis.status as 'pending' | 'accepted' | 'rejected',
-                        created_at: hypothesis.created_at
+                        status: (hypothesis.status === 'accepted' ? 'validated' : hypothesis.status) as 'pending' | 'validated' | 'rejected',
+                        created_at: hypothesis.created_at || new Date().toISOString()
                     };
 
                     setHypotheses(prev => {
@@ -2961,9 +3126,10 @@ const DiscoveryPlatform = () => {
                         id: n.id,
                         label: n.name,
                         type: n.node_type,
-                        x: (node.x || 250) + radius * Math.cos(angle),
-                        y: (node.y || 200) + radius * Math.sin(angle)
+                        x: node.x + radius * Math.cos(angle),
+                        y: node.y + radius * Math.sin(angle)
                     };
+
                 });
 
                 // Add new edges
@@ -2993,127 +3159,384 @@ const DiscoveryPlatform = () => {
 
     return (
         <AppLayout>
-            <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50/30 to-purple-50/20 dark:from-slate-900 dark:via-blue-900/10 dark:to-purple-900/10">
-                <div className="container mx-auto p-4 space-y-4">
-                    {/* Header with Stats */}
-                    <StatsHeader stats={stats} />
+            <div className="min-h-screen text-foreground pb-20 overflow-x-hidden selection:bg-cyan-500/30 transition-colors duration-500">
+                <NexusHeader />
 
-                    {/* Main Grid Layout */}
-                    <div className="grid grid-cols-12 gap-4">
-                        {/* Left Column: News + Stats + Alerts + KG */}
-                        <div className="col-span-12 lg:col-span-3 space-y-4">
-                            <NewsFeed items={newsItems} />
-                            <SavedGraphsPanel
-                                onLoad={(graph) => {
-                                    setSavedGraphToLoad(graph);
-                                    setIsRadialModalOpen(true);
-                                }}
-                                refreshTrigger={refreshSavedGraphs}
+                <div className="max-w-[1600px] mx-auto px-6">
+                    <NexusHero />
+
+                    {/* Redesigned Search Bar matching Nexus design */}
+                    <div className="max-w-2xl mx-auto w-full mb-12 relative z-10 -mt-8">
+                        <div className={cn(
+                            "relative flex items-center rounded-full border p-1.5 pl-5 transition-all duration-300",
+                            theme === 'dark'
+                                ? "bg-[#0f172a]/80 backdrop-blur-xl border-white/10 shadow-lg shadow-black/20"
+                                : "bg-white/90 backdrop-blur-xl border-slate-200 shadow-lg shadow-slate-200/50"
+                        )}>
+                            <Search className={cn(
+                                "h-5 w-5 mr-3",
+                                theme === 'dark' ? "text-slate-500" : "text-slate-400"
+                            )} />
+                            <Input
+                                placeholder="Search synthetic synapses, clinical trials, or nano-structures..."
+                                className={cn(
+                                    "flex-1 bg-transparent border-none focus-visible:ring-0 py-6 text-sm font-normal",
+                                    theme === 'dark' ? "text-slate-200 placeholder:text-slate-600" : "text-slate-800 placeholder:text-slate-400"
+                                )}
+                                value={searchInput}
+                                onChange={(e) => setSearchInput(e.target.value)}
+                                onKeyDown={(e) => e.key === 'Enter' && handleSearch(searchInput, {})}
                             />
-                            <StatisticsPanel />
-                            <AlertsPanel />
-                        </div>
-
-                        {/* Center Column: Search + Results + Hypotheses */}
-                        <div className="col-span-12 lg:col-span-5 space-y-4">
-                            <ScientificSearch onSearch={handleSearch} isLoading={isSearching} />
-                            <SearchResults results={searchResults} isLoading={isSearching} />
-                            <HypothesisPanel
-                                hypotheses={hypotheses}
-                                onSelectHypothesis={setSelectedHypothesis}
-                                selectedId={selectedHypothesis?.id}
-                                comparedIds={comparedHypothesisIds}
-                                onToggleCompare={handleToggleCompare}
-                                onGenerate={handleGenerateHypotheses}
-                                isGenerating={isGeneratingHypotheses}
-                                lastSearchQuery={lastSearchQuery}
-                            />
-                        </div>
-
-                        {/* Right Column: Evidence + Review */}
-                        <div className="col-span-12 lg:col-span-4 space-y-4">
-                            <EvidenceDossier hypothesis={selectedHypothesis} />
-                            <AdversarialReview hypothesis={selectedHypothesis} />
+                            <Button
+                                className={cn(
+                                    "font-semibold px-8 py-6 rounded-full transition-all text-sm uppercase tracking-wide",
+                                    theme === 'dark'
+                                        ? "bg-cyan-500 hover:bg-cyan-400 text-[#020617]"
+                                        : "bg-indigo-600 hover:bg-indigo-700 text-white"
+                                )}
+                                onClick={() => handleSearch(searchInput, {})}
+                                disabled={isSearching}
+                            >
+                                {isSearching ? 'Analyzing...' : 'INITIATE'}
+                            </Button>
                         </div>
                     </div>
 
-                    {/* Bottom Section: Extraction + KG + Comparison + Prioritization + Protocol + Synthesis */}
-                    <div className="grid grid-cols-12 gap-4">
-                        <div className="col-span-12 lg:col-span-4 space-y-4">
-                            <KnowledgeExtractionPanel
-                                extraction={extractionResult}
-                                isLoading={isExtracting}
-                                onExtract={handleExtractKnowledge}
-                            />
-                            <PatternMiningPanel extraction={extractionResult} />
-                            <KnowledgeGraphViz
-                                nodes={knowledgeGraph.nodes}
-                                edges={knowledgeGraph.edges}
-                                onNodeClick={handleNodeClick}
-                                isExpanding={isExpandingGraph}
-                                selectedNodeId={selectedGraphNode || undefined}
-                            />
-                        </div>
-                        <div className="col-span-12 lg:col-span-4 space-y-4">
-                            <HypothesisComparisonPanel
-                                hypotheses={hypotheses}
-                                comparedIds={comparedHypothesisIds}
-                                onToggleCompare={handleToggleCompare}
-                            />
-                            <HypothesisPrioritization hypotheses={hypotheses} />
-                        </div>
-                        <div className="col-span-12 lg:col-span-4 space-y-4">
-                            <EvidenceTrailPanel
-                                hypothesis={selectedHypothesis}
-                                searchResults={searchResults}
-                                extraction={extractionResult}
-                            />
-                            <ExperimentalProtocol hypothesis={selectedHypothesis} />
-                            <FinalSynthesis hypothesis={selectedHypothesis} searchResults={searchResults} />
-                        </div>
+                    <div className="space-y-8 pb-24">
+
+                        <Tabs defaultValue="exploration" className="space-y-8">
+                            <div className="flex items-center justify-between">
+                                <div className="flex items-center gap-2">
+                                    {['TRENDING', 'LATEST', 'HIGH-IMPACT'].map((tab, i) => (
+                                        <button
+                                            key={tab}
+                                            className={cn(
+                                                "px-4 py-2 text-xs uppercase tracking-wide font-medium rounded transition-all",
+                                                i === 0
+                                                    ? (theme === 'dark'
+                                                        ? "text-cyan-400 border-b-2 border-cyan-400"
+                                                        : "text-cyan-600 border-b-2 border-cyan-600")
+                                                    : (theme === 'dark'
+                                                        ? "text-slate-500 hover:text-slate-300"
+                                                        : "text-slate-400 hover:text-slate-600")
+                                            )}
+                                        >
+                                            {tab}
+                                        </button>
+                                    ))}
+                                </div>
+                                <div className="flex items-center gap-2">
+                                    <button className={cn(
+                                        "w-9 h-9 rounded-lg flex items-center justify-center transition-all",
+                                        theme === 'dark'
+                                            ? "bg-white/5 border border-white/10 text-slate-400 hover:text-cyan-400"
+                                            : "bg-slate-100 border border-slate-200 text-slate-500 hover:text-cyan-600"
+                                    )}>
+                                        <BarChart3 className="h-4 w-4" />
+                                    </button>
+                                    <button className={cn(
+                                        "w-9 h-9 rounded-lg flex items-center justify-center transition-all",
+                                        theme === 'dark'
+                                            ? "bg-white/5 border border-white/10 text-slate-400 hover:text-cyan-400"
+                                            : "bg-slate-100 border border-slate-200 text-slate-500 hover:text-cyan-600"
+                                    )}>
+                                        <Zap className="h-4 w-4" />
+                                    </button>
+                                </div>
+                            </div>
+
+                            <TabsContent value="exploration" className="space-y-6">
+                                <div className="grid grid-cols-12 gap-6">
+                                    {/* Research Cards - Left column */}
+                                    <div className="col-span-12 lg:col-span-8">
+                                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                                            {/* Research Card 1 */}
+                                            <div className="research-card">
+                                                <div className="flex items-center justify-between mb-3">
+                                                    <span className="relevance-badge">RELEVANCE 94%</span>
+                                                    <span className={cn(
+                                                        "text-xs font-bold",
+                                                        theme === 'dark' ? "text-cyan-400" : "text-cyan-600"
+                                                    )}>#1</span>
+                                                </div>
+                                                <h4 className={cn(
+                                                    "font-semibold text-base mb-2 line-clamp-2",
+                                                    theme === 'dark' ? "text-white" : "text-slate-800"
+                                                )}>CRISPR-Cas9 Gene Editing in Cardiovascular Therapy</h4>
+                                                <p className={cn(
+                                                    "text-xs mb-4 line-clamp-3",
+                                                    theme === 'dark' ? "text-slate-400" : "text-slate-500"
+                                                )}>Exploring the precision of CRISPR in targeting cardiological genetic mutations...</p>
+                                                <div className="flex flex-wrap gap-1 mb-4">
+                                                    <span className="tag-pill">GENETICS</span>
+                                                    <span className="tag-pill">CARDIOLOGY</span>
+                                                    <span className="tag-pill">CRISPR</span>
+                                                </div>
+                                                <div className="flex items-center justify-between text-xs">
+                                                    <div>
+                                                        <span className={theme === 'dark' ? "text-cyan-400" : "text-cyan-600"}>Dr. Elena Vance</span>
+                                                        <span className={theme === 'dark' ? "text-slate-500" : "text-slate-400"}> • 2024-11-12</span>
+                                                    </div>
+                                                    <span className={theme === 'dark' ? "text-slate-300" : "text-slate-600"}>1240 Citations</span>
+                                                </div>
+                                            </div>
+
+                                            {/* Research Card 2 */}
+                                            <div className="research-card">
+                                                <div className="flex items-center justify-between mb-3">
+                                                    <span className="relevance-badge">RELEVANCE 94%</span>
+                                                    <span className={cn(
+                                                        "text-xs font-bold",
+                                                        theme === 'dark' ? "text-cyan-400" : "text-cyan-600"
+                                                    )}>#2</span>
+                                                </div>
+                                                <h4 className={cn(
+                                                    "font-semibold text-base mb-2 line-clamp-2",
+                                                    theme === 'dark' ? "text-white" : "text-slate-800"
+                                                )}>Neural Link Synthetic Synapse Integration in Post-Trauma Recovery</h4>
+                                                <p className={cn(
+                                                    "text-xs mb-4 line-clamp-3",
+                                                    theme === 'dark' ? "text-slate-400" : "text-slate-500"
+                                                )}>A study on the biocompatibility of silicon-based synapse implants...</p>
+                                                <div className="flex flex-wrap gap-1 mb-4">
+                                                    <span className="tag-pill">NEUROLOGY</span>
+                                                    <span className="tag-pill">BIO-ENGINEERING</span>
+                                                    <span className="tag-pill">AI</span>
+                                                </div>
+                                                <div className="flex items-center justify-between text-xs">
+                                                    <div>
+                                                        <span className={theme === 'dark' ? "text-cyan-400" : "text-cyan-600"}>Research Team</span>
+                                                    </div>
+                                                    <span className={theme === 'dark' ? "text-slate-300" : "text-slate-600"}>890 Citations</span>
+                                                </div>
+                                            </div>
+
+                                            {/* Research Card 3 */}
+                                            <div className="research-card">
+                                                <div className="flex items-center justify-between mb-3">
+                                                    <span className="relevance-badge">RELEVANCE 91%</span>
+                                                    <span className={cn(
+                                                        "text-xs font-bold",
+                                                        theme === 'dark' ? "text-cyan-400" : "text-cyan-600"
+                                                    )}>#3</span>
+                                                </div>
+                                                <h4 className={cn(
+                                                    "font-semibold text-base mb-2 line-clamp-2",
+                                                    theme === 'dark' ? "text-white" : "text-slate-800"
+                                                )}>Nano-Robotics in Targeted Oncology: 5-Year Clinical Outcomes</h4>
+                                                <p className={cn(
+                                                    "text-xs mb-4 line-clamp-3",
+                                                    theme === 'dark' ? "text-slate-400" : "text-slate-500"
+                                                )}>Long-term monitoring of autonomous nanobots used for localized cancer treatment...</p>
+                                                <div className="flex flex-wrap gap-1 mb-4">
+                                                    <span className="tag-pill">ONCOLOGY</span>
+                                                    <span className="tag-pill">NANOTECH</span>
+                                                    <span className="tag-pill">ROBOTICS</span>
+                                                </div>
+                                                <div className="flex items-center justify-between text-xs">
+                                                    <div>
+                                                        <span className={theme === 'dark' ? "text-cyan-400" : "text-cyan-600"}>Dr. Sarah Chen</span>
+                                                    </div>
+                                                    <span className={theme === 'dark' ? "text-slate-300" : "text-slate-600"}>2100 Citations</span>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    {/* AI Synthesis Panel - Right column */}
+                                    <div className="col-span-12 lg:col-span-4">
+                                        <div className={cn(
+                                            "research-card h-full flex flex-col items-center justify-center text-center py-12",
+                                            theme === 'dark' ? "border-cyan-500/10" : "border-cyan-500/20"
+                                        )}>
+                                            <div className={cn(
+                                                "w-16 h-16 rounded-full flex items-center justify-center mb-6",
+                                                theme === 'dark'
+                                                    ? "bg-gradient-to-br from-cyan-500/10 to-purple-500/10 border border-white/10"
+                                                    : "bg-gradient-to-br from-cyan-500/5 to-purple-500/5 border border-slate-200"
+                                            )}>
+                                                <Lightbulb className={cn(
+                                                    "h-8 w-8",
+                                                    theme === 'dark' ? "text-slate-500" : "text-slate-400"
+                                                )} />
+                                            </div>
+                                            <h4 className={cn(
+                                                "text-sm font-semibold uppercase tracking-wide mb-2",
+                                                theme === 'dark' ? "text-slate-300" : "text-slate-600"
+                                            )}>AI SYNTHESIS ENGINE</h4>
+                                            <p className={cn(
+                                                "text-xs max-w-[200px]",
+                                                theme === 'dark' ? "text-slate-500" : "text-slate-400"
+                                            )}>Awaiting query input to generate clinical summaries and future research projections.</p>
+                                        </div>
+                                    </div>
+                                </div>
+                            </TabsContent>
+
+                            <TabsContent value="latest" className="space-y-6">
+                                <div className="grid grid-cols-12 gap-6">
+                                    <div className="col-span-12 lg:col-span-4 space-y-6">
+                                        <div className="nexus-card p-6 border-cyan-500/10 hover:border-cyan-500/30 group transition-all">
+                                            <div className="flex items-center justify-between mb-6">
+                                                <h3 className="text-xs uppercase tracking-[0.2em] font-black text-cyan-400 flex items-center gap-2">
+                                                    <Activity className="h-4 w-4" /> Global Flux
+                                                </h3>
+                                                <div className="h-1.5 w-1.5 bg-cyan-500 rounded-full animate-ping" />
+                                            </div>
+                                            <NewsFeed items={newsItems} />
+                                        </div>
+                                        <div className="nexus-card p-6 border-purple-500/10">
+                                            <StatisticsPanel />
+                                        </div>
+                                        <div className="nexus-card p-6 border-red-500/10">
+                                            <AlertsPanel />
+                                        </div>
+                                    </div>
+                                    <div className="col-span-12 lg:col-span-8 space-y-6">
+                                        <div className="nexus-card border-white/5">
+                                            <div className="p-4 border-b border-white/5 bg-white/5 flex items-center justify-between">
+                                                <h3 className="text-xs uppercase tracking-[0.2em] font-black text-slate-400">Search Results</h3>
+                                                <div className="flex gap-2">
+                                                    <button className="p-1 px-3 bg-cyan-500/10 border border-cyan-500/20 rounded text-[9px] uppercase font-bold text-cyan-400">Filter</button>
+                                                    <button className="p-1 px-3 bg-slate-800 border border-white/5 rounded text-[9px] uppercase font-bold text-slate-500">Reset</button>
+                                                </div>
+                                            </div>
+                                            <SearchResults results={searchResults} isLoading={isSearching} />
+                                        </div>
+                                        <div className="grid grid-cols-2 gap-6">
+                                            <div className="nexus-card p-6 border-white/5">
+                                                <KnowledgeExtractionPanel
+                                                    extraction={extractionResult}
+                                                    isLoading={isExtracting}
+                                                    onExtract={handleExtractKnowledge}
+                                                />
+                                            </div>
+                                            <div className="nexus-card p-6 border-white/5">
+                                                <PatternMiningPanel extraction={extractionResult} />
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </TabsContent>
+
+                            <TabsContent value="radial">
+                                <div className="grid grid-cols-12 gap-8 h-[700px]">
+                                    <div className="col-span-12 lg:col-span-8 nexus-card relative bg-black/60 p-1">
+                                        <KnowledgeGraphViz
+                                            nodes={knowledgeGraph.nodes}
+                                            edges={knowledgeGraph.edges}
+                                            onNodeClick={handleNodeClick}
+                                            isExpanding={isExpandingGraph}
+                                            selectedNodeId={selectedGraphNode || undefined}
+                                        />
+                                        <div className="absolute top-6 left-6 flex items-center gap-2 px-3 py-1.5 bg-black/80 backdrop-blur-md rounded border border-cyan-500/30">
+                                            <div className="w-1.5 h-1.5 bg-cyan-400 rounded-full animate-pulse" />
+                                            <span className="text-[9px] font-black text-cyan-400 uppercase tracking-widest">Live Semantic Grid</span>
+                                        </div>
+                                    </div>
+                                    <div className="col-span-12 lg:col-span-4 space-y-6">
+                                        <div className="nexus-card p-6 border-white/5">
+                                            <SavedGraphsPanel
+                                                onLoad={(graph) => {
+                                                    setSavedGraphToLoad(graph);
+                                                    setIsRadialModalOpen(true);
+                                                }}
+                                                refreshTrigger={refreshSavedGraphs}
+                                            />
+                                        </div>
+                                        <div className="flex justify-center">
+                                            <button
+                                                className="w-full nexus-initiate-button flex items-center justify-center gap-3 py-5"
+                                                onClick={() => setIsRadialModalOpen(true)}
+                                            >
+                                                <Network className="h-5 w-5" />
+                                                Open Explorer
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
+                            </TabsContent>
+
+                            <TabsContent value="synthesis" className="space-y-8">
+                                <div className="grid grid-cols-12 gap-8">
+                                    <div className="col-span-12 lg:col-span-5 space-y-6">
+                                        <div className="nexus-card border-indigo-500/10">
+                                            <HypothesisPanel
+                                                hypotheses={hypotheses}
+                                                onSelectHypothesis={setSelectedHypothesis}
+                                                selectedId={selectedHypothesis?.id}
+                                                comparedIds={comparedHypothesisIds}
+                                                onToggleCompare={handleToggleCompare}
+                                                onGenerate={handleGenerateHypotheses}
+                                                isGenerating={isGeneratingHypotheses}
+                                                lastSearchQuery={lastSearchQuery}
+                                            />
+                                        </div>
+                                        <div className="nexus-card p-6 border-white/5">
+                                            <HypothesisPrioritization hypotheses={hypotheses} />
+                                        </div>
+                                    </div>
+                                    <div className="col-span-12 lg:col-span-7 space-y-6 text-center py-20 bg-slate-900/10 rounded-3xl border-2 border-dashed border-white/5">
+                                        <div className="w-20 h-20 bg-white/5 rounded-full flex items-center justify-center mx-auto mb-6 bg-gradient-to-br from-cyan-500/10 to-purple-500/10 border border-white/10">
+                                            <Lightbulb className="h-10 w-10 text-slate-500" />
+                                        </div>
+                                        <h4 className="text-xl font-bold nexus-header text-slate-400 mb-2">AI Synthesis Engine</h4>
+                                        <p className="text-sm text-slate-500 max-w-sm mx-auto">Awaiting query Input to generate clinical summaries and future research projections.</p>
+                                    </div>
+                                </div>
+                            </TabsContent>
+                        </Tabs>
                     </div>
                 </div>
-            </div>
 
-
-            <ClaudeStreamingModal
-                isOpen={isGeneratingHypotheses}
-                streamingContent={streamingContent}
-                onClose={() => setIsGeneratingHypotheses(false)}
-            />
-
-            {/* Radial Rings Modal (Persistent Session) */}
-            {isRadialModalOpen && (
-                <RadialRingsModal
-                    isOpen={isRadialModalOpen}
-                    onClose={() => setIsRadialModalOpen(false)}
-                    pathology={savedGraphToLoad?.name || 'Session chargée'}
-                    initialData={savedGraphToLoad?.graph_data}
-                    initialViewState={savedGraphToLoad?.view_state}
-                    onSave={async (payload) => {
-                        try {
-                            const { error } = await supabase
-                                .from('saved_graphs')
-                                .insert({
-                                    user_id: (await supabase.auth.getUser()).data.user?.id,
-                                    name: payload.name,
-                                    description: payload.description,
-                                    graph_data: payload.graph_data,
-                                    view_state: payload.view_state
-                                });
-
-                            if (error) throw error;
-                            toast.success('Graphe sauvegardé avec succès');
-                            setRefreshSavedGraphs(prev => prev + 1);
-                        } catch (e) {
-                            console.error(e);
-                            toast.error('Erreur sauvegarde');
-                        }
-                    }}
+                {/* Claude Streaming Modal */}
+                <ClaudeStreamingModal
+                    isOpen={isGeneratingHypotheses}
+                    streamingContent={streamingContent}
+                    onClose={() => setIsGeneratingHypotheses(false)}
                 />
-            )}
-        </AppLayout >
+
+                {isRadialModalOpen && (
+                    <RadialRingsModal
+                        isOpen={isRadialModalOpen}
+                        onClose={() => setIsRadialModalOpen(false)}
+                        pathology={savedGraphToLoad?.name || 'Session chargée'}
+                        onLoad={(graph) => setSavedGraphToLoad(graph)}
+                        initialData={savedGraphToLoad?.graph_data}
+                        initialViewState={savedGraphToLoad?.view_state}
+                        onSave={async (payload) => {
+                            try {
+                                const { data: { user } } = await supabase.auth.getUser();
+                                if (!user) throw new Error('Non authentifié');
+
+                                const { error } = await supabase
+                                    .from('saved_graphs')
+                                    .upsert({
+                                        id: savedGraphToLoad?.id, // Use existing ID if loading a graph
+                                        user_id: user.id,
+                                        name: payload.name,
+                                        description: payload.description,
+                                        graph_data: payload.graph_data,
+                                        view_state: payload.view_state,
+                                        updated_at: new Date().toISOString()
+                                    });
+
+                                if (error) throw error;
+                                toast.success(savedGraphToLoad?.id ? 'Graphe mis à jour' : 'Graphe sauvegardé');
+                                setRefreshSavedGraphs(prev => prev + 1);
+                            } catch (e: any) {
+                                console.error(e);
+                                toast.error('Erreur sauvegarde: ' + (e.message || ''));
+                            }
+                        }}
+                    />
+                )}
+
+                <NexusStatusBar />
+            </div>
+        </AppLayout>
     );
 };
+
 
 export default DiscoveryPlatform;

@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { streamAI } from "../_shared/ai-client.ts";
 
 /**
  * LIVE RESEARCH - Recherche Live
@@ -17,7 +18,6 @@ const corsHeaders = {
     "Access-Control-Allow-Origin": "*",
     "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
-
 interface StreamEvent {
     type: 'step_update' | 'text' | 'breaking_news' | 'trial_update' | 'safety_alert' | 'regulatory_update' | 'sources' | 'done';
     step?: { id: number; status: string; details?: string; source?: string };
@@ -26,6 +26,7 @@ interface StreamEvent {
     trial_update?: any;
     safety_alert?: any;
     regulatory_update?: any;
+    sources?: any[];
 }
 
 // LIVE MODE SYSTEM PROMPT
@@ -302,16 +303,9 @@ serve(async (req) => {
 
         const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
         const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-        const claudeApiKey = Deno.env.get("CLAUDE_API_KEY") || Deno.env.get("ANTHROPIC_API_KEY");
         const ncbiApiKey = Deno.env.get("NCBI_API_KEY");
+        // API keys for AI are handled by callAI/streamAI
         const supabase = createClient(supabaseUrl, supabaseKey);
-
-        if (!claudeApiKey) {
-            return new Response(
-                JSON.stringify({ error: "CLAUDE_API_KEY not configured" }),
-                { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-            );
-        }
 
         console.log(`[LIVE-RESEARCH] Topic: ${topic}`);
 
@@ -427,38 +421,22 @@ Analyse ces données RÉCENTES et produis:
 Priorise la FRAÎCHEUR et la PERTINENCE CLINIQUE.
 `;
 
-                    const claudeResponse = await fetch("https://api.anthropic.com/v1/messages", {
-                        method: "POST",
-                        headers: {
-                            "Content-Type": "application/json",
-                            "x-api-key": claudeApiKey,
-                            "anthropic-version": "2023-06-01"
+                    const aiResponse = await streamAI(
+                        SYSTEM_PROMPT,
+                        liveContext,
+                        (chunk) => {
+                            sendEvent({ type: 'text', content: chunk });
                         },
-                        body: JSON.stringify({
-                            model: "claude-sonnet-4-20250514",
-                            max_tokens: 12000,
-                            temperature: 0.4,
-                            system: SYSTEM_PROMPT,
-                            messages: [{ role: "user", content: liveContext }]
-                        })
-                    });
+                        {
+                            model: "claude-3-5-sonnet-20240620",
+                            maxTokens: 12000,
+                            temperature: 0.4
+                        }
+                    );
 
-                    if (!claudeResponse.ok) {
-                        const err = await claudeResponse.text();
-                        console.error("Claude error:", err);
-                        throw new Error(`Claude: ${claudeResponse.status}`);
-                    }
-
-                    const claudeData = await claudeResponse.json();
-                    let textContent = "";
-                    for (const block of claudeData.content || []) {
-                        if (block.type === "text") textContent += block.text;
-                    }
+                    const textContent = aiResponse.text;
 
                     sendEvent({ type: 'step_update', step: { id: 4, status: 'completed', details: '✅ Veille actualisée', source: 'Claude Live' } });
-
-                    // Send full analysis
-                    sendEvent({ type: 'text', content: textContent });
 
                     // Extract and emit structured updates
                     try {

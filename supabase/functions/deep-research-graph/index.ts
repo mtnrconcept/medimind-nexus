@@ -5,6 +5,7 @@
 
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { callAI } from "../_shared/ai-client.ts";
 
 const corsHeaders = {
     "Access-Control-Allow-Origin": "*",
@@ -137,11 +138,6 @@ async function synthesizeWithClaude(
     existingNodes: Array<{ name: string; node_type: string }> = [],
     allPathologies: string[] = [] // NEW: For comorbidity analysis
 ): Promise<ResearchResult> {
-    const anthropicKey = Deno.env.get("CLAUDE_API_KEY");
-    if (!anthropicKey) {
-        throw new Error("CLAUDE_API_KEY not configured");
-    }
-
     // Prepare existing nodes context for cross-linking
     const existingNodesContext = existingNodes.length > 0
         ? `\n\nNOEUDS EXISTANTS SUR LE GRAPHE (à analyser pour liens croisés):
@@ -268,30 +264,16 @@ Génère un graphe RICHE avec ${allPathologies.length > 1 ? 'au moins 60-100 nœ
   "research_summary": "Expansion: X concepts pour ${allPathologies.length} pathologie(s)"
 }`;
 
-    const response = await fetch("https://api.anthropic.com/v1/messages", {
-        method: "POST",
-        headers: {
-            "Content-Type": "application/json",
-            "x-api-key": anthropicKey,
-            "anthropic-version": "2023-06-01"
-        },
-        body: JSON.stringify({
-            model: "claude-sonnet-4-20250514",
-            max_tokens: 8000,
-            messages: [
-                { role: "user", content: userPrompt }
-            ],
-            system: systemPrompt
-        })
-    });
+    const aiResult = await callAI(
+        systemPrompt,
+        userPrompt,
+        {
+            model: "claude-3-5-sonnet-20240620",
+            maxTokens: 8000,
+        }
+    );
 
-    if (!response.ok) {
-        const error = await response.text();
-        throw new Error(`Claude API error: ${error}`);
-    }
-
-    const result = await response.json();
-    const content = result.content?.[0]?.text || "{}";
+    const content = aiResult.text || "{}";
 
     // Parse JSON from response (handle potential markdown wrapping)
     let jsonContent = content;

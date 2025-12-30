@@ -1,4 +1,5 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import { streamAI } from "../_shared/ai-client.ts";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -30,11 +31,6 @@ serve(async (req) => {
 
   try {
     const { message, patient, conversationHistory } = await req.json();
-    const CLAUDE_API_KEY = Deno.env.get("CLAUDE_API_KEY");
-
-    if (!CLAUDE_API_KEY) {
-      throw new Error("CLAUDE_API_KEY is not configured");
-    }
 
     const patientContext = patient as PatientContext;
     const labResults = patientContext?.lab_results_json;
@@ -121,80 +117,29 @@ ${consults}
       .filter((m: any) => m.role === 'user' || m.role === 'assistant')
       .map((m: any) => ({ role: m.role, content: m.content }));
 
-    const response = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: {
-        "x-api-key": CLAUDE_API_KEY,
-        "anthropic-version": "2023-06-01",
-        "content-type": "application/json",
-      },
-      body: JSON.stringify({
-        model: "claude-sonnet-4-20250514",
-        max_tokens: 1024,
-        system: systemPrompt,
-        messages: [
-          ...validMessages,
-          { role: "user", content: message }
-        ],
-        stream: true,
-      }),
-    });
-
-    if (!response.ok) {
-      if (response.status === 429) {
-        return new Response(JSON.stringify({ error: "Limite de requêtes atteinte. Veuillez réessayer dans quelques instants." }), {
-          status: 429,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
-      }
-      const errorText = await response.text();
-      console.error("Claude API error:", response.status, errorText);
-      return new Response(JSON.stringify({ error: "Erreur du service IA Claude" }), {
-        status: 500,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
-
-    // Transform Stream pour convertir le format Claude en format OpenAI pour le frontend
-    const reader = response.body!.getReader();
     const encoder = new TextEncoder();
-    const decoder = new TextDecoder();
 
     const stream = new ReadableStream({
       async start(controller) {
         try {
-          let buffer = '';
-          while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-
-            buffer += decoder.decode(value, { stream: true });
-            const lines = buffer.split('\n');
-            buffer = lines.pop() || ''; // Garder le dernier fragment incomplet
-
-            for (const line of lines) {
-              if (line.startsWith('data: ')) {
-                const jsonStr = line.slice(6).trim();
-                if (jsonStr === '[DONE]') continue;
-
-                try {
-                  const data = JSON.parse(jsonStr);
-                  if (data.type === 'content_block_delta' && data.delta?.text) {
-                    // Format compatible OpenAI pour le frontend
-                    const openaiChunk = {
-                      choices: [{ delta: { content: data.delta.text } }]
-                    };
-                    controller.enqueue(encoder.encode(`data: ${JSON.stringify(openaiChunk)}\n\n`));
-                  }
-                } catch (e) {
-                  // Ignorer les erreurs de parsing JSON partiel
-                }
-              }
+          await streamAI(
+            systemPrompt,
+            [...validMessages, { role: "user", content: message }],
+            (text) => {
+              const openaiChunk = {
+                choices: [{ delta: { content: text } }]
+              };
+              controller.enqueue(encoder.encode(`data: ${JSON.stringify(openaiChunk)}\n\n`));
+            },
+            {
+              model: "claude-3-5-sonnet-20240620",
+              maxTokens: 1024,
             }
-          }
+          );
           controller.enqueue(encoder.encode('data: [DONE]\n\n'));
           controller.close();
         } catch (e) {
+          console.error("Stream error:", e);
           controller.error(e);
         }
       }
