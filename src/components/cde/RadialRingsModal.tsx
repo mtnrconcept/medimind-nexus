@@ -5449,8 +5449,8 @@ IMPORTANT: Retourne UNIQUEMENT les IDs des nœuds qui forment le schéma thérap
                     {/* Show when loading AND graph has minimal content (placeholder only) */}
                     {isLoading && (!data || data.knowledge_graph.nodes.length <= 1) && (
                         <div className="absolute inset-0 flex items-center justify-center bg-gray-900 z-30 overflow-hidden">
-                            {/* Canvas-based Matrix Rain Background */}
-                            <MatrixBackground />
+                            {/* Background fill */}
+                            <div className="absolute inset-0 bg-[#0a0a14]" />
 
                             {/* Radar Sweep Effect - Submarine Style */}
                             <div className="absolute inset-0 flex items-center justify-center pointer-events-none">

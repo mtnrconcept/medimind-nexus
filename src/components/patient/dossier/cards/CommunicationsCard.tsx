@@ -85,7 +85,7 @@ const CommunicationsCard = ({ patientId }: CommunicationsCardProps) => {
     const [saving, setSaving] = useState(false);
 
     const [formData, setFormData] = useState({
-        communication_date: new Date().toISOString().split('T')[0],
+        communication_date: new Date().toISOString().slice(0, 16),
         communication_type: 'letter_in',
         sender: '',
         recipient: '',
@@ -114,7 +114,7 @@ const CommunicationsCard = ({ patientId }: CommunicationsCardProps) => {
     const openAddDialog = () => {
         setEditing(null);
         setFormData({
-            communication_date: new Date().toISOString().split('T')[0],
+            communication_date: new Date().toISOString().slice(0, 16),
             communication_type: 'letter_in',
             sender: '',
             recipient: '',
@@ -130,7 +130,7 @@ const CommunicationsCard = ({ patientId }: CommunicationsCardProps) => {
     const openEditDialog = (item: Communication) => {
         setEditing(item);
         setFormData({
-            communication_date: item.communication_date?.split('T')[0] || '',
+            communication_date: item.communication_date?.slice(0, 16) || '',
             communication_type: item.communication_type,
             sender: item.sender || '',
             recipient: item.recipient || '',

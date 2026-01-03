@@ -81,7 +81,7 @@ const MonitoringCard = ({ patientId }: MonitoringCardProps) => {
     const [saving, setSaving] = useState(false);
 
     const [formData, setFormData] = useState({
-        monitoring_date: new Date().toISOString().split('T')[0] + 'T12:00',
+        monitoring_date: new Date().toISOString().slice(0, 16),
         monitoring_type: 'blood_pressure',
         value: '',
         value_unit: 'mmHg',
@@ -110,7 +110,7 @@ const MonitoringCard = ({ patientId }: MonitoringCardProps) => {
     const openAddDialog = () => {
         setEditing(null);
         setFormData({
-            monitoring_date: new Date().toISOString().split('T')[0] + 'T12:00',
+            monitoring_date: new Date().toISOString().slice(0, 16),
             monitoring_type: 'blood_pressure',
             value: '',
             value_unit: 'mmHg',

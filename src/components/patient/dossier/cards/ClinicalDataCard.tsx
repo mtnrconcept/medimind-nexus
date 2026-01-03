@@ -65,7 +65,7 @@ const ClinicalDataCard = ({ patientId }: ClinicalDataCardProps) => {
     const [saving, setSaving] = useState(false);
 
     const [formData, setFormData] = useState({
-        recorded_at: new Date().toISOString().split('T')[0],
+        recorded_at: new Date().toISOString().slice(0, 16),
         systolic_bp: undefined as number | undefined,
         diastolic_bp: undefined as number | undefined,
         heart_rate: undefined as number | undefined,
@@ -97,7 +97,7 @@ const ClinicalDataCard = ({ patientId }: ClinicalDataCardProps) => {
     const openAddDialog = () => {
         setEditing(null);
         setFormData({
-            recorded_at: new Date().toISOString().split('T')[0],
+            recorded_at: new Date().toISOString().slice(0, 16),
             systolic_bp: undefined,
             diastolic_bp: undefined,
             heart_rate: undefined,
@@ -115,7 +115,7 @@ const ClinicalDataCard = ({ patientId }: ClinicalDataCardProps) => {
     const openEditDialog = (item: ClinicalData) => {
         setEditing(item);
         setFormData({
-            recorded_at: item.recorded_at?.split('T')[0] || '',
+            recorded_at: item.recorded_at?.slice(0, 16) || '',
             systolic_bp: item.systolic_bp,
             diastolic_bp: item.diastolic_bp,
             heart_rate: item.heart_rate,

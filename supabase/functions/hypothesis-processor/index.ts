@@ -15,6 +15,12 @@ interface Job {
     query: string;
     query_intent: any;
     evidence_pack: any;
+    status: string;
+    hypothesis_id?: string;
+    progress_percentage?: number;
+    progress_message?: string;
+    error_message?: string;
+    created_at?: string;
 }
 
 serve(async (req) => {
@@ -27,15 +33,22 @@ serve(async (req) => {
         const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
         const supabase = createClient(supabaseUrl, supabaseKey);
 
-        console.log('🔄 Checking for pending jobs...');
+        const { job_id } = await req.json().catch(() => ({}));
 
-        // Find the oldest pending job
-        const { data: jobs, error: fetchError } = await supabase
+        console.log('🔄 Checking for pending jobs...', job_id ? `(Targeting ${job_id})` : '');
+
+        // Find the specific job or the oldest pending job
+        let queryBuilder = supabase
             .from('hypothesis_generation_jobs')
-            .select('*')
-            .eq('status', 'pending')
-            .order('created_at', { ascending: true })
-            .limit(1);
+            .select('*');
+
+        if (job_id) {
+            queryBuilder = queryBuilder.eq('id', job_id);
+        } else {
+            queryBuilder = queryBuilder.eq('status', 'pending').order('created_at', { ascending: true }).limit(1);
+        }
+
+        const { data: jobs, error: fetchError } = await queryBuilder;
 
         if (fetchError) {
             console.error('Error fetching jobs:', fetchError);
@@ -46,13 +59,22 @@ serve(async (req) => {
         }
 
         if (!jobs || jobs.length === 0) {
-            console.log('✅ No pending jobs');
+            console.log('✅ No pending jobs' + (job_id ? ` with ID ${job_id}` : ''));
             return new Response(JSON.stringify({ message: 'No pending jobs' }), {
                 headers: { ...corsHeaders, 'Content-Type': 'application/json' },
             });
         }
 
         const job: Job = jobs[0];
+
+        // If we targeted a specific job, make sure it's processable
+        if (job_id && job.status !== 'pending') {
+            console.log(`ℹ️ Job ${job.id} is already ${job.status}`);
+            return new Response(JSON.stringify({ message: `Job is already ${job.status}` }), {
+                headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+            });
+        }
+
         console.log(`📋 Processing job ${job.id}`);
 
         // Mark job as processing
@@ -60,7 +82,6 @@ serve(async (req) => {
             .from('hypothesis_generation_jobs')
             .update({
                 status: 'processing',
-                started_at: new Date().toISOString(),
                 progress_percentage: 10,
                 progress_message: 'Génération de l\'hypothèse avec Claude...'
             })
@@ -233,7 +254,6 @@ Retourne JSON strict selon le format spécifié.`;
                 .update({
                     status: 'completed',
                     hypothesis_id: savedHyp.id,
-                    completed_at: new Date().toISOString(),
                     progress_percentage: 100,
                     progress_message: 'Hypothèse générée avec succès!'
                 })
@@ -257,8 +277,7 @@ Retourne JSON strict selon le format spécifié.`;
                 .from('hypothesis_generation_jobs')
                 .update({
                     status: 'failed',
-                    error_message: processingError.message,
-                    completed_at: new Date().toISOString()
+                    error_message: processingError.message
                 })
                 .eq('id', job.id);
 
@@ -272,10 +291,14 @@ Retourne JSON strict selon le format spécifié.`;
         }
 
     } catch (error: any) {
-        console.error('Processor error:', error);
-        return new Response(JSON.stringify({ error: error.message }), {
+        console.error('❌ CRITICAL Processor Error:', error);
+        return new Response(JSON.stringify({
+            error: error.message,
+            stack: error.stack,
+            type: 'CRITICAL_PROCESSOR_ERROR'
+        }), {
             headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-            status: 500
+            status: 500,
         });
     }
 });

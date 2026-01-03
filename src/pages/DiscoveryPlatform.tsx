@@ -610,10 +610,14 @@ function StatisticsPanel() {
 
 function ScientificSearch({
     onSearch,
-    isLoading
+    onGenerate,
+    isLoading,
+    isGenerating
 }: {
     onSearch: (query: string, filters: any) => void;
+    onGenerate: (query: string) => void;
     isLoading: boolean;
+    isGenerating: boolean;
 }) {
     const [query, setQuery] = useState('Parkinson et inflammation');
     const [typeFilter, setTypeFilter] = useState('all');
@@ -645,6 +649,15 @@ function ScientificSearch({
                     </div>
                     <Button onClick={handleSearch} disabled={isLoading} className="bg-blue-600 hover:bg-blue-700">
                         {isLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Rechercher'}
+                    </Button>
+                    <Button
+                        onClick={() => onGenerate(query)}
+                        disabled={isGenerating || !query}
+                        className="bg-purple-600 hover:bg-purple-700 gap-2 border-none shadow-lg shadow-purple-500/20"
+                    >
+                        {isGenerating ? <Loader2 className="h-4 w-4 animate-spin" /> : <Brain className="h-4 w-4" />}
+                        <span className="hidden sm:inline">Générer Hypothèse</span>
+                        <span className="sm:hidden">Générer</span>
                     </Button>
                 </div>
 
@@ -2803,10 +2816,13 @@ const DiscoveryPlatform = () => {
             }
 
             // Store abstracts for knowledge extraction
-            setLastSearchQuery(query);
-            setLastSearchAbstracts((data.papers || []).map((p: any) => p.abstract || '').filter((a: string) => a));
-
             toast.success(`${results.length} résultats trouvés`);
+
+            // Auto-trigger hypothesis generation if no previous hypotheses were found
+            if (!data.previous_hypotheses || data.previous_hypotheses.length === 0) {
+                console.log('No previous hypotheses, triggering auto-generation for:', query);
+                handleGenerateHypotheses(query);
+            }
         } catch (err: any) {
             console.error('Search error:', err);
             toast.error('Erreur lors de la recherche: ' + (err.message || 'Erreur inconnue'));
@@ -2952,6 +2968,12 @@ const DiscoveryPlatform = () => {
 
             toast.success('Job créé ! Génération en arrière-plan...');
 
+            // Trigger the background processor explicitly from the client 
+            // to ensure it starts even if the fire-and-forget fetch in the edge function fails
+            supabase.functions.invoke('hypothesis-processor', {
+                body: { job_id: jobId }
+            }).catch(e => console.warn('Client-side processor trigger warning:', e));
+
             // Subscribe to BROADCAST channel for live streaming text
             const streamChannel = supabase
                 .channel(`hypothesis-stream-${jobId}`)
@@ -3010,9 +3032,10 @@ const DiscoveryPlatform = () => {
                 // Update progress message
                 if (job.progress_message) {
                     setStreamingContent(prev => {
-                        // Avoid duplicating message if already there
-                        if (prev.includes(job.progress_message)) return prev;
-                        return prev + `\n[${job.progress_percentage}%] ${job.progress_message}`;
+                        const message = `\n[${new Date().toLocaleTimeString()}] [${job.progress_percentage}%] ${job.progress_message}`;
+                        // Avoid duplicating exactly the same message
+                        if (prev.endsWith(message)) return prev;
+                        return prev + message;
                     });
                 }
 
@@ -3165,41 +3188,14 @@ const DiscoveryPlatform = () => {
                 <div className="max-w-[1600px] mx-auto px-6">
                     <NexusHero />
 
-                    {/* Redesigned Search Bar matching Nexus design */}
-                    <div className="max-w-2xl mx-auto w-full mb-12 relative z-10 -mt-8">
-                        <div className={cn(
-                            "relative flex items-center rounded-full border p-1.5 pl-5 transition-all duration-300",
-                            theme === 'dark'
-                                ? "bg-[#0f172a]/80 backdrop-blur-xl border-white/10 shadow-lg shadow-black/20"
-                                : "bg-white/90 backdrop-blur-xl border-slate-200 shadow-lg shadow-slate-200/50"
-                        )}>
-                            <Search className={cn(
-                                "h-5 w-5 mr-3",
-                                theme === 'dark' ? "text-slate-500" : "text-slate-400"
-                            )} />
-                            <Input
-                                placeholder="Search synthetic synapses, clinical trials, or nano-structures..."
-                                className={cn(
-                                    "flex-1 bg-transparent border-none focus-visible:ring-0 py-6 text-sm font-normal",
-                                    theme === 'dark' ? "text-slate-200 placeholder:text-slate-600" : "text-slate-800 placeholder:text-slate-400"
-                                )}
-                                value={searchInput}
-                                onChange={(e) => setSearchInput(e.target.value)}
-                                onKeyDown={(e) => e.key === 'Enter' && handleSearch(searchInput, {})}
-                            />
-                            <Button
-                                className={cn(
-                                    "font-semibold px-8 py-6 rounded-full transition-all text-sm uppercase tracking-wide",
-                                    theme === 'dark'
-                                        ? "bg-cyan-500 hover:bg-cyan-400 text-[#020617]"
-                                        : "bg-indigo-600 hover:bg-indigo-700 text-white"
-                                )}
-                                onClick={() => handleSearch(searchInput, {})}
-                                disabled={isSearching}
-                            >
-                                {isSearching ? 'Analyzing...' : 'INITIATE'}
-                            </Button>
-                        </div>
+                    {/* Scientific Search Tool */}
+                    <div className="max-w-5xl mx-auto w-full mb-12 relative z-10 -mt-8 px-4">
+                        <ScientificSearch
+                            onSearch={handleSearch}
+                            onGenerate={handleGenerateHypotheses}
+                            isLoading={isSearching}
+                            isGenerating={isGeneratingHypotheses}
+                        />
                     </div>
 
                     <div className="space-y-8 pb-24">
@@ -3247,127 +3243,100 @@ const DiscoveryPlatform = () => {
 
                             <TabsContent value="exploration" className="space-y-6">
                                 <div className="grid grid-cols-12 gap-6">
-                                    {/* Research Cards - Left column */}
+                                    {/* Real Search Results instead of placeholders */}
                                     <div className="col-span-12 lg:col-span-8">
-                                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                                            {/* Research Card 1 */}
-                                            <div className="research-card">
-                                                <div className="flex items-center justify-between mb-3">
-                                                    <span className="relevance-badge">RELEVANCE 94%</span>
-                                                    <span className={cn(
-                                                        "text-xs font-bold",
-                                                        theme === 'dark' ? "text-cyan-400" : "text-cyan-600"
-                                                    )}>#1</span>
-                                                </div>
-                                                <h4 className={cn(
-                                                    "font-semibold text-base mb-2 line-clamp-2",
-                                                    theme === 'dark' ? "text-white" : "text-slate-800"
-                                                )}>CRISPR-Cas9 Gene Editing in Cardiovascular Therapy</h4>
-                                                <p className={cn(
-                                                    "text-xs mb-4 line-clamp-3",
-                                                    theme === 'dark' ? "text-slate-400" : "text-slate-500"
-                                                )}>Exploring the precision of CRISPR in targeting cardiological genetic mutations...</p>
-                                                <div className="flex flex-wrap gap-1 mb-4">
-                                                    <span className="tag-pill">GENETICS</span>
-                                                    <span className="tag-pill">CARDIOLOGY</span>
-                                                    <span className="tag-pill">CRISPR</span>
-                                                </div>
-                                                <div className="flex items-center justify-between text-xs">
-                                                    <div>
-                                                        <span className={theme === 'dark' ? "text-cyan-400" : "text-cyan-600"}>Dr. Elena Vance</span>
-                                                        <span className={theme === 'dark' ? "text-slate-500" : "text-slate-400"}> • 2024-11-12</span>
-                                                    </div>
-                                                    <span className={theme === 'dark' ? "text-slate-300" : "text-slate-600"}>1240 Citations</span>
-                                                </div>
+                                        <div className="nexus-card border-white/5 overflow-hidden">
+                                            <div className="p-4 border-b border-white/5 bg-white/5 flex items-center justify-between">
+                                                <h3 className="text-xs uppercase tracking-[0.2em] font-black text-cyan-400">Analysis Feed</h3>
+                                                <Badge variant="outline" className="text-[10px] border-cyan-500/30 text-cyan-400">
+                                                    {isSearching ? 'Scanning...' : `${searchResults.length} Results`}
+                                                </Badge>
                                             </div>
-
-                                            {/* Research Card 2 */}
-                                            <div className="research-card">
-                                                <div className="flex items-center justify-between mb-3">
-                                                    <span className="relevance-badge">RELEVANCE 94%</span>
-                                                    <span className={cn(
-                                                        "text-xs font-bold",
-                                                        theme === 'dark' ? "text-cyan-400" : "text-cyan-600"
-                                                    )}>#2</span>
+                                            <SearchResults results={searchResults.slice(0, 6)} isLoading={isSearching} />
+                                            {searchResults.length > 6 && (
+                                                <div className="p-4 text-center border-t border-white/5">
+                                                    <Button variant="ghost" size="sm" className="text-xs text-slate-500 hover:text-cyan-400" onClick={() => { }}>
+                                                        View all {searchResults.length} papers in Latest tab
+                                                    </Button>
                                                 </div>
-                                                <h4 className={cn(
-                                                    "font-semibold text-base mb-2 line-clamp-2",
-                                                    theme === 'dark' ? "text-white" : "text-slate-800"
-                                                )}>Neural Link Synthetic Synapse Integration in Post-Trauma Recovery</h4>
-                                                <p className={cn(
-                                                    "text-xs mb-4 line-clamp-3",
-                                                    theme === 'dark' ? "text-slate-400" : "text-slate-500"
-                                                )}>A study on the biocompatibility of silicon-based synapse implants...</p>
-                                                <div className="flex flex-wrap gap-1 mb-4">
-                                                    <span className="tag-pill">NEUROLOGY</span>
-                                                    <span className="tag-pill">BIO-ENGINEERING</span>
-                                                    <span className="tag-pill">AI</span>
-                                                </div>
-                                                <div className="flex items-center justify-between text-xs">
-                                                    <div>
-                                                        <span className={theme === 'dark' ? "text-cyan-400" : "text-cyan-600"}>Research Team</span>
-                                                    </div>
-                                                    <span className={theme === 'dark' ? "text-slate-300" : "text-slate-600"}>890 Citations</span>
-                                                </div>
-                                            </div>
-
-                                            {/* Research Card 3 */}
-                                            <div className="research-card">
-                                                <div className="flex items-center justify-between mb-3">
-                                                    <span className="relevance-badge">RELEVANCE 91%</span>
-                                                    <span className={cn(
-                                                        "text-xs font-bold",
-                                                        theme === 'dark' ? "text-cyan-400" : "text-cyan-600"
-                                                    )}>#3</span>
-                                                </div>
-                                                <h4 className={cn(
-                                                    "font-semibold text-base mb-2 line-clamp-2",
-                                                    theme === 'dark' ? "text-white" : "text-slate-800"
-                                                )}>Nano-Robotics in Targeted Oncology: 5-Year Clinical Outcomes</h4>
-                                                <p className={cn(
-                                                    "text-xs mb-4 line-clamp-3",
-                                                    theme === 'dark' ? "text-slate-400" : "text-slate-500"
-                                                )}>Long-term monitoring of autonomous nanobots used for localized cancer treatment...</p>
-                                                <div className="flex flex-wrap gap-1 mb-4">
-                                                    <span className="tag-pill">ONCOLOGY</span>
-                                                    <span className="tag-pill">NANOTECH</span>
-                                                    <span className="tag-pill">ROBOTICS</span>
-                                                </div>
-                                                <div className="flex items-center justify-between text-xs">
-                                                    <div>
-                                                        <span className={theme === 'dark' ? "text-cyan-400" : "text-cyan-600"}>Dr. Sarah Chen</span>
-                                                    </div>
-                                                    <span className={theme === 'dark' ? "text-slate-300" : "text-slate-600"}>2100 Citations</span>
-                                                </div>
-                                            </div>
+                                            )}
                                         </div>
                                     </div>
 
-                                    {/* AI Synthesis Panel - Right column */}
+                                    {/* Live AI Synthesis Panel */}
                                     <div className="col-span-12 lg:col-span-4">
                                         <div className={cn(
-                                            "research-card h-full flex flex-col items-center justify-center text-center py-12",
-                                            theme === 'dark' ? "border-cyan-500/10" : "border-cyan-500/20"
+                                            "nexus-card h-full flex flex-col p-6 border-cyan-500/10",
+                                            isGeneratingHypotheses && "border-purple-500/30 shadow-lg shadow-purple-500/10"
                                         )}>
-                                            <div className={cn(
-                                                "w-16 h-16 rounded-full flex items-center justify-center mb-6",
-                                                theme === 'dark'
-                                                    ? "bg-gradient-to-br from-cyan-500/10 to-purple-500/10 border border-white/10"
-                                                    : "bg-gradient-to-br from-cyan-500/5 to-purple-500/5 border border-slate-200"
-                                            )}>
-                                                <Lightbulb className={cn(
-                                                    "h-8 w-8",
-                                                    theme === 'dark' ? "text-slate-500" : "text-slate-400"
-                                                )} />
+                                            <div className="flex items-center justify-between mb-6">
+                                                <h4 className={cn(
+                                                    "text-xs font-semibold uppercase tracking-wide",
+                                                    theme === 'dark' ? "text-slate-300" : "text-slate-600"
+                                                )}>AI SYNTHESIS ENGINE</h4>
+                                                {isGeneratingHypotheses && (
+                                                    <div className="flex items-center gap-1">
+                                                        <div className="w-1.5 h-1.5 bg-purple-500 rounded-full animate-ping" />
+                                                        <span className="text-[10px] text-purple-400 font-bold">LIVE</span>
+                                                    </div>
+                                                )}
                                             </div>
-                                            <h4 className={cn(
-                                                "text-sm font-semibold uppercase tracking-wide mb-2",
-                                                theme === 'dark' ? "text-slate-300" : "text-slate-600"
-                                            )}>AI SYNTHESIS ENGINE</h4>
-                                            <p className={cn(
-                                                "text-xs max-w-[200px]",
-                                                theme === 'dark' ? "text-slate-500" : "text-slate-400"
-                                            )}>Awaiting query input to generate clinical summaries and future research projections.</p>
+
+                                            {isGeneratingHypotheses ? (
+                                                <div className="flex-1 flex flex-col justify-center">
+                                                    <div className="w-16 h-16 rounded-full flex items-center justify-center mb-6 bg-gradient-to-br from-cyan-500/20 to-purple-500/20 border border-purple-500/30 mx-auto">
+                                                        <Brain className="h-8 w-8 text-purple-400 animate-pulse" />
+                                                    </div>
+                                                    <p className="text-xs text-slate-400 mb-4 text-center">
+                                                        Hypothesis generation in progress...
+                                                    </p>
+                                                    <div className="bg-black/40 p-3 rounded-lg border border-white/5 font-mono text-[10px] text-purple-300/80 mb-4 h-32 overflow-hidden relative">
+                                                        <div className="absolute inset-0 bg-gradient-to-t from-black/80 to-transparent pointer-events-none" />
+                                                        {streamingContent || 'Awaiting initial stream chunk...'}
+                                                    </div>
+                                                    <Button
+                                                        variant="outline"
+                                                        size="sm"
+                                                        className="w-full text-[10px] uppercase border-purple-500/30 text-purple-400"
+                                                        onClick={() => { }}
+                                                    >
+                                                        Details in Modal
+                                                    </Button>
+                                                </div>
+                                            ) : hypotheses.length > 0 ? (
+                                                <div className="flex-1">
+                                                    <div className="mb-4">
+                                                        <h5 className="text-[10px] text-slate-500 uppercase mb-2">Latest Candidate</h5>
+                                                        <div className="p-3 bg-blue-500/5 border border-blue-500/20 rounded-lg">
+                                                            <p className="text-xs text-white line-clamp-3">
+                                                                {hypotheses[0].statement}
+                                                            </p>
+                                                        </div>
+                                                    </div>
+                                                    <div className="space-y-2">
+                                                        <div className="flex justify-between text-[10px]">
+                                                            <span className="text-slate-500 uppercase">Plausibility</span>
+                                                            <span className="text-cyan-400 font-bold">{(hypotheses[0].scores?.plausibility || 0).toFixed(1)}/10</span>
+                                                        </div>
+                                                        <Progress value={(hypotheses[0].scores?.plausibility || 0) * 10} className="h-1 bg-white/5" />
+                                                    </div>
+                                                    <Button
+                                                        className="w-full mt-6 bg-gradient-to-r from-blue-600 to-purple-600 border-none text-[10px] uppercase font-bold"
+                                                        onClick={() => setSelectedHypothesis(hypotheses[0])}
+                                                    >
+                                                        Deep Analysis
+                                                    </Button>
+                                                </div>
+                                            ) : (
+                                                <div className="flex-1 flex flex-col items-center justify-center text-center">
+                                                    <div className="w-16 h-16 rounded-full flex items-center justify-center mb-6 bg-slate-800/50 border border-white/5">
+                                                        <Lightbulb className="h-8 w-8 text-slate-600" />
+                                                    </div>
+                                                    <p className="text-xs text-slate-500 max-w-[200px]">
+                                                        Awaiting query input to generate clinical summaries and future research projections.
+                                                    </p>
+                                                </div>
+                                            )}
                                         </div>
                                     </div>
                                 </div>
