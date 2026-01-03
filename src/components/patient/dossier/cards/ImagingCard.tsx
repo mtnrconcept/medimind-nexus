@@ -24,14 +24,9 @@ import {
     DropdownMenuSeparator,
     DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import {
-    Dialog,
-    DialogContent,
-    DialogDescription,
-    DialogHeader,
-    DialogTitle,
-} from '@/components/ui/dialog';
 import { Plus, Image as ImageIcon, Loader2, MoreVertical, Pencil, Trash2, Calendar, FileText, ExternalLink, Upload } from 'lucide-react';
+import { useWindowManager } from '@/contexts/WindowManagerContext';
+import AppWindow from '../AppWindow';
 import { toast } from 'sonner';
 import { format } from 'date-fns';
 import { fr } from 'date-fns/locale';
@@ -90,6 +85,7 @@ const BODY_REGIONS = [
 ];
 
 const ImagingCard = ({ patientId }: ImagingCardProps) => {
+    const { maxZIndex } = useWindowManager();
     const [imaging, setImaging] = useState<Imaging[]>([]);
     const [loading, setLoading] = useState(true);
     const [dialogOpen, setDialogOpen] = useState(false);
@@ -264,80 +260,83 @@ const ImagingCard = ({ patientId }: ImagingCardProps) => {
                 </div>
             )}
 
-            <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-                <DialogContent className="max-w-md">
-                    <DialogHeader>
-                        <DialogTitle>{editing ? 'Modifier l\'examen' : 'Ajouter un examen'}</DialogTitle>
-                        <DialogDescription>Renseignez les informations de l'imagerie</DialogDescription>
-                    </DialogHeader>
-
-                    <div className="space-y-4 py-4 max-h-[60vh] overflow-y-auto">
-                        <div className="grid grid-cols-2 gap-4">
-                            <div className="space-y-2">
-                                <Label>Type d'examen</Label>
-                                <Select value={formData.imaging_type} onValueChange={(v) => setFormData({ ...formData, imaging_type: v })}>
-                                    <SelectTrigger><SelectValue /></SelectTrigger>
-                                    <SelectContent>
-                                        {IMAGING_TYPES.map((t) => (
-                                            <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>
-                                        ))}
-                                    </SelectContent>
-                                </Select>
+            {dialogOpen && (
+                <AppWindow
+                    id={`imaging-form-${patientId}`}
+                    title={editing ? 'Modifier l\'examen' : 'Ajouter un examen'}
+                    onClose={() => setDialogOpen(false)}
+                    zIndex={maxZIndex + 10}
+                    defaultSize={{ width: 500, height: 600 }}
+                >
+                    <div className="space-y-6">
+                        <div className="space-y-4 py-2">
+                            <div className="grid grid-cols-2 gap-4">
+                                <div className="space-y-2">
+                                    <Label>Type d'examen</Label>
+                                    <Select value={formData.imaging_type} onValueChange={(v) => setFormData({ ...formData, imaging_type: v })}>
+                                        <SelectTrigger><SelectValue /></SelectTrigger>
+                                        <SelectContent>
+                                            {IMAGING_TYPES.map((t) => (
+                                                <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>
+                                            ))}
+                                        </SelectContent>
+                                    </Select>
+                                </div>
+                                <div className="space-y-2">
+                                    <Label>Région</Label>
+                                    <Select value={formData.body_region} onValueChange={(v) => setFormData({ ...formData, body_region: v })}>
+                                        <SelectTrigger><SelectValue /></SelectTrigger>
+                                        <SelectContent>
+                                            {BODY_REGIONS.map((r) => (
+                                                <SelectItem key={r.value} value={r.value}>{r.label}</SelectItem>
+                                            ))}
+                                        </SelectContent>
+                                    </Select>
+                                </div>
                             </div>
+
                             <div className="space-y-2">
-                                <Label>Région</Label>
-                                <Select value={formData.body_region} onValueChange={(v) => setFormData({ ...formData, body_region: v })}>
-                                    <SelectTrigger><SelectValue /></SelectTrigger>
-                                    <SelectContent>
-                                        {BODY_REGIONS.map((r) => (
-                                            <SelectItem key={r.value} value={r.value}>{r.label}</SelectItem>
-                                        ))}
-                                    </SelectContent>
-                                </Select>
+                                <Label>Date de l'examen</Label>
+                                <Input type="date" value={formData.exam_date} onChange={(e) => setFormData({ ...formData, exam_date: e.target.value })} />
+                            </div>
+
+                            <div className="space-y-2">
+                                <Label>Résultats / Findings</Label>
+                                <Textarea value={formData.findings} onChange={(e) => setFormData({ ...formData, findings: e.target.value })} rows={3} />
+                            </div>
+
+                            <div className="space-y-2">
+                                <Label>Conclusion</Label>
+                                <Textarea value={formData.conclusion} onChange={(e) => setFormData({ ...formData, conclusion: e.target.value })} rows={2} />
+                            </div>
+
+                            <div className="grid grid-cols-2 gap-4">
+                                <div className="space-y-2">
+                                    <Label>Radiologue</Label>
+                                    <Input value={formData.radiologist} onChange={(e) => setFormData({ ...formData, radiologist: e.target.value })} />
+                                </div>
+                                <div className="space-y-2">
+                                    <Label>Établissement</Label>
+                                    <Input value={formData.facility} onChange={(e) => setFormData({ ...formData, facility: e.target.value })} />
+                                </div>
+                            </div>
+
+                            <div className="flex items-center gap-2">
+                                <input type="checkbox" id="is_abnormal" checked={formData.is_abnormal} onChange={(e) => setFormData({ ...formData, is_abnormal: e.target.checked })} className="rounded" />
+                                <Label htmlFor="is_abnormal">Résultat anormal</Label>
                             </div>
                         </div>
 
-                        <div className="space-y-2">
-                            <Label>Date de l'examen</Label>
-                            <Input type="date" value={formData.exam_date} onChange={(e) => setFormData({ ...formData, exam_date: e.target.value })} />
-                        </div>
-
-                        <div className="space-y-2">
-                            <Label>Résultats / Findings</Label>
-                            <Textarea value={formData.findings} onChange={(e) => setFormData({ ...formData, findings: e.target.value })} rows={3} />
-                        </div>
-
-                        <div className="space-y-2">
-                            <Label>Conclusion</Label>
-                            <Textarea value={formData.conclusion} onChange={(e) => setFormData({ ...formData, conclusion: e.target.value })} rows={2} />
-                        </div>
-
-                        <div className="grid grid-cols-2 gap-4">
-                            <div className="space-y-2">
-                                <Label>Radiologue</Label>
-                                <Input value={formData.radiologist} onChange={(e) => setFormData({ ...formData, radiologist: e.target.value })} />
-                            </div>
-                            <div className="space-y-2">
-                                <Label>Établissement</Label>
-                                <Input value={formData.facility} onChange={(e) => setFormData({ ...formData, facility: e.target.value })} />
-                            </div>
-                        </div>
-
-                        <div className="flex items-center gap-2">
-                            <input type="checkbox" id="is_abnormal" checked={formData.is_abnormal} onChange={(e) => setFormData({ ...formData, is_abnormal: e.target.checked })} className="rounded" />
-                            <Label htmlFor="is_abnormal">Résultat anormal</Label>
+                        <div className="flex justify-end gap-2 pt-4 border-t border-border/10">
+                            <Button variant="outline" onClick={() => setDialogOpen(false)}>Annuler</Button>
+                            <Button onClick={handleSave} disabled={saving}>
+                                {saving && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                                {editing ? 'Mettre à jour' : 'Ajouter'}
+                            </Button>
                         </div>
                     </div>
-
-                    <div className="flex justify-end gap-2">
-                        <Button variant="outline" onClick={() => setDialogOpen(false)}>Annuler</Button>
-                        <Button onClick={handleSave} disabled={saving}>
-                            {saving && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
-                            {editing ? 'Mettre à jour' : 'Ajouter'}
-                        </Button>
-                    </div>
-                </DialogContent>
-            </Dialog>
+                </AppWindow>
+            )}
 
             <DocumentUploadDialog
                 open={importDialogOpen}

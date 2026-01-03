@@ -3,7 +3,7 @@
  * Features: Vaccination schedule, reminders, add/edit, lot tracking
  */
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -24,17 +24,12 @@ import {
     DropdownMenuSeparator,
     DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import {
-    Dialog,
-    DialogContent,
-    DialogDescription,
-    DialogHeader,
-    DialogTitle,
-} from '@/components/ui/dialog';
 import { Plus, Syringe, Loader2, MoreVertical, Pencil, Trash2, Calendar, Clock, AlertTriangle, CheckCircle } from 'lucide-react';
 import { toast } from 'sonner';
 import { format, isPast, addMonths, differenceInDays } from 'date-fns';
 import { fr } from 'date-fns/locale';
+import { useWindowManager } from '@/contexts/WindowManagerContext';
+import AppWindow from '../AppWindow';
 
 interface VaccinationsCardProps {
     patientId: string;
@@ -78,11 +73,52 @@ const INJECTION_SITES = [
 ];
 
 const VaccinationsCard = ({ patientId }: VaccinationsCardProps) => {
+    const { maxZIndex } = useWindowManager();
     const [vaccinations, setVaccinations] = useState<Vaccination[]>([]);
     const [loading, setLoading] = useState(true);
     const [dialogOpen, setDialogOpen] = useState(false);
     const [editingVacc, setEditingVacc] = useState<Vaccination | null>(null);
     const [saving, setSaving] = useState(false);
+    const [selectedIds, setSelectedIds] = useState<string[]>([]);
+
+    const handleSelectAll = (checked: boolean) => {
+        if (checked) {
+            const uniqueIds: string[] = [];
+            const seen = new Set<string>();
+            // Select only the latest dose (visible one) for each unique vaccine
+            // Assuming vaccinations is sorted desc
+            vaccinations.forEach(v => {
+                if (!seen.has(v.vaccine_name)) {
+                    seen.add(v.vaccine_name);
+                    uniqueIds.push(v.id);
+                }
+            });
+            setSelectedIds(uniqueIds);
+        } else {
+            setSelectedIds([]);
+        }
+    };
+
+    const handleSelect = (id: string, checked: boolean) => {
+        if (checked) setSelectedIds(prev => [...prev, id]);
+        else setSelectedIds(prev => prev.filter(i => i !== id));
+    };
+
+    const handleBulkDelete = async () => {
+        if (!selectedIds.length) return;
+        if (!window.confirm(`Supprimer ${selectedIds.length} vaccinations ?`)) return;
+
+        try {
+            const { error } = await supabase.from('patient_vaccinations').delete().in('id', selectedIds);
+            if (error) throw error;
+            toast.success(`${selectedIds.length} vaccinations supprimées`);
+            setSelectedIds([]);
+            fetchData();
+        } catch (err) {
+            console.error(err);
+            toast.error('Erreur lors de la suppression multiple');
+        }
+    };
 
     const [formData, setFormData] = useState({
         vaccine_name: '',
@@ -95,11 +131,7 @@ const VaccinationsCard = ({ patientId }: VaccinationsCardProps) => {
         notes: '',
     });
 
-    useEffect(() => {
-        fetchData();
-    }, [patientId]);
-
-    const fetchData = async () => {
+    const fetchData = useCallback(async () => {
         setLoading(true);
         const { data } = await supabase
             .from('patient_vaccinations')
@@ -108,7 +140,11 @@ const VaccinationsCard = ({ patientId }: VaccinationsCardProps) => {
             .order('vaccination_date', { ascending: false });
         setVaccinations(data || []);
         setLoading(false);
-    };
+    }, [patientId]);
+
+    useEffect(() => {
+        fetchData();
+    }, [fetchData]);
 
     const openAddDialog = () => {
         setEditingVacc(null);
@@ -251,11 +287,35 @@ const VaccinationsCard = ({ patientId }: VaccinationsCardProps) => {
                 </div>
             ) : (
                 <div className="space-y-2">
+                    <div className="flex items-center space-x-2 mb-2 p-2 bg-muted/20 rounded-lg justify-between">
+                        <div className="flex items-center space-x-2">
+                            <Checkbox
+                                id="select-all-vax"
+                                // Crude approximation for isAllSelected: if selected count matches visible count (group count)
+                                checked={Object.keys(vaccineGroups).length > 0 && selectedIds.length === Object.keys(vaccineGroups).length}
+                                onCheckedChange={(c) => handleSelectAll(c as boolean)}
+                            />
+                            <Label htmlFor="select-all-vax" className="text-xs text-muted-foreground cursor-pointer">
+                                Tout sélectionner
+                            </Label>
+                        </div>
+                        {selectedIds.length > 0 && (
+                            <Button variant="destructive" size="sm" onClick={handleBulkDelete} className="h-7 text-xs">
+                                <Trash2 className="h-3 w-3 mr-2" /> Supprimer ({selectedIds.length})
+                            </Button>
+                        )}
+                    </div>
+
                     {Object.entries(vaccineGroups).map(([name, doses]) => {
                         const latestDose = doses[0];
                         return (
                             <div key={name} className="p-3 rounded-lg border bg-card">
                                 <div className="flex items-start gap-3">
+                                    <Checkbox
+                                        className="mt-1"
+                                        checked={selectedIds.includes(latestDose.id)}
+                                        onCheckedChange={(c) => handleSelect(latestDose.id, c as boolean)}
+                                    />
                                     <div className="p-2 rounded-lg bg-cyan-500/10 text-cyan-500">
                                         <Syringe className="h-4 w-4" />
                                     </div>
@@ -313,97 +373,99 @@ const VaccinationsCard = ({ patientId }: VaccinationsCardProps) => {
                 </div>
             )}
 
-            {/* Add/Edit Dialog */}
-            <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-                <DialogContent className="max-w-md">
-                    <DialogHeader>
-                        <DialogTitle>{editingVacc ? 'Modifier la vaccination' : 'Ajouter une vaccination'}</DialogTitle>
-                        <DialogDescription>Renseignez les informations du vaccin</DialogDescription>
-                    </DialogHeader>
-
-                    <div className="space-y-4 py-4">
-                        <div className="space-y-2">
-                            <Label>Vaccin *</Label>
-                            <Select value={formData.vaccine_name} onValueChange={handleVaccineSelect}>
-                                <SelectTrigger><SelectValue placeholder="Sélectionner..." /></SelectTrigger>
-                                <SelectContent>
-                                    {VACCINES.map((v) => (
-                                        <SelectItem key={v.name} value={v.name}>{v.name}</SelectItem>
-                                    ))}
-                                </SelectContent>
-                            </Select>
-                        </div>
-
-                        <div className="grid grid-cols-2 gap-4">
+            {dialogOpen && (
+                <AppWindow
+                    id={`vacc-form-${patientId}`}
+                    title={editingVacc ? 'Modifier la vaccination' : 'Ajouter une vaccination'}
+                    onClose={() => setDialogOpen(false)}
+                    zIndex={maxZIndex + 10}
+                    defaultSize={{ width: 500, height: 600 }}
+                >
+                    <div className="space-y-6">
+                        <div className="space-y-4 py-2">
                             <div className="space-y-2">
-                                <Label>Dose n°</Label>
-                                <Input
-                                    type="number"
-                                    min={1}
-                                    value={formData.dose_number}
-                                    onChange={(e) => setFormData({ ...formData, dose_number: parseInt(e.target.value) || 1 })}
-                                />
-                            </div>
-                            <div className="space-y-2">
-                                <Label>Date d'administration *</Label>
-                                <Input
-                                    type="date"
-                                    value={formData.vaccination_date}
-                                    onChange={(e) => setFormData({ ...formData, vaccination_date: e.target.value })}
-                                />
-                            </div>
-                        </div>
-
-                        <div className="space-y-2">
-                            <Label>Prochaine dose prévue</Label>
-                            <Input
-                                type="date"
-                                value={formData.next_dose_date}
-                                onChange={(e) => setFormData({ ...formData, next_dose_date: e.target.value })}
-                            />
-                        </div>
-
-                        <div className="grid grid-cols-2 gap-4">
-                            <div className="space-y-2">
-                                <Label>N° de lot</Label>
-                                <Input
-                                    placeholder="ABC123..."
-                                    value={formData.lot_number}
-                                    onChange={(e) => setFormData({ ...formData, lot_number: e.target.value })}
-                                />
-                            </div>
-                            <div className="space-y-2">
-                                <Label>Site d'injection</Label>
-                                <Select value={formData.site} onValueChange={(v) => setFormData({ ...formData, site: v })}>
-                                    <SelectTrigger><SelectValue /></SelectTrigger>
+                                <Label>Vaccin *</Label>
+                                <Select value={formData.vaccine_name} onValueChange={handleVaccineSelect}>
+                                    <SelectTrigger><SelectValue placeholder="Sélectionner..." /></SelectTrigger>
                                     <SelectContent>
-                                        {INJECTION_SITES.map((s) => (
-                                            <SelectItem key={s.value} value={s.value}>{s.label}</SelectItem>
+                                        {VACCINES.map((v) => (
+                                            <SelectItem key={v.name} value={v.name}>{v.name}</SelectItem>
                                         ))}
                                     </SelectContent>
                                 </Select>
                             </div>
+
+                            <div className="grid grid-cols-2 gap-4">
+                                <div className="space-y-2">
+                                    <Label>Dose n°</Label>
+                                    <Input
+                                        type="number"
+                                        min={1}
+                                        value={formData.dose_number}
+                                        onChange={(e) => setFormData({ ...formData, dose_number: parseInt(e.target.value) || 1 })}
+                                    />
+                                </div>
+                                <div className="space-y-2">
+                                    <Label>Date d'administration *</Label>
+                                    <Input
+                                        type="date"
+                                        value={formData.vaccination_date}
+                                        onChange={(e) => setFormData({ ...formData, vaccination_date: e.target.value })}
+                                    />
+                                </div>
+                            </div>
+
+                            <div className="space-y-2">
+                                <Label>Prochaine dose prévue</Label>
+                                <Input
+                                    type="date"
+                                    value={formData.next_dose_date}
+                                    onChange={(e) => setFormData({ ...formData, next_dose_date: e.target.value })}
+                                />
+                            </div>
+
+                            <div className="grid grid-cols-2 gap-4">
+                                <div className="space-y-2">
+                                    <Label>N° de lot</Label>
+                                    <Input
+                                        placeholder="ABC123..."
+                                        value={formData.lot_number}
+                                        onChange={(e) => setFormData({ ...formData, lot_number: e.target.value })}
+                                    />
+                                </div>
+                                <div className="space-y-2">
+                                    <Label>Site d'injection</Label>
+                                    <Select value={formData.site} onValueChange={(v) => setFormData({ ...formData, site: v })}>
+                                        <SelectTrigger><SelectValue /></SelectTrigger>
+                                        <SelectContent>
+                                            {INJECTION_SITES.map((s) => (
+                                                <SelectItem key={s.value} value={s.value}>{s.label}</SelectItem>
+                                            ))}
+                                        </SelectContent>
+                                    </Select>
+                                </div>
+                            </div>
+
+                            <div className="space-y-2">
+                                <Label>Administré par</Label>
+                                <Input
+                                    placeholder="Dr / Infirmier..."
+                                    value={formData.administered_by}
+                                    onChange={(e) => setFormData({ ...formData, administered_by: e.target.value })}
+                                />
+                            </div>
                         </div>
 
-                        <div className="space-y-2">
-                            <Label>Administré par</Label>
-                            <Input
-                                placeholder="Dr / Infirmier..."
-                                value={formData.administered_by}
-                                onChange={(e) => setFormData({ ...formData, administered_by: e.target.value })}
-                            />
+                        <div className="flex justify-end gap-2 pt-4 border-t border-border/10">
+                            <Button variant="outline" onClick={() => setDialogOpen(false)}>Annuler</Button>
+                            <Button onClick={handleSave} disabled={saving}>
+                                {saving && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                                {editingVacc ? 'Mettre à jour' : 'Ajouter'}
+                            </Button>
                         </div>
                     </div>
-
-                    <div className="flex justify-end gap-2">
-                        <Button variant="outline" onClick={() => setDialogOpen(false)}>Annuler</Button>
-                        <Button onClick={handleSave} disabled={saving}>
-                            {saving && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
-                            {editingVacc ? 'Mettre à jour' : 'Ajouter'}
-                        </Button>
-                    </div>
-                </DialogContent>
-            </Dialog>
+                </AppWindow>
+            )}
         </div>
     );
 };

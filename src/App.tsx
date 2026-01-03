@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route, useLocation } from "react-router-dom";
 import { AuthProvider } from "@/hooks/useAuth";
 import { TranslationProvider } from "@/contexts/TranslationContext";
+import { WindowManagerProvider } from "@/contexts/WindowManagerContext";
 import ProtectedRoute from "@/components/auth/ProtectedRoute";
 import PageTransition from "@/components/layout/PageTransition";
 import Index from "./pages/Index";
@@ -64,15 +65,17 @@ const App = () => (
   <QueryClientProvider client={queryClient}>
     <ThemeProvider defaultTheme="light" storageKey="vite-ui-theme" attribute="class" enableSystem>
       <TranslationProvider>
-        <TooltipProvider>
-          <Toaster />
-          <Sonner />
-          <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
-            <AuthProvider>
-              <AnimatedRoutes />
-            </AuthProvider>
-          </BrowserRouter>
-        </TooltipProvider>
+        <WindowManagerProvider>
+          <TooltipProvider>
+            <Toaster />
+            <Sonner />
+            <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+              <AuthProvider>
+                <AnimatedRoutes />
+              </AuthProvider>
+            </BrowserRouter>
+          </TooltipProvider>
+        </WindowManagerProvider>
       </TranslationProvider>
     </ThemeProvider>
   </QueryClientProvider>

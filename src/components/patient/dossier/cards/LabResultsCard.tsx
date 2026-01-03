@@ -8,13 +8,14 @@ import { supabase } from '@/integrations/supabase/client';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { toast } from 'sonner';
 import { DocumentUploadDialog } from '@/components/patient/DocumentUploadDialog';
+import { useWindowManager } from '@/contexts/WindowManagerContext';
+import AppWindow from '../AppWindow';
 import {
     Plus, FlaskConical, Loader2, MoreVertical, Pencil, Trash2,
     TrendingUp, TrendingDown, Minus, AlertTriangle, Calendar, Upload
@@ -54,6 +55,7 @@ const LAB_CATEGORIES = [
 ];
 
 const LabResultsCard = ({ patientId }: LabResultsCardProps) => {
+    const { maxZIndex } = useWindowManager();
     const [results, setResults] = useState<LabResult[]>([]);
     const [loading, setLoading] = useState(true);
     const [dialogOpen, setDialogOpen] = useState(false);
@@ -334,15 +336,17 @@ const LabResultsCard = ({ patientId }: LabResultsCardProps) => {
                 </TabsContent>
             </Tabs>
 
-            {/* Add/Edit Dialog */}
-            <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-                <DialogContent>
-                    <DialogHeader>
-                        <DialogTitle>{editing ? 'Modifier le résultat' : 'Nouveau résultat'}</DialogTitle>
-                    </DialogHeader>
-                    <div className="space-y-4">
+            {dialogOpen && (
+                <AppWindow
+                    id={`lab-form-${patientId}`}
+                    title={editing ? 'Modifier le résultat' : 'Nouveau résultat'}
+                    onClose={() => setDialogOpen(false)}
+                    zIndex={maxZIndex + 10}
+                    defaultSize={{ width: 550, height: 600 }}
+                >
+                    <div className="space-y-6">
                         <div className="grid grid-cols-2 gap-4">
-                            <div className="col-span-2">
+                            <div className="col-span-2 space-y-2">
                                 <Label>Nom du test *</Label>
                                 <Input
                                     value={formData.test_name}
@@ -350,7 +354,7 @@ const LabResultsCard = ({ patientId }: LabResultsCardProps) => {
                                     placeholder="Ex: Créatinine"
                                 />
                             </div>
-                            <div>
+                            <div className="space-y-2">
                                 <Label>Catégorie</Label>
                                 <Select
                                     value={formData.test_category}
@@ -366,7 +370,7 @@ const LabResultsCard = ({ patientId }: LabResultsCardProps) => {
                                     </SelectContent>
                                 </Select>
                             </div>
-                            <div>
+                            <div className="space-y-2">
                                 <Label>Date</Label>
                                 <Input
                                     type="date"
@@ -374,7 +378,7 @@ const LabResultsCard = ({ patientId }: LabResultsCardProps) => {
                                     onChange={e => setFormData({ ...formData, test_date: e.target.value })}
                                 />
                             </div>
-                            <div>
+                            <div className="space-y-2">
                                 <Label>Valeur *</Label>
                                 <Input
                                     type="number"
@@ -384,7 +388,7 @@ const LabResultsCard = ({ patientId }: LabResultsCardProps) => {
                                     placeholder="0.00"
                                 />
                             </div>
-                            <div>
+                            <div className="space-y-2">
                                 <Label>Unité</Label>
                                 <Input
                                     value={formData.unit}
@@ -392,7 +396,7 @@ const LabResultsCard = ({ patientId }: LabResultsCardProps) => {
                                     placeholder="Ex: mg/dL"
                                 />
                             </div>
-                            <div>
+                            <div className="space-y-2">
                                 <Label>Réf. min</Label>
                                 <Input
                                     type="number"
@@ -401,7 +405,7 @@ const LabResultsCard = ({ patientId }: LabResultsCardProps) => {
                                     onChange={e => setFormData({ ...formData, reference_min: e.target.value })}
                                 />
                             </div>
-                            <div>
+                            <div className="space-y-2">
                                 <Label>Réf. max</Label>
                                 <Input
                                     type="number"
@@ -410,7 +414,7 @@ const LabResultsCard = ({ patientId }: LabResultsCardProps) => {
                                     onChange={e => setFormData({ ...formData, reference_max: e.target.value })}
                                 />
                             </div>
-                            <div className="col-span-2">
+                            <div className="col-span-2 space-y-2">
                                 <Label>Notes</Label>
                                 <Input
                                     value={formData.notes}
@@ -419,16 +423,16 @@ const LabResultsCard = ({ patientId }: LabResultsCardProps) => {
                                 />
                             </div>
                         </div>
+                        <div className="flex justify-end gap-2 pt-4 border-t border-border/10">
+                            <Button variant="outline" onClick={() => setDialogOpen(false)}>Annuler</Button>
+                            <Button onClick={handleSave} disabled={saving}>
+                                {saving && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                                {editing ? 'Mettre à jour' : 'Ajouter'}
+                            </Button>
+                        </div>
                     </div>
-                    <DialogFooter>
-                        <Button variant="outline" onClick={() => setDialogOpen(false)}>Annuler</Button>
-                        <Button onClick={handleSave} disabled={saving}>
-                            {saving && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
-                            {editing ? 'Mettre à jour' : 'Ajouter'}
-                        </Button>
-                    </DialogFooter>
-                </DialogContent>
-            </Dialog>
+                </AppWindow>
+            )}
 
             {/* Import Dialog */}
             <DocumentUploadDialog

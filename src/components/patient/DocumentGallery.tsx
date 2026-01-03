@@ -37,6 +37,7 @@ import {
     DropdownMenuItem,
     DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
+import { Checkbox } from '@/components/ui/checkbox';
 import {
     FolderOpen,
     Search,
@@ -109,6 +110,11 @@ const DocumentGallery = ({ patientId, onDocumentIntegrated }: DocumentGalleryPro
     const [documents, setDocuments] = useState<Document[]>([]);
     const [loading, setLoading] = useState(true);
     const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
+    const [selectedIds, setSelectedIds] = useState<string[]>([]);
+
+    // Derived state for selection
+    // Note: We'll calculate isAllSelected based on *filtered* documents effectively
+    // But simple check: are there selected items?
 
     // Filters
     const [searchQuery, setSearchQuery] = useState('');
@@ -198,7 +204,59 @@ const DocumentGallery = ({ patientId, onDocumentIntegrated }: DocumentGalleryPro
         }
 
         return filtered;
+        return filtered;
     }, [documents, searchQuery, categoryFilter, dateFilter, showIntegrated]);
+
+    const isAllSelected = filteredDocuments.length > 0 && filteredDocuments.every(d => selectedIds.includes(d.id));
+
+    // =====================================================
+    // SELECTION ACTIONS
+    // =====================================================
+
+    const handleSelectAll = (checked: boolean) => {
+        if (checked) {
+            // Select all visible (filtered) documents
+            const newIds = new Set(selectedIds);
+            filteredDocuments.forEach(d => newIds.add(d.id));
+            setSelectedIds(Array.from(newIds));
+        } else {
+            // Deselect all visible documents
+            const visibleIds = new Set(filteredDocuments.map(d => d.id));
+            setSelectedIds(selectedIds.filter(id => !visibleIds.has(id)));
+        }
+    };
+
+    const handleSelect = (id: string, checked: boolean) => {
+        if (checked) {
+            setSelectedIds(prev => [...prev, id]);
+        } else {
+            setSelectedIds(prev => prev.filter(item => item !== id));
+        }
+    };
+
+    const handleBulkDelete = async () => {
+        if (!confirm(`Voulez-vous vraiment supprimer ${selectedIds.length} documents ?`)) return;
+
+        const docsToDelete = documents.filter(d => selectedIds.includes(d.id));
+
+        try {
+            // Delete from storage
+            const pathsToRemove = docsToDelete.map(d => d.file_path);
+            if (pathsToRemove.length > 0) {
+                await supabase.storage.from('patient-documents').remove(pathsToRemove);
+            }
+
+            // Delete from DB
+            await supabase.from('patient_documents').delete().in('id', selectedIds);
+
+            toast.success(`${selectedIds.length} documents supprimés`);
+            setSelectedIds([]);
+            fetchDocuments();
+        } catch (error) {
+            console.error('Error deleting:', error);
+            toast.error('Erreur lors de la suppression multiple');
+        }
+    };
 
     // =====================================================
     // ACTIONS
@@ -416,6 +474,37 @@ const DocumentGallery = ({ patientId, onDocumentIntegrated }: DocumentGalleryPro
                     </div>
                 </div>
 
+                {/* Bulk Actions Bar */}
+                <div className="flex items-center justify-between mt-4 pb-2 border-b border-border/40">
+                    <div className="flex items-center space-x-2">
+                        <Checkbox
+                            id="select-all-docs"
+                            checked={isAllSelected}
+                            onCheckedChange={(checked) => handleSelectAll(checked as boolean)}
+                        />
+                        <label
+                            htmlFor="select-all-docs"
+                            className="text-sm text-muted-foreground cursor-pointer select-none"
+                        >
+                            Tout sélectionner ({filteredDocuments.length})
+                        </label>
+                    </div>
+
+                    {selectedIds.length > 0 && (
+                        <div className="flex items-center gap-2 animate-in fade-in slide-in-from-right-4 duration-300">
+                            <Button
+                                variant="destructive"
+                                size="sm"
+                                onClick={handleBulkDelete}
+                                className="h-8"
+                            >
+                                <Trash2 className="h-4 w-4 mr-2" />
+                                Supprimer la sélection ({selectedIds.length})
+                            </Button>
+                        </div>
+                    )}
+                </div>
+
                 {/* Category pills */}
                 <div className="flex flex-wrap gap-2 mt-3">
                     <Badge
@@ -502,9 +591,20 @@ const DocumentGallery = ({ patientId, onDocumentIntegrated }: DocumentGalleryPro
                                         )}
                                         onClick={() => handlePreview(doc)}
                                     >
+                                        {/* Selection Checkbox */}
+                                        <div
+                                            className="absolute top-2 left-2 z-20"
+                                            onClick={(e) => e.stopPropagation()}
+                                        >
+                                            <Checkbox
+                                                checked={selectedIds.includes(doc.id)}
+                                                onCheckedChange={(checked) => handleSelect(doc.id, checked as boolean)}
+                                                className="bg-background/80 backdrop-blur-sm border-2 border-primary/50 data-[state=checked]:bg-primary"
+                                            />
+                                        </div>
                                         {/* Integrated indicator */}
                                         {isIntegrated && (
-                                            <div className="absolute top-2 right-2 z-10">
+                                            <div className="absolute bottom-2 right-2 z-10">
                                                 <CheckCircle className="h-4 w-4 text-green-500" />
                                             </div>
                                         )}
@@ -526,7 +626,8 @@ const DocumentGallery = ({ patientId, onDocumentIntegrated }: DocumentGalleryPro
                                         </div>
 
                                         {/* Actions */}
-                                        <div className="absolute top-2 left-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                                        <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity z-20">
+                                            {isIntegrated && <div className="mb-2" />} {/* Spacer if integrated badge is present */}
                                             <DropdownMenu>
                                                 <DropdownMenuTrigger asChild>
                                                     <Button variant="secondary" size="icon" className="h-6 w-6">
@@ -568,6 +669,12 @@ const DocumentGallery = ({ patientId, onDocumentIntegrated }: DocumentGalleryPro
                                         )}
                                         onClick={() => handlePreview(doc)}
                                     >
+                                        <div onClick={(e) => e.stopPropagation()}>
+                                            <Checkbox
+                                                checked={selectedIds.includes(doc.id)}
+                                                onCheckedChange={(checked) => handleSelect(doc.id, checked as boolean)}
+                                            />
+                                        </div>
                                         <div className={cn("p-2 rounded-lg shrink-0", config.color)}>
                                             <Icon className="h-5 w-5" />
                                         </div>
@@ -677,7 +784,7 @@ const DocumentGallery = ({ patientId, onDocumentIntegrated }: DocumentGalleryPro
                     )}
                 </DialogContent>
             </Dialog>
-        </Card>
+        </Card >
     );
 };
 

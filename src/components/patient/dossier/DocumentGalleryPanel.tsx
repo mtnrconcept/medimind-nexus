@@ -27,12 +27,10 @@ import { toast } from 'sonner';
 import { format } from 'date-fns';
 import { fr } from 'date-fns/locale';
 import {
-    Dialog,
-    DialogContent,
-    DialogDescription,
     DialogHeader,
     DialogTitle,
 } from '@/components/ui/dialog';
+import { Checkbox } from '@/components/ui/checkbox';
 
 interface DocumentGalleryPanelProps {
     patientId: string;
@@ -59,6 +57,49 @@ const DocumentGalleryPanel = ({ patientId, onDataIntegrated }: DocumentGalleryPa
     const [analyzing, setAnalyzing] = useState<string | null>(null);
     const [previewDoc, setPreviewDoc] = useState<Document | null>(null);
     const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+    const [selectedIds, setSelectedIds] = useState<string[]>([]);
+
+    const isAllSelected = documents.length > 0 && selectedIds.length === documents.length;
+
+    const handleSelectAll = (checked: boolean) => {
+        if (checked) {
+            setSelectedIds(documents.map(d => d.id));
+        } else {
+            setSelectedIds([]);
+        }
+    };
+
+    const handleSelect = (id: string, checked: boolean) => {
+        if (checked) {
+            setSelectedIds(prev => [...prev, id]);
+        } else {
+            setSelectedIds(prev => prev.filter(item => item !== id));
+        }
+    };
+
+    const handleBulkDelete = async () => {
+        if (!confirm(`Voulez-vous vraiment supprimer ${selectedIds.length} documents ?`)) return;
+
+        const docsToDelete = documents.filter(d => selectedIds.includes(d.id));
+
+        try {
+            // Delete from storage
+            const pathsToRemove = docsToDelete.map(d => d.file_path);
+            if (pathsToRemove.length > 0) {
+                await supabase.storage.from('patient-documents').remove(pathsToRemove);
+            }
+
+            // Delete from DB
+            await supabase.from('patient_documents').delete().in('id', selectedIds);
+
+            toast.success(`${selectedIds.length} documents supprimés`);
+            setSelectedIds([]);
+            fetchDocuments();
+        } catch (error) {
+            toast.error('Erreur lors de la suppression multiple');
+            console.error(error);
+        }
+    };
 
     const fetchDocuments = useCallback(async () => {
         setLoading(true);
@@ -289,7 +330,35 @@ const DocumentGalleryPanel = ({ patientId, onDataIntegrated }: DocumentGalleryPa
                         </Button>
                     </label>
                 </div>
-                {uploading && <Progress value={uploadProgress} className="h-1 mt-2" />}
+                <div className="flex items-center justify-between mt-2">
+                    <div className="flex items-center space-x-2">
+                        <Checkbox
+                            id="select-all"
+                            checked={isAllSelected}
+                            onCheckedChange={(checked) => handleSelectAll(checked as boolean)}
+                        />
+                        <label
+                            htmlFor="select-all"
+                            className="text-xs text-muted-foreground cursor-pointer select-none"
+                        >
+                            Tout sélectionner
+                        </label>
+                    </div>
+
+                    {selectedIds.length > 0 && (
+                        <Button
+                            variant="destructive"
+                            size="sm"
+                            className="h-7 text-xs"
+                            onClick={handleBulkDelete}
+                        >
+                            <Trash2 className="h-3 w-3 mr-1" />
+                            Supprimer ({selectedIds.length})
+                        </Button>
+                    )}
+
+                    {selectedIds.length === 0 && uploading && <Progress value={uploadProgress} className="h-1 flex-1 ml-4" />}
+                </div>
             </CardHeader>
 
             <CardContent>
@@ -312,6 +381,10 @@ const DocumentGalleryPanel = ({ patientId, onDataIntegrated }: DocumentGalleryPa
                                     className="p-2 rounded-lg border bg-card hover:bg-muted/50 transition-colors"
                                 >
                                     <div className="flex items-center gap-2">
+                                        <Checkbox
+                                            checked={selectedIds.includes(doc.id)}
+                                            onCheckedChange={(checked) => handleSelect(doc.id, checked as boolean)}
+                                        />
                                         <div className="p-2 rounded bg-muted">
                                             {getFileIcon(doc.file_type)}
                                         </div>

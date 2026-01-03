@@ -3,7 +3,7 @@
  * Features: Consultation history, specialties, notes, follow-ups
  */
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -24,17 +24,12 @@ import {
     DropdownMenuSeparator,
     DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import {
-    Dialog,
-    DialogContent,
-    DialogDescription,
-    DialogHeader,
-    DialogTitle,
-} from '@/components/ui/dialog';
 import { Plus, CalendarDays, Loader2, MoreVertical, Pencil, Trash2, Calendar, Clock, User, MapPin } from 'lucide-react';
 import { toast } from 'sonner';
 import { format, isPast, isFuture } from 'date-fns';
 import { fr } from 'date-fns/locale';
+import { useWindowManager } from '@/contexts/WindowManagerContext';
+import AppWindow from '../AppWindow';
 
 interface ConsultationsCardProps {
     patientId: string;
@@ -76,6 +71,7 @@ const SPECIALTIES = [
 ];
 
 const ConsultationsCard = ({ patientId }: ConsultationsCardProps) => {
+    const { maxZIndex } = useWindowManager();
     const [consultations, setConsultations] = useState<Consultation[]>([]);
     const [loading, setLoading] = useState(true);
     const [dialogOpen, setDialogOpen] = useState(false);
@@ -94,11 +90,7 @@ const ConsultationsCard = ({ patientId }: ConsultationsCardProps) => {
         notes: '',
     });
 
-    useEffect(() => {
-        fetchData();
-    }, [patientId]);
-
-    const fetchData = async () => {
+    const fetchData = useCallback(async () => {
         setLoading(true);
         const { data } = await supabase
             .from('patient_consultations')
@@ -107,7 +99,11 @@ const ConsultationsCard = ({ patientId }: ConsultationsCardProps) => {
             .order('consultation_date', { ascending: false });
         setConsultations(data || []);
         setLoading(false);
-    };
+    }, [patientId]);
+
+    useEffect(() => {
+        fetchData();
+    }, [fetchData]);
 
     const openAddDialog = () => {
         setEditing(null);
@@ -268,72 +264,75 @@ const ConsultationsCard = ({ patientId }: ConsultationsCardProps) => {
                 </div>
             )}
 
-            <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-                <DialogContent className="max-w-md">
-                    <DialogHeader>
-                        <DialogTitle>{editing ? 'Modifier la consultation' : 'Ajouter une consultation'}</DialogTitle>
-                        <DialogDescription>Renseignez les informations de la consultation</DialogDescription>
-                    </DialogHeader>
-
-                    <div className="space-y-4 py-4 max-h-[60vh] overflow-y-auto">
-                        <div className="grid grid-cols-2 gap-4">
-                            <div className="space-y-2">
-                                <Label>Date</Label>
-                                <Input type="date" value={formData.consultation_date} onChange={(e) => setFormData({ ...formData, consultation_date: e.target.value })} />
+            {dialogOpen && (
+                <AppWindow
+                    id={`consult-form-${patientId}`}
+                    title={editing ? 'Modifier la consultation' : 'Ajouter une consultation'}
+                    onClose={() => setDialogOpen(false)}
+                    zIndex={maxZIndex + 10}
+                    defaultSize={{ width: 500, height: 600 }}
+                >
+                    <div className="space-y-6">
+                        <div className="space-y-4 py-2">
+                            <div className="grid grid-cols-2 gap-4">
+                                <div className="space-y-2">
+                                    <Label>Date</Label>
+                                    <Input type="date" value={formData.consultation_date} onChange={(e) => setFormData({ ...formData, consultation_date: e.target.value })} />
+                                </div>
+                                <div className="space-y-2">
+                                    <Label>Spécialité</Label>
+                                    <Select value={formData.specialty} onValueChange={(v) => setFormData({ ...formData, specialty: v })}>
+                                        <SelectTrigger><SelectValue /></SelectTrigger>
+                                        <SelectContent>
+                                            {SPECIALTIES.map((s) => (
+                                                <SelectItem key={s.value} value={s.value}>{s.label}</SelectItem>
+                                            ))}
+                                        </SelectContent>
+                                    </Select>
+                                </div>
                             </div>
+
                             <div className="space-y-2">
-                                <Label>Spécialité</Label>
-                                <Select value={formData.specialty} onValueChange={(v) => setFormData({ ...formData, specialty: v })}>
-                                    <SelectTrigger><SelectValue /></SelectTrigger>
-                                    <SelectContent>
-                                        {SPECIALTIES.map((s) => (
-                                            <SelectItem key={s.value} value={s.value}>{s.label}</SelectItem>
-                                        ))}
-                                    </SelectContent>
-                                </Select>
+                                <Label>Médecin *</Label>
+                                <Input placeholder="Dr..." value={formData.physician_name} onChange={(e) => setFormData({ ...formData, physician_name: e.target.value })} />
+                            </div>
+
+                            <div className="space-y-2">
+                                <Label>Établissement</Label>
+                                <Input value={formData.facility} onChange={(e) => setFormData({ ...formData, facility: e.target.value })} />
+                            </div>
+
+                            <div className="space-y-2">
+                                <Label>Motif</Label>
+                                <Input value={formData.reason} onChange={(e) => setFormData({ ...formData, reason: e.target.value })} />
+                            </div>
+
+                            <div className="space-y-2">
+                                <Label>Diagnostic / Conclusion</Label>
+                                <Textarea value={formData.diagnosis} onChange={(e) => setFormData({ ...formData, diagnosis: e.target.value })} rows={2} />
+                            </div>
+
+                            <div className="space-y-2">
+                                <Label>Plan de traitement</Label>
+                                <Textarea value={formData.treatment_plan} onChange={(e) => setFormData({ ...formData, treatment_plan: e.target.value })} rows={2} />
+                            </div>
+
+                            <div className="space-y-2">
+                                <Label>Suivi prévu le</Label>
+                                <Input type="date" value={formData.follow_up_date} onChange={(e) => setFormData({ ...formData, follow_up_date: e.target.value })} />
                             </div>
                         </div>
 
-                        <div className="space-y-2">
-                            <Label>Médecin *</Label>
-                            <Input placeholder="Dr..." value={formData.physician_name} onChange={(e) => setFormData({ ...formData, physician_name: e.target.value })} />
-                        </div>
-
-                        <div className="space-y-2">
-                            <Label>Établissement</Label>
-                            <Input value={formData.facility} onChange={(e) => setFormData({ ...formData, facility: e.target.value })} />
-                        </div>
-
-                        <div className="space-y-2">
-                            <Label>Motif</Label>
-                            <Input value={formData.reason} onChange={(e) => setFormData({ ...formData, reason: e.target.value })} />
-                        </div>
-
-                        <div className="space-y-2">
-                            <Label>Diagnostic / Conclusion</Label>
-                            <Textarea value={formData.diagnosis} onChange={(e) => setFormData({ ...formData, diagnosis: e.target.value })} rows={2} />
-                        </div>
-
-                        <div className="space-y-2">
-                            <Label>Plan de traitement</Label>
-                            <Textarea value={formData.treatment_plan} onChange={(e) => setFormData({ ...formData, treatment_plan: e.target.value })} rows={2} />
-                        </div>
-
-                        <div className="space-y-2">
-                            <Label>Suivi prévu le</Label>
-                            <Input type="date" value={formData.follow_up_date} onChange={(e) => setFormData({ ...formData, follow_up_date: e.target.value })} />
+                        <div className="flex justify-end gap-2 pt-4 border-t border-border/10">
+                            <Button variant="outline" onClick={() => setDialogOpen(false)}>Annuler</Button>
+                            <Button onClick={handleSave} disabled={saving}>
+                                {saving && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                                {editing ? 'Mettre à jour' : 'Ajouter'}
+                            </Button>
                         </div>
                     </div>
-
-                    <div className="flex justify-end gap-2">
-                        <Button variant="outline" onClick={() => setDialogOpen(false)}>Annuler</Button>
-                        <Button onClick={handleSave} disabled={saving}>
-                            {saving && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
-                            {editing ? 'Mettre à jour' : 'Ajouter'}
-                        </Button>
-                    </div>
-                </DialogContent>
-            </Dialog>
+                </AppWindow>
+            )}
         </div>
     );
 };

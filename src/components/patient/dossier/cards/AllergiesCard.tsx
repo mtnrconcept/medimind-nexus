@@ -11,6 +11,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
+import { Checkbox } from '@/components/ui/checkbox';
 import {
     Select,
     SelectContent,
@@ -25,16 +26,11 @@ import {
     DropdownMenuSeparator,
     DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import {
-    Dialog,
-    DialogContent,
-    DialogDescription,
-    DialogHeader,
-    DialogTitle,
-} from '@/components/ui/dialog';
 import { Plus, AlertTriangle, Pill, Apple, Leaf, Hand, Loader2, MoreVertical, Pencil, Trash2, Check, Search, Globe } from 'lucide-react';
 import { toast } from 'sonner';
 import { SearchableSelect, SelectOption } from '@/components/ui/searchable-select';
+import { useWindowManager } from '@/contexts/WindowManagerContext';
+import AppWindow from '../AppWindow';
 
 interface AllergiesCardProps {
     patientId: string;
@@ -79,11 +75,39 @@ const COMMON_ALLERGENS = {
 };
 
 const AllergiesCard = ({ patientId }: AllergiesCardProps) => {
+    const { maxZIndex } = useWindowManager();
     const [allergies, setAllergies] = useState<Allergy[]>([]);
     const [loading, setLoading] = useState(true);
     const [dialogOpen, setDialogOpen] = useState(false);
     const [editingAllergy, setEditingAllergy] = useState<Allergy | null>(null);
     const [saving, setSaving] = useState(false);
+    const [selectedIds, setSelectedIds] = useState<string[]>([]);
+
+    const handleSelectAll = (checked: boolean) => {
+        if (checked) setSelectedIds(allergies.map(a => a.id));
+        else setSelectedIds([]);
+    };
+
+    const handleSelect = (id: string, checked: boolean) => {
+        if (checked) setSelectedIds(prev => [...prev, id]);
+        else setSelectedIds(prev => prev.filter(i => i !== id));
+    };
+
+    const handleBulkDelete = async () => {
+        if (!selectedIds.length) return;
+        if (!window.confirm(`Supprimer ${selectedIds.length} allergies ?`)) return;
+
+        try {
+            const { error } = await supabase.from('patient_allergies').delete().in('id', selectedIds);
+            if (error) throw error;
+            toast.success(`${selectedIds.length} allergies supprimées`);
+            setSelectedIds([]);
+            fetchData();
+        } catch (err) {
+            console.error(err);
+            toast.error('Erreur lors de la suppression multiple');
+        }
+    };
 
     // Form state
     const [formData, setFormData] = useState({
@@ -341,12 +365,34 @@ const AllergiesCard = ({ patientId }: AllergiesCardProps) => {
                 </div>
             ) : (
                 <div className="space-y-2">
+                    <div className="flex items-center space-x-2 mb-2 p-2 bg-muted/20 rounded-lg justify-between">
+                        <div className="flex items-center space-x-2">
+                            <Checkbox
+                                id="select-all-allergies"
+                                checked={allergies.length > 0 && selectedIds.length === allergies.length}
+                                onCheckedChange={(c) => handleSelectAll(c as boolean)}
+                            />
+                            <Label htmlFor="select-all-allergies" className="text-xs text-muted-foreground cursor-pointer">
+                                Tout sélectionner
+                            </Label>
+                        </div>
+                        {selectedIds.length > 0 && (
+                            <Button variant="destructive" size="sm" onClick={handleBulkDelete} className="h-7 text-xs">
+                                <Trash2 className="h-3 w-3 mr-2" /> Supprimer ({selectedIds.length})
+                            </Button>
+                        )}
+                    </div>
+
                     {allergies.map((allergy) => (
                         <div
                             key={allergy.id}
                             className={`p-3 rounded-lg border ${getSeverityColor(allergy.severity)} ${!allergy.confirmed ? 'opacity-60' : ''}`}
                         >
                             <div className="flex items-center gap-3">
+                                <Checkbox
+                                    checked={selectedIds.includes(allergy.id)}
+                                    onCheckedChange={(c) => handleSelect(allergy.id, c as boolean)}
+                                />
                                 <div className="p-2 rounded-lg bg-background/50">
                                     {getTypeIcon(allergy.allergy_type)}
                                 </div>
@@ -393,144 +439,142 @@ const AllergiesCard = ({ patientId }: AllergiesCardProps) => {
                 </div>
             )}
 
-            {/* Add/Edit Dialog */}
-            <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-                <DialogContent>
-                    <DialogHeader>
-                        <DialogTitle>
-                            {editingAllergy ? 'Modifier l\'allergie' : 'Ajouter une allergie'}
-                        </DialogTitle>
-                        <DialogDescription>
-                            Renseignez les informations de l'allergie
-                        </DialogDescription>
-                    </DialogHeader>
+            {dialogOpen && (
+                <AppWindow
+                    id={`allergy-form-${patientId}`}
+                    title={editingAllergy ? 'Modifier l\'allergie' : 'Ajouter une allergie'}
+                    onClose={() => setDialogOpen(false)}
+                    zIndex={maxZIndex + 10}
+                    defaultSize={{ width: 500, height: 600 }}
+                >
+                    <div className="space-y-6">
+                        <div className="space-y-4 py-2">
+                            <div className="space-y-2">
+                                <Label>Type d'allergie</Label>
+                                <Select
+                                    value={formData.allergy_type}
+                                    onValueChange={(value) => setFormData({ ...formData, allergy_type: value, allergen: '' })}
+                                >
+                                    <SelectTrigger>
+                                        <SelectValue />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        {ALLERGY_TYPES.map((type) => (
+                                            <SelectItem key={type.value} value={type.value}>
+                                                <div className="flex items-center gap-2">
+                                                    <type.icon className="h-4 w-4" />
+                                                    {type.label}
+                                                </div>
+                                            </SelectItem>
+                                        ))}
+                                    </SelectContent>
+                                </Select>
+                            </div>
 
-                    <div className="space-y-4 py-4">
-                        <div className="space-y-2">
-                            <Label>Type d'allergie</Label>
-                            <Select
-                                value={formData.allergy_type}
-                                onValueChange={(value) => setFormData({ ...formData, allergy_type: value, allergen: '' })}
-                            >
-                                <SelectTrigger>
-                                    <SelectValue />
-                                </SelectTrigger>
-                                <SelectContent>
-                                    {ALLERGY_TYPES.map((type) => (
-                                        <SelectItem key={type.value} value={type.value}>
-                                            <div className="flex items-center gap-2">
-                                                <type.icon className="h-4 w-4" />
-                                                {type.label}
-                                            </div>
-                                        </SelectItem>
-                                    ))}
-                                </SelectContent>
-                            </Select>
-                        </div>
-
-                        <div className="space-y-2">
-                            <Label>Allergène</Label>
-                            {formData.allergy_type === 'medication' ? (
-                                <>
-                                    <SearchableSelect
-                                        options={medicationOptions}
-                                        value={formData.allergen}
-                                        onValueChange={(v) => {
-                                            setFormData({ ...formData, allergen: v });
-                                            if (v !== '__custom__') setCustomAllergen('');
-                                        }}
-                                        onSearch={handleMedicationSearch}
-                                        placeholder="Sélectionner ou rechercher..."
-                                        searchPlaceholder="Taper un médicament..."
-                                        loading={medicationsLoading}
-                                        externalSearch={true}
-                                    />
-                                    {formData.allergen === '__custom__' && (
-                                        <Input
-                                            className="mt-2"
-                                            placeholder="Saisir l'allergène..."
-                                            value={customAllergen}
-                                            onChange={(e) => setCustomAllergen(e.target.value)}
+                            <div className="space-y-2">
+                                <Label>Allergène</Label>
+                                {formData.allergy_type === 'medication' ? (
+                                    <>
+                                        <SearchableSelect
+                                            options={medicationOptions}
+                                            value={formData.allergen}
+                                            onValueChange={(v) => {
+                                                setFormData({ ...formData, allergen: v });
+                                                if (v !== '__custom__') setCustomAllergen('');
+                                            }}
+                                            onSearch={handleMedicationSearch}
+                                            placeholder="Sélectionner ou rechercher..."
+                                            searchPlaceholder="Taper un médicament..."
+                                            loading={medicationsLoading}
+                                            externalSearch={true}
                                         />
-                                    )}
-                                </>
-                            ) : (
-                                <>
-                                    <Select
-                                        value={formData.allergen}
-                                        onValueChange={(value) => setFormData({ ...formData, allergen: value })}
-                                    >
-                                        <SelectTrigger>
-                                            <SelectValue placeholder="Sélectionner ou saisir..." />
-                                        </SelectTrigger>
-                                        <SelectContent>
-                                            {getAllergenOptions().map((a) => (
-                                                <SelectItem key={a.value} value={a.value}>{a.label}</SelectItem>
-                                            ))}
-                                        </SelectContent>
-                                    </Select>
-                                    {formData.allergen === '__custom__' && (
-                                        <Input
-                                            className="mt-2"
-                                            placeholder="Saisir l'allergène..."
-                                            value={customAllergen}
-                                            onChange={(e) => setCustomAllergen(e.target.value)}
-                                        />
-                                    )}
-                                </>
-                            )}
+                                        {formData.allergen === '__custom__' && (
+                                            <Input
+                                                className="mt-2"
+                                                placeholder="Saisir l'allergène..."
+                                                value={customAllergen}
+                                                onChange={(e) => setCustomAllergen(e.target.value)}
+                                            />
+                                        )}
+                                    </>
+                                ) : (
+                                    <>
+                                        <Select
+                                            value={formData.allergen}
+                                            onValueChange={(value) => setFormData({ ...formData, allergen: value })}
+                                        >
+                                            <SelectTrigger>
+                                                <SelectValue placeholder="Sélectionner ou saisir..." />
+                                            </SelectTrigger>
+                                            <SelectContent>
+                                                {getAllergenOptions().map((a) => (
+                                                    <SelectItem key={a.value} value={a.value}>{a.label}</SelectItem>
+                                                ))}
+                                            </SelectContent>
+                                        </Select>
+                                        {formData.allergen === '__custom__' && (
+                                            <Input
+                                                className="mt-2"
+                                                placeholder="Saisir l'allergène..."
+                                                value={customAllergen}
+                                                onChange={(e) => setCustomAllergen(e.target.value)}
+                                            />
+                                        )}
+                                    </>
+                                )}
+                            </div>
+
+                            <div className="space-y-2">
+                                <Label>Sévérité</Label>
+                                <Select
+                                    value={formData.severity}
+                                    onValueChange={(value) => setFormData({ ...formData, severity: value })}
+                                >
+                                    <SelectTrigger>
+                                        <SelectValue />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        {SEVERITY_OPTIONS.map((sev) => (
+                                            <SelectItem key={sev.value} value={sev.value}>
+                                                <Badge className={sev.color}>{sev.label}</Badge>
+                                            </SelectItem>
+                                        ))}
+                                    </SelectContent>
+                                </Select>
+                            </div>
+
+                            <div className="space-y-2">
+                                <Label>Réaction</Label>
+                                <Textarea
+                                    placeholder="Décrivez la réaction allergique..."
+                                    value={formData.reaction}
+                                    onChange={(e) => setFormData({ ...formData, reaction: e.target.value })}
+                                    rows={2}
+                                />
+                            </div>
+
+                            <div className="space-y-2">
+                                <Label>Date de découverte (optionnel)</Label>
+                                <Input
+                                    type="date"
+                                    value={formData.onset_date}
+                                    onChange={(e) => setFormData({ ...formData, onset_date: e.target.value })}
+                                />
+                            </div>
                         </div>
 
-                        <div className="space-y-2">
-                            <Label>Sévérité</Label>
-                            <Select
-                                value={formData.severity}
-                                onValueChange={(value) => setFormData({ ...formData, severity: value })}
-                            >
-                                <SelectTrigger>
-                                    <SelectValue />
-                                </SelectTrigger>
-                                <SelectContent>
-                                    {SEVERITY_OPTIONS.map((sev) => (
-                                        <SelectItem key={sev.value} value={sev.value}>
-                                            <Badge className={sev.color}>{sev.label}</Badge>
-                                        </SelectItem>
-                                    ))}
-                                </SelectContent>
-                            </Select>
-                        </div>
-
-                        <div className="space-y-2">
-                            <Label>Réaction</Label>
-                            <Textarea
-                                placeholder="Décrivez la réaction allergique..."
-                                value={formData.reaction}
-                                onChange={(e) => setFormData({ ...formData, reaction: e.target.value })}
-                                rows={2}
-                            />
-                        </div>
-
-                        <div className="space-y-2">
-                            <Label>Date de découverte (optionnel)</Label>
-                            <Input
-                                type="date"
-                                value={formData.onset_date}
-                                onChange={(e) => setFormData({ ...formData, onset_date: e.target.value })}
-                            />
+                        <div className="flex justify-end gap-2 pt-4 border-t border-border/10">
+                            <Button variant="outline" onClick={() => setDialogOpen(false)}>
+                                Annuler
+                            </Button>
+                            <Button onClick={handleSave} disabled={saving}>
+                                {saving && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                                {editingAllergy ? 'Mettre à jour' : 'Ajouter'}
+                            </Button>
                         </div>
                     </div>
-
-                    <div className="flex justify-end gap-2">
-                        <Button variant="outline" onClick={() => setDialogOpen(false)}>
-                            Annuler
-                        </Button>
-                        <Button onClick={handleSave} disabled={saving}>
-                            {saving && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
-                            {editingAllergy ? 'Mettre à jour' : 'Ajouter'}
-                        </Button>
-                    </div>
-                </DialogContent>
-            </Dialog>
+                </AppWindow>
+            )}
         </div>
     );
 };

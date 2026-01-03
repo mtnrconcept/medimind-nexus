@@ -344,6 +344,8 @@ Extraire pour chaque membre:
     5. Identifie les ALERTES: IRC, diabète, dyslipidémie, scores élevés
     6. Pour les médicaments combinés, sépare les substances si possible
     7. Les SYNONYMES sont importants: ATCD = antécédents, HTA = hypertension, etc.
+    8. CRITIQUE: Ne regroupe JAMAIS plusieurs pathologies dans une seule entrée. Crée une entrée distincte pour CHAQUE maladie, chirurgie ou antécédent.
+    9. CRITIQUE: Ne mets PAS les listes de pathologies dans "notes" ou "description". Utilise les tableaux structurés.
 
 ## FORMAT DE RÉPONSE(JSON STRICT):
     {
@@ -377,10 +379,10 @@ Extraire pour chaque membre:
                 "facility": "Centre"
         },
         "medicalHistory": [
-            { "category": "disease|surgery|hospitalization|injury|other", "title": "Nom", "description": "Détails", "start_date": "YYYY-MM-DD", "end_date": "YYYY-MM-DD", "severity": "mild|moderate|severe|critical", "treating_physician": "Dr.", "treating_facility": "Hôpital", "is_ongoing": false }
+            { "category": "disease|surgery|hospitalization|injury|other", "title": "Nom UNIQUE de la pathologie", "description": "Détails", "start_date": "YYYY-MM-DD", "end_date": "YYYY-MM-DD", "severity": "mild|moderate|severe|critical", "treating_physician": "Dr.", "treating_facility": "Hôpital", "is_ongoing": false }
         ],
             "familyHistory": [
-                { "relationship": "father|mother|brother|sister|...", "condition": "Pathologie", "age_at_diagnosis": 55, "is_deceased": false, "age_at_death": null, "cause_of_death": null }
+                { "relationship": "father|mother|brother|sister|...", "condition": "Une seule pathologie", "age_at_diagnosis": 55, "is_deceased": false, "age_at_death": null, "cause_of_death": null }
             ],
                 "lifestyle": {
             "smoking_status": "never|former|occasional|current",

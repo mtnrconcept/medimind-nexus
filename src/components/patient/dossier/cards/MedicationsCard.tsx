@@ -28,18 +28,13 @@ import {
     DropdownMenuSeparator,
     DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import {
-    Dialog,
-    DialogContent,
-    DialogDescription,
-    DialogHeader,
-    DialogTitle,
-} from '@/components/ui/dialog';
 import { Plus, Pill, Loader2, MoreVertical, Pencil, Trash2, Clock, Calendar, AlertCircle, CheckCircle, Upload } from 'lucide-react';
 import { toast } from 'sonner';
 import { format } from 'date-fns';
 import { fr } from 'date-fns/locale';
 import { DocumentUploadDialog } from '@/components/patient/DocumentUploadDialog';
+import { useWindowManager } from '@/contexts/WindowManagerContext';
+import AppWindow from '../AppWindow';
 
 interface MedicationsCardProps {
     patientId: string;
@@ -86,6 +81,7 @@ const ROUTES = [
 
 
 const MedicationsCard = ({ patientId }: MedicationsCardProps) => {
+    const { maxZIndex } = useWindowManager();
     const [medications, setMedications] = useState<Medication[]>([]);
     const [loading, setLoading] = useState(true);
     const [dialogOpen, setDialogOpen] = useState(false);
@@ -492,111 +488,111 @@ const MedicationsCard = ({ patientId }: MedicationsCardProps) => {
                 </TabsContent>
             </Tabs>
 
-            {/* Add/Edit Dialog */}
-            <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-                <DialogContent className="max-w-md">
-                    <DialogHeader>
-                        <DialogTitle>{editingMed ? 'Modifier le traitement' : 'Ajouter un traitement'}</DialogTitle>
-                        <DialogDescription>Renseignez les informations du médicament</DialogDescription>
-                    </DialogHeader>
-
-                    <div className="space-y-4 py-4 max-h-[60vh] overflow-y-auto">
-                        <div className="space-y-2">
-                            <Label>Médicament *</Label>
-                            <SearchableSelect
-                                options={medicationOptions}
-                                value={formData.medication_name}
-                                onValueChange={(value) => {
-                                    setFormData({ ...formData, medication_name: value });
-                                    if (value !== '__custom__') setCustomMedName('');
-                                }}
-                                onSearch={handleMedicationSearch}
-                                placeholder="Rechercher un médicament..."
-                                searchPlaceholder="Tapez min. 3 lettres pour chercher..."
-                                loading={medicationsLoading}
-                            />
-                            {formData.medication_name === '__custom__' && (
-                                <Input
-                                    placeholder="Nom du médicament..."
-                                    className="mt-2"
-                                    value={customMedName}
-                                    onChange={(e) => setCustomMedName(e.target.value)}
-                                    autoFocus
-                                />
-                            )}
-                        </div>
-
-                        <div className="grid grid-cols-2 gap-4">
+            {dialogOpen && (
+                <AppWindow
+                    id={`med-form-${patientId}`}
+                    title={editingMed ? 'Modifier le traitement' : 'Ajouter un traitement'}
+                    onClose={() => setDialogOpen(false)}
+                    zIndex={maxZIndex + 10}
+                    defaultSize={{ width: 500, height: 650 }}
+                >
+                    <div className="space-y-6">
+                        <div className="space-y-4 py-2">
                             <div className="space-y-2">
-                                <Label>Posologie</Label>
+                                <Label>Médicament *</Label>
+                                <SearchableSelect
+                                    options={medicationOptions}
+                                    value={formData.medication_name}
+                                    onValueChange={(value) => {
+                                        setFormData({ ...formData, medication_name: value });
+                                        if (value !== '__custom__') setCustomMedName('');
+                                    }}
+                                    onSearch={handleMedicationSearch}
+                                    placeholder="Rechercher un médicament..."
+                                    searchPlaceholder="Tapez min. 3 lettres pour chercher..."
+                                    loading={medicationsLoading}
+                                />
+                                {formData.medication_name === '__custom__' && (
+                                    <Input
+                                        placeholder="Nom du médicament..."
+                                        className="mt-2"
+                                        value={customMedName}
+                                        onChange={(e) => setCustomMedName(e.target.value)}
+                                        autoFocus
+                                    />
+                                )}
+                            </div>
+
+                            <div className="grid grid-cols-2 gap-4">
+                                <div className="space-y-2">
+                                    <Label>Posologie</Label>
+                                    <Input
+                                        placeholder="ex: 1 comprimé"
+                                        value={formData.dosage}
+                                        onChange={(e) => setFormData({ ...formData, dosage: e.target.value })}
+                                    />
+                                </div>
+                                <div className="space-y-2">
+                                    <Label>Fréquence</Label>
+                                    <Select value={formData.frequency} onValueChange={(v) => setFormData({ ...formData, frequency: v })}>
+                                        <SelectTrigger><SelectValue /></SelectTrigger>
+                                        <SelectContent>
+                                            {FREQUENCIES.map((f) => (
+                                                <SelectItem key={f.value} value={f.value}>{f.label}</SelectItem>
+                                            ))}
+                                        </SelectContent>
+                                    </Select>
+                                </div>
+                            </div>
+
+                            <div className="grid grid-cols-2 gap-4">
+                                <div className="space-y-2">
+                                    <Label>Date de début</Label>
+                                    <Input
+                                        type="date"
+                                        value={formData.start_date}
+                                        onChange={(e) => setFormData({ ...formData, start_date: e.target.value })}
+                                    />
+                                </div>
+                                <div className="space-y-2">
+                                    <Label>Date de fin (optionnel)</Label>
+                                    <Input
+                                        type="date"
+                                        value={formData.end_date}
+                                        onChange={(e) => setFormData({ ...formData, end_date: e.target.value })}
+                                    />
+                                </div>
+                            </div>
+
+                            <div className="space-y-2">
+                                <Label>Médecin prescripteur</Label>
                                 <Input
-                                    placeholder="ex: 1 comprimé"
-                                    value={formData.dosage}
-                                    onChange={(e) => setFormData({ ...formData, dosage: e.target.value })}
+                                    placeholder="Dr..."
+                                    value={formData.prescribing_doctor}
+                                    onChange={(e) => setFormData({ ...formData, prescribing_doctor: e.target.value })}
                                 />
                             </div>
-                            <div className="space-y-2">
-                                <Label>Fréquence</Label>
-                                <Select value={formData.frequency} onValueChange={(v) => setFormData({ ...formData, frequency: v })}>
-                                    <SelectTrigger><SelectValue /></SelectTrigger>
-                                    <SelectContent>
-                                        {FREQUENCIES.map((f) => (
-                                            <SelectItem key={f.value} value={f.value}>{f.label}</SelectItem>
-                                        ))}
-                                    </SelectContent>
-                                </Select>
-                            </div>
-                        </div>
 
-
-
-                        <div className="grid grid-cols-2 gap-4">
-                            <div className="space-y-2">
-                                <Label>Date de début</Label>
-                                <Input
-                                    type="date"
-                                    value={formData.start_date}
-                                    onChange={(e) => setFormData({ ...formData, start_date: e.target.value })}
+                            <div className="flex items-center gap-2">
+                                <Checkbox
+                                    id="is_active"
+                                    checked={formData.is_active}
+                                    onCheckedChange={(checked) => setFormData({ ...formData, is_active: !!checked })}
                                 />
-                            </div>
-                            <div className="space-y-2">
-                                <Label>Date de fin (optionnel)</Label>
-                                <Input
-                                    type="date"
-                                    value={formData.end_date}
-                                    onChange={(e) => setFormData({ ...formData, end_date: e.target.value })}
-                                />
+                                <Label htmlFor="is_active">Traitement actif</Label>
                             </div>
                         </div>
 
-                        <div className="space-y-2">
-                            <Label>Médecin prescripteur</Label>
-                            <Input
-                                placeholder="Dr..."
-                                value={formData.prescribing_doctor}
-                                onChange={(e) => setFormData({ ...formData, prescribing_doctor: e.target.value })}
-                            />
-                        </div>
-
-                        <div className="flex items-center gap-2">
-                            <Checkbox
-                                id="is_active"
-                                checked={formData.is_active}
-                                onCheckedChange={(checked) => setFormData({ ...formData, is_active: !!checked })}
-                            />
-                            <Label htmlFor="is_active">Traitement actif</Label>
+                        <div className="flex justify-end gap-2 pt-4 border-t border-border/10">
+                            <Button variant="outline" onClick={() => setDialogOpen(false)}>Annuler</Button>
+                            <Button onClick={handleSave} disabled={saving}>
+                                {saving && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                                {editingMed ? 'Mettre à jour' : 'Ajouter'}
+                            </Button>
                         </div>
                     </div>
-
-                    <div className="flex justify-end gap-2">
-                        <Button variant="outline" onClick={() => setDialogOpen(false)}>Annuler</Button>
-                        <Button onClick={handleSave} disabled={saving}>
-                            {saving && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
-                            {editingMed ? 'Mettre à jour' : 'Ajouter'}
-                        </Button>
-                    </div>
-                </DialogContent>
-            </Dialog>
+                </AppWindow>
+            )}
 
             <DocumentUploadDialog
                 open={importDialogOpen}

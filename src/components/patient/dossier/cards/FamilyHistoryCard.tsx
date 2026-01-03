@@ -24,16 +24,11 @@ import {
     DropdownMenuSeparator,
     DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import {
-    Dialog,
-    DialogContent,
-    DialogDescription,
-    DialogHeader,
-    DialogTitle,
-} from '@/components/ui/dialog';
 import { Plus, Users, Loader2, MoreVertical, Pencil, Trash2, Heart, Brain, Activity, AlertTriangle, Search, Globe } from 'lucide-react';
 import { toast } from 'sonner';
 import { SearchableSelect, SelectOption } from '@/components/ui/searchable-select';
+import { useWindowManager } from '@/contexts/WindowManagerContext';
+import AppWindow from '../AppWindow';
 
 interface NCBIConcept {
     id: string;
@@ -102,6 +97,7 @@ const COMMON_FAMILY_CONDITIONS = [
 const RISK_CONDITIONS = ['Cancer', 'Maladie coronarienne', 'Infarctus', 'AVC', 'Diabète', 'Alzheimer'];
 
 const FamilyHistoryCard = ({ patientId }: FamilyHistoryCardProps) => {
+    const { maxZIndex } = useWindowManager();
     const [history, setHistory] = useState<FamilyHistory[]>([]);
     const [loading, setLoading] = useState(true);
     const [dialogOpen, setDialogOpen] = useState(false);
@@ -368,113 +364,115 @@ const FamilyHistoryCard = ({ patientId }: FamilyHistoryCardProps) => {
                 </div>
             )}
 
-            {/* Add/Edit Dialog */}
-            <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-                <DialogContent className="max-w-md">
-                    <DialogHeader>
-                        <DialogTitle>{editing ? 'Modifier l\'antécédent' : 'Ajouter un antécédent familial'}</DialogTitle>
-                        <DialogDescription>Renseignez les informations du membre de la famille</DialogDescription>
-                    </DialogHeader>
+            {dialogOpen && (
+                <AppWindow
+                    id={`family-form-${patientId}`}
+                    title={editing ? 'Modifier l\'antécédent' : 'Ajouter un antécédent familial'}
+                    onClose={() => setDialogOpen(false)}
+                    zIndex={maxZIndex + 10}
+                    defaultSize={{ width: 500, height: 650 }}
+                >
+                    <div className="space-y-6">
+                        <div className="space-y-4 py-2">
+                            <div className="space-y-2">
+                                <Label>Membre de la famille *</Label>
+                                <Select value={formData.relationship} onValueChange={(v) => setFormData({ ...formData, relationship: v })}>
+                                    <SelectTrigger><SelectValue /></SelectTrigger>
+                                    <SelectContent>
+                                        {RELATIONSHIPS.map((r) => (
+                                            <SelectItem key={r.value} value={r.value}>{r.label}</SelectItem>
+                                        ))}
+                                    </SelectContent>
+                                </Select>
+                            </div>
 
-                    <div className="space-y-4 py-4">
-                        <div className="space-y-2">
-                            <Label>Membre de la famille *</Label>
-                            <Select value={formData.relationship} onValueChange={(v) => setFormData({ ...formData, relationship: v })}>
-                                <SelectTrigger><SelectValue /></SelectTrigger>
-                                <SelectContent>
-                                    {RELATIONSHIPS.map((r) => (
-                                        <SelectItem key={r.value} value={r.value}>{r.label}</SelectItem>
-                                    ))}
-                                </SelectContent>
-                            </Select>
-                        </div>
-
-                        <div className="space-y-2">
-                            <Label>Pathologie *</Label>
-                            <SearchableSelect
-                                options={pathologyOptions}
-                                value={formData.condition}
-                                onValueChange={(v) => {
-                                    setFormData({ ...formData, condition: v });
-                                    if (v !== '__custom__') setCustomConditionName('');
-                                }}
-                                onSearch={handlePathologySearch}
-                                placeholder="Sélectionner ou rechercher..."
-                                searchPlaceholder="Taper une maladie..."
-                                loading={pathologiesLoading}
-                                externalSearch={true}
-                            />
-                            {formData.condition === '__custom__' && (
-                                <Input
-                                    className="mt-2"
-                                    placeholder="Saisir la pathologie..."
-                                    value={customConditionName}
-                                    onChange={(e) => setCustomConditionName(e.target.value)}
+                            <div className="space-y-2">
+                                <Label>Pathologie *</Label>
+                                <SearchableSelect
+                                    options={pathologyOptions}
+                                    value={formData.condition}
+                                    onValueChange={(v) => {
+                                        setFormData({ ...formData, condition: v });
+                                        if (v !== '__custom__') setCustomConditionName('');
+                                    }}
+                                    onSearch={handlePathologySearch}
+                                    placeholder="Sélectionner ou rechercher..."
+                                    searchPlaceholder="Taper une maladie..."
+                                    loading={pathologiesLoading}
+                                    externalSearch={true}
                                 />
+                                {formData.condition === '__custom__' && (
+                                    <Input
+                                        className="mt-2"
+                                        placeholder="Saisir la pathologie..."
+                                        value={customConditionName}
+                                        onChange={(e) => setCustomConditionName(e.target.value)}
+                                    />
+                                )}
+                            </div>
+
+                            <div className="space-y-2">
+                                <Label>Âge au diagnostic</Label>
+                                <Input
+                                    type="number"
+                                    placeholder="Ex: 55"
+                                    value={formData.age_at_diagnosis || ''}
+                                    onChange={(e) => setFormData({ ...formData, age_at_diagnosis: parseInt(e.target.value) || undefined })}
+                                />
+                            </div>
+
+                            <div className="flex items-center gap-2">
+                                <input
+                                    type="checkbox"
+                                    id="is_deceased"
+                                    checked={formData.is_deceased}
+                                    onChange={(e) => setFormData({ ...formData, is_deceased: e.target.checked })}
+                                    className="rounded"
+                                />
+                                <Label htmlFor="is_deceased">Décédé(e)</Label>
+                            </div>
+
+                            {formData.is_deceased && (
+                                <div className="space-y-4 pt-2 border-t border-border/10">
+                                    <div className="space-y-2">
+                                        <Label>Âge au décès</Label>
+                                        <Input
+                                            type="number"
+                                            value={formData.age_at_death || ''}
+                                            onChange={(e) => setFormData({ ...formData, age_at_death: parseInt(e.target.value) || undefined })}
+                                        />
+                                    </div>
+                                    <div className="space-y-2">
+                                        <Label>Cause du décès</Label>
+                                        <Input
+                                            value={formData.cause_of_death}
+                                            onChange={(e) => setFormData({ ...formData, cause_of_death: e.target.value })}
+                                        />
+                                    </div>
+                                </div>
                             )}
+
+                            <div className="space-y-2 text-area-parent">
+                                <Label>Notes</Label>
+                                <Textarea
+                                    placeholder="Informations complémentaires..."
+                                    value={formData.notes}
+                                    onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
+                                    rows={2}
+                                />
+                            </div>
                         </div>
 
-                        <div className="space-y-2">
-                            <Label>Âge au diagnostic</Label>
-                            <Input
-                                type="number"
-                                placeholder="Ex: 55"
-                                value={formData.age_at_diagnosis || ''}
-                                onChange={(e) => setFormData({ ...formData, age_at_diagnosis: parseInt(e.target.value) || undefined })}
-                            />
-                        </div>
-
-                        <div className="flex items-center gap-2">
-                            <input
-                                type="checkbox"
-                                id="is_deceased"
-                                checked={formData.is_deceased}
-                                onChange={(e) => setFormData({ ...formData, is_deceased: e.target.checked })}
-                                className="rounded"
-                            />
-                            <Label htmlFor="is_deceased">Décédé(e)</Label>
-                        </div>
-
-                        {formData.is_deceased && (
-                            <>
-                                <div className="space-y-2">
-                                    <Label>Âge au décès</Label>
-                                    <Input
-                                        type="number"
-                                        value={formData.age_at_death || ''}
-                                        onChange={(e) => setFormData({ ...formData, age_at_death: parseInt(e.target.value) || undefined })}
-                                    />
-                                </div>
-                                <div className="space-y-2">
-                                    <Label>Cause du décès</Label>
-                                    <Input
-                                        value={formData.cause_of_death}
-                                        onChange={(e) => setFormData({ ...formData, cause_of_death: e.target.value })}
-                                    />
-                                </div>
-                            </>
-                        )}
-
-                        <div className="space-y-2">
-                            <Label>Notes</Label>
-                            <Textarea
-                                placeholder="Informations complémentaires..."
-                                value={formData.notes}
-                                onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
-                                rows={2}
-                            />
+                        <div className="flex justify-end gap-2 pt-4 border-t border-border/10">
+                            <Button variant="outline" onClick={() => setDialogOpen(false)}>Annuler</Button>
+                            <Button onClick={handleSave} disabled={saving}>
+                                {saving && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                                {editing ? 'Mettre à jour' : 'Ajouter'}
+                            </Button>
                         </div>
                     </div>
-
-                    <div className="flex justify-end gap-2">
-                        <Button variant="outline" onClick={() => setDialogOpen(false)}>Annuler</Button>
-                        <Button onClick={handleSave} disabled={saving}>
-                            {saving && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
-                            {editing ? 'Mettre à jour' : 'Ajouter'}
-                        </Button>
-                    </div>
-                </DialogContent>
-            </Dialog>
+                </AppWindow>
+            )}
         </div>
     );
 };

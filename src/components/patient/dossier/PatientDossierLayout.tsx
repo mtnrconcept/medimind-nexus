@@ -9,6 +9,7 @@ import AIAssistant from '../AIAssistant';
 import { usePatientAlerts } from '@/hooks/usePatientAlerts';
 import { Responsive as ResponsiveGridLayout } from 'react-grid-layout';
 import { useContainerWidth } from '@/hooks/useContainerWidth';
+import { useWindowManager, WindowData } from '@/contexts/WindowManagerContext';
 import AppWindow from './AppWindow';
 
 // Styles requis pour le grid layout
@@ -44,21 +45,11 @@ interface PatientDossierLayoutProps {
     patient: any;
 }
 
-interface WindowData {
-    id: string;
-    title: string;
-    category: PatientCategory;
-    zIndex: number;
-    x: number;
-    y: number;
-}
-
 const PatientDossierLayout = ({ patientId, patient }: PatientDossierLayoutProps) => {
     const { containerRef, width } = useContainerWidth();
+    const { openWindows, openWindow, closeWindow, focusWindow } = useWindowManager();
     const [activeCategory, setActiveCategory] = useState<PatientCategory>('summary');
     const [refreshKey, setRefreshKey] = useState(0);
-    const [openWindows, setOpenWindows] = useState<WindowData[]>([]);
-    const [maxZIndex, setMaxZIndex] = useState(5000);
 
     const patientAlerts = usePatientAlerts(
         patient.lab_results_json || {},
@@ -71,45 +62,25 @@ const PatientDossierLayout = ({ patientId, patient }: PatientDossierLayoutProps)
     ) || [];
 
     const handleSelectCategory = (category: PatientCategory, rect?: DOMRect) => {
-        const existing = openWindows.find(w => w.category === category);
-        if (existing) {
-            focusWindow(existing.id);
-            return;
-        }
-
         // Calcul de la position relative au viewport (fixed)
         let x = 300;
         let y = 200;
 
         if (rect) {
-            // Avec position fixed, on utilise directement les coordonnées du rect (viewport)
             x = rect.right + 20;
             y = Math.max(20, rect.top - 100);
         }
 
-        const newWindow: WindowData = {
-            id: `win-${category}-${Date.now()}`,
+        openWindow({
+            id: `win-${category}`,
             title: category.replace('_', ' ').charAt(0).toUpperCase() + category.replace('_', ' ').slice(1),
+            // @ts-expect-error PatientCategory is compatible but technically different from WindowCategory
             category: category,
-            zIndex: maxZIndex + 1,
             x,
             y
-        };
+        });
 
-        setMaxZIndex(prev => prev + 1);
-        setOpenWindows(prev => [...prev, newWindow]);
         setActiveCategory(category);
-    };
-
-    const closeWindow = (id: string) => {
-        setOpenWindows(prev => prev.filter(w => w.id !== id));
-    };
-
-    const focusWindow = (id: string) => {
-        setOpenWindows(prev => prev.map(w =>
-            w.id === id ? { ...w, zIndex: maxZIndex + 1 } : w
-        ));
-        setMaxZIndex(prev => prev + 1);
     };
 
     const handleDocumentIntegrated = () => {
@@ -305,7 +276,7 @@ const PatientDossierLayout = ({ patientId, patient }: PatientDossierLayoutProps)
                     id={win.id}
                     title={win.title}
                     zIndex={win.zIndex}
-                    defaultPosition={{ x: win.x + (index * 20), y: win.y + (index * 20) }}
+                    defaultPosition={{ x: win.x + (index * 2), y: win.y + (index * 2) }}
                     onClose={() => closeWindow(win.id)}
                     onFocus={() => focusWindow(win.id)}
                 >

@@ -6,7 +6,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { Button } from '@/components/ui/button';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
@@ -20,6 +19,8 @@ import { fr } from 'date-fns/locale';
 import { Plus, Hospital, Loader2, MoreVertical, Pencil, Trash2, Stethoscope, Scissors, BedDouble, Upload, Search, Globe } from 'lucide-react';
 import { DocumentUploadDialog } from '@/components/patient/DocumentUploadDialog';
 import { SearchableSelect, SelectOption } from '@/components/ui/searchable-select';
+import { useWindowManager } from '@/contexts/WindowManagerContext';
+import AppWindow from '../AppWindow';
 
 interface MedicalHistoryCardProps {
     patientId: string;
@@ -60,6 +61,7 @@ const SEVERITY_OPTIONS = [
 ];
 
 const MedicalHistoryCard = ({ patientId }: MedicalHistoryCardProps) => {
+    const { maxZIndex, focusWindow } = useWindowManager();
     // 1. State declarations
     const [history, setHistory] = useState<MedicalHistory[]>([]);
     const [loading, setLoading] = useState(true);
@@ -95,8 +97,8 @@ const MedicalHistoryCard = ({ patientId }: MedicalHistoryCardProps) => {
                 .from('patient_medical_history')
                 .select('*')
                 .eq('patient_id', patientId)
-                .order('start_date', { ascending: false });
-            setHistory((data as any) || []);
+                .order('created_at', { ascending: false });
+            setHistory((data as unknown as MedicalHistory[]) || []);
         } catch (err) {
             console.error('Error fetching medical history:', err);
         } finally {
@@ -267,11 +269,11 @@ const MedicalHistoryCard = ({ patientId }: MedicalHistoryCardProps) => {
             };
 
             if (editing) {
-                const { error } = await supabase.from('patient_medical_history').update(payload as any).eq('id', editing.id);
+                const { error } = await supabase.from('patient_medical_history').update(payload).eq('id', editing.id);
                 if (error) throw error;
                 toast.success('Antécédent mis à jour');
             } else {
-                const { error } = await supabase.from('patient_medical_history').insert(payload as any);
+                const { error } = await supabase.from('patient_medical_history').insert(payload);
                 if (error) throw error;
                 toast.success('Antécédent ajouté');
             }
@@ -395,138 +397,144 @@ const MedicalHistoryCard = ({ patientId }: MedicalHistoryCardProps) => {
                 )}
             </div>
 
-            <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-                <DialogContent className="max-w-2xl">
-                    <DialogHeader>
-                        <DialogTitle>{editing ? 'Modifier l\'antécédent' : 'Ajouter un antécédent'}</DialogTitle>
-                    </DialogHeader>
-                    <div className="grid grid-cols-2 gap-4 py-4">
-                        <div className="space-y-2">
-                            <Label>Type d'antécédent</Label>
-                            <Select
-                                value={formData.category}
-                                onValueChange={(v) => setFormData({ ...formData, category: v })}
-                            >
-                                <SelectTrigger><SelectValue /></SelectTrigger>
-                                <SelectContent>
-                                    {CONDITION_TYPES.map(type => (
-                                        <SelectItem key={type.value} value={type.value}>
-                                            <div className="flex items-center gap-2">
-                                                <type.icon className="h-4 w-4" />
-                                                {type.label}
-                                            </div>
-                                        </SelectItem>
-                                    ))}
-                                </SelectContent>
-                            </Select>
-                        </div>
+            {dialogOpen && (
+                <AppWindow
+                    id={`medical-history-form-${patientId}`}
+                    title={editing ? 'Modifier l\'antécédent' : 'Ajouter un antécédent'}
+                    onClose={() => setDialogOpen(false)}
+                    zIndex={maxZIndex + 100}
+                    onFocus={() => { }}
+                    defaultSize={{ width: 600, height: 650 }}
+                >
+                    <div className="space-y-6">
+                        <div className="grid grid-cols-2 gap-4 py-4">
+                            <div className="space-y-2">
+                                <Label>Type d'antécédent</Label>
+                                <Select
+                                    value={formData.category}
+                                    onValueChange={(v) => setFormData({ ...formData, category: v })}
+                                >
+                                    <SelectTrigger><SelectValue /></SelectTrigger>
+                                    <SelectContent>
+                                        {CONDITION_TYPES.map(type => (
+                                            <SelectItem key={type.value} value={type.value}>
+                                                <div className="flex items-center gap-2">
+                                                    <type.icon className="h-4 w-4" />
+                                                    {type.label}
+                                                </div>
+                                            </SelectItem>
+                                        ))}
+                                    </SelectContent>
+                                </Select>
+                            </div>
 
-                        <div className="space-y-2">
-                            <Label>Nom de la condition / Pathologie</Label>
-                            <SearchableSelect
-                                options={pathologyOptions}
-                                value={formData.title}
-                                onValueChange={(v) => {
-                                    setFormData({ ...formData, title: v });
-                                    if (v !== '__custom__') setCustomConditionName('');
-                                }}
-                                onSearch={handlePathologySearch}
-                                placeholder="Sélectionner ou rechercher..."
-                                searchPlaceholder="Taper une maladie..."
-                                loading={pathologiesLoading}
-                                externalSearch={true}
-                            />
-                            {formData.title === '__custom__' && (
-                                <Input
-                                    className="mt-2"
-                                    placeholder="Saisir la condition..."
-                                    value={customConditionName}
-                                    onChange={(e) => setCustomConditionName(e.target.value)}
+                            <div className="space-y-2">
+                                <Label>Nom de la condition / Pathologie</Label>
+                                <SearchableSelect
+                                    options={pathologyOptions}
+                                    value={formData.title}
+                                    onValueChange={(v) => {
+                                        setFormData({ ...formData, title: v });
+                                        if (v !== '__custom__') setCustomConditionName('');
+                                    }}
+                                    onSearch={handlePathologySearch}
+                                    placeholder="Sélectionner ou rechercher..."
+                                    searchPlaceholder="Taper une maladie..."
+                                    loading={pathologiesLoading}
+                                    externalSearch={true}
                                 />
-                            )}
-                        </div>
+                                {formData.title === '__custom__' && (
+                                    <Input
+                                        className="mt-2"
+                                        placeholder="Saisir la condition..."
+                                        value={customConditionName}
+                                        onChange={(e) => setCustomConditionName(e.target.value)}
+                                    />
+                                )}
+                            </div>
 
-                        <div className="space-y-2">
-                            <Label>Date du diagnostic</Label>
-                            <Input
-                                type="date"
-                                value={formData.start_date}
-                                onChange={(e) => setFormData({ ...formData, start_date: e.target.value })}
-                            />
-                        </div>
-
-                        <div className="space-y-2">
-                            <Label>Gravité</Label>
-                            <Select
-                                value={formData.severity}
-                                onValueChange={(v) => setFormData({ ...formData, severity: v })}
-                            >
-                                <SelectTrigger><SelectValue /></SelectTrigger>
-                                <SelectContent>
-                                    {SEVERITY_OPTIONS.map(opt => (
-                                        <SelectItem key={opt.value} value={opt.value}>
-                                            {opt.label}
-                                        </SelectItem>
-                                    ))}
-                                </SelectContent>
-                            </Select>
-                        </div>
-
-                        <div className="space-y-2">
-                            <Label>Traitement prescrit</Label>
-                            <SearchableSelect
-                                options={treatmentOptions}
-                                value={formData.description}
-                                onValueChange={(v) => {
-                                    setFormData({ ...formData, description: v });
-                                    if (v !== '__custom__') setCustomTreatmentName('');
-                                }}
-                                onSearch={handleTreatmentSearch}
-                                placeholder="Médicament ou intervention..."
-                                searchPlaceholder="Rechercher un traitement..."
-                                loading={treatmentsLoading}
-                                externalSearch={true}
-                            />
-                            {formData.description === '__custom__' && (
+                            <div className="space-y-2">
+                                <Label>Date du diagnostic</Label>
                                 <Input
-                                    className="mt-2"
-                                    placeholder="Saisir le traitement..."
-                                    value={customTreatmentName}
-                                    onChange={(e) => setCustomTreatmentName(e.target.value)}
+                                    type="date"
+                                    value={formData.start_date}
+                                    onChange={(e) => setFormData({ ...formData, start_date: e.target.value })}
                                 />
-                            )}
-                        </div>
+                            </div>
 
-                        <div className="flex items-center space-x-2 pt-8">
-                            <input
-                                type="checkbox"
-                                id="is_ongoing"
-                                checked={formData.is_ongoing}
-                                onChange={(e) => setFormData({ ...formData, is_ongoing: e.target.checked })}
-                                className="rounded border-gray-300"
-                            />
-                            <Label htmlFor="is_ongoing">Affection chronique</Label>
-                        </div>
+                            <div className="space-y-2">
+                                <Label>Gravité</Label>
+                                <Select
+                                    value={formData.severity}
+                                    onValueChange={(v) => setFormData({ ...formData, severity: v })}
+                                >
+                                    <SelectTrigger><SelectValue /></SelectTrigger>
+                                    <SelectContent>
+                                        {SEVERITY_OPTIONS.map(opt => (
+                                            <SelectItem key={opt.value} value={opt.value}>
+                                                {opt.label}
+                                            </SelectItem>
+                                        ))}
+                                    </SelectContent>
+                                </Select>
+                            </div>
 
-                        <div className="col-span-2 space-y-2">
-                            <Label>Notes complémentaires</Label>
-                            <Textarea
-                                value={formData.notes}
-                                onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
-                                placeholder="Détails, interventions, complications..."
-                                rows={3}
-                            />
+                            <div className="space-y-2">
+                                <Label>Traitement prescrit</Label>
+                                <SearchableSelect
+                                    options={treatmentOptions}
+                                    value={formData.description}
+                                    onValueChange={(v) => {
+                                        setFormData({ ...formData, description: v });
+                                        if (v !== '__custom__') setCustomTreatmentName('');
+                                    }}
+                                    onSearch={handleTreatmentSearch}
+                                    placeholder="Médicament ou intervention..."
+                                    searchPlaceholder="Rechercher un traitement..."
+                                    loading={treatmentsLoading}
+                                    externalSearch={true}
+                                />
+                                {formData.description === '__custom__' && (
+                                    <Input
+                                        className="mt-2"
+                                        placeholder="Saisir le traitement..."
+                                        value={customTreatmentName}
+                                        onChange={(e) => setCustomTreatmentName(e.target.value)}
+                                    />
+                                )}
+                            </div>
+
+                            <div className="flex items-center space-x-2 pt-8">
+                                <input
+                                    type="checkbox"
+                                    id="is_ongoing"
+                                    checked={formData.is_ongoing}
+                                    onChange={(e) => setFormData({ ...formData, is_ongoing: e.target.checked })}
+                                    className="rounded border-gray-300"
+                                />
+                                <Label htmlFor="is_ongoing">Affection chronique</Label>
+                            </div>
+
+                            <div className="col-span-2 space-y-2">
+                                <Label>Notes complémentaires</Label>
+                                <Textarea
+                                    value={formData.notes}
+                                    onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
+                                    placeholder="Détails, interventions, complications..."
+                                    rows={3}
+                                />
+                            </div>
+                        </div>
+                        <div className="flex justify-end gap-2 pt-4 border-t border-border/10">
+                            <Button variant="outline" onClick={() => setDialogOpen(false)}>Annuler</Button>
+                            <Button onClick={handleSave} disabled={saving}>
+                                {saving && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                                {editing ? 'Mettre à jour' : 'Enregistrer'}
+                            </Button>
                         </div>
                     </div>
-                    <DialogFooter>
-                        <Button variant="outline" onClick={() => setDialogOpen(false)}>Annuler</Button>
-                        <Button onClick={handleSave} disabled={saving}>
-                            {saving && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
-                            {editing ? 'Mettre à jour' : 'Enregistrer'}
-                        </Button>
-                    </DialogFooter>
-                </DialogContent>
-            </Dialog>
+                </AppWindow>
+            )}
 
             <DocumentUploadDialog
                 open={importDialogOpen}
