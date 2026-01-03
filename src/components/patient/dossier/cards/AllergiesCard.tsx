@@ -132,8 +132,17 @@ const AllergiesCard = ({ patientId }: AllergiesCardProps) => {
                 .from('patient_allergies')
                 .select('*')
                 .eq('patient_id', patientId)
-                .order('severity', { ascending: true });
-            setAllergies(data || []);
+                .order('created_at', { ascending: false });
+
+            // Map DB columns to interface
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const mappedAllergies = (data || []).map((d: any) => ({
+                ...d,
+                allergy_type: d.allergen_type,
+                confirmed: d.verified
+            }));
+
+            setAllergies(mappedAllergies as Allergy[]);
         } catch (err) {
             console.error('Error fetching allergies:', err);
         } finally {
@@ -260,13 +269,14 @@ const AllergiesCard = ({ patientId }: AllergiesCardProps) => {
         setSaving(true);
         try {
             const payload = {
-                allergen: allergenName.trim(),
-                allergy_type: formData.allergy_type,
+                patient_id: patientId,
+                allergen: formData.allergen,
+                allergen_type: formData.allergy_type,
                 severity: formData.severity,
-                reaction: formData.reaction?.trim() || null,
-                onset_date: formData.onset_date || null,
-                confirmed: formData.confirmed,
-                patient_id: patientId
+                reaction: formData.reaction,
+                first_reaction_date: formData.onset_date || null,
+                verified: formData.confirmed,
+                notes: formData.notes
             };
 
             if (editingAllergy) {

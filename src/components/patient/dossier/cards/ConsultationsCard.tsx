@@ -24,6 +24,7 @@ import {
     DropdownMenuSeparator,
     DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Plus, CalendarDays, Loader2, MoreVertical, Pencil, Trash2, Calendar, Clock, User, MapPin } from 'lucide-react';
 import { toast } from 'sonner';
 import { format, isPast, isFuture } from 'date-fns';
@@ -77,6 +78,33 @@ const ConsultationsCard = ({ patientId }: ConsultationsCardProps) => {
     const [dialogOpen, setDialogOpen] = useState(false);
     const [editing, setEditing] = useState<Consultation | null>(null);
     const [saving, setSaving] = useState(false);
+    const [selectedIds, setSelectedIds] = useState<string[]>([]);
+
+    const handleSelectAll = (checked: boolean) => {
+        if (checked) setSelectedIds(consultations.map(c => c.id));
+        else setSelectedIds([]);
+    };
+
+    const handleSelect = (id: string, checked: boolean) => {
+        if (checked) setSelectedIds(prev => [...prev, id]);
+        else setSelectedIds(prev => prev.filter(i => i !== id));
+    };
+
+    const handleBulkDelete = async () => {
+        if (!selectedIds.length) return;
+        if (!window.confirm(`Supprimer ${selectedIds.length} consultations ?`)) return;
+
+        try {
+            const { error } = await supabase.from('patient_consultations').delete().in('id', selectedIds);
+            if (error) throw error;
+            toast.success(`${selectedIds.length} consultations supprimées`);
+            setSelectedIds([]);
+            fetchData();
+        } catch (err) {
+            console.error(err);
+            toast.error('Erreur lors de la suppression multiple');
+        }
+    };
 
     const [formData, setFormData] = useState({
         consultation_date: new Date().toISOString().split('T')[0],
@@ -211,9 +239,32 @@ const ConsultationsCard = ({ patientId }: ConsultationsCardProps) => {
                 </div>
             ) : (
                 <div className="space-y-2">
+                    <div className="flex items-center space-x-2 mb-2 p-2 bg-muted/20 rounded-lg justify-between">
+                        <div className="flex items-center space-x-2">
+                            <Checkbox
+                                id="select-all-consult"
+                                checked={consultations.length > 0 && selectedIds.length === consultations.length}
+                                onCheckedChange={(c) => handleSelectAll(c as boolean)}
+                            />
+                            <Label htmlFor="select-all-consult" className="text-xs text-muted-foreground cursor-pointer">
+                                Tout sélectionner
+                            </Label>
+                        </div>
+                        {selectedIds.length > 0 && (
+                            <Button variant="destructive" size="sm" onClick={handleBulkDelete} className="h-7 text-xs">
+                                <Trash2 className="h-3 w-3 mr-2" /> Supprimer ({selectedIds.length})
+                            </Button>
+                        )}
+                    </div>
+
                     {consultations.map((consult) => (
                         <div key={consult.id} className="p-3 rounded-lg border bg-card">
                             <div className="flex items-start gap-3">
+                                <Checkbox
+                                    className="mt-1"
+                                    checked={selectedIds.includes(consult.id)}
+                                    onCheckedChange={(c) => handleSelect(consult.id, c as boolean)}
+                                />
                                 <div className="p-2 rounded-lg bg-violet-500/10 text-violet-500">
                                     <CalendarDays className="h-4 w-4" />
                                 </div>

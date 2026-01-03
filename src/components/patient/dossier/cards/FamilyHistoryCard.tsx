@@ -24,6 +24,7 @@ import {
     DropdownMenuSeparator,
     DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Plus, Users, Loader2, MoreVertical, Pencil, Trash2, Heart, Brain, Activity, AlertTriangle, Search, Globe } from 'lucide-react';
 import { toast } from 'sonner';
 import { SearchableSelect, SelectOption } from '@/components/ui/searchable-select';
@@ -103,6 +104,33 @@ const FamilyHistoryCard = ({ patientId }: FamilyHistoryCardProps) => {
     const [dialogOpen, setDialogOpen] = useState(false);
     const [editing, setEditing] = useState<FamilyHistory | null>(null);
     const [saving, setSaving] = useState(false);
+    const [selectedIds, setSelectedIds] = useState<string[]>([]);
+
+    const handleSelectAll = (checked: boolean) => {
+        if (checked) setSelectedIds(history.map(h => h.id));
+        else setSelectedIds([]);
+    };
+
+    const handleSelect = (id: string, checked: boolean) => {
+        if (checked) setSelectedIds(prev => [...prev, id]);
+        else setSelectedIds(prev => prev.filter(i => i !== id));
+    };
+
+    const handleBulkDelete = async () => {
+        if (!selectedIds.length) return;
+        if (!window.confirm(`Supprimer ${selectedIds.length} antécédents ?`)) return;
+
+        try {
+            const { error } = await supabase.from('patient_family_history').delete().in('id', selectedIds);
+            if (error) throw error;
+            toast.success(`${selectedIds.length} antécédents supprimés`);
+            setSelectedIds([]);
+            fetchData();
+        } catch (err) {
+            console.error(err);
+            toast.error('Erreur lors de la suppression multiple');
+        }
+    };
 
     const [formData, setFormData] = useState({
         relationship: 'mother',
@@ -316,6 +344,24 @@ const FamilyHistoryCard = ({ patientId }: FamilyHistoryCardProps) => {
                 </div>
             ) : (
                 <div className="space-y-3">
+                    <div className="flex items-center space-x-2 mb-2 p-2 bg-muted/20 rounded-lg justify-between">
+                        <div className="flex items-center space-x-2">
+                            <Checkbox
+                                id="select-all-family"
+                                checked={history.length > 0 && selectedIds.length === history.length}
+                                onCheckedChange={(c) => handleSelectAll(c as boolean)}
+                            />
+                            <Label htmlFor="select-all-family" className="text-xs text-muted-foreground cursor-pointer">
+                                Tout sélectionner
+                            </Label>
+                        </div>
+                        {selectedIds.length > 0 && (
+                            <Button variant="destructive" size="sm" onClick={handleBulkDelete} className="h-7 text-xs">
+                                <Trash2 className="h-3 w-3 mr-2" /> Supprimer ({selectedIds.length})
+                            </Button>
+                        )}
+                    </div>
+
                     {Object.entries(groupedHistory).map(([relationship, conditions]) => (
                         <div key={relationship} className="p-3 rounded-lg border bg-card">
                             <div className="font-medium text-sm mb-2 flex items-center gap-2">
@@ -328,7 +374,11 @@ const FamilyHistoryCard = ({ patientId }: FamilyHistoryCardProps) => {
                             <div className="space-y-2">
                                 {conditions.map(cond => (
                                     <div key={cond.id} className="flex items-center justify-between group">
-                                        <div className="flex-1">
+                                        <div className="flex items-center gap-3 flex-1">
+                                            <Checkbox
+                                                checked={selectedIds.includes(cond.id)}
+                                                onCheckedChange={(c) => handleSelect(cond.id, c as boolean)}
+                                            />
                                             <div className="text-sm flex items-center gap-2">
                                                 <span className={RISK_CONDITIONS.some(rc => cond.condition.toLowerCase().includes(rc.toLowerCase())) ? 'text-orange-500 font-medium' : ''}>
                                                     {cond.condition}

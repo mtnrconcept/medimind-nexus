@@ -21,6 +21,7 @@ import {
     TrendingUp, TrendingDown, Minus, AlertTriangle, Calendar, Upload
 } from 'lucide-react';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
+import { Checkbox } from '@/components/ui/checkbox';
 
 interface LabResult {
     id: string;
@@ -63,6 +64,37 @@ const LabResultsCard = ({ patientId }: LabResultsCardProps) => {
     const [editing, setEditing] = useState<LabResult | null>(null);
     const [saving, setSaving] = useState(false);
     const [activeTab, setActiveTab] = useState('all');
+    const [selectedIds, setSelectedIds] = useState<string[]>([]);
+
+    const handleSelectAll = (checked: boolean) => {
+        if (checked) setSelectedIds(filteredResults.map(r => r.id));
+        else setSelectedIds([]);
+    };
+
+    const handleSelect = (id: string, checked: boolean) => {
+        if (checked) setSelectedIds(prev => [...prev, id]);
+        else setSelectedIds(prev => prev.filter(i => i !== id));
+    };
+
+    const handleBulkDelete = async () => {
+        if (!selectedIds.length) return;
+        if (!window.confirm(`Supprimer ${selectedIds.length} résultats ?`)) return;
+
+        try {
+            const { error } = await supabase.from('patient_lab_results').delete().in('id', selectedIds);
+            if (error) throw error;
+            toast.success(`${selectedIds.length} résultats supprimés`);
+            setSelectedIds([]);
+            fetchData();
+        } catch (err) {
+            console.error(err);
+            toast.error('Erreur lors de la suppression multiple');
+        }
+    };
+
+    useEffect(() => {
+        setSelectedIds([]);
+    }, [activeTab]);
 
     const [formData, setFormData] = useState({
         test_name: '',
@@ -128,7 +160,7 @@ const LabResultsCard = ({ patientId }: LabResultsCardProps) => {
             unit: result.unit,
             reference_min: result.reference_min ? String(result.reference_min) : '',
             reference_max: result.reference_max ? String(result.reference_max) : '',
-            test_date: result.test_date,
+            test_date: result.test_date ? result.test_date.split('T')[0] : '',
             notes: result.notes || '',
             interpretation: result.interpretation || '',
             laboratory: result.laboratory || '',
@@ -275,66 +307,90 @@ const LabResultsCard = ({ patientId }: LabResultsCardProps) => {
                         </div>
                     ) : (
                         <div className="space-y-2">
-                            {filteredResults.map(result => (
-                                <div
-                                    key={result.id}
-                                    className={`flex items-center justify-between p-3 rounded-lg border ${result.is_abnormal
-                                        ? 'bg-red-50 border-red-200 dark:bg-red-900/20 dark:border-red-800'
-                                        : 'bg-white dark:bg-slate-800'
-                                        }`}
-                                >
-                                    <div className="flex items-center gap-3">
-                                        <FlaskConical className={`h-5 w-5 ${result.is_abnormal ? 'text-red-500' : 'text-violet-500'}`} />
-                                        <div>
-                                            <div className="font-medium flex items-center gap-2">
-                                                {result.test_name}
-                                                {result.is_abnormal && (
-                                                    <Badge variant="destructive" className="text-xs">Anormal</Badge>
+                            <div className="flex items-center space-x-2 mb-2 p-2 bg-muted/20 rounded-lg justify-between">
+                                <div className="flex items-center space-x-2">
+                                    <Checkbox
+                                        id="select-all-labs"
+                                        checked={filteredResults.length > 0 && selectedIds.length === filteredResults.length}
+                                        onCheckedChange={(c) => handleSelectAll(c as boolean)}
+                                    />
+                                    <Label htmlFor="select-all-labs" className="text-xs text-muted-foreground cursor-pointer">
+                                        Tout sélectionner
+                                    </Label>
+                                </div>
+                                {selectedIds.length > 0 && (
+                                    <Button variant="destructive" size="sm" onClick={handleBulkDelete} className="h-7 text-xs">
+                                        <Trash2 className="h-3 w-3 mr-2" /> Supprimer ({selectedIds.length})
+                                    </Button>
+                                )}
+                            </div>
+
+                            {
+                                filteredResults.map(result => (
+                                    <div
+                                        key={result.id}
+                                        className={`flex items-center justify-between p-3 rounded-lg border ${result.is_abnormal
+                                            ? 'bg-red-50 border-red-200 dark:bg-red-900/20 dark:border-red-800'
+                                            : 'bg-white dark:bg-slate-800'
+                                            }`}
+                                    >
+                                        <div className="flex items-center gap-3">
+                                            <Checkbox
+                                                checked={selectedIds.includes(result.id)}
+                                                onCheckedChange={(c) => handleSelect(result.id, c as boolean)}
+                                            />
+                                            <FlaskConical className={`h-5 w-5 ${result.is_abnormal ? 'text-red-500' : 'text-violet-500'}`} />
+                                            <div>
+                                                <div className="font-medium flex items-center gap-2">
+                                                    {result.test_name}
+                                                    {result.is_abnormal && (
+                                                        <Badge variant="destructive" className="text-xs">Anormal</Badge>
+                                                    )}
+                                                </div>
+                                                <div className="text-sm text-muted-foreground flex items-center gap-2">
+                                                    <Calendar className="h-3 w-3" />
+                                                    {new Date(result.test_date).toLocaleDateString('fr-FR')}
+                                                    <Badge variant="outline" className="text-xs">
+                                                        {LAB_CATEGORIES.find(c => c.value === result.test_category)?.label || result.test_category}
+                                                    </Badge>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <div className="flex items-center gap-3">
+                                            <div className="text-right">
+                                                <div className="font-bold flex items-center gap-1">
+                                                    {getTrendIcon(result)}
+                                                    {result.value} {result.unit}
+                                                </div>
+                                                {(result.reference_min || result.reference_max) && (
+                                                    <div className="text-xs text-muted-foreground">
+                                                        Réf: {result.reference_min || '-'} - {result.reference_max || '-'} {result.unit}
+                                                    </div>
                                                 )}
                                             </div>
-                                            <div className="text-sm text-muted-foreground flex items-center gap-2">
-                                                <Calendar className="h-3 w-3" />
-                                                {new Date(result.test_date).toLocaleDateString('fr-FR')}
-                                                <Badge variant="outline" className="text-xs">
-                                                    {LAB_CATEGORIES.find(c => c.value === result.test_category)?.label || result.test_category}
-                                                </Badge>
-                                            </div>
+                                            <DropdownMenu>
+                                                <DropdownMenuTrigger asChild>
+                                                    <Button variant="ghost" size="icon">
+                                                        <MoreVertical className="h-4 w-4" />
+                                                    </Button>
+                                                </DropdownMenuTrigger>
+                                                <DropdownMenuContent>
+                                                    <DropdownMenuItem onClick={() => openEditDialog(result)}>
+                                                        <Pencil className="h-4 w-4 mr-2" />Modifier
+                                                    </DropdownMenuItem>
+                                                    <DropdownMenuItem onClick={() => handleDelete(result.id)} className="text-red-600">
+                                                        <Trash2 className="h-4 w-4 mr-2" />Supprimer
+                                                    </DropdownMenuItem>
+                                                </DropdownMenuContent>
+                                            </DropdownMenu>
                                         </div>
                                     </div>
-                                    <div className="flex items-center gap-3">
-                                        <div className="text-right">
-                                            <div className="font-bold flex items-center gap-1">
-                                                {getTrendIcon(result)}
-                                                {result.value} {result.unit}
-                                            </div>
-                                            {(result.reference_min || result.reference_max) && (
-                                                <div className="text-xs text-muted-foreground">
-                                                    Réf: {result.reference_min || '-'} - {result.reference_max || '-'} {result.unit}
-                                                </div>
-                                            )}
-                                        </div>
-                                        <DropdownMenu>
-                                            <DropdownMenuTrigger asChild>
-                                                <Button variant="ghost" size="icon">
-                                                    <MoreVertical className="h-4 w-4" />
-                                                </Button>
-                                            </DropdownMenuTrigger>
-                                            <DropdownMenuContent>
-                                                <DropdownMenuItem onClick={() => openEditDialog(result)}>
-                                                    <Pencil className="h-4 w-4 mr-2" />Modifier
-                                                </DropdownMenuItem>
-                                                <DropdownMenuItem onClick={() => handleDelete(result.id)} className="text-red-600">
-                                                    <Trash2 className="h-4 w-4 mr-2" />Supprimer
-                                                </DropdownMenuItem>
-                                            </DropdownMenuContent>
-                                        </DropdownMenu>
-                                    </div>
-                                </div>
-                            ))}
-                        </div>
+                                ))
+                            }
+                        </div >
                     )}
-                </TabsContent>
-            </Tabs>
+                </TabsContent >
+            </Tabs >
 
             {dialogOpen && (
                 <AppWindow
@@ -445,7 +501,7 @@ const LabResultsCard = ({ patientId }: LabResultsCardProps) => {
                     fetchData();
                 }}
             />
-        </div>
+        </div >
     );
 };
 

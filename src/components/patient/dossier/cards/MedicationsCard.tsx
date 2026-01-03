@@ -146,38 +146,58 @@ const MedicationsCard = ({ patientId }: MedicationsCardProps) => {
         if (query.length < 3) return;
 
         try {
-            // Call Edge Function
-            const { data, error } = await supabase.functions.invoke('search-medical-concepts', {
+            // 1. Search Local DB
+            const localPromise = supabase
+                .from('medications')
+                .select('id, name, composition')
+                .ilike('name', `%${query}%`)
+                .limit(20);
+
+            // 2. Search External (Edge Function)
+            const externalPromise = supabase.functions.invoke('search-medical-concepts', {
                 body: { query, type: 'medication' }
             });
 
-            if (error) throw error;
+            const [localRes, externalRes] = await Promise.all([localPromise, externalPromise]);
 
-            if (data?.results) {
-                const globalOptions: SelectOption[] = data.results.map((r: unknown) => {
-                    const item = r as { id?: string; name: string; source?: string };
-                    return {
-                        value: item.id || `glb-${Math.random().toString(36).substr(2, 9)}`,
-                        label: item.name,
-                        description: item.source === 'drugbank' ? 'DrugBank Global' : 'OpenFDA Global',
-                        category: 'Monde'
-                    };
-                });
+            let newOptions: SelectOption[] = [];
 
-                // Merge with existing options avoiding duplicates
-                setMedicationOptions(prev => {
-                    const existingIds = new Set(prev.map(p => p.value));
-                    const newUnique = globalOptions.filter(g => !existingIds.has(g.value));
-                    // Keep original options but append new ones
-                    return [...prev, ...newUnique];
-                });
-
-                if (globalOptions.length > 0) {
-                    toast.success(`${globalOptions.length} résultats globaux ajoutés`);
-                }
+            // Process Local Results
+            if (localRes.data) {
+                newOptions = localRes.data.map(m => ({
+                    value: m.id,
+                    label: m.name,
+                    description: m.composition || undefined,
+                    category: 'Base de données'
+                }));
             }
+
+            // Process External Results
+            const extData = externalRes.data;
+            if (extData?.concepts) {
+                const globalOptions: SelectOption[] = extData.concepts.map((item: any) => ({
+                    value: item.id || `glb-${Math.random().toString(36).substr(2, 9)}`,
+                    label: item.name,
+                    description: item.source === 'ncbi_pccompound' ? 'NCBI Global' : item.description,
+                    category: 'Monde'
+                }));
+                newOptions = [...newOptions, ...globalOptions];
+            }
+
+            // Merge with existing options avoiding duplicates
+            setMedicationOptions(prev => {
+                const existingValues = new Set(prev.map(p => p.value));
+                const existingLabels = new Set(prev.map(p => p.label.toLowerCase()));
+
+                const filteredNew = newOptions.filter(o =>
+                    !existingValues.has(o.value) &&
+                    !existingLabels.has(o.label.toLowerCase())
+                );
+                return [...prev, ...filteredNew];
+            });
+
         } catch (err) {
-            console.error('Global med search error:', err);
+            console.error('Medication search error:', err);
         }
     }, []);
 

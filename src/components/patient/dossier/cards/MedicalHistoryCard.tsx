@@ -9,6 +9,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Badge } from '@/components/ui/badge';
@@ -16,7 +17,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { toast } from 'sonner';
 import { format } from 'date-fns';
 import { fr } from 'date-fns/locale';
-import { Plus, Hospital, Loader2, MoreVertical, Pencil, Trash2, Stethoscope, Scissors, BedDouble, Upload, Search, Globe } from 'lucide-react';
+import { Plus, Hospital, Loader2, MoreVertical, Pencil, Trash2, Stethoscope, Scissors, BedDouble, Upload } from 'lucide-react';
 import { DocumentUploadDialog } from '@/components/patient/DocumentUploadDialog';
 import { SearchableSelect, SelectOption } from '@/components/ui/searchable-select';
 import { useWindowManager } from '@/contexts/WindowManagerContext';
@@ -28,14 +29,13 @@ interface MedicalHistoryCardProps {
 
 interface MedicalHistory {
     id: string;
-    category: string;
-    title: string;
-    start_date?: string;
-    end_date?: string;
+    condition_type: string; // was category
+    condition_name: string; // was title
+    diagnosis_date?: string; // was start_date
+    treatment?: string; // was description of treatment
     severity?: string;
-    description?: string;
     notes?: string;
-    is_ongoing: boolean;
+    is_chronic: boolean; // was is_ongoing
 }
 
 interface NCBIConcept {
@@ -61,7 +61,7 @@ const SEVERITY_OPTIONS = [
 ];
 
 const MedicalHistoryCard = ({ patientId }: MedicalHistoryCardProps) => {
-    const { maxZIndex, focusWindow } = useWindowManager();
+    const { maxZIndex } = useWindowManager();
     // 1. State declarations
     const [history, setHistory] = useState<MedicalHistory[]>([]);
     const [loading, setLoading] = useState(true);
@@ -70,16 +70,47 @@ const MedicalHistoryCard = ({ patientId }: MedicalHistoryCardProps) => {
     const [editing, setEditing] = useState<MedicalHistory | null>(null);
     const [saving, setSaving] = useState(false);
     const [activeTab, setActiveTab] = useState('all');
+    const [selectedIds, setSelectedIds] = useState<string[]>([]);
+
+    const handleSelectAll = (checked: boolean) => {
+        if (checked) setSelectedIds(filteredHistory.map(h => h.id));
+        else setSelectedIds([]);
+    };
+
+    const handleSelect = (id: string, checked: boolean) => {
+        if (checked) setSelectedIds(prev => [...prev, id]);
+        else setSelectedIds(prev => prev.filter(i => i !== id));
+    };
+
+    const handleBulkDelete = async () => {
+        if (!selectedIds.length) return;
+        if (!window.confirm(`Supprimer ${selectedIds.length} antécédents ?`)) return;
+
+        try {
+            const { error } = await supabase.from('patient_medical_history').delete().in('id', selectedIds);
+            if (error) throw error;
+            toast.success(`${selectedIds.length} antécédents supprimés`);
+            setSelectedIds([]);
+            fetchData();
+        } catch (err) {
+            console.error(err);
+            toast.error('Erreur lors de la suppression multiple');
+        }
+    };
+
+    // Reset selection when changing tabs to avoid deleting hidden items
+    useEffect(() => {
+        setSelectedIds([]);
+    }, [activeTab]);
 
     const [formData, setFormData] = useState({
-        category: 'disease',
-        title: '',
-        start_date: '',
-        end_date: '',
+        condition_type: 'disease',
+        condition_name: '',
+        diagnosis_date: '',
         severity: 'moderate',
-        description: '',
+        treatment: '',
         notes: '',
-        is_ongoing: false,
+        is_chronic: false,
     });
 
     const [pathologyOptions, setPathologyOptions] = useState<SelectOption[]>([]);
@@ -136,22 +167,50 @@ const MedicalHistoryCard = ({ patientId }: MedicalHistoryCardProps) => {
     const handlePathologySearch = useCallback(async (query: string) => {
         if (query.length < 3) return;
         try {
-            const { data } = await supabase.functions.invoke('search-medical-concepts', {
+            // 1. Search Local DB
+            const localPromise = supabase
+                .from('pathologies')
+                .select('id, name')
+                .ilike('name', `%${query}%`)
+                .limit(20);
+
+            // 2. Search External
+            const externalPromise = supabase.functions.invoke('search-medical-concepts', {
                 body: { query, type: 'pathology' }
             });
-            if (data?.concepts) {
-                const newOptions: SelectOption[] = data.concepts.map((c: NCBIConcept) => ({
+
+            const [localRes, externalRes] = await Promise.all([localPromise, externalPromise]);
+
+            let newOptions: SelectOption[] = [];
+
+            // Process Local
+            if (localRes.data) {
+                newOptions = localRes.data.map(p => ({
+                    value: p.id,
+                    label: p.name,
+                    category: 'Base de données'
+                }));
+            }
+
+            // Process External
+            const extData = externalRes.data;
+            if (extData?.concepts) {
+                const globalOptions: SelectOption[] = extData.concepts.map((c: NCBIConcept) => ({
                     value: `ext-${c.id}`,
                     label: c.name,
                     description: c.description,
                     category: 'NCBI'
                 }));
-                setPathologyOptions(prev => {
-                    const existingLabels = new Set(prev.map(p => p.label.toLowerCase()));
-                    const filtered = newOptions.filter(o => !existingLabels.has(o.label.toLowerCase()));
-                    return [...prev, ...filtered];
-                });
+                newOptions = [...newOptions, ...globalOptions];
             }
+
+            // Merge
+            setPathologyOptions(prev => {
+                const existingLabels = new Set(prev.map(p => p.label.toLowerCase()));
+                const filtered = newOptions.filter(o => !existingLabels.has(o.label.toLowerCase()));
+                return [...prev, ...filtered];
+            });
+
         } catch (err) {
             console.error('Pathology search error:', err);
         }
@@ -160,22 +219,50 @@ const MedicalHistoryCard = ({ patientId }: MedicalHistoryCardProps) => {
     const handleTreatmentSearch = useCallback(async (query: string) => {
         if (query.length < 3) return;
         try {
-            const { data } = await supabase.functions.invoke('search-medical-concepts', {
+            // 1. Search Local DB
+            const localPromise = supabase
+                .from('medications')
+                .select('id, name')
+                .ilike('name', `%${query}%`)
+                .limit(20);
+
+            // 2. Search External
+            const externalPromise = supabase.functions.invoke('search-medical-concepts', {
                 body: { query, type: 'medication' }
             });
-            if (data?.concepts) {
-                const newOptions: SelectOption[] = data.concepts.map((c: NCBIConcept) => ({
-                    value: `ext-${c.id}`,
+
+            const [localRes, externalRes] = await Promise.all([localPromise, externalPromise]);
+
+            let newOptions: SelectOption[] = [];
+
+            // Process Local
+            if (localRes.data) {
+                newOptions = localRes.data.map(m => ({
+                    value: m.id,
+                    label: m.name,
+                    category: 'Base de données'
+                }));
+            }
+
+            // Process External
+            const extData = externalRes.data;
+            if (extData?.concepts) {
+                const globalOptions: SelectOption[] = extData.concepts.map((c: NCBIConcept) => ({
+                    value: `ext-${c.id}`, // Maintain consistent ID format for external
                     label: c.name,
                     description: c.description,
                     category: 'NCBI'
                 }));
-                setTreatmentOptions(prev => {
-                    const existingLabels = new Set(prev.map(p => p.label.toLowerCase()));
-                    const filtered = newOptions.filter(o => !existingLabels.has(o.label.toLowerCase()));
-                    return [...prev, ...filtered];
-                });
+                newOptions = [...newOptions, ...globalOptions];
             }
+
+            // Merge
+            setTreatmentOptions(prev => {
+                const existingLabels = new Set(prev.map(p => p.label.toLowerCase()));
+                const filtered = newOptions.filter(o => !existingLabels.has(o.label.toLowerCase()));
+                return [...prev, ...filtered];
+            });
+
         } catch (err) {
             console.error('Treatment search error:', err);
         }
@@ -191,14 +278,13 @@ const MedicalHistoryCard = ({ patientId }: MedicalHistoryCardProps) => {
     const openAddDialog = () => {
         setEditing(null);
         setFormData({
-            category: 'disease',
-            title: '',
-            start_date: new Date().toISOString().split('T')[0],
-            end_date: '',
+            condition_type: 'disease',
+            condition_name: '',
+            diagnosis_date: new Date().toISOString().split('T')[0],
             severity: 'moderate',
-            description: '',
+            treatment: '',
             notes: '',
-            is_ongoing: false,
+            is_chronic: false,
         });
         setCustomConditionName('');
         setCustomTreatmentName('');
@@ -208,21 +294,20 @@ const MedicalHistoryCard = ({ patientId }: MedicalHistoryCardProps) => {
     const openEditDialog = (item: MedicalHistory) => {
         setEditing(item);
         setFormData({
-            category: item.category || 'disease',
-            title: item.title || '',
-            start_date: item.start_date || '',
-            end_date: item.end_date || '',
+            condition_type: item.condition_type || 'disease',
+            condition_name: item.condition_name || '',
+            diagnosis_date: item.diagnosis_date || '',
             severity: item.severity || 'moderate',
-            description: item.description || '',
+            treatment: item.treatment || '',
             notes: item.notes || '',
-            is_ongoing: item.is_ongoing || false,
+            is_chronic: item.is_chronic || false,
         });
         setDialogOpen(true);
     };
 
     const handleSave = async () => {
-        let conditionName = formData.title;
-        let treatmentName = formData.description;
+        let conditionName = formData.condition_name;
+        let treatmentName = formData.treatment;
 
         if (conditionName === '__custom__') {
             if (!customConditionName.trim()) {
@@ -257,14 +342,13 @@ const MedicalHistoryCard = ({ patientId }: MedicalHistoryCardProps) => {
         try {
             // Build payload with proper null handling for dates
             const payload = {
-                category: formData.category,
-                title: conditionName.trim(),
-                start_date: formData.start_date || null,
-                end_date: formData.end_date || null,
+                condition_type: formData.condition_type,
+                condition_name: conditionName.trim(),
+                diagnosis_date: formData.diagnosis_date || null,
                 severity: formData.severity,
-                description: treatmentName?.trim() || null,
+                treatment: treatmentName?.trim() || null,
                 notes: formData.notes?.trim() || null,
-                is_ongoing: formData.is_ongoing,
+                is_chronic: formData.is_chronic,
                 patient_id: patientId
             };
 
@@ -301,7 +385,7 @@ const MedicalHistoryCard = ({ patientId }: MedicalHistoryCardProps) => {
 
     const filteredHistory = activeTab === 'all'
         ? history
-        : history.filter(h => h.category === activeTab);
+        : history.filter(h => h.condition_type === activeTab);
 
     const getTypeIcon = (type: string) => {
         const config = CONDITION_TYPES.find(t => t.value === type);
@@ -346,54 +430,81 @@ const MedicalHistoryCard = ({ patientId }: MedicalHistoryCardProps) => {
                         Aucun antécédent enregistré
                     </div>
                 ) : (
-                    filteredHistory.map((item) => (
-                        <div key={item.id} className="flex items-start gap-3 p-3 rounded-lg border bg-card hover:bg-accent/50 transition-colors">
-                            <div className="p-2 rounded-lg bg-blue-100 dark:bg-blue-900/30 text-blue-600">
-                                {getTypeIcon(item.category)}
+                    <div className="space-y-2">
+                        <div className="flex items-center space-x-2 mb-2 p-2 bg-muted/20 rounded-lg justify-between">
+                            <div className="flex items-center space-x-2">
+                                <Checkbox
+                                    id="select-all-history"
+                                    checked={filteredHistory.length > 0 && selectedIds.length === filteredHistory.length}
+                                    onCheckedChange={(c) => handleSelectAll(c as boolean)}
+                                />
+                                <Label htmlFor="select-all-history" className="text-xs text-muted-foreground cursor-pointer">
+                                    Tout sélectionner
+                                </Label>
                             </div>
-                            <div className="flex-1 min-w-0">
-                                <div className="flex items-center gap-2">
-                                    <span className="font-medium text-sm">{item.title}</span>
-                                    {item.is_ongoing && <Badge variant="outline" className="text-[10px]">Chronique</Badge>}
-                                    {item.severity && (
-                                        <Badge className={SEVERITY_OPTIONS.find(s => s.value === item.severity)?.color || ''}>
-                                            {SEVERITY_OPTIONS.find(s => s.value === item.severity)?.label}
-                                        </Badge>
-                                    )}
-                                </div>
-                                <div className="text-xs text-muted-foreground mt-1 flex flex-wrap gap-x-3 gap-y-1">
-                                    {item.start_date && (
-                                        <span className="flex items-center gap-1">
-                                            Diagnostic: {format(new Date(item.start_date), 'PPP', { locale: fr })}
-                                        </span>
-                                    )}
-                                    {item.description && (
-                                        <span className="flex items-center gap-1 italic">
-                                            Traitement: {item.description}
-                                        </span>
-                                    )}
-                                </div>
-                                {item.notes && (
-                                    <p className="text-xs text-muted-foreground mt-2 line-clamp-2">{item.notes}</p>
-                                )}
-                            </div>
-                            <DropdownMenu>
-                                <DropdownMenuTrigger asChild>
-                                    <Button variant="ghost" size="icon" className="h-8 w-8">
-                                        <MoreVertical className="h-4 w-4" />
-                                    </Button>
-                                </DropdownMenuTrigger>
-                                <DropdownMenuContent align="end">
-                                    <DropdownMenuItem onClick={() => openEditDialog(item)}>
-                                        <Pencil className="h-4 w-4 mr-2" /> Modifier
-                                    </DropdownMenuItem>
-                                    <DropdownMenuItem className="text-destructive" onClick={() => handleDelete(item.id)}>
-                                        <Trash2 className="h-4 w-4 mr-2" /> Supprimer
-                                    </DropdownMenuItem>
-                                </DropdownMenuContent>
-                            </DropdownMenu>
+                            {selectedIds.length > 0 && (
+                                <Button variant="destructive" size="sm" onClick={handleBulkDelete} className="h-7 text-xs">
+                                    <Trash2 className="h-3 w-3 mr-2" /> Supprimer ({selectedIds.length})
+                                </Button>
+                            )}
                         </div>
-                    ))
+
+                        {
+                            filteredHistory.map((item) => (
+                                <div key={item.id} className="flex items-start gap-3 p-3 rounded-lg border bg-card hover:bg-accent/50 transition-colors">
+                                    <Checkbox
+                                        className="mt-1"
+                                        checked={selectedIds.includes(item.id)}
+                                        onCheckedChange={(c) => handleSelect(item.id, c as boolean)}
+                                    />
+                                    <div className="p-2 rounded-lg bg-blue-100 dark:bg-blue-900/30 text-blue-600">
+                                        {getTypeIcon(item.condition_type)}
+                                    </div>
+                                    <div className="flex-1 min-w-0">
+                                        <div className="flex items-center gap-2">
+                                            <span className="font-medium text-sm">{item.condition_name}</span>
+                                            {item.is_chronic && <Badge variant="outline" className="text-[10px]">Chronique</Badge>}
+                                            {item.severity && (
+                                                <Badge className={SEVERITY_OPTIONS.find(s => s.value === item.severity)?.color || ''}>
+                                                    {SEVERITY_OPTIONS.find(s => s.value === item.severity)?.label}
+                                                </Badge>
+                                            )}
+                                        </div>
+                                        <div className="text-xs text-muted-foreground mt-1 flex flex-wrap gap-x-3 gap-y-1">
+                                            {item.diagnosis_date && (
+                                                <span className="flex items-center gap-1">
+                                                    Diagnostic: {format(new Date(item.diagnosis_date), 'PPP', { locale: fr })}
+                                                </span>
+                                            )}
+                                            {item.treatment && (
+                                                <span className="flex items-center gap-1 italic">
+                                                    Traitement: {item.treatment}
+                                                </span>
+                                            )}
+                                        </div>
+                                        {item.notes && (
+                                            <p className="text-xs text-muted-foreground mt-2 line-clamp-2">{item.notes}</p>
+                                        )}
+                                    </div>
+                                    <DropdownMenu>
+                                        <DropdownMenuTrigger asChild>
+                                            <Button variant="ghost" size="icon" className="h-8 w-8">
+                                                <MoreVertical className="h-4 w-4" />
+                                            </Button>
+                                        </DropdownMenuTrigger>
+                                        <DropdownMenuContent align="end">
+                                            <DropdownMenuItem onClick={() => openEditDialog(item)}>
+                                                <Pencil className="h-4 w-4 mr-2" /> Modifier
+                                            </DropdownMenuItem>
+                                            <DropdownMenuItem className="text-destructive" onClick={() => handleDelete(item.id)}>
+                                                <Trash2 className="h-4 w-4 mr-2" /> Supprimer
+                                            </DropdownMenuItem>
+                                        </DropdownMenuContent>
+                                    </DropdownMenu>
+                                </div>
+                            ))
+                        }
+                    </div>
                 )}
             </div>
 
@@ -411,8 +522,8 @@ const MedicalHistoryCard = ({ patientId }: MedicalHistoryCardProps) => {
                             <div className="space-y-2">
                                 <Label>Type d'antécédent</Label>
                                 <Select
-                                    value={formData.category}
-                                    onValueChange={(v) => setFormData({ ...formData, category: v })}
+                                    value={formData.condition_type}
+                                    onValueChange={(v) => setFormData({ ...formData, condition_type: v })}
                                 >
                                     <SelectTrigger><SelectValue /></SelectTrigger>
                                     <SelectContent>
@@ -432,9 +543,9 @@ const MedicalHistoryCard = ({ patientId }: MedicalHistoryCardProps) => {
                                 <Label>Nom de la condition / Pathologie</Label>
                                 <SearchableSelect
                                     options={pathologyOptions}
-                                    value={formData.title}
+                                    value={formData.condition_name}
                                     onValueChange={(v) => {
-                                        setFormData({ ...formData, title: v });
+                                        setFormData({ ...formData, condition_name: v });
                                         if (v !== '__custom__') setCustomConditionName('');
                                     }}
                                     onSearch={handlePathologySearch}
@@ -443,7 +554,7 @@ const MedicalHistoryCard = ({ patientId }: MedicalHistoryCardProps) => {
                                     loading={pathologiesLoading}
                                     externalSearch={true}
                                 />
-                                {formData.title === '__custom__' && (
+                                {formData.condition_name === '__custom__' && (
                                     <Input
                                         className="mt-2"
                                         placeholder="Saisir la condition..."
@@ -457,8 +568,8 @@ const MedicalHistoryCard = ({ patientId }: MedicalHistoryCardProps) => {
                                 <Label>Date du diagnostic</Label>
                                 <Input
                                     type="date"
-                                    value={formData.start_date}
-                                    onChange={(e) => setFormData({ ...formData, start_date: e.target.value })}
+                                    value={formData.diagnosis_date}
+                                    onChange={(e) => setFormData({ ...formData, diagnosis_date: e.target.value })}
                                 />
                             </div>
 
@@ -483,9 +594,9 @@ const MedicalHistoryCard = ({ patientId }: MedicalHistoryCardProps) => {
                                 <Label>Traitement prescrit</Label>
                                 <SearchableSelect
                                     options={treatmentOptions}
-                                    value={formData.description}
+                                    value={formData.treatment}
                                     onValueChange={(v) => {
-                                        setFormData({ ...formData, description: v });
+                                        setFormData({ ...formData, treatment: v });
                                         if (v !== '__custom__') setCustomTreatmentName('');
                                     }}
                                     onSearch={handleTreatmentSearch}
@@ -494,7 +605,7 @@ const MedicalHistoryCard = ({ patientId }: MedicalHistoryCardProps) => {
                                     loading={treatmentsLoading}
                                     externalSearch={true}
                                 />
-                                {formData.description === '__custom__' && (
+                                {formData.treatment === '__custom__' && (
                                     <Input
                                         className="mt-2"
                                         placeholder="Saisir le traitement..."
@@ -507,12 +618,12 @@ const MedicalHistoryCard = ({ patientId }: MedicalHistoryCardProps) => {
                             <div className="flex items-center space-x-2 pt-8">
                                 <input
                                     type="checkbox"
-                                    id="is_ongoing"
-                                    checked={formData.is_ongoing}
-                                    onChange={(e) => setFormData({ ...formData, is_ongoing: e.target.checked })}
+                                    id="is_chronic"
+                                    checked={formData.is_chronic}
+                                    onChange={(e) => setFormData({ ...formData, is_chronic: e.target.checked })}
                                     className="rounded border-gray-300"
                                 />
-                                <Label htmlFor="is_ongoing">Affection chronique</Label>
+                                <Label htmlFor="is_chronic">Affection chronique</Label>
                             </div>
 
                             <div className="col-span-2 space-y-2">
@@ -542,7 +653,7 @@ const MedicalHistoryCard = ({ patientId }: MedicalHistoryCardProps) => {
                 patientId={patientId}
                 category="medical_history"
             />
-        </div>
+        </div >
     );
 };
 
