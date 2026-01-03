@@ -267,74 +267,80 @@ const AIAssistant = ({ patient }: AIAssistantProps) => {
   };
 
   return (
-    <Card className="h-full flex flex-col">
-      <CardHeader className="pb-3">
-        <CardTitle className="flex items-center gap-2">
+    <Card className="h-full flex flex-col overflow-hidden border-none shadow-none bg-transparent">
+      <CardHeader className="shrink-0 pb-3">
+        <CardTitle className="flex items-center gap-2 text-sm sm:text-base">
           <Brain className="h-5 w-5 text-primary" />
           Assistant MediCore (RAG)
           <Sparkles className="h-4 w-4 text-primary" />
         </CardTitle>
-        <CardDescription>
+        <CardDescription className="text-xs">
           Posez une question sur le patient {patient.patient_id.slice(0, 6)}...
         </CardDescription>
       </CardHeader>
-      <CardContent className="flex-1 flex flex-col p-4 pt-0">
-        {/* Suggested Questions */}
-        {messages.length === 0 && (
-          <div className="space-y-2 mb-4">
-            <p className="text-xs text-muted-foreground">Questions suggérées :</p>
-            <div className="flex flex-wrap gap-2">
-              {suggestedQuestions.map((q, i) => (
-                <Button
-                  key={i}
-                  variant="outline"
-                  size="sm"
-                  className="text-xs h-auto py-1.5 px-2"
-                  onClick={() => handleSuggestion(q)}
-                  disabled={isLoading}
-                >
-                  {q}
-                </Button>
-              ))}
-            </div>
-          </div>
-        )}
 
-        {/* Messages */}
-        <ScrollArea className="flex-1 pr-4" ref={scrollRef}>
-          <div className="space-y-4">
+      <CardContent className="flex-1 min-h-0 flex flex-col p-4 pt-0 overflow-hidden">
+        {/* Messages and Suggestions Area - This one scrolls */}
+        <div
+          className="flex-1 overflow-y-auto pr-2 custom-scrollbar min-h-0"
+          ref={scrollRef}
+        >
+          {/* Suggested Questions (only if no messages) */}
+          {messages.length === 0 && (
+            <div className="space-y-3 mb-6">
+              <p className="text-[10px] uppercase font-bold tracking-wider text-muted-foreground opacity-70">
+                Suggestions d'analyse :
+              </p>
+              <div className="flex flex-col gap-2">
+                {suggestedQuestions.map((q, i) => (
+                  <Button
+                    key={i}
+                    variant="outline"
+                    size="sm"
+                    className="text-xs justify-start h-auto py-2 px-3 bg-background/50 border-primary/10 hover:border-primary/30 text-left whitespace-normal"
+                    onClick={() => handleSuggestion(q)}
+                    disabled={isLoading}
+                  >
+                    {q}
+                  </Button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <div className="space-y-4 pb-4">
             {messages.map((msg, i) => (
               <div
                 key={i}
                 className={`flex flex-col ${msg.role === 'user' ? 'items-end' : 'items-start'}`}
               >
                 <div
-                  className={`max-w-[85%] rounded-lg px-3 py-2 text-sm ${msg.role === 'user'
-                    ? 'bg-primary text-primary-foreground'
-                    : 'bg-muted'
+                  className={`max-w-[90%] rounded-2xl px-4 py-2.5 text-sm ${msg.role === 'user'
+                    ? 'bg-primary text-primary-foreground rounded-tr-none'
+                    : 'bg-muted rounded-tl-none border border-border/30'
                     }`}
                 >
-                  <div className="whitespace-pre-wrap">{msg.content}</div>
+                  <div className="whitespace-pre-wrap leading-relaxed">{msg.content}</div>
                 </div>
 
-                {/* Explainability toggle for assistant messages */}
+                {/* Explainability toggle */}
                 {msg.role === 'assistant' && msg.content && (
-                  <div className="mt-1 flex items-center gap-2">
+                  <div className="mt-1.5 flex items-center gap-2 ml-1">
                     <Button
                       variant="ghost"
                       size="sm"
-                      className="h-6 text-xs text-muted-foreground hover:text-primary"
+                      className="h-6 text-[10px] text-muted-foreground hover:text-primary px-1"
                       onClick={() => setShowExplainability(showExplainability === i ? null : i)}
                     >
                       <Info className="h-3 w-3 mr-1" />
-                      {showExplainability === i ? 'Masquer' : 'Expliquer'}
+                      {showExplainability === i ? 'Masquer' : 'Expliquer la réponse'}
                     </Button>
                   </div>
                 )}
 
                 {/* Explainability Panel */}
                 {showExplainability === i && msg.role === 'assistant' && (
-                  <div className="mt-2 w-full max-w-[95%]">
+                  <div className="mt-2 w-full">
                     <ExplainabilityPanel
                       data={{
                         overallConfidence: 0.78,
@@ -402,7 +408,7 @@ const AIAssistant = ({ patient }: AIAssistantProps) => {
                           'Adaptation posologique selon fonction rénale',
                         ],
                       }}
-                      className="border-l-2 border-primary/30"
+                      className="bg-card/30"
                     />
                   </div>
                 )}
@@ -410,27 +416,40 @@ const AIAssistant = ({ patient }: AIAssistantProps) => {
             ))}
             {isLoading && messages[messages.length - 1]?.role === 'user' && (
               <div className="flex justify-start">
-                <div className="bg-muted rounded-lg px-3 py-2">
-                  <Loader2 className="h-4 w-4 animate-spin" />
+                <div className="bg-muted rounded-2xl px-4 py-2 border border-border/30">
+                  <Loader2 className="h-4 w-4 animate-spin text-primary" />
                 </div>
               </div>
             )}
           </div>
-        </ScrollArea>
+        </div>
 
-        {/* Input */}
-        <form onSubmit={handleSubmit} className="flex gap-2 mt-4">
-          <Input
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            placeholder="Posez votre question..."
-            disabled={isLoading}
-            className="flex-1"
-          />
-          <Button type="submit" size="icon" disabled={isLoading || !input.trim()}>
-            {isLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
-          </Button>
-        </form>
+        {/* Input - This remains sticked to the bottom */}
+        <div className="shrink-0 pt-3 mt-auto">
+          <form
+            onSubmit={handleSubmit}
+            className="relative flex items-center"
+          >
+            <Input
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              placeholder="Posez votre question..."
+              disabled={isLoading}
+              className="flex-1 pr-12 bg-background/50 border-primary/20 focus-visible:ring-primary/30 h-11"
+            />
+            <Button
+              type="submit"
+              size="icon"
+              disabled={isLoading || !input.trim()}
+              className="absolute right-1 h-9 w-9 rounded-lg"
+            >
+              {isLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+            </Button>
+          </form>
+          <p className="text-[9px] text-center text-muted-foreground mt-2 opacity-60 italic">
+            MediCore peut faire des erreurs. Vérifiez les informations critiques.
+          </p>
+        </div>
       </CardContent>
     </Card>
   );

@@ -158,9 +158,9 @@ const PatientDetail = () => {
 
   return (
     <AppLayout>
-      <div className="space-y-3 sm:space-y-4 px-2 sm:px-0 pb-20 lg:pb-0">
-        {/* Header */}
-        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 sm:gap-4">
+      <div className="min-h-screen flex flex-col px-2 sm:px-4 pb-20">
+        {/* Header - Fixed Height */}
+        <div className="shrink-0 py-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 sm:gap-4">
           <div className="flex items-center gap-2 sm:gap-4">
             <Link to="/patients">
               <Button variant="outline" size="sm" className="touch-manipulation">
@@ -201,43 +201,47 @@ const PatientDetail = () => {
           </div>
         </div>
 
-        {/* Safety Alerts */}
-        <SafetyAlertBanner alerts={alerts} />
+        {/* Safety Alerts - Fixed Height */}
+        <div className="shrink-0 mb-4">
+          <SafetyAlertBanner alerts={alerts} />
+        </div>
 
-        {/* Main Content - Dossier Layout with integrated AI */}
-        <PatientDossierLayout
-          patientId={patient.id}
-          patient={{
-            id: patient.id,
-            first_name: patient.first_name || 'Patient',
-            last_name: patient.last_name || patient.patient_id,
-            date_of_birth: patient.date_of_birth || '',
-            gender: patient.gender,
-            email: patient.email,
-            phone: patient.phone,
-            address: patient.address,
-            city: patient.city,
-            postal_code: patient.postal_code,
-            pathologies: patient.pathologies,
-            age: patient.age,
-            height_cm: patient.height_cm,
-            weight_kg: patient.weight_kg,
-            treatment: patient.treatment,
-            medical_notes_nlp: patient.medical_notes_nlp,
-            // Pass all real database relations to the layout for the AI Assistant
-            medications: patient.medications,
-            vaccinations: patient.vaccinations,
-            allergies: patient.allergies,
-            medical_history: patient.medical_history,
-            consultations: patient.consultations,
-            mental_health: patient.mental_health,
-            reproductive_health: patient.reproductive_health,
-            clinical_data: patient.clinical_data,
-            lab_results_data: patient.lab_results_data,
-            lab_results_json: patient.lab_results_json,
-          }}
-          alerts={alerts}
-        />
+        {/* Main Content - Flex-1 (Takes remaining space) */}
+        <div className="flex-1 min-h-0">
+          <PatientDossierLayout
+            patientId={patient.id}
+            patient={{
+              id: patient.id,
+              first_name: patient.first_name || 'Patient',
+              last_name: patient.last_name || patient.patient_id,
+              date_of_birth: patient.date_of_birth || '',
+              gender: patient.gender,
+              email: patient.email,
+              phone: patient.phone,
+              address: patient.address,
+              city: patient.city,
+              postal_code: patient.postal_code,
+              pathologies: patient.pathologies,
+              age: patient.age,
+              height_cm: patient.height_cm,
+              weight_kg: patient.weight_kg,
+              treatment: patient.treatment,
+              medical_notes_nlp: patient.medical_notes_nlp,
+              // Pass all real database relations to the layout for the AI Assistant
+              medications: patient.medications,
+              vaccinations: patient.vaccinations,
+              allergies: patient.allergies,
+              medical_history: patient.medical_history,
+              consultations: patient.consultations,
+              mental_health: patient.mental_health,
+              reproductive_health: patient.reproductive_health,
+              clinical_data: patient.clinical_data,
+              lab_results_data: patient.lab_results_data,
+              lab_results_json: patient.lab_results_json,
+            }}
+            alerts={alerts}
+          />
+        </div>
       </div>
     </AppLayout>
   );

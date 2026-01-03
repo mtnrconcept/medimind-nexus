@@ -1,348 +1,254 @@
-/**
- * PatientDossierLayout - Main orchestrator for the new patient dossier UI
- * 
- * Layout:
- * - Left: Summary panel + Category menu
- * - Center: Digital Twin 3D (full height)
- * - Right side: AI Health Synthesis + Document Gallery
- * - Floating: Category cards (draggable)
- */
-
-import { useState, useMemo, useCallback } from 'react';
-import { Hospital, Users, AlertTriangle, Pill, Syringe, Activity, Heart, FlaskConical, Image, Stethoscope, Baby, Brain, Home, Shield, Smile, FileText, MessageSquare, LineChart, UserCircle } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { Image } from 'lucide-react';
 import PatientSummaryPanel from './PatientSummaryPanel';
-import CategoryMenu, { CategoryKey, CATEGORIES } from './CategoryMenu';
-import FloatingCard from './FloatingCard';
+import CategoryMenu, { PatientCategory } from './CategoryMenu';
 import DigitalTwin3DViewer from '../DigitalTwin3DViewer';
 import PatientHealthSynthesis from '../PatientHealthSynthesis';
 import DocumentGallery from '../DocumentGallery';
 import AIAssistant from '../AIAssistant';
-import { MedicalHistoryCard, FamilyHistoryCard, AllergiesCard, MedicationsCard, VaccinationsCard, LifestyleCard, LabResultsCard, ClinicalDataCard, ImagingCard, FunctionalExamsCard, PreventionCard, ConsultationsCard, MentalHealthCard, ReproductiveHealthCard, SocialFactorsCard, DentalCard, CommunicationsCard, MonitoringCard, AgeSpecificCard, GenericDataCard } from './cards';
-import { SideEffectAlertPanel } from '../SideEffectAlertPanel';
-import { ScrollArea } from '@/components/ui/scroll-area';
+import { usePatientAlerts } from '@/hooks/usePatientAlerts';
+import { Responsive as ResponsiveGridLayout, useContainerWidth } from 'react-grid-layout';
+import AppWindow from './AppWindow';
+
+// Styles requis pour le grid layout
+import 'react-grid-layout/css/styles.css';
+import 'react-resizable/css/styles.css';
 
 interface PatientDossierLayoutProps {
     patientId: string;
-    patient: {
-        id: string;
-        patient_id?: string;
-        first_name: string;
-        last_name: string;
-        date_of_birth: string;
-        gender: string;
-        email?: string;
-        phone?: string;
-        address?: string;
-        city?: string;
-        postal_code?: string;
-        pathologies?: { name: string };
-        // For AI Assistant
-        age?: number;
-        height_cm?: number;
-        weight_kg?: number;
-        treatment?: string;
-        medical_notes_nlp?: string;
-        lab_results_json?: any;
-        medications?: any[];
-        vaccinations?: any[];
-        allergies?: any[];
-        medical_history?: any[];
-        consultations?: any[];
-        mental_health?: any[];
-        reproductive_health?: any[];
-        clinical_data?: any[];
-        lab_results_data?: any[];
-    };
-    alerts: any[];
+    patient: any;
 }
 
-const PatientDossierLayout = ({ patientId, patient, alerts }: PatientDossierLayoutProps) => {
-    const [activeCategory, setActiveCategory] = useState<CategoryKey | null>(null);
+interface WindowData {
+    id: string;
+    title: string;
+    category: PatientCategory;
+    zIndex: number;
+    initialY: number;
+}
+
+const PatientDossierLayout = ({ patientId, patient }: PatientDossierLayoutProps) => {
+    const { containerRef, width } = useContainerWidth();
+    const [activeCategory, setActiveCategory] = useState<PatientCategory>('summary');
     const [refreshKey, setRefreshKey] = useState(0);
+    const [openWindows, setOpenWindows] = useState<WindowData[]>([]);
+    const [maxZIndex, setMaxZIndex] = useState(100);
 
-    // Mobile navigation state
-    const [mobileTab, setMobileTab] = useState<'twin' | 'summary' | 'menu' | 'docs' | 'ai'>('twin');
+    const patientAlerts = usePatientAlerts(
+        patient.lab_results_json || {},
+        (patient as any).medications?.map((m: any) => m.drug_name).join(', ') || '',
+        '', // Notes médicales supplémentaires
+        patient.pathologies?.name,
+        (patient as any).medical_history
+    ) || [];
 
-    const handleSelectCategory = (category: CategoryKey) => {
-        setActiveCategory(activeCategory === category ? null : category);
+    const handleSelectCategory = (category: PatientCategory, yPosition?: number) => {
+        const existing = openWindows.find(w => w.category === category);
+        if (existing) {
+            focusWindow(existing.id);
+            return;
+        }
+
+        // Calcul de la position Y relative
+        const scrollY = window.scrollY;
+        const targetY = (yPosition || 100) + scrollY - 200; // Ajustement pour centrer un peu plus
+
+        const newWindow: WindowData = {
+            id: `win-${category}-${Date.now()}`,
+            title: category.replace('_', ' ').charAt(0).toUpperCase() + category.replace('_', ' ').slice(1),
+            category: category,
+            zIndex: maxZIndex + 1,
+            initialY: Math.max(targetY, 100)
+        };
+
+        setMaxZIndex(prev => prev + 1);
+        setOpenWindows(prev => [...prev, newWindow]);
+        setActiveCategory(category);
     };
 
-    const handleCloseCard = () => {
-        setActiveCategory(null);
+    const closeWindow = (id: string) => {
+        setOpenWindows(prev => prev.filter(w => w.id !== id));
     };
 
-    // Callback when document data is integrated - refresh data
-    const handleDocumentIntegrated = useCallback(() => {
+    const focusWindow = (id: string) => {
+        setOpenWindows(prev => prev.map(w =>
+            w.id === id ? { ...w, zIndex: maxZIndex + 1 } : w
+        ));
+        setMaxZIndex(prev => prev + 1);
+    };
+
+    const handleDocumentIntegrated = () => {
         setRefreshKey(prev => prev + 1);
-    }, []);
-
-    // Get category config for active card
-    const activeCategoryConfig = useMemo(() => {
-        return CATEGORIES.find(c => c.key === activeCategory);
-    }, [activeCategory]);
-
-    // Render card content based on category
-    const renderCardContent = () => {
-        if (!activeCategory) return null;
-
-        switch (activeCategory) {
-            case 'medical_history':
-                return <MedicalHistoryCard patientId={patientId} />;
-            case 'family_history':
-                return <FamilyHistoryCard patientId={patientId} />;
-            case 'allergies':
-                return <AllergiesCard patientId={patientId} />;
-            case 'medications':
-                return <MedicationsCard patientId={patientId} />;
-            case 'vaccinations':
-                return <VaccinationsCard patientId={patientId} />;
-            case 'lifestyle':
-                return <LifestyleCard patientId={patientId} />;
-            case 'clinical_data':
-                return <ClinicalDataCard patientId={patientId} />;
-            case 'lab_results':
-                return <LabResultsCard patientId={patientId} />;
-            case 'imaging':
-                return <ImagingCard patientId={patientId} />;
-            case 'functional_exams':
-                return <FunctionalExamsCard patientId={patientId} />;
-            case 'prevention':
-                return <PreventionCard patientId={patientId} />;
-            case 'reproductive':
-                return <ReproductiveHealthCard patientId={patientId} />;
-            case 'mental_health':
-                return <MentalHealthCard patientId={patientId} />;
-            case 'social_factors':
-                return <SocialFactorsCard patientId={patientId} />;
-            case 'consultations':
-                return <ConsultationsCard patientId={patientId} />;
-            case 'communications':
-                return <CommunicationsCard patientId={patientId} />;
-            case 'monitoring':
-                return <MonitoringCard patientId={patientId} />;
-            case 'age_specific':
-                return <AgeSpecificCard patientId={patientId} />;
-            case 'dental':
-                return <DentalCard patientId={patientId} />;
-            case 'documents':
-                return (
-                    <GenericDataCard
-                        patientId={patientId}
-                        table="patient_documents"
-                        titleField="file_name"
-                        dateField="created_at"
-                        descriptionField="category"
-                        emptyIcon={<FileText className="h-8 w-8 mx-auto opacity-50" />}
-                        emptyText="Aucun document"
-                    />
-                );
-            case 'side_effects':
-                return <SideEffectAlertPanel patientId={patientId} />;
-            default:
-                return (
-                    <div className="py-8 text-center text-muted-foreground">
-                        <p>Section en développement</p>
-                        <p className="text-xs mt-2">Cette catégorie sera bientôt disponible</p>
-                    </div>
-                );
-        }
     };
 
-    // Render mobile content based on active tab
-    const renderMobileContent = () => {
-        switch (mobileTab) {
-            case 'twin':
-                return (
-                    <div className="h-full">
-                        <DigitalTwin3DViewer
-                            alerts={alerts}
-                            pathologyName={patient.pathologies?.name}
-                        />
-                    </div>
-                );
-            case 'summary':
-                return (
-                    <ScrollArea className="h-full">
-                        <div className="p-4 space-y-4">
-                            <PatientSummaryPanel patientId={patientId} patient={patient} />
-                            <PatientHealthSynthesis key={refreshKey} patientId={patientId} />
-                        </div>
-                    </ScrollArea>
-                );
-            case 'menu':
-                return (
-                    <ScrollArea className="h-full">
-                        <div className="p-4">
-                            <CategoryMenu
-                                activeCategory={activeCategory}
-                                onSelectCategory={handleSelectCategory}
-                                accordionMode={true}
-                                renderContent={(category) => (
-                                    <div key={`${category}-${refreshKey}`}>
-                                        {renderCardContent()}
-                                    </div>
-                                )}
-                            />
-                        </div>
-                    </ScrollArea>
-                );
-            case 'docs':
-                return (
-                    <ScrollArea className="h-full">
-                        <div className="p-4">
-                            <DocumentGallery
-                                patientId={patientId}
-                                onDocumentIntegrated={handleDocumentIntegrated}
-                            />
-                        </div>
-                    </ScrollArea>
-                );
-            case 'ai':
-                return (
-                    <div className="h-full p-4">
-                        <AIAssistant
-                            patient={{
-                                ...patient,
-                                patient_id: patient.patient_id || patient.id,
-                                lab_results_json: patient.lab_results_json || {},
-                                alerts: alerts,
-                                bmi: patient.height_cm && patient.weight_kg
-                                    ? Math.round((patient.weight_kg / ((patient.height_cm / 100) ** 2)) * 10) / 10
-                                    : undefined,
-                                // Relayer les données réelles de la DB
-                                medications: (patient as any).medications,
-                                vaccinations: (patient as any).vaccinations,
-                                allergies: (patient as any).allergies,
-                                medical_history: (patient as any).medical_history,
-                                consultations: (patient as any).consultations,
-                                mental_health: (patient as any).mental_health,
-                                reproductive_health: (patient as any).reproductive_health,
-                                clinical_data: (patient as any).clinical_data,
-                                lab_results_data: (patient as any).lab_results_data,
-                            } as any}
-                        />
-                    </div>
-                );
-            default:
-                return null;
-        }
+    const layouts = {
+        lg: [
+            { i: 'summary', x: 0, y: 0, w: 3, h: 4 },
+            { i: 'digital-twin', x: 3, y: 0, w: 6, h: 10 },
+            { i: 'ai-synthesis', x: 9, y: 0, w: 3, h: 6 },
+            { i: 'documents', x: 0, y: 4, w: 3, h: 8 },
+            { i: 'ai-assistant', x: 9, y: 6, w: 3, h: 10 },
+        ]
     };
 
     return (
-        <>
-            {/* Desktop Layout - Hidden on mobile */}
-            <div className="hidden lg:flex h-[calc(100vh-120px)] gap-4">
-                {/* Left Panel - Summary + Categories + Documents */}
-                <div className="w-72 shrink-0 flex flex-col gap-2 overflow-y-auto">
-                    <div className="shrink-0">
+        <div className="relative min-h-[1200px] pb-20">
+            {/* Main Menu - Fixed on the left */}
+            <div className="fixed left-4 top-24 z-20 w-64 hidden xl:block">
+                <div className="flex flex-col gap-6">
+                    <div className="shrink-0 bg-background/40 backdrop-blur-md rounded-2xl border border-border/30 overflow-hidden shadow-xl">
                         <PatientSummaryPanel patientId={patientId} patient={patient} />
                     </div>
-                    <div className="shrink-0">
+                    <div className="rounded-2xl border border-border/50 bg-background/80 backdrop-blur-md p-2 shadow-2xl">
                         <CategoryMenu
                             activeCategory={activeCategory}
                             onSelectCategory={handleSelectCategory}
                         />
                     </div>
-                    {/* Document Gallery - compact under menu */}
-                    <div className="shrink-0">
-                        <DocumentGallery
-                            patientId={patientId}
-                            onDocumentIntegrated={handleDocumentIntegrated}
-                        />
-                    </div>
                 </div>
+            </div>
 
-                {/* Center - Digital Twin (full height) */}
-                <div className="flex-1 min-w-0">
-                    <DigitalTwin3DViewer
-                        alerts={alerts}
-                        pathologyName={patient.pathologies?.name}
-                    />
-                </div>
-
-                {/* Right Panel - AI Health Synthesis + AI Assistant */}
-                <div className="w-80 shrink-0 flex flex-col gap-4">
-                    <div className="shrink-0">
-                        <PatientHealthSynthesis
-                            key={refreshKey}
-                            patientId={patientId}
-                        />
-                    </div>
-                    <div className="shrink-0">
-                        <AIAssistant
-                            patient={{
-                                ...patient,
-                                patient_id: patient.patient_id || patient.id,
-                                lab_results_json: patient.lab_results_json || {},
-                                alerts: alerts,
-                                bmi: patient.height_cm && patient.weight_kg
-                                    ? Math.round((patient.weight_kg / ((patient.height_cm / 100) ** 2)) * 10) / 10
-                                    : undefined,
-                            } as any}
-                        />
-                    </div>
-                </div>
-
-                {/* Floating Cards - Desktop only */}
-                {activeCategory && activeCategoryConfig && (
-                    <FloatingCard
-                        title={activeCategoryConfig.label}
-                        icon={activeCategoryConfig.icon}
-                        isOpen={!!activeCategory}
-                        onClose={handleCloseCard}
-                        initialPosition={{ x: 320, y: 100 }}
+            {/* Dashboard Area */}
+            <div ref={containerRef} className="xl:ml-72 flex-1 pt-4 px-4 overflow-x-hidden">
+                {width > 0 && (
+                    <ResponsiveGridLayout
+                        className="layout"
+                        layouts={layouts}
+                        breakpoints={{ lg: 1200, md: 996, sm: 768, xs: 480, xxs: 0 }}
+                        cols={{ lg: 12, md: 10, sm: 6, xs: 4, xxs: 2 }}
+                        rowHeight={50}
+                        draggableHandle=".drag-handle"
+                        margin={[24, 24]}
+                        width={width}
                     >
-                        <div key={refreshKey} className="h-full">
-                            {renderCardContent()}
+                        {/* Summary Block */}
+                        <div key="summary" className="bg-card/20 rounded-2xl border border-border/50 overflow-hidden shadow-sm hover:shadow-md transition-shadow flex flex-col">
+                            <div className="drag-handle h-8 bg-muted/20 cursor-move flex items-center justify-center shrink-0">
+                                <div className="w-12 h-1 bg-primary/30 rounded-full"></div>
+                            </div>
+                            <div className="p-2 flex-1 overflow-y-auto custom-scrollbar">
+                                <div className="text-[10px] font-bold uppercase tracking-widest opacity-40 mb-3 px-2">Aperçu Médical</div>
+                                <PatientSummaryPanel patientId={patientId} patient={patient} />
+                            </div>
                         </div>
-                    </FloatingCard>
+
+                        {/* Digital Twin */}
+                        <div key="digital-twin" className="bg-background/20 rounded-2xl border border-border/50 overflow-hidden relative shadow-lg group">
+                            <div className="drag-handle absolute top-0 left-0 right-0 h-10 z-10 bg-gradient-to-b from-background/90 to-transparent cursor-move opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                                <div className="w-16 h-1 bg-primary/40 rounded-full"></div>
+                            </div>
+                            <DigitalTwin3DViewer
+                                alerts={patientAlerts}
+                                pathologyName={patient.pathologies?.name}
+                            />
+                        </div>
+
+                        {/* AI Synthesis */}
+                        <div key="ai-synthesis" className="bg-card/20 rounded-2xl border border-border/50 overflow-hidden shadow-sm flex flex-col">
+                            <div className="drag-handle h-8 bg-muted/20 cursor-move flex items-center justify-center shrink-0">
+                                <div className="w-12 h-1 bg-primary/30 rounded-full"></div>
+                            </div>
+                            <div className="flex-1 overflow-y-auto custom-scrollbar">
+                                <PatientHealthSynthesis
+                                    key={refreshKey}
+                                    patientId={patientId}
+                                />
+                            </div>
+                        </div>
+
+                        {/* Document Gallery */}
+                        <div key="documents" className="bg-card/20 rounded-2xl border border-border/50 overflow-hidden flex flex-col shadow-sm">
+                            <div className="drag-handle px-6 py-4 border-b border-border/20 bg-muted/10 flex items-center justify-between cursor-move">
+                                <h3 className="text-[11px] font-bold uppercase tracking-widest flex items-center gap-3 opacity-80">
+                                    <Image className="h-4 w-4 text-primary" />
+                                    Archive Documentaire
+                                </h3>
+                                <div className="w-8 h-1 bg-primary/20 rounded-full"></div>
+                            </div>
+                            <div className="p-4 overflow-y-auto custom-scrollbar flex-1">
+                                <DocumentGallery
+                                    patientId={patientId}
+                                    onDocumentIntegrated={handleDocumentIntegrated}
+                                />
+                            </div>
+                        </div>
+
+                        {/* AI Assistant */}
+                        <div key="ai-assistant" className="border border-border/50 rounded-3xl overflow-hidden shadow-2xl bg-background/40 flex flex-col">
+                            <div className="drag-handle h-8 bg-muted/20 cursor-move flex items-center justify-center shrink-0">
+                                <div className="w-12 h-1 bg-primary/30 rounded-full"></div>
+                            </div>
+                            <div className="flex-1 min-h-0">
+                                <AIAssistant
+                                    patient={{
+                                        ...patient,
+                                        patient_id: patient.patient_id || patient.id,
+                                        lab_results_json: patient.lab_results_json || {},
+                                        alerts: patientAlerts,
+                                        bmi: patient.height_cm && patient.weight_kg
+                                            ? Math.round((patient.weight_kg / ((patient.height_cm / 100) ** 2)) * 10) / 10
+                                            : undefined,
+                                        medications: (patient as any).medications,
+                                        vaccinations: (patient as any).vaccinations,
+                                        allergies: (patient as any).allergies,
+                                        medical_history: (patient as any).medical_history,
+                                        consultations: (patient as any).consultations,
+                                        mental_health: (patient as any).mental_health,
+                                        reproductive_health: (patient as any).reproductive_health,
+                                        clinical_data: (patient as any).clinical_data,
+                                        lab_results_data: (patient as any).lab_results_data,
+                                    } as any}
+                                />
+                            </div>
+                        </div>
+                    </ResponsiveGridLayout>
                 )}
             </div>
 
-            {/* Mobile Layout - Shown only on mobile */}
-            <div className="lg:hidden flex flex-col h-[calc(100vh-140px)]">
-                {/* Mobile Content Area */}
-                <div className="flex-1 overflow-hidden">
-                    {renderMobileContent()}
-                </div>
-
-                {/* Mobile Bottom Navigation */}
-                <nav className="fixed bottom-0 left-0 right-0 z-50 bg-white/95 dark:bg-slate-900/95 backdrop-blur-lg border-t border-slate-200 dark:border-slate-700">
-                    <div className="flex items-center justify-around h-16 pb-safe">
-                        {[
-                            { key: 'twin' as const, icon: Activity, label: 'Twin' },
-                            { key: 'summary' as const, icon: Heart, label: 'Résumé' },
-                            { key: 'menu' as const, icon: Hospital, label: 'Menu' },
-                            { key: 'docs' as const, icon: Image, label: 'Docs' },
-                            { key: 'ai' as const, icon: Brain, label: 'IA' },
-                        ].map((tab) => {
-                            const Icon = tab.icon;
-                            const isActive = mobileTab === tab.key;
-                            return (
-                                <button
-                                    key={tab.key}
-                                    onClick={() => setMobileTab(tab.key)}
-                                    className={`flex flex-col items-center justify-center flex-1 h-full gap-0.5 touch-manipulation transition-colors relative ${isActive
-                                        ? 'text-primary'
-                                        : 'text-slate-500 dark:text-slate-400'
-                                        }`}
-                                >
-                                    <Icon className={`h-5 w-5 ${isActive ? 'scale-110' : ''} transition-transform`} />
-                                    <span className={`text-[10px] font-medium`}>
-                                        {tab.label}
-                                    </span>
-                                    {isActive && (
-                                        <div className="absolute bottom-1 w-8 h-0.5 bg-primary rounded-full" />
-                                    )}
-                                </button>
-                            );
-                        })}
+            {/* Floating Windows System */}
+            {openWindows.map((win, index) => (
+                <AppWindow
+                    key={win.id}
+                    id={win.id}
+                    title={win.title}
+                    zIndex={win.zIndex}
+                    defaultPosition={{ x: 400 + (index * 40), y: win.initialY + (index * 20) }}
+                    onClose={() => closeWindow(win.id)}
+                    onFocus={() => focusWindow(win.id)}
+                >
+                    <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
+                        {win.category === 'documents' ? (
+                            <div className="p-2">
+                                <DocumentGallery patientId={patientId} onDocumentIntegrated={handleDocumentIntegrated} />
+                            </div>
+                        ) : (
+                            <div className="p-8 text-center space-y-6">
+                                <div className="mx-auto w-16 h-16 rounded-full bg-primary/10 flex items-center justify-center animate-pulse">
+                                    <div className="w-8 h-8 rounded-full bg-primary/20"></div>
+                                </div>
+                                <div className="space-y-2">
+                                    <h4 className="text-lg font-bold text-primary">Module {win.title}</h4>
+                                    <p className="text-sm text-muted-foreground leading-relaxed max-w-xs mx-auto">
+                                        Exploration détaillée des données. Vous pouvez comparer ce module avec les blocs du dashboard en arrière-plan.
+                                    </p>
+                                </div>
+                                <div className="grid grid-cols-2 gap-3 pt-4">
+                                    <div className="h-20 rounded-xl bg-card border border-border/30 flex flex-col items-center justify-center">
+                                        <span className="text-[10px] uppercase font-bold opacity-40">Entrées</span>
+                                        <span className="text-xl font-bold">12</span>
+                                    </div>
+                                    <div className="h-20 rounded-xl bg-card border border-border/30 flex flex-col items-center justify-center">
+                                        <span className="text-[10px] uppercase font-bold opacity-40">Alertes</span>
+                                        <span className="text-xl font-bold text-destructive">2</span>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
                     </div>
-                </nav>
-            </div>
-        </>
+                </AppWindow>
+            ))}
+        </div>
     );
 };
 
 export default PatientDossierLayout;
-

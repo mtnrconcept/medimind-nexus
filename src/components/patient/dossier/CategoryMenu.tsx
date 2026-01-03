@@ -32,7 +32,8 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
-export type CategoryKey =
+export type PatientCategory =
+    | 'summary'
     | 'medical_history'
     | 'family_history'
     | 'allergies'
@@ -56,7 +57,7 @@ export type CategoryKey =
     | 'side_effects';
 
 interface CategoryConfig {
-    key: CategoryKey;
+    key: PatientCategory;
     label: string;
     icon: ReactNode;
     color: string;
@@ -87,11 +88,11 @@ export const CATEGORIES: CategoryConfig[] = [
 ];
 
 interface CategoryMenuProps {
-    activeCategory: CategoryKey | null;
-    onSelectCategory: (category: CategoryKey) => void;
+    activeCategory: PatientCategory | null;
+    onSelectCategory: (category: PatientCategory, yPosition?: number) => void;
     className?: string;
     /** Optional: render content directly under category (accordion mode for mobile) */
-    renderContent?: (category: CategoryKey) => React.ReactNode;
+    renderContent?: (category: PatientCategory) => React.ReactNode;
     /** If true, content expands inline under category */
     accordionMode?: boolean;
 }
@@ -112,7 +113,10 @@ const CategoryMenu = ({ activeCategory, onSelectCategory, className, renderConte
                                         cat.color,
                                         isActive && "ring-2 ring-primary ring-offset-1 ring-offset-background"
                                     )}
-                                    onClick={() => onSelectCategory(cat.key)}
+                                    onClick={(e) => {
+                                        const rect = e.currentTarget.getBoundingClientRect();
+                                        onSelectCategory(cat.key, rect.top);
+                                    }}
                                 >
                                     {cat.icon}
                                     <span className="truncate flex-1 text-left">{cat.label}</span>
