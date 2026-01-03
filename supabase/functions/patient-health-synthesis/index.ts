@@ -115,6 +115,13 @@ serve(async (req) => {
             { data: labResults },
             { data: prevention },
             { data: administrative },
+            { data: consultations },
+            { data: imaging },
+            { data: functionalExams },
+            { data: mentalHealth },
+            { data: reproductiveHealth },
+            { data: socialFactors },
+            { data: dental },
         ] = await Promise.all([
             supabase.from("patient_medications").select("*, medications(*)").eq("patient_id", patient_id),
             supabase.from("patient_pathologies").select("*, pathologies(*)").eq("patient_id", patient_id),
@@ -128,6 +135,13 @@ serve(async (req) => {
             supabase.from("patient_lab_results").select("*").eq("patient_id", patient_id).order("test_date", { ascending: false }).limit(50),
             supabase.from("patient_prevention").select("*").eq("patient_id", patient_id),
             supabase.from("patient_administrative").select("*").eq("patient_id", patient_id).maybeSingle(),
+            supabase.from("patient_consultations").select("*").eq("patient_id", patient_id).order("consultation_date", { ascending: false }).limit(20),
+            supabase.from("patient_imaging").select("*").eq("patient_id", patient_id).order("exam_date", { ascending: false }).limit(20),
+            supabase.from("patient_functional_exams").select("*").eq("patient_id", patient_id).order("exam_date", { ascending: false }).limit(20),
+            supabase.from("patient_mental_health").select("*").eq("patient_id", patient_id).maybeSingle(),
+            supabase.from("patient_reproductive_health").select("*").eq("patient_id", patient_id).maybeSingle(),
+            supabase.from("patient_social_factors").select("*").eq("patient_id", patient_id).maybeSingle(),
+            supabase.from("patient_dental").select("*").eq("patient_id", patient_id).order("exam_date", { ascending: false }).limit(5),
         ]);
 
         // =====================================================
@@ -143,10 +157,12 @@ serve(async (req) => {
                 height_cm: patient.height_cm,
             },
             current_medications: medications?.map(m => ({
-                name: m.medications?.name,
+                name: m.medications?.name || m.medication_name,
                 dosage: m.dosage,
                 frequency: m.frequency,
+                route: m.route,
                 is_active: m.is_active,
+                start_date: m.start_date,
             })) || [],
             current_pathologies: patientPathologies?.map(p => ({
                 name: p.pathologies?.name,
@@ -156,14 +172,16 @@ serve(async (req) => {
             })) || [],
             allergies: allergies?.map(a => ({
                 allergen: a.allergen,
-                type: a.allergen_type,
+                type: a.allergy_type,
                 severity: a.severity,
                 reaction: a.reaction,
+                confirmed: a.confirmed,
             })) || [],
             vaccinations: vaccinations?.map(v => ({
                 vaccine: v.vaccine_name,
                 date: v.vaccination_date,
-                booster_due: v.booster_date,
+                dose_number: v.dose_number,
+                next_dose_due: v.next_dose_date,
             })) || [],
             active_symptoms: symptoms?.map(s => ({
                 name: s.symptom_name,
@@ -171,22 +189,30 @@ serve(async (req) => {
                 onset: s.onset_date,
             })) || [],
             medical_history: medicalHistory?.map(h => ({
-                category: h.category,
-                title: h.title,
-                date: h.start_date,
-                is_ongoing: h.is_ongoing,
+                condition_name: h.condition_name,
+                condition_type: h.condition_type,
+                severity: h.severity,
+                diagnosis_date: h.diagnosis_date,
+                resolution_date: h.resolution_date,
+                treatment: h.treatment,
+                is_chronic: h.is_chronic,
+                notes: h.notes,
             })) || [],
             family_history: familyHistory?.map(f => ({
                 relationship: f.relationship,
                 condition: f.condition,
-                hereditary: f.is_hereditary,
+                age_at_diagnosis: f.age_at_diagnosis,
+                is_deceased: f.is_deceased,
+                cause_of_death: f.cause_of_death,
             })) || [],
             lifestyle: lifestyle ? {
                 smoking: lifestyle.smoking_status,
-                alcohol: lifestyle.alcohol_status,
-                physical_activity: lifestyle.physical_activity_level,
-                sleep_quality: lifestyle.sleep_quality,
-                pack_years: lifestyle.pack_years,
+                alcohol: lifestyle.alcohol_consumption,
+                physical_activity: lifestyle.physical_activity,
+                diet: lifestyle.diet_type,
+                sleep_hours: lifestyle.sleep_hours,
+                stress_level: lifestyle.stress_level,
+                occupation: lifestyle.occupation,
             } : null,
             recent_vitals: clinicalData?.[0] ? {
                 bp: `${clinicalData[0].systolic_bp}/${clinicalData[0].diastolic_bp}`,
@@ -194,13 +220,16 @@ serve(async (req) => {
                 weight: clinicalData[0].weight_kg,
                 bmi: clinicalData[0].bmi,
                 temperature: clinicalData[0].temperature,
+                spo2: clinicalData[0].spo2,
+                respiratory_rate: clinicalData[0].respiratory_rate,
             } : null,
-            recent_labs: labResults?.slice(0, 20).map(l => ({
+            recent_labs: labResults?.slice(0, 30).map(l => ({
                 test: l.test_name,
                 value: l.value,
                 unit: l.unit,
                 is_abnormal: l.is_abnormal,
                 date: l.test_date,
+                reference_range: l.reference_range,
             })) || [],
             prevention_status: prevention?.map(p => ({
                 screening: p.screening_type,
@@ -208,6 +237,58 @@ serve(async (req) => {
                 next_due: p.next_due_date,
                 status: p.result_status,
             })) || [],
+            // NEW: Additional context from all cards
+            recent_consultations: consultations?.slice(0, 10).map(c => ({
+                date: c.consultation_date,
+                specialty: c.specialty,
+                physician: c.physician_name,
+                reason: c.reason,
+                diagnosis: c.diagnosis,
+                treatment_plan: c.treatment_plan,
+                follow_up_date: c.follow_up_date,
+            })) || [],
+            imaging_results: imaging?.slice(0, 10).map(i => ({
+                type: i.exam_type,
+                body_part: i.body_part,
+                date: i.exam_date,
+                findings: i.findings,
+                conclusion: i.conclusion,
+                is_abnormal: i.is_abnormal,
+            })) || [],
+            functional_exams: functionalExams?.slice(0, 10).map(e => ({
+                type: e.exam_type,
+                date: e.exam_date,
+                result: e.result_summary,
+                is_abnormal: e.is_abnormal,
+            })) || [],
+            mental_health: mentalHealth ? {
+                anxiety_score: mentalHealth.anxiety_score,
+                depression_score: mentalHealth.depression_score,
+                stress_level: mentalHealth.stress_level,
+                sleep_quality: mentalHealth.sleep_quality,
+                current_therapy: mentalHealth.current_therapy,
+                medications: mentalHealth.psychiatric_medications,
+                last_assessment: mentalHealth.last_assessment_date,
+            } : null,
+            reproductive_health: reproductiveHealth ? {
+                pregnancy_status: reproductiveHealth.pregnancy_status,
+                contraception: reproductiveHealth.contraception_method,
+                last_period: reproductiveHealth.last_menstrual_period,
+                menopause_status: reproductiveHealth.menopause_status,
+            } : null,
+            social_factors: socialFactors ? {
+                housing: socialFactors.housing_situation,
+                employment: socialFactors.employment_status,
+                education: socialFactors.education_level,
+                social_support: socialFactors.social_support_level,
+                financial_stress: socialFactors.financial_stress,
+            } : null,
+            dental_status: dental?.[0] ? {
+                last_exam: dental[0].exam_date,
+                cavities: dental[0].cavities_count,
+                periodontal_disease: dental[0].periodontal_disease,
+                missing_teeth: dental[0].missing_teeth_count,
+            } : null,
         };
 
         // Analysis with AI (callAI handles keys and fallback)
@@ -273,15 +354,22 @@ serve(async (req) => {
      "summary_for_patient": "Résumé simple et compréhensible pour le patient (1-2 phrases)"
  }
  
- Analyse avec attention:
- 1. Les interactions médicamenteuses potentielles
- 2. Les facteurs de risque combinés
- 3. Les signaux faibles qui pourraient indiquer un problème émergent
- 4. Les dépistages manquants ou en retard
- 5. Les contradictions entre traitements et pathologies
- 6. L'impact du mode de vie sur les pathologies existantes
- 7. Les antécédents familiaux pertinents
+ Analyse avec attention TOUT le dossier patient:
+ 1. Les ANTÉCÉDENTS MÉDICAUX personnels (medical_history) - chaque pathologie passée et actuelle
+ 2. Les ANTÉCÉDENTS FAMILIAUX - maladies héréditaires et risques génétiques
+ 3. Les interactions médicamenteuses potentielles entre tous les traitements
+ 4. Les ALLERGIES et leur impact sur les prescriptions possibles
+ 5. Le STATUT VACCINAL et les vaccins manquants ou à renouveler
+ 6. Les résultats de CONSULTATIONS récentes et leur suivi
+ 7. Les résultats d'IMAGERIE et d'EXAMENS FONCTIONNELS
+ 8. L'état de SANTÉ MENTALE (anxiété, dépression, stress)
+ 9. Les FACTEURS SOCIAUX qui peuvent impacter la santé
+ 10. Le MODE DE VIE (tabac, alcool, activité physique, alimentation)
+ 11. Les signaux faibles qui pourraient indiquer un problème émergent
+ 12. Les dépistages manquants ou en retard selon l'âge et le sexe
+ 13. La cohérence entre tous les éléments du dossier
  
+ IMPORTANT: Mentionne explicitement les antécédents médicaux significatifs (comme l'hépatite, les infarctus, le diabète, etc.) dans la synthèse globale.
  Sois précis, factuel et cliniquement pertinent. Le score de santé doit refléter objectivement l'état global.`;
 
             const aiResponse = await callAI(

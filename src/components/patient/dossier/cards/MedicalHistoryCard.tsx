@@ -3,7 +3,7 @@
  * Features: Categories (diseases, surgeries, hospitalizations), timeline, severity
  */
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
@@ -17,8 +17,9 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { toast } from 'sonner';
 import { format } from 'date-fns';
 import { fr } from 'date-fns/locale';
-import { Plus, Hospital, Loader2, MoreVertical, Pencil, Trash2, Stethoscope, Scissors, BedDouble, Upload } from 'lucide-react';
+import { Plus, Hospital, Loader2, MoreVertical, Pencil, Trash2, Stethoscope, Scissors, BedDouble, Upload, Search, Globe } from 'lucide-react';
 import { DocumentUploadDialog } from '@/components/patient/DocumentUploadDialog';
+import { SearchableSelect, SelectOption } from '@/components/ui/searchable-select';
 
 interface MedicalHistoryCardProps {
     patientId: string;
@@ -36,6 +37,14 @@ interface MedicalHistory {
     is_chronic: boolean;
 }
 
+interface NCBIConcept {
+    id: string;
+    name: string;
+    description?: string;
+    source?: string;
+    type?: string;
+}
+
 const CONDITION_TYPES = [
     { value: 'disease', label: 'Maladie', icon: Stethoscope },
     { value: 'surgery', label: 'Chirurgie', icon: Scissors },
@@ -51,6 +60,7 @@ const SEVERITY_OPTIONS = [
 ];
 
 const MedicalHistoryCard = ({ patientId }: MedicalHistoryCardProps) => {
+    // 1. State declarations
     const [history, setHistory] = useState<MedicalHistory[]>([]);
     const [loading, setLoading] = useState(true);
     const [dialogOpen, setDialogOpen] = useState(false);
@@ -70,21 +80,112 @@ const MedicalHistoryCard = ({ patientId }: MedicalHistoryCardProps) => {
         is_chronic: false,
     });
 
-    useEffect(() => {
-        fetchData();
+    const [pathologyOptions, setPathologyOptions] = useState<SelectOption[]>([]);
+    const [pathologiesLoading, setPathologiesLoading] = useState(false);
+    const [treatmentOptions, setTreatmentOptions] = useState<SelectOption[]>([]);
+    const [treatmentsLoading, setTreatmentsLoading] = useState(false);
+    const [customConditionName, setCustomConditionName] = useState('');
+    const [customTreatmentName, setCustomTreatmentName] = useState('');
+
+    // 2. Callback definitions (must be before useEffect or any other usage)
+    const fetchData = useCallback(async () => {
+        setLoading(true);
+        try {
+            const { data } = await supabase
+                .from('patient_medical_history')
+                .select('*')
+                .eq('patient_id', patientId)
+                .order('diagnosis_date', { ascending: false });
+            setHistory(data || []);
+        } catch (err) {
+            console.error('Error fetching medical history:', err);
+        } finally {
+            setLoading(false);
+        }
     }, [patientId]);
 
-    const fetchData = async () => {
-        setLoading(true);
-        const { data } = await supabase
-            .from('patient_medical_history')
-            .select('*')
-            .eq('patient_id', patientId)
-            .order('diagnosis_date', { ascending: false });
-        setHistory(data || []);
-        setLoading(false);
-    };
+    const fetchInitialOptions = useCallback(async () => {
+        setPathologiesLoading(true);
+        setTreatmentsLoading(true);
+        try {
+            const { data: pathologies } = await supabase.from('pathologies').select('id, name').limit(100);
+            if (pathologies) {
+                setPathologyOptions([
+                    ...pathologies.map(p => ({ value: p.id, label: p.name, category: 'Base de données' })),
+                    { value: '__custom__', label: 'Autre condition...', category: 'Autre' }
+                ]);
+            }
 
+            const { data: meds } = await supabase.from('medications').select('id, name').limit(100);
+            if (meds) {
+                setTreatmentOptions([
+                    ...meds.map(m => ({ value: m.id, label: m.name, category: 'Base de données' })),
+                    { value: '__custom__', label: 'Autre traitement...', category: 'Autre' }
+                ]);
+            }
+        } catch (error) {
+            console.error('Error fetching initial options:', error);
+        } finally {
+            setPathologiesLoading(false);
+            setTreatmentsLoading(false);
+        }
+    }, []);
+
+    const handlePathologySearch = useCallback(async (query: string) => {
+        if (query.length < 3) return;
+        try {
+            const { data } = await supabase.functions.invoke('search-medical-concepts', {
+                body: { query, type: 'pathology' }
+            });
+            if (data?.concepts) {
+                const newOptions: SelectOption[] = data.concepts.map((c: NCBIConcept) => ({
+                    value: `ext-${c.id}`,
+                    label: c.name,
+                    description: c.description,
+                    category: 'NCBI'
+                }));
+                setPathologyOptions(prev => {
+                    const existingLabels = new Set(prev.map(p => p.label.toLowerCase()));
+                    const filtered = newOptions.filter(o => !existingLabels.has(o.label.toLowerCase()));
+                    return [...prev, ...filtered];
+                });
+            }
+        } catch (err) {
+            console.error('Pathology search error:', err);
+        }
+    }, []);
+
+    const handleTreatmentSearch = useCallback(async (query: string) => {
+        if (query.length < 3) return;
+        try {
+            const { data } = await supabase.functions.invoke('search-medical-concepts', {
+                body: { query, type: 'medication' }
+            });
+            if (data?.concepts) {
+                const newOptions: SelectOption[] = data.concepts.map((c: NCBIConcept) => ({
+                    value: `ext-${c.id}`,
+                    label: c.name,
+                    description: c.description,
+                    category: 'NCBI'
+                }));
+                setTreatmentOptions(prev => {
+                    const existingLabels = new Set(prev.map(p => p.label.toLowerCase()));
+                    const filtered = newOptions.filter(o => !existingLabels.has(o.label.toLowerCase()));
+                    return [...prev, ...filtered];
+                });
+            }
+        } catch (err) {
+            console.error('Treatment search error:', err);
+        }
+    }, []);
+
+    // 3. Effects
+    useEffect(() => {
+        fetchData();
+        fetchInitialOptions();
+    }, [fetchData, fetchInitialOptions]);
+
+    // 4. Action Handlers
     const openAddDialog = () => {
         setEditing(null);
         setFormData({
@@ -97,6 +198,8 @@ const MedicalHistoryCard = ({ patientId }: MedicalHistoryCardProps) => {
             notes: '',
             is_chronic: false,
         });
+        setCustomConditionName('');
+        setCustomTreatmentName('');
         setDialogOpen(true);
     };
 
@@ -116,22 +219,68 @@ const MedicalHistoryCard = ({ patientId }: MedicalHistoryCardProps) => {
     };
 
     const handleSave = async () => {
-        if (!formData.condition_name.trim()) {
+        let conditionName = formData.condition_name;
+        let treatmentName = formData.treatment;
+
+        if (conditionName === '__custom__') {
+            if (!customConditionName.trim()) {
+                toast.error('Veuillez entrer un nom pour la condition');
+                return;
+            }
+            conditionName = customConditionName;
+        } else if (conditionName.startsWith('ext-')) {
+            const option = pathologyOptions.find(o => o.value === conditionName);
+            if (option) conditionName = option.label;
+        } else if (conditionName) {
+            const option = pathologyOptions.find(o => o.value === conditionName);
+            if (option) conditionName = option.label;
+        }
+
+        if (treatmentName === '__custom__') {
+            treatmentName = customTreatmentName;
+        } else if (treatmentName && treatmentName.startsWith('ext-')) {
+            const option = treatmentOptions.find(o => o.value === treatmentName);
+            if (option) treatmentName = option.label;
+        } else if (treatmentName) {
+            const option = treatmentOptions.find(o => o.value === treatmentName);
+            if (option) treatmentName = option.label;
+        }
+
+        if (!conditionName || !conditionName.trim()) {
             toast.error('Veuillez entrer un nom de condition');
             return;
         }
+
         setSaving(true);
         try {
+            // Build payload with proper null handling for dates
+            const payload = {
+                condition_type: formData.condition_type,
+                condition_name: conditionName.trim(),
+                diagnosis_date: formData.diagnosis_date || null,
+                resolution_date: formData.resolution_date || null,
+                severity: formData.severity,
+                treatment: treatmentName?.trim() || null,
+                notes: formData.notes?.trim() || null,
+                is_chronic: formData.is_chronic,
+                patient_id: patientId
+            };
+
             if (editing) {
-                await supabase.from('patient_medical_history').update(formData).eq('id', editing.id);
+                const { error } = await supabase.from('patient_medical_history').update(payload).eq('id', editing.id);
+                if (error) throw error;
                 toast.success('Antécédent mis à jour');
             } else {
-                await supabase.from('patient_medical_history').insert({ ...formData, patient_id: patientId });
+                const { error } = await supabase.from('patient_medical_history').insert(payload);
+                if (error) throw error;
                 toast.success('Antécédent ajouté');
             }
             setDialogOpen(false);
+            setCustomConditionName('');
+            setCustomTreatmentName('');
             fetchData();
         } catch (error) {
+            console.error('Save error:', error);
             toast.error('Erreur lors de la sauvegarde');
         } finally {
             setSaving(false);
@@ -210,24 +359,34 @@ const MedicalHistoryCard = ({ patientId }: MedicalHistoryCardProps) => {
                                         </Badge>
                                     )}
                                 </div>
-                                <div className="text-xs text-muted-foreground mt-1">
-                                    {item.diagnosis_date && format(new Date(item.diagnosis_date), 'dd/MM/yyyy', { locale: fr })}
-                                    {item.resolution_date && ` → ${format(new Date(item.resolution_date), 'dd/MM/yyyy', { locale: fr })}`}
+                                <div className="text-xs text-muted-foreground mt-1 flex flex-wrap gap-x-3 gap-y-1">
+                                    {item.diagnosis_date && (
+                                        <span className="flex items-center gap-1">
+                                            Diagnostic: {format(new Date(item.diagnosis_date), 'PPP', { locale: fr })}
+                                        </span>
+                                    )}
+                                    {item.treatment && (
+                                        <span className="flex items-center gap-1 italic">
+                                            Traitement: {item.treatment}
+                                        </span>
+                                    )}
                                 </div>
-                                {item.treatment && <div className="text-xs mt-1">💊 {item.treatment}</div>}
+                                {item.notes && (
+                                    <p className="text-xs text-muted-foreground mt-2 line-clamp-2">{item.notes}</p>
+                                )}
                             </div>
                             <DropdownMenu>
                                 <DropdownMenuTrigger asChild>
-                                    <Button variant="ghost" size="sm" className="h-8 w-8 p-0">
+                                    <Button variant="ghost" size="icon" className="h-8 w-8">
                                         <MoreVertical className="h-4 w-4" />
                                     </Button>
                                 </DropdownMenuTrigger>
                                 <DropdownMenuContent align="end">
                                     <DropdownMenuItem onClick={() => openEditDialog(item)}>
-                                        <Pencil className="h-3 w-3 mr-2" />Modifier
+                                        <Pencil className="h-4 w-4 mr-2" /> Modifier
                                     </DropdownMenuItem>
-                                    <DropdownMenuItem onClick={() => handleDelete(item.id)} className="text-red-600">
-                                        <Trash2 className="h-3 w-3 mr-2" />Supprimer
+                                    <DropdownMenuItem className="text-destructive" onClick={() => handleDelete(item.id)}>
+                                        <Trash2 className="h-4 w-4 mr-2" /> Supprimer
                                     </DropdownMenuItem>
                                 </DropdownMenuContent>
                             </DropdownMenu>
@@ -236,96 +395,134 @@ const MedicalHistoryCard = ({ patientId }: MedicalHistoryCardProps) => {
                 )}
             </div>
 
-            {/* Add/Edit Dialog */}
             <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-                <DialogContent className="max-w-md">
+                <DialogContent className="max-w-2xl">
                     <DialogHeader>
-                        <DialogTitle>{editing ? 'Modifier' : 'Ajouter'} un antécédent</DialogTitle>
+                        <DialogTitle>{editing ? 'Modifier l\'antécédent' : 'Ajouter un antécédent'}</DialogTitle>
                     </DialogHeader>
-                    <div className="space-y-4">
-                        <div className="grid grid-cols-2 gap-3">
-                            <div>
-                                <Label>Type</Label>
-                                <Select value={formData.condition_type} onValueChange={(v) => setFormData({ ...formData, condition_type: v })}>
-                                    <SelectTrigger><SelectValue /></SelectTrigger>
-                                    <SelectContent>
-                                        {CONDITION_TYPES.map(t => (
-                                            <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>
-                                        ))}
-                                    </SelectContent>
-                                </Select>
-                            </div>
-                            <div>
-                                <Label>Sévérité</Label>
-                                <Select value={formData.severity} onValueChange={(v) => setFormData({ ...formData, severity: v })}>
-                                    <SelectTrigger><SelectValue /></SelectTrigger>
-                                    <SelectContent>
-                                        {SEVERITY_OPTIONS.map(s => (
-                                            <SelectItem key={s.value} value={s.value}>{s.label}</SelectItem>
-                                        ))}
-                                    </SelectContent>
-                                </Select>
-                            </div>
+                    <div className="grid grid-cols-2 gap-4 py-4">
+                        <div className="space-y-2">
+                            <Label>Type d'antécédent</Label>
+                            <Select
+                                value={formData.condition_type}
+                                onValueChange={(v) => setFormData({ ...formData, condition_type: v })}
+                            >
+                                <SelectTrigger><SelectValue /></SelectTrigger>
+                                <SelectContent>
+                                    {CONDITION_TYPES.map(type => (
+                                        <SelectItem key={type.value} value={type.value}>
+                                            <div className="flex items-center gap-2">
+                                                <type.icon className="h-4 w-4" />
+                                                {type.label}
+                                            </div>
+                                        </SelectItem>
+                                    ))}
+                                </SelectContent>
+                            </Select>
                         </div>
-                        <div>
-                            <Label>Nom de la condition</Label>
-                            <Input
+
+                        <div className="space-y-2">
+                            <Label>Nom de la condition / Pathologie</Label>
+                            <SearchableSelect
+                                options={pathologyOptions}
                                 value={formData.condition_name}
-                                onChange={(e) => setFormData({ ...formData, condition_name: e.target.value })}
-                                placeholder="Ex: Diabète de type 2"
+                                onValueChange={(v) => {
+                                    setFormData({ ...formData, condition_name: v });
+                                    if (v !== '__custom__') setCustomConditionName('');
+                                }}
+                                onSearch={handlePathologySearch}
+                                placeholder="Sélectionner ou rechercher..."
+                                searchPlaceholder="Taper une maladie..."
+                                loading={pathologiesLoading}
+                                externalSearch={true}
                             />
-                        </div>
-                        <div className="grid grid-cols-2 gap-3">
-                            <div>
-                                <Label>Date de diagnostic</Label>
+                            {formData.condition_name === '__custom__' && (
                                 <Input
-                                    type="date"
-                                    value={formData.diagnosis_date}
-                                    onChange={(e) => setFormData({ ...formData, diagnosis_date: e.target.value })}
+                                    className="mt-2"
+                                    placeholder="Saisir la condition..."
+                                    value={customConditionName}
+                                    onChange={(e) => setCustomConditionName(e.target.value)}
                                 />
-                            </div>
-                            <div>
-                                <Label>Date de résolution</Label>
-                                <Input
-                                    type="date"
-                                    value={formData.resolution_date}
-                                    onChange={(e) => setFormData({ ...formData, resolution_date: e.target.value })}
-                                />
-                            </div>
+                            )}
                         </div>
-                        <div>
-                            <Label>Traitement</Label>
+
+                        <div className="space-y-2">
+                            <Label>Date du diagnostic</Label>
                             <Input
+                                type="date"
+                                value={formData.diagnosis_date}
+                                onChange={(e) => setFormData({ ...formData, diagnosis_date: e.target.value })}
+                            />
+                        </div>
+
+                        <div className="space-y-2">
+                            <Label>Gravité</Label>
+                            <Select
+                                value={formData.severity}
+                                onValueChange={(v) => setFormData({ ...formData, severity: v })}
+                            >
+                                <SelectTrigger><SelectValue /></SelectTrigger>
+                                <SelectContent>
+                                    {SEVERITY_OPTIONS.map(opt => (
+                                        <SelectItem key={opt.value} value={opt.value}>
+                                            {opt.label}
+                                        </SelectItem>
+                                    ))}
+                                </SelectContent>
+                            </Select>
+                        </div>
+
+                        <div className="space-y-2">
+                            <Label>Traitement prescrit</Label>
+                            <SearchableSelect
+                                options={treatmentOptions}
                                 value={formData.treatment}
-                                onChange={(e) => setFormData({ ...formData, treatment: e.target.value })}
-                                placeholder="Traitement suivi"
+                                onValueChange={(v) => {
+                                    setFormData({ ...formData, treatment: v });
+                                    if (v !== '__custom__') setCustomTreatmentName('');
+                                }}
+                                onSearch={handleTreatmentSearch}
+                                placeholder="Médicament ou intervention..."
+                                searchPlaceholder="Rechercher un traitement..."
+                                loading={treatmentsLoading}
+                                externalSearch={true}
                             />
+                            {formData.treatment === '__custom__' && (
+                                <Input
+                                    className="mt-2"
+                                    placeholder="Saisir le traitement..."
+                                    value={customTreatmentName}
+                                    onChange={(e) => setCustomTreatmentName(e.target.value)}
+                                />
+                            )}
                         </div>
-                        <div>
-                            <Label>Notes</Label>
-                            <Textarea
-                                value={formData.notes}
-                                onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
-                                placeholder="Notes additionnelles..."
-                                rows={2}
-                            />
-                        </div>
-                        <div className="flex items-center gap-2">
+
+                        <div className="flex items-center space-x-2 pt-8">
                             <input
                                 type="checkbox"
                                 id="is_chronic"
                                 checked={formData.is_chronic}
                                 onChange={(e) => setFormData({ ...formData, is_chronic: e.target.checked })}
-                                className="rounded"
+                                className="rounded border-gray-300"
                             />
-                            <Label htmlFor="is_chronic">Condition chronique</Label>
+                            <Label htmlFor="is_chronic">Affection chronique</Label>
+                        </div>
+
+                        <div className="col-span-2 space-y-2">
+                            <Label>Notes complémentaires</Label>
+                            <Textarea
+                                value={formData.notes}
+                                onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
+                                placeholder="Détails, interventions, complications..."
+                                rows={3}
+                            />
                         </div>
                     </div>
                     <DialogFooter>
                         <Button variant="outline" onClick={() => setDialogOpen(false)}>Annuler</Button>
                         <Button onClick={handleSave} disabled={saving}>
-                            {saving ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
-                            {editing ? 'Mettre à jour' : 'Ajouter'}
+                            {saving && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                            {editing ? 'Mettre à jour' : 'Enregistrer'}
                         </Button>
                     </DialogFooter>
                 </DialogContent>
@@ -335,10 +532,7 @@ const MedicalHistoryCard = ({ patientId }: MedicalHistoryCardProps) => {
                 open={importDialogOpen}
                 onOpenChange={setImportDialogOpen}
                 patientId={patientId}
-                onUploadComplete={() => {
-                    toast.success('Document analysé, rechargement des antécédents...');
-                    fetchData();
-                }}
+                category="medical_history"
             />
         </div>
     );

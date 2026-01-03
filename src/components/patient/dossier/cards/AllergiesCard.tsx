@@ -1,9 +1,10 @@
 /**
  * AllergiesCard - Complete allergies and intolerances management
  * Features: Add/Edit/Delete, context menus, severity dropdown, type selection
+ * Updated: Connected to medications database for drug allergies with SearchableSelect
  */
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -31,8 +32,9 @@ import {
     DialogHeader,
     DialogTitle,
 } from '@/components/ui/dialog';
-import { Plus, AlertTriangle, Pill, Apple, Leaf, Hand, Loader2, MoreVertical, Pencil, Trash2, Check } from 'lucide-react';
+import { Plus, AlertTriangle, Pill, Apple, Leaf, Hand, Loader2, MoreVertical, Pencil, Trash2, Check, Search, Globe } from 'lucide-react';
 import { toast } from 'sonner';
+import { SearchableSelect, SelectOption } from '@/components/ui/searchable-select';
 
 interface AllergiesCardProps {
     patientId: string;
@@ -46,6 +48,12 @@ interface Allergy {
     reaction?: string;
     onset_date?: string;
     confirmed: boolean;
+}
+
+interface NCBIConcept {
+    id: string;
+    name: string;
+    description?: string;
 }
 
 const ALLERGY_TYPES = [
@@ -87,20 +95,91 @@ const AllergiesCard = ({ patientId }: AllergiesCardProps) => {
         confirmed: true,
     });
 
-    useEffect(() => {
-        fetchData();
+    // Database options for medication allergens
+    const [medicationOptions, setMedicationOptions] = useState<SelectOption[]>([]);
+    const [medicationsLoading, setMedicationsLoading] = useState(false);
+    const [customAllergen, setCustomAllergen] = useState('');
+
+    // Callbacks for data fetching
+    const fetchData = useCallback(async () => {
+        setLoading(true);
+        try {
+            const { data } = await supabase
+                .from('patient_allergies')
+                .select('*')
+                .eq('patient_id', patientId)
+                .order('severity', { ascending: true });
+            setAllergies(data || []);
+        } catch (err) {
+            console.error('Error fetching allergies:', err);
+        } finally {
+            setLoading(false);
+        }
     }, [patientId]);
 
-    const fetchData = async () => {
-        setLoading(true);
-        const { data } = await supabase
-            .from('patient_allergies')
-            .select('*')
-            .eq('patient_id', patientId)
-            .order('severity', { ascending: true });
-        setAllergies(data || []);
-        setLoading(false);
-    };
+    const fetchMedicationOptions = useCallback(async () => {
+        setMedicationsLoading(true);
+        try {
+            // Fetch from medications table
+            const { data: meds } = await supabase
+                .from('medications')
+                .select('id, name')
+                .limit(100);
+
+            const dbOptions: SelectOption[] = meds?.map(m => ({
+                value: m.id,
+                label: m.name,
+                category: 'Base de données'
+            })) || [];
+
+            // Add common allergens from static list
+            const commonOptions: SelectOption[] = COMMON_ALLERGENS.medication.map(a => ({
+                value: `common-${a}`,
+                label: a,
+                category: 'Courants'
+            }));
+
+            // Custom option
+            setMedicationOptions([
+                ...commonOptions,
+                ...dbOptions,
+                { value: '__custom__', label: 'Autre allergène...', category: 'Autre' }
+            ]);
+        } catch (err) {
+            console.error('Error fetching medications:', err);
+        } finally {
+            setMedicationsLoading(false);
+        }
+    }, []);
+
+    const handleMedicationSearch = useCallback(async (query: string) => {
+        if (query.length < 3) return;
+        try {
+            const { data } = await supabase.functions.invoke('search-medical-concepts', {
+                body: { query, type: 'medication' }
+            });
+            if (data?.concepts) {
+                const newOptions: SelectOption[] = data.concepts.map((c: NCBIConcept) => ({
+                    value: `ext-${c.id}`,
+                    label: c.name,
+                    description: c.description,
+                    category: 'NCBI'
+                }));
+                setMedicationOptions(prev => {
+                    const existingLabels = new Set(prev.map(p => p.label.toLowerCase()));
+                    const filtered = newOptions.filter(o => !existingLabels.has(o.label.toLowerCase()));
+                    return [...prev, ...filtered];
+                });
+            }
+        } catch (err) {
+            console.error('Medication search error:', err);
+        }
+    }, []);
+
+    useEffect(() => {
+        fetchData();
+        fetchMedicationOptions();
+    }, [fetchData, fetchMedicationOptions]);
 
     const openAddDialog = () => {
         setEditingAllergy(null);
@@ -112,6 +191,7 @@ const AllergiesCard = ({ patientId }: AllergiesCardProps) => {
             onset_date: '',
             confirmed: true,
         });
+        setCustomAllergen('');
         setDialogOpen(true);
     };
 
@@ -129,28 +209,61 @@ const AllergiesCard = ({ patientId }: AllergiesCardProps) => {
     };
 
     const handleSave = async () => {
-        if (!formData.allergen.trim()) {
+        let allergenName = formData.allergen;
+
+        // Handle custom allergen
+        if (allergenName === '__custom__') {
+            if (!customAllergen.trim()) {
+                toast.error('Veuillez saisir un allergène');
+                return;
+            }
+            allergenName = customAllergen;
+        } else if (allergenName && (allergenName.startsWith('ext-') || allergenName.startsWith('common-'))) {
+            // External or common options - get the label
+            const option = medicationOptions.find(o => o.value === allergenName);
+            if (option) allergenName = option.label;
+        } else if (allergenName) {
+            // It's a database ID, get the label
+            const option = medicationOptions.find(o => o.value === allergenName);
+            if (option) allergenName = option.label;
+        }
+
+        if (!allergenName || !allergenName.trim()) {
             toast.error('Veuillez saisir un allergène');
             return;
         }
 
         setSaving(true);
         try {
+            const payload = {
+                allergen: allergenName.trim(),
+                allergy_type: formData.allergy_type,
+                severity: formData.severity,
+                reaction: formData.reaction?.trim() || null,
+                onset_date: formData.onset_date || null,
+                confirmed: formData.confirmed,
+                patient_id: patientId
+            };
+
             if (editingAllergy) {
-                await supabase
+                const { error } = await supabase
                     .from('patient_allergies')
-                    .update(formData)
+                    .update(payload)
                     .eq('id', editingAllergy.id);
+                if (error) throw error;
                 toast.success('Allergie mise à jour');
             } else {
-                await supabase
+                const { error } = await supabase
                     .from('patient_allergies')
-                    .insert({ ...formData, patient_id: patientId });
+                    .insert(payload);
+                if (error) throw error;
                 toast.success('Allergie ajoutée');
             }
             setDialogOpen(false);
+            setCustomAllergen('');
             fetchData();
         } catch (error) {
+            console.error('Save error:', error);
             toast.error('Erreur lors de la sauvegarde');
         } finally {
             setSaving(false);
@@ -190,6 +303,19 @@ const AllergiesCard = ({ patientId }: AllergiesCardProps) => {
 
     const getSeverityColor = (severity: string) => {
         return SEVERITY_OPTIONS.find(s => s.value === severity)?.color || 'bg-muted';
+    };
+
+    // Get options based on allergy type
+    const getAllergenOptions = (): SelectOption[] => {
+        if (formData.allergy_type === 'medication') {
+            return medicationOptions;
+        }
+        // For other types, use static list
+        const staticList = COMMON_ALLERGENS[formData.allergy_type as keyof typeof COMMON_ALLERGENS] || [];
+        return [
+            ...staticList.map(a => ({ value: a, label: a, category: 'Courants' })),
+            { value: '__custom__', label: 'Autre (saisir)', category: 'Autre' }
+        ];
     };
 
     if (loading) {
@@ -304,26 +430,54 @@ const AllergiesCard = ({ patientId }: AllergiesCardProps) => {
 
                         <div className="space-y-2">
                             <Label>Allergène</Label>
-                            <Select
-                                value={formData.allergen}
-                                onValueChange={(value) => setFormData({ ...formData, allergen: value })}
-                            >
-                                <SelectTrigger>
-                                    <SelectValue placeholder="Sélectionner ou saisir..." />
-                                </SelectTrigger>
-                                <SelectContent>
-                                    {(COMMON_ALLERGENS[formData.allergy_type as keyof typeof COMMON_ALLERGENS] || []).map((a) => (
-                                        <SelectItem key={a} value={a}>{a}</SelectItem>
-                                    ))}
-                                    <SelectItem value="__custom__">Autre (saisir)</SelectItem>
-                                </SelectContent>
-                            </Select>
-                            {formData.allergen === '__custom__' && (
-                                <Input
-                                    placeholder="Saisir l'allergène..."
-                                    value=""
-                                    onChange={(e) => setFormData({ ...formData, allergen: e.target.value })}
-                                />
+                            {formData.allergy_type === 'medication' ? (
+                                <>
+                                    <SearchableSelect
+                                        options={medicationOptions}
+                                        value={formData.allergen}
+                                        onValueChange={(v) => {
+                                            setFormData({ ...formData, allergen: v });
+                                            if (v !== '__custom__') setCustomAllergen('');
+                                        }}
+                                        onSearch={handleMedicationSearch}
+                                        placeholder="Sélectionner ou rechercher..."
+                                        searchPlaceholder="Taper un médicament..."
+                                        loading={medicationsLoading}
+                                        externalSearch={true}
+                                    />
+                                    {formData.allergen === '__custom__' && (
+                                        <Input
+                                            className="mt-2"
+                                            placeholder="Saisir l'allergène..."
+                                            value={customAllergen}
+                                            onChange={(e) => setCustomAllergen(e.target.value)}
+                                        />
+                                    )}
+                                </>
+                            ) : (
+                                <>
+                                    <Select
+                                        value={formData.allergen}
+                                        onValueChange={(value) => setFormData({ ...formData, allergen: value })}
+                                    >
+                                        <SelectTrigger>
+                                            <SelectValue placeholder="Sélectionner ou saisir..." />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                            {getAllergenOptions().map((a) => (
+                                                <SelectItem key={a.value} value={a.value}>{a.label}</SelectItem>
+                                            ))}
+                                        </SelectContent>
+                                    </Select>
+                                    {formData.allergen === '__custom__' && (
+                                        <Input
+                                            className="mt-2"
+                                            placeholder="Saisir l'allergène..."
+                                            value={customAllergen}
+                                            onChange={(e) => setCustomAllergen(e.target.value)}
+                                        />
+                                    )}
+                                </>
                             )}
                         </div>
 

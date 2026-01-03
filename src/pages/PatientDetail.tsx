@@ -127,7 +127,8 @@ const PatientDetail = () => {
     patient?.lab_results_json || { glucose_mg_dl: 0, blood_pressure_sys: 0, blood_pressure_dia: 0, temperature_c: 0 },
     patient?.treatment || '',
     patient?.medical_notes_nlp || '',
-    patient?.pathologies?.name
+    patient?.pathologies?.name,
+    patient?.medical_history || []
   );
 
   if (loading || !patient) {

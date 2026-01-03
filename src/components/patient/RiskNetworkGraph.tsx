@@ -62,6 +62,7 @@ import {
     FileText,
 } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
+import { toast } from 'sonner';
 
 // Types étendus avec severity/toxicity
 interface Pathology {
@@ -186,6 +187,22 @@ const linkColors = {
     blue: '#3b82f6',     // Lien informatif
 };
 
+interface MedicalNodeData extends Record<string, unknown> {
+    label: string;
+    type: 'pathology' | 'symptom' | 'treatment' | 'medication' | 'group';
+    status?: 'neutral' | 'danger' | 'safe';
+    groupId?: string;
+    link?: CausalLink;
+    isProposed?: boolean;
+}
+
+interface MedicalEdgeData extends Record<string, unknown> {
+    link?: CausalLink;
+    originalAnimated?: boolean;
+    originalStrokeDasharray?: string;
+    isProposed?: boolean;
+}
+
 // Fonction pour obtenir la couleur d'un nœud pathologie selon sa sévérité
 const getPathologySeverityColor = (severity?: string | null) => {
     switch (severity?.toLowerCase()) {
@@ -228,6 +245,7 @@ interface RiskNetworkGraphProps {
     selectedTreatmentIds?: string[];
     selectedMedicationIds?: string[];
     analysisResultFromParent?: AnalysisResult | null;
+    onAnalysisResultChange?: (result: AnalysisResult) => void;
 }
 
 // Composant principal
@@ -241,6 +259,7 @@ export function RiskNetworkGraph({
     selectedTreatmentIds,
     selectedMedicationIds,
     analysisResultFromParent,
+    onAnalysisResultChange,
 }: RiskNetworkGraphProps = {}) {
     // États
     const [nodes, setNodes, onNodesChange] = useNodesState([]);
@@ -279,6 +298,74 @@ export function RiskNetworkGraph({
     const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null);
     const [showGroupDialog, setShowGroupDialog] = useState(false);
     const [newGroupPathologyId, setNewGroupPathologyId] = useState<string | null>(null);
+
+    // ========================================
+    // HELPERS & UTILITIES (INIT FIRST)
+    // ========================================
+
+    // Fonction de normalisation pour la comparaison (définie tôt pour éviter ReferenceError)
+    const normalizeForComparison = useCallback((str: string) => {
+        return str.toLowerCase()
+            .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+            .replace(/[^a-z0-9]/g, '');
+    }, []);
+
+    // Fonction pour obtenir les couleurs d'un item
+    const getItemColors = useCallback((item: MedicalItem) => {
+        switch (item.type) {
+            case 'pathology':
+                return getPathologySeverityColor((item as Pathology).severity);
+            case 'symptom':
+                return getSymptomColor();
+            case 'treatment':
+            case 'medication':
+                return getMedicationColor();
+            default:
+                return { bg: '#f3f4f6', border: '#9ca3af', text: '#4b5563' };
+        }
+    }, []);
+
+    // Couleurs disponibles pour les groupes
+    const groupColors = useMemo(() => ['#8b5cf6', '#06b6d4', '#f59e0b', '#ec4899', '#10b981', '#6366f1'], []);
+    const getNextGroupColor = useCallback(() => groupColors[groups.length % groupColors.length], [groups.length, groupColors]);
+
+    // Fonction pour calculer le score de dangerosité d'un lien
+    const getDangerScore = useCallback((link: CausalLink): number => {
+        let score = 0;
+        if (link.dangerLevel === 'critical') score += 100;
+        else if (link.dangerLevel === 'high') score += 75;
+        else if (link.dangerLevel === 'moderate') score += 50;
+        else if (link.dangerLevel === 'low') score += 25;
+        if (link.isAppropriate === false) score += 60;
+        if (link.effectType === 'adverse') score += 40;
+        else if (link.effectType === 'both') score += 20;
+        if (link.interactionType === 'drug-drug') score += 30;
+        if (link.interactionType === 'pathology-danger') score += 50;
+        return score;
+    }, []);
+
+    // Helper: Convertir coordonnée écran (relative container) -> coordonnée graphe (World)
+    const screenToFlow = useCallback((point: { x: number; y: number }, vp: { x: number; y: number; zoom: number }) => {
+        return {
+            x: (point.x - vp.x) / vp.zoom,
+            y: (point.y - vp.y) / vp.zoom,
+        };
+    }, []);
+
+    // Fonction géométrique: Point dans un polygone (Ray-casting)
+    const isPointInPolygon = useCallback((point: { x: number, y: number }, vs: { x: number, y: number }[]) => {
+        const { x, y } = point;
+        let inside = false;
+        for (let i = 0, j = vs.length - 1; i < vs.length; j = i++) {
+            const xi = vs[i].x, yi = vs[i].y;
+            const xj = vs[j].x, yj = vs[j].y;
+            const intersect = ((yi > y) !== (yj > y))
+                && (x < (xj - xi) * (y - yi) / (yj - yi) + xi);
+            if (intersect) inside = !inside;
+        }
+        return inside;
+    }, []);
+
 
     // === ÉTAT DE VISIBILITÉ DES NŒUDS ===
     const [hiddenNodes, setHiddenNodes] = useState<Set<string>>(new Set());
@@ -444,38 +531,12 @@ export function RiskNetworkGraph({
         })));
     }, [hiddenNodes, setNodes]);
 
-    // Couleurs disponibles pour les groupes
-    const groupColors = ['#8b5cf6', '#06b6d4', '#f59e0b', '#ec4899', '#10b981', '#6366f1'];
-    const getNextGroupColor = () => groupColors[groups.length % groupColors.length];
 
-    // Fonction pour calculer le score de dangerosité d'un lien
-    const getDangerScore = (link: CausalLink): number => {
-        let score = 0;
-
-        // Score basé sur dangerLevel
-        if (link.dangerLevel === 'critical') score += 100;
-        else if (link.dangerLevel === 'high') score += 75;
-        else if (link.dangerLevel === 'moderate') score += 50;
-        else if (link.dangerLevel === 'low') score += 25;
-
-        // Score basé sur isAppropriate
-        if (link.isAppropriate === false) score += 60;
-
-        // Score basé sur effectType
-        if (link.effectType === 'adverse') score += 40;
-        else if (link.effectType === 'both') score += 20;
-
-        // Score basé sur interactionType
-        if (link.interactionType === 'drug-drug') score += 30;
-        if (link.interactionType === 'pathology-danger') score += 50;
-
-        return score;
-    };
 
     // Trier les liens par dangerosité (du plus dangereux au moins dangereux)
     const sortedDisplayedLinks = useMemo(() => {
         return [...displayedLinks].sort((a, b) => getDangerScore(b) - getDangerScore(a));
-    }, [displayedLinks]);
+    }, [displayedLinks, getDangerScore]);
 
     // Générer le schéma proposé en appliquant les modifications
     // Ce useEffect se déclenche à chaque changement de hiddenNodes pour refléter les nœuds actuellement visibles
@@ -578,7 +639,7 @@ export function RiskNetworkGraph({
             })
             .map(e => {
                 // Trouver le lien original pour cette edge
-                const originalLink = edgeLinkMap[e.id] || (e.data as any)?.link;
+                const originalLink = edgeLinkMap[e.id] || (e.data as MedicalEdgeData)?.link;
 
                 return {
                     ...e,
@@ -766,7 +827,7 @@ export function RiskNetworkGraph({
         }
     }, [selectedPathologyIds, selectedSymptomIds, selectedTreatmentIds, selectedMedicationIds,
         externalPathologies, externalSymptoms, externalTreatments, externalMedications,
-        pathologies, symptoms, treatments, medications]);
+        pathologies, symptoms, treatments, medications, setNodes, nodes]);
 
     // Synchroniser l'analyse depuis le parent
     useEffect(() => {
@@ -786,29 +847,21 @@ export function RiskNetworkGraph({
                 }, index * 100);
             });
         }
-    }, [analysisResultFromParent]);
+    }, [analysisResultFromParent, setAnalysisResult, setDisplayedLinks, setIsLoadingLinks]);
 
-    // Fonction pour obtenir les couleurs d'un item
-    const getItemColors = (item: MedicalItem) => {
-        switch (item.type) {
-            case 'pathology':
-                return getPathologySeverityColor((item as Pathology).severity);
-            case 'symptom':
-                return getSymptomColor();
-            case 'treatment':
-            case 'medication':
-                return getMedicationColor();
-            default:
-                return { bg: '#f3f4f6', border: '#9ca3af', text: '#4b5563' };
-        }
-    };
+
 
     // Analyser les connexions via l'IA (uniquement les nœuds visibles)
-    const analyzeConnections = useCallback(async () => {
+    const analyzeConnections = useCallback(async (customIds?: {
+        pathologyIds?: string[],
+        symptomIds?: string[],
+        treatmentIds?: string[],
+        medicationIds?: string[]
+    }) => {
         // Utiliser les nœuds visibles uniquement
         const nodesToAnalyze = nodes.filter(n => !hiddenNodes.has(n.id));
 
-        if (nodesToAnalyze.length < 2) {
+        if (nodesToAnalyze.length < 2 && !customIds) {
             console.log('[RiskNetworkGraph] Pas assez de nœuds visibles pour analyser');
             return;
         }
@@ -820,14 +873,14 @@ export function RiskNetworkGraph({
 
         try {
             // Préparer les IDs par type (nœuds visibles uniquement)
-            const pathologyIds = nodesToAnalyze.filter(n => n.data.type === 'pathology').map(n => n.id);
-            const symptomIds = nodesToAnalyze.filter(n => n.data.type === 'symptom').map(n => n.id);
-            const treatmentIds = nodesToAnalyze.filter(n => n.data.type === 'treatment').map(n => n.id);
-            const medicationIds = nodesToAnalyze.filter(n => n.data.type === 'medication').map(n => n.id);
+            const pathologyIds = customIds?.pathologyIds || nodesToAnalyze.filter(n => n.data.type === 'pathology').map(n => n.id);
+            const symptomIds = customIds?.symptomIds || nodesToAnalyze.filter(n => n.data.type === 'symptom').map(n => n.id);
+            const treatmentIds = customIds?.treatmentIds || nodesToAnalyze.filter(n => n.data.type === 'treatment').map(n => n.id);
+            const medicationIds = customIds?.medicationIds || nodesToAnalyze.filter(n => n.data.type === 'medication').map(n => n.id);
 
-            console.log('[RiskNetworkGraph] Analyse avec nœuds visibles:', {
-                total: nodesToAnalyze.length,
-                hidden: hiddenNodes.size,
+            console.log('[RiskNetworkGraph] Analyse avec IDs:', {
+                total: pathologyIds.length + symptomIds.length + treatmentIds.length + medicationIds.length,
+                isCustom: !!customIds,
                 pathologyIds, symptomIds, treatmentIds, medicationIds
             });
 
@@ -836,16 +889,31 @@ export function RiskNetworkGraph({
                 body: { pathologyIds, symptomIds, treatmentIds, medicationIds }
             });
 
+            if (data?.error) {
+                toast.error(`Erreur d'analyse: ${data.error}`);
+                setIsAnalyzing(false);
+                setIsLoadingLinks(false);
+                return;
+            }
+
             if (error) {
                 console.error('[RiskNetworkGraph] Erreur API:', error);
                 throw error;
             }
 
             console.log('[RiskNetworkGraph] Réponse API:', data);
-            setAnalysisResult(data);
+
+            // Extract the actual analysis object from the response
+            const actualAnalysis = data?.analysis || data;
+            setAnalysisResult(actualAnalysis);
+
+            // Sync with parent if callback provided
+            if (onAnalysisResultChange) {
+                onAnalysisResultChange(actualAnalysis);
+            }
 
             // Vérifier la structure des données
-            const causalLinks = data?.causalLinks || data?.analysis?.causalLinks || [];
+            const causalLinks = actualAnalysis?.causalLinks || [];
             console.log('[RiskNetworkGraph] Liens trouvés:', causalLinks.length);
 
             // Mettre à jour les edges et les nœuds selon les résultats
@@ -1028,7 +1096,7 @@ export function RiskNetworkGraph({
             setIsAnalyzing(false);
             setIsLoadingLinks(false);
         }
-    }, [nodes, setNodes, setEdges]);
+    }, [nodes, setNodes, setEdges, hiddenNodes, onAnalysisResultChange, normalizeForComparison]);
 
     // Analyser les connexions entre groupes
     const analyzeGroupConnections = useCallback(async () => {
@@ -1066,8 +1134,13 @@ export function RiskNetworkGraph({
             });
         });
 
-        // Utiliser la même logique d'analyse
-        analyzeConnections();
+        // Utiliser la même logique d'analyse mais restreinte aux éléments des groupes
+        analyzeConnections({
+            pathologyIds: allPathologyIds,
+            symptomIds: allSymptomIds,
+            treatmentIds: allTreatmentIds,
+            medicationIds: allMedicationIds
+        });
     }, [groups, nodes, analyzeConnections]);
 
     // Debounce search term to avoid blocking UI
@@ -1203,12 +1276,7 @@ export function RiskNetworkGraph({
 
     }, [setEdges, nodes, analyzeConnections]);
 
-    // Fonction de normalisation pour la comparaison
-    const normalizeForComparison = (str: string) => {
-        return str.toLowerCase()
-            .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
-            .replace(/[^a-z0-9]/g, '');
-    };
+
 
     // --- Selection Tools State ---
     const [selectionMode, setSelectionMode] = useState<'pointer' | 'box' | 'lasso'>('pointer');
@@ -1216,27 +1284,7 @@ export function RiskNetworkGraph({
     const [isDrawingLasso, setIsDrawingLasso] = useState(false);
     const [viewport, setViewport] = useState({ x: 0, y: 0, zoom: 1 });
 
-    // Helper: Convertir coordonnée écran (relative container) -> coordonnée graphe (World)
-    const screenToFlow = (point: { x: number; y: number }, vp: { x: number; y: number; zoom: number }) => {
-        return {
-            x: (point.x - vp.x) / vp.zoom,
-            y: (point.y - vp.y) / vp.zoom,
-        };
-    };
 
-    // Fonction géométrique: Point dans un polygone (Ray-casting)
-    const isPointInPolygon = (point: { x: number, y: number }, vs: { x: number, y: number }[]) => {
-        let x = point.x, y = point.y;
-        let inside = false;
-        for (let i = 0, j = vs.length - 1; i < vs.length; j = i++) {
-            let xi = vs[i].x, yi = vs[i].y;
-            let xj = vs[j].x, yj = vs[j].y;
-            let intersect = ((yi > y) !== (yj > y))
-                && (x < (xj - xi) * (y - yi) / (yj - yi) + xi);
-            if (intersect) inside = !inside;
-        }
-        return inside;
-    };
 
     // Gestionnaires d'événements pour le Lasso (attachés au layer SVG/Div)
     const onLassoMouseDown = (e: React.MouseEvent) => {
@@ -1411,7 +1459,7 @@ export function RiskNetworkGraph({
         }
         setEdges(prev => [...prev, ...structuralEdges]);
 
-    }, [selectedNodes, nodes, getNextGroupColor, edges]);
+    }, [selectedNodes, nodes, getNextGroupColor, edges, setEdges, setNodes]);
 
     // Ancien système (compatible pour l'instant) mais on privilégiera le nouveau
     const createGroupFromPathology = useCallback((pathologyId: string) => {
@@ -1531,7 +1579,7 @@ export function RiskNetworkGraph({
         // Réinitialiser le style du nœud
         setNodes(nds => nds.map(n => {
             if (n.id === nodeId) {
-                const { groupId: _, ...restData } = n.data as any;
+                const { groupId: _, ...restData } = n.data as MedicalNodeData;
                 return {
                     ...n,
                     data: restData,
@@ -1559,7 +1607,7 @@ export function RiskNetworkGraph({
             if (!groupNode) {
                 return nds.map(n => {
                     if (group.memberIds.includes(n.id)) {
-                        const { groupId: _, ...restData } = n.data as any;
+                        const { groupId: _, ...restData } = n.data as MedicalNodeData;
                         return { ...n, data: restData, style: { ...n.style, boxShadow: 'none' } };
                     }
                     return n;
@@ -1588,7 +1636,7 @@ export function RiskNetworkGraph({
                 }
                 // Fallback pour ancien système mixte
                 if (group.memberIds.includes(n.id)) {
-                    const { groupId: _, ...restData } = n.data as any;
+                    const { groupId: _, ...restData } = n.data as MedicalNodeData;
                     return { ...n, data: restData, style: { ...n.style, boxShadow: 'none' } };
                 }
                 return n;
@@ -1605,16 +1653,16 @@ export function RiskNetworkGraph({
     type SymptomSource = 'pathology' | 'adverse' | 'both';
 
     // Couleurs pour les bordures de symptômes selon leur source
-    const symptomSourceStyles = {
+    const symptomSourceStyles = useMemo(() => ({
         pathology: { borderColor: '#3b82f6', borderStyle: 'solid' }, // Bleu - causé par pathologie
         adverse: { borderColor: '#f97316', borderStyle: 'dashed' }, // Orange tireté - effet secondaire
         both: { borderColor: '#8b5cf6', borderStyle: 'double' }, // Violet double - les deux
-    };
+    }), []);
 
     // Fonction d'auto-génération de groupes basée sur l'analyse
     // Si pas de liens causaux disponibles, lance d'abord une analyse
     const autoGenerateGroups = useCallback(async () => {
-        let causalLinks = analysisResult?.causalLinks || displayedLinks;
+        const causalLinks = analysisResult?.causalLinks || displayedLinks;
 
         // Si pas de liens, lancer une analyse d'abord
         if (!causalLinks || causalLinks.length === 0) {
@@ -1970,7 +2018,7 @@ export function RiskNetworkGraph({
 
         console.log(`[AutoGroup] ${newGroups.length} groupes créés automatiquement`);
 
-    }, [analysisResult, displayedLinks, nodes, groups, hiddenNodes, normalizeForComparison, groupColors, setNodes, setGroups, analyzeConnections]);
+    }, [analysisResult, displayedLinks, nodes, groups, hiddenNodes, normalizeForComparison, groupColors, setNodes, setGroups, analyzeConnections, symptomSourceStyles]);
 
 
 
@@ -2117,7 +2165,7 @@ export function RiskNetworkGraph({
                             {/* Bouton d'analyse */}
                             <Button
                                 className="w-full"
-                                onClick={groups.length >= 2 ? analyzeGroupConnections : analyzeConnections}
+                                onClick={() => (groups.length >= 2 ? analyzeGroupConnections() : analyzeConnections())}
                                 disabled={nodes.length < 2 || isAnalyzing}
                             >
                                 {isAnalyzing ? (
@@ -2327,7 +2375,7 @@ export function RiskNetworkGraph({
                                         selectionKeyCode={selectionMode === 'pointer' ? "Control" : null}
                                         multiSelectionKeyCode="Control"
                                         onEdgeClick={(_, edge) => {
-                                            const link = edgeLinkMap[edge.id] || (edge.data as any)?.link;
+                                            const link = edgeLinkMap[edge.id] || (edge.data as MedicalEdgeData)?.link;
                                             if (link) {
                                                 setHoveredLink(link);
                                                 setShowLinkDetails(true);
@@ -2363,7 +2411,7 @@ export function RiskNetworkGraph({
                                         onEdgeClick={(_, edge) => {
                                             // Récupérer le lien original (sans le préfixe 'proposed-')
                                             const originalEdgeId = edge.id.replace('proposed-', '');
-                                            const link = edgeLinkMap[originalEdgeId] || (edge.data as any)?.link;
+                                            const link = edgeLinkMap[originalEdgeId] || (edge.data as MedicalEdgeData)?.link;
                                             if (link) {
                                                 setHoveredLink(link);
                                                 setShowLinkDetails(true);
@@ -2397,7 +2445,7 @@ export function RiskNetworkGraph({
                                 multiSelectionKeyCode="Control"
 
                                 onEdgeClick={(_, edge) => {
-                                    const link = edgeLinkMap[edge.id] || (edge.data as any)?.link;
+                                    const link = edgeLinkMap[edge.id] || (edge.data as MedicalEdgeData)?.link;
                                     if (link) {
                                         setHoveredLink(link);
                                         setShowLinkDetails(true);
@@ -2806,7 +2854,7 @@ export function RiskNetworkGraph({
                                     Alternatives proposées
                                 </p>
                                 <div className="space-y-3">
-                                    {analysisResult.alternatives.map((alt: any, idx: number) => (
+                                    {analysisResult.alternatives.map((alt: { for: string; reason: string; suggestions?: string[] }, idx: number) => (
                                         <div key={idx} className="p-2 bg-white dark:bg-gray-800 rounded border">
                                             <p className="text-xs text-red-500 mb-1">
                                                 ⚠️ Problème avec: <strong>{alt.for}</strong>

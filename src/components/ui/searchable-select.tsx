@@ -28,13 +28,39 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 
+
 export interface SelectOption {
     value: string;
     label: string;
     description?: string;
     category?: string;
-    onSearch?: (term: string) => void;
+}
+
+export interface SearchableSelectProps {
+    options: SelectOption[];
+    value: string;
+    onValueChange: (value: string) => void;
+    placeholder?: string;
+    searchPlaceholder?: string;
+    emptyMessage?: string;
+    loading?: boolean;
+    disabled?: boolean;
+    className?: string;
+    onSearch?: (term: string) => void | Promise<void>;
     externalSearch?: boolean;
+}
+
+export interface SearchableMultiSelectProps {
+    options: SelectOption[];
+    values: string[];
+    onValuesChange: (values: string[]) => void;
+    placeholder?: string;
+    searchPlaceholder?: string;
+    emptyMessage?: string;
+    loading?: boolean;
+    disabled?: boolean;
+    maxDisplay?: number;
+    className?: string;
 }
 
 // Single Select Component
@@ -53,6 +79,39 @@ export function SearchableSelect({
 }: SearchableSelectProps) {
     const [open, setOpen] = React.useState(false);
     const [search, setSearch] = React.useState("");
+    const [isSearching, setIsSearching] = React.useState(false);
+    const searchTimeoutRef = React.useRef<NodeJS.Timeout | null>(null);
+
+    // Handle search input with debounce for external search
+    const handleSearchChange = React.useCallback((value: string) => {
+        setSearch(value);
+
+        // Clear previous timeout
+        if (searchTimeoutRef.current) {
+            clearTimeout(searchTimeoutRef.current);
+        }
+
+        // Debounce external search
+        if (onSearch && value.length >= 3) {
+            setIsSearching(true);
+            searchTimeoutRef.current = setTimeout(async () => {
+                try {
+                    await onSearch(value);
+                } finally {
+                    setIsSearching(false);
+                }
+            }, 400);
+        }
+    }, [onSearch]);
+
+    // Cleanup timeout on unmount
+    React.useEffect(() => {
+        return () => {
+            if (searchTimeoutRef.current) {
+                clearTimeout(searchTimeoutRef.current);
+            }
+        };
+    }, []);
 
     const filteredOptions = React.useMemo(() => {
         if (externalSearch) return options; // Return all options provided by parent
@@ -101,8 +160,9 @@ export function SearchableSelect({
                             className="flex h-10 w-full rounded-md bg-transparent py-3 text-sm outline-none placeholder:text-muted-foreground disabled:cursor-not-allowed disabled:opacity-50"
                             placeholder={searchPlaceholder}
                             value={search}
-                            onChange={(e) => setSearch(e.target.value)}
+                            onChange={(e) => handleSearchChange(e.target.value)}
                         />
+                        {isSearching && <Loader2 className="ml-2 h-4 w-4 animate-spin text-muted-foreground" />}
                     </div>
                     <CommandList>
                         <CommandEmpty>{emptyMessage}</CommandEmpty>

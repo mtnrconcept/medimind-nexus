@@ -12,6 +12,7 @@ import { PatientAlert } from '@/hooks/usePatientAlerts';
 import AnatomyMarkers from './AnatomyMarkers';
 import AnatomySearch from './AnatomySearch';
 import { ALL_ANATOMY_PARTS, AnatomyPart, AnatomyCategory } from '@/data/anatomyData';
+import DigitalTwin3D from './DigitalTwin3D';
 
 interface LayerConfig {
   id: 'skin' | 'tissues' | 'organs' | 'bones' | 'markers';
@@ -631,33 +632,9 @@ function isWebGLAvailable(): boolean {
 }
 
 // 2D Fallback Component when WebGL is unavailable
-const Fallback2DViewer = ({ alerts }: { alerts: PatientAlert[] }) => (
-  <div className="h-full flex flex-col items-center justify-center bg-gradient-to-b from-muted/50 to-muted p-6 text-center">
-    <div className="text-6xl mb-4">🧬</div>
-    <h3 className="text-lg font-semibold mb-2">Visualisation 3D non disponible</h3>
-    <p className="text-sm text-muted-foreground mb-4 max-w-sm">
-      WebGL est désactivé ou non supporté par votre navigateur.
-      Le jumeau numérique 3D ne peut pas être affiché.
-    </p>
-    <div className="text-xs text-muted-foreground mb-4">
-      💡 Essayez Chrome, Firefox ou Edge avec WebGL activé
-    </div>
-    {alerts.length > 0 && (
-      <div className="mt-4 p-4 border rounded-lg bg-destructive/10 max-w-md">
-        <div className="text-sm font-medium mb-2 flex items-center justify-center gap-2">
-          <AlertTriangle className="h-4 w-4 text-destructive" />
-          {alerts.length} alerte(s) patient
-        </div>
-        <div className="space-y-1">
-          {alerts.slice(0, 3).map((alert, idx) => (
-            <div key={idx} className="text-xs text-left flex gap-2">
-              <span className={alert.level === 'CRITICAL' ? 'text-destructive' : 'text-yellow-500'}>●</span>
-              <span>{alert.title}{alert.organ && ` (${alert.organ})`}</span>
-            </div>
-          ))}
-        </div>
-      </div>
-    )}
+const Fallback2DViewer = ({ alerts, pathologyName }: { alerts: PatientAlert[], pathologyName?: string }) => (
+  <div className="h-full">
+    <DigitalTwin3D alerts={alerts} pathologyName={pathologyName} />
   </div>
 );
 
@@ -673,6 +650,9 @@ const DigitalTwin3DViewer: React.FC<DigitalTwin3DViewerProps> = ({
   const [showMarkers, setShowMarkers] = useState(true);
   const [contextLost, setContextLost] = useState(false);
   const [webglAvailable, setWebglAvailable] = useState<boolean | null>(null);
+
+  const criticalAlerts = alerts.filter(a => a.level === 'CRITICAL');
+  const hasCritical = criticalAlerts.length > 0;
 
   // Check WebGL availability on mount
   useEffect(() => {
@@ -807,7 +787,25 @@ const DigitalTwin3DViewer: React.FC<DigitalTwin3DViewerProps> = ({
           <div className={`${showSearchPanel ? 'lg:col-span-2' : 'lg:col-span-3'} h-[500px] bg-gradient-to-b from-muted/50 to-muted rounded-lg overflow-hidden relative`}>
             {/* Show 2D fallback when WebGL is unavailable */}
             {webglAvailable === false && (
-              <Fallback2DViewer alerts={alerts} />
+              <Fallback2DViewer alerts={alerts} pathologyName={pathologyName} />
+            )}
+
+            {/* Severe Alert Banner Overlay */}
+            {hasCritical && (
+              <div className="absolute top-4 left-4 right-4 z-40 animate-in fade-in slide-in-from-top-4 duration-500 pointer-events-none">
+                <div className="bg-red-500/90 text-white px-4 py-2 rounded-lg flex items-center justify-between shadow-[0_0_20px_rgba(239,68,68,0.5)] border border-red-400 backdrop-blur-sm">
+                  <div className="flex items-center gap-2">
+                    <AlertTriangle className="w-5 h-5 animate-pulse text-white" />
+                    <div className="flex flex-col">
+                      <span className="text-[10px] font-bold uppercase tracking-widest opacity-80">État Critique</span>
+                      <span className="text-xs font-bold leading-tight">
+                        {criticalAlerts[0]?.title || pathologyName || "Condition sévère détectée"}
+                      </span>
+                    </div>
+                  </div>
+                  <div className="text-[10px] bg-white/20 px-2 py-0.5 rounded font-bold">ALERTE</div>
+                </div>
+              </div>
             )}
 
             {/* WebGL Canvas - only render when WebGL is available */}

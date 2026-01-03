@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useRef } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { Virtuoso } from 'react-virtuoso';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -108,8 +108,24 @@ interface AnalysisResult {
   webResearch: WebResearch[];
 }
 
+interface PatientData {
+  linked_pathologies?: { pathologies?: { id: string; name: string } }[];
+  linked_medications?: { medications?: { id: string; name: string } }[];
+  linked_symptoms?: { symptoms?: { id: string; name: string } }[];
+  linked_treatments?: { treatments?: { id: string; name: string } }[];
+  pathologies?: { name: string };
+  medical_notes_nlp?: string;
+  treatment?: string;
+}
+
 interface CrossDataAnalyzerProps {
-  patientData?: any;
+  patientData?: PatientData;
+}
+
+interface NCBIConcept {
+  id: string;
+  name: string;
+  description?: string;
 }
 
 const CrossDataAnalyzer = ({ patientData }: CrossDataAnalyzerProps) => {
@@ -177,24 +193,109 @@ const CrossDataAnalyzer = ({ patientData }: CrossDataAnalyzerProps) => {
     return () => clearTimeout(timer);
   }, [searchMedications]);
 
+  // Recherche externe NCBI
+  const [isSearchingWeb, setIsSearchingWeb] = useState(false);
+
+  const searchExternalConcepts = useCallback(async (query: string, type: 'pathology' | 'medication' | 'symptom', isAuto = false) => {
+    if (!query || query.length < 3) {
+      if (!isAuto) toast.error("Veuillez saisir au moins 3 caractères pour la recherche en ligne");
+      return;
+    }
+
+    // Avoid searching if we already have the exact match to prevent spam
+    if (type === 'pathology' && pathologies.some(p => p.name.toLowerCase() === query.toLowerCase())) return;
+    if (type === 'symptom' && symptoms.some(s => s.name.toLowerCase() === query.toLowerCase())) return;
+    if (type === 'medication' && medications.some(m => m.name.toLowerCase() === query.toLowerCase())) return;
+
+    setIsSearchingWeb(true);
+    try {
+      const { data, error } = await supabase.functions.invoke('search-medical-concepts', {
+        body: { query, type }
+      });
+
+      if (error) throw error;
+
+      if (data?.concepts) {
+        let addedCount = 0;
+
+        if (type === 'pathology') {
+          const newItems: Pathology[] = data.concepts
+            .filter((c: NCBIConcept) => !pathologies.some(p => p.id === c.id || p.name.toLowerCase() === c.name.toLowerCase()))
+            .map((c: NCBIConcept) => ({
+              id: c.id,
+              name: c.name,
+              category: 'NCBI',
+              specialty: 'Importé',
+              severity: 'unknown',
+              isExternal: true
+            }));
+          if (newItems.length > 0) {
+            setPathologies(prev => [...prev, ...newItems]);
+            addedCount = newItems.length;
+          }
+        }
+        else if (type === 'medication') {
+          const newItems: Medication[] = data.concepts
+            .filter((c: NCBIConcept) => !medications.some(m => m.id === c.id || m.name.toLowerCase() === c.name.toLowerCase()))
+            .map((c: NCBIConcept) => ({
+              id: c.id,
+              name: c.name,
+              atc_code: null,
+              substance: c.description || null,
+              isExternal: true
+            }));
+          if (newItems.length > 0) {
+            setMedications(prev => [...prev, ...newItems]);
+            addedCount = newItems.length;
+          }
+        }
+        else if (type === 'symptom') {
+          const newItems: Symptom[] = data.concepts
+            .filter((c: NCBIConcept) => !symptoms.some(s => s.id === c.id || s.name.toLowerCase() === c.name.toLowerCase()))
+            .map((c: NCBIConcept) => ({
+              id: c.id,
+              name: c.name,
+              body_system: 'NCBI',
+              isExternal: true
+            }));
+          if (newItems.length > 0) {
+            setSymptoms(prev => [...prev, ...newItems]);
+            addedCount = newItems.length;
+          }
+        }
+
+        if (addedCount > 0 && !isAuto) {
+          toast.success(`${addedCount} éléments ajoutés depuis NCBI`);
+        } else if (!isAuto) {
+          toast.info("Aucun nouvel élément trouvé sur NCBI");
+        }
+      }
+    } catch (err) {
+      console.error('Erreur recherche NCBI:', err);
+      if (!isAuto) toast.error("Erreur lors de la recherche NCBI");
+    } finally {
+      setIsSearchingWeb(false);
+    }
+  }, [pathologies, symptoms, medications]);
+
   // Triggers automatiques pour la recherche externe (Smart Autocomplete)
   useEffect(() => {
     if (debouncedSearchPathologies.length >= 3) {
       searchExternalConcepts(debouncedSearchPathologies, 'pathology', true);
     }
-  }, [debouncedSearchPathologies]);
+  }, [debouncedSearchPathologies, searchExternalConcepts]);
 
   useEffect(() => {
     if (debouncedSearchSymptoms.length >= 3) {
       searchExternalConcepts(debouncedSearchSymptoms, 'symptom', true);
     }
-  }, [debouncedSearchSymptoms]);
+  }, [debouncedSearchSymptoms, searchExternalConcepts]);
 
   useEffect(() => {
     if (debouncedSearchMedications.length >= 3) {
       searchExternalConcepts(debouncedSearchMedications, 'medication', true);
     }
-  }, [debouncedSearchMedications]);
+  }, [debouncedSearchMedications, searchExternalConcepts]);
 
   // Options de filtres extraites des données
   const pathologyCategories = useMemo(() => {
@@ -284,91 +385,6 @@ const CrossDataAnalyzer = ({ patientData }: CrossDataAnalyzerProps) => {
     });
   }, [medications, debouncedSearchMedications, filterMedicationAtc]);
 
-  // Recherche externe NCBI
-  const [isSearchingWeb, setIsSearchingWeb] = useState(false);
-
-  const searchExternalConcepts = async (query: string, type: 'pathology' | 'medication' | 'symptom', isAuto = false) => {
-    if (!query || query.length < 3) {
-      if (!isAuto) toast.error("Veuillez saisir au moins 3 caractères pour la recherche en ligne");
-      return;
-    }
-
-    // Avoid searching if we already have the exact match to prevent spam
-    if (type === 'pathology' && pathologies.some(p => p.name.toLowerCase() === query.toLowerCase())) return;
-    if (type === 'symptom' && symptoms.some(s => s.name.toLowerCase() === query.toLowerCase())) return;
-    if (type === 'medication' && medications.some(m => m.name.toLowerCase() === query.toLowerCase())) return;
-
-    setIsSearchingWeb(true);
-    try {
-      const { data, error } = await supabase.functions.invoke('search-medical-concepts', {
-        body: { query, type }
-      });
-
-      if (error) throw error;
-
-      if (data?.concepts) {
-        let addedCount = 0;
-
-        if (type === 'pathology') {
-          const newItems: Pathology[] = data.concepts
-            .filter((c: any) => !pathologies.some(p => p.id === c.id || p.name.toLowerCase() === c.name.toLowerCase()))
-            .map((c: any) => ({
-              id: c.id,
-              name: c.name,
-              category: 'NCBI',
-              specialty: 'Importé',
-              severity: 'unknown',
-              isExternal: true
-            }));
-          if (newItems.length > 0) {
-            setPathologies(prev => [...prev, ...newItems]);
-            addedCount = newItems.length;
-          }
-        }
-        else if (type === 'medication') {
-          const newItems: Medication[] = data.concepts
-            .filter((c: any) => !medications.some(m => m.id === c.id || m.name.toLowerCase() === c.name.toLowerCase()))
-            .map((c: any) => ({
-              id: c.id,
-              name: c.name,
-              atc_code: null,
-              substance: c.description || null,
-              isExternal: true
-            }));
-          if (newItems.length > 0) {
-            setMedications(prev => [...prev, ...newItems]);
-            addedCount = newItems.length;
-          }
-        }
-        else if (type === 'symptom') {
-          const newItems: Symptom[] = data.concepts
-            .filter((c: any) => !symptoms.some(s => s.id === c.id || s.name.toLowerCase() === c.name.toLowerCase()))
-            .map((c: any) => ({
-              id: c.id,
-              name: c.name,
-              body_system: 'NCBI',
-              isExternal: true
-            }));
-          if (newItems.length > 0) {
-            setSymptoms(prev => [...prev, ...newItems]);
-            addedCount = newItems.length;
-          }
-        }
-
-        if (addedCount > 0 && !isAuto) {
-          toast.success(`${addedCount} éléments ajoutés depuis NCBI`);
-        } else if (!isAuto) {
-          toast.info("Aucun nouvel élément trouvé sur NCBI");
-        }
-      }
-    } catch (err) {
-      console.error('Erreur recherche NCBI:', err);
-      if (!isAuto) toast.error("Erreur lors de la recherche NCBI");
-    } finally {
-      setIsSearchingWeb(false);
-    }
-  };
-
   useEffect(() => {
     const fetchAllRows = async <T,>(
       table: 'pathologies' | 'symptoms' | 'treatments' | 'medications',
@@ -402,7 +418,7 @@ const CrossDataAnalyzer = ({ patientData }: CrossDataAnalyzerProps) => {
       }
 
       // Déduplication de sécurité sur l'ID
-      return Array.from(new Map(allData.map((item: any) => [item.id, item])).values());
+      return Array.from(new Map(allData.map((item: T & { id: string }) => [item.id, item])).values());
     };
 
     const fetchData = async () => {
@@ -498,9 +514,9 @@ const CrossDataAnalyzer = ({ patientData }: CrossDataAnalyzerProps) => {
         // ========== PRIORITÉ 1: Tables de liaison ==========
 
         // 1a. Pathologies depuis tables de liaison
-        if (patientData.linked_pathologies?.length > 0) {
+        if (patientData.linked_pathologies?.length && patientData.linked_pathologies.length > 0) {
           console.log('📦 Utilisation des pathologies liées:', patientData.linked_pathologies.length);
-          patientData.linked_pathologies.forEach((lp: any) => {
+          patientData.linked_pathologies.forEach((lp) => {
             if (lp.pathologies?.id && !selectedPathIds.includes(lp.pathologies.id)) {
               selectedPathIds.push(lp.pathologies.id);
               console.log('✅ Pathologie liée:', lp.pathologies.name);
@@ -509,9 +525,9 @@ const CrossDataAnalyzer = ({ patientData }: CrossDataAnalyzerProps) => {
         }
 
         // 1b. Médicaments depuis tables de liaison
-        if (patientData.linked_medications?.length > 0) {
+        if (patientData.linked_medications?.length && patientData.linked_medications.length > 0) {
           console.log('📦 Utilisation des médicaments liés:', patientData.linked_medications.length);
-          patientData.linked_medications.forEach((lm: any) => {
+          patientData.linked_medications.forEach((lm) => {
             if (lm.medications?.id && !selectedMedIds.includes(lm.medications.id)) {
               selectedMedIds.push(lm.medications.id);
               console.log('✅ Médicament lié:', lm.medications.name);
@@ -520,9 +536,9 @@ const CrossDataAnalyzer = ({ patientData }: CrossDataAnalyzerProps) => {
         }
 
         // 1c. Symptômes depuis tables de liaison
-        if (patientData.linked_symptoms?.length > 0) {
+        if (patientData.linked_symptoms?.length && patientData.linked_symptoms.length > 0) {
           console.log('📦 Utilisation des symptômes liés:', patientData.linked_symptoms.length);
-          patientData.linked_symptoms.forEach((ls: any) => {
+          patientData.linked_symptoms.forEach((ls) => {
             if (ls.symptoms?.id && !selectedSymptIds.includes(ls.symptoms.id)) {
               selectedSymptIds.push(ls.symptoms.id);
               console.log('✅ Symptôme lié:', ls.symptoms.name);
@@ -531,9 +547,9 @@ const CrossDataAnalyzer = ({ patientData }: CrossDataAnalyzerProps) => {
         }
 
         // 1d. Traitements depuis tables de liaison
-        if (patientData.linked_treatments?.length > 0) {
+        if (patientData.linked_treatments?.length && patientData.linked_treatments.length > 0) {
           console.log('📦 Utilisation des traitements liés:', patientData.linked_treatments.length);
-          patientData.linked_treatments.forEach((lt: any) => {
+          patientData.linked_treatments.forEach((lt) => {
             if (lt.treatments?.id && !selectedTreatIds.includes(lt.treatments.id)) {
               selectedTreatIds.push(lt.treatments.id);
               console.log('✅ Traitement lié:', lt.treatments.name);
@@ -954,6 +970,7 @@ const CrossDataAnalyzer = ({ patientData }: CrossDataAnalyzerProps) => {
               selectedTreatmentIds={selectedTreatments}
               selectedMedicationIds={selectedMedications}
               analysisResultFromParent={result}
+              onAnalysisResultChange={setResult}
             />
           ) : (
             <>

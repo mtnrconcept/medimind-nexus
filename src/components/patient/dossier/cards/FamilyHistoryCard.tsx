@@ -3,7 +3,7 @@
  * Features: Family member relationship, conditions, age of onset
  */
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -31,8 +31,17 @@ import {
     DialogHeader,
     DialogTitle,
 } from '@/components/ui/dialog';
-import { Plus, Users, Loader2, MoreVertical, Pencil, Trash2, Heart, Brain, Activity, AlertTriangle } from 'lucide-react';
+import { Plus, Users, Loader2, MoreVertical, Pencil, Trash2, Heart, Brain, Activity, AlertTriangle, Search, Globe } from 'lucide-react';
 import { toast } from 'sonner';
+import { SearchableSelect, SelectOption } from '@/components/ui/searchable-select';
+
+interface NCBIConcept {
+    id: string;
+    name: string;
+    description?: string;
+    source?: string;
+    type?: string;
+}
 
 interface FamilyHistoryCardProps {
     patientId: string;
@@ -109,11 +118,11 @@ const FamilyHistoryCard = ({ patientId }: FamilyHistoryCardProps) => {
         notes: '',
     });
 
-    useEffect(() => {
-        fetchData();
-    }, [patientId]);
+    const [pathologyOptions, setPathologyOptions] = useState<SelectOption[]>([]);
+    const [pathologiesLoading, setPathologiesLoading] = useState(false);
+    const [customConditionName, setCustomConditionName] = useState('');
 
-    const fetchData = async () => {
+    const fetchData = useCallback(async () => {
         setLoading(true);
         const { data } = await supabase
             .from('patient_family_history')
@@ -122,6 +131,52 @@ const FamilyHistoryCard = ({ patientId }: FamilyHistoryCardProps) => {
             .order('relationship');
         setHistory(data || []);
         setLoading(false);
+    }, [patientId]);
+
+    const fetchInitialOptions = useCallback(async () => {
+        setPathologiesLoading(true);
+        try {
+            const { data: pathologies } = await supabase.from('pathologies').select('id, name').limit(50);
+            if (pathologies) {
+                setPathologyOptions([
+                    ...pathologies.map(p => ({ value: p.id, label: p.name, category: 'Base de données' })),
+                    { value: '__custom__', label: 'Autre condition...', category: 'Autre' }
+                ]);
+            }
+        } catch (err) {
+            console.error('Error fetching initial options:', err);
+        } finally {
+            setPathologiesLoading(false);
+        }
+    }, []);
+
+    useEffect(() => {
+        fetchData();
+        fetchInitialOptions();
+    }, [fetchData, fetchInitialOptions]);
+
+    const handlePathologySearch = async (query: string) => {
+        if (query.length < 3) return;
+        try {
+            const { data } = await supabase.functions.invoke('search-medical-concepts', {
+                body: { query, type: 'pathology' }
+            });
+            if (data?.concepts) {
+                const newOptions: SelectOption[] = data.concepts.map((c: NCBIConcept) => ({
+                    value: `ext-${c.id}`,
+                    label: c.name,
+                    description: c.description,
+                    category: 'NCBI'
+                }));
+                setPathologyOptions(prev => {
+                    const existingLabels = new Set(prev.map(p => p.label.toLowerCase()));
+                    const filtered = newOptions.filter(o => !existingLabels.has(o.label.toLowerCase()));
+                    return [...prev, ...filtered];
+                });
+            }
+        } catch (err) {
+            console.error('Pathology search error:', err);
+        }
     };
 
     const openAddDialog = () => {
@@ -153,23 +208,54 @@ const FamilyHistoryCard = ({ patientId }: FamilyHistoryCardProps) => {
     };
 
     const handleSave = async () => {
-        if (!formData.condition.trim()) {
+        let conditionName = formData.condition;
+
+        if (conditionName === '__custom__') {
+            if (!customConditionName.trim()) {
+                toast.error('Veuillez entrer un nom pour la condition');
+                return;
+            }
+            conditionName = customConditionName;
+        } else if (conditionName && conditionName.startsWith('ext-')) {
+            const option = pathologyOptions.find(o => o.value === conditionName);
+            if (option) conditionName = option.label;
+        } else if (conditionName) {
+            const option = pathologyOptions.find(o => o.value === conditionName);
+            if (option) conditionName = option.label;
+        }
+
+        if (!conditionName || !conditionName.trim()) {
             toast.error('Veuillez saisir une pathologie');
             return;
         }
 
         setSaving(true);
         try {
+            const payload = {
+                relationship: formData.relationship,
+                condition: conditionName.trim(),
+                age_at_diagnosis: formData.age_at_diagnosis || null,
+                is_deceased: formData.is_deceased,
+                age_at_death: formData.age_at_death || null,
+                cause_of_death: formData.cause_of_death?.trim() || null,
+                notes: formData.notes?.trim() || null,
+                patient_id: patientId
+            };
+
             if (editing) {
-                await supabase.from('patient_family_history').update(formData).eq('id', editing.id);
+                const { error } = await supabase.from('patient_family_history').update(payload).eq('id', editing.id);
+                if (error) throw error;
                 toast.success('Antécédent mis à jour');
             } else {
-                await supabase.from('patient_family_history').insert({ ...formData, patient_id: patientId });
+                const { error } = await supabase.from('patient_family_history').insert(payload);
+                if (error) throw error;
                 toast.success('Antécédent ajouté');
             }
             setDialogOpen(false);
+            setCustomConditionName('');
             fetchData();
         } catch (error) {
+            console.error('Save error:', error);
             toast.error('Erreur lors de la sauvegarde');
         } finally {
             setSaving(false);
@@ -305,19 +391,25 @@ const FamilyHistoryCard = ({ patientId }: FamilyHistoryCardProps) => {
 
                         <div className="space-y-2">
                             <Label>Pathologie *</Label>
-                            <Select value={formData.condition} onValueChange={(v) => setFormData({ ...formData, condition: v })}>
-                                <SelectTrigger><SelectValue placeholder="Sélectionner..." /></SelectTrigger>
-                                <SelectContent>
-                                    {COMMON_FAMILY_CONDITIONS.map((c) => (
-                                        <SelectItem key={c} value={c}>{c}</SelectItem>
-                                    ))}
-                                    <SelectItem value="__custom__">Autre...</SelectItem>
-                                </SelectContent>
-                            </Select>
+                            <SearchableSelect
+                                options={pathologyOptions}
+                                value={formData.condition}
+                                onValueChange={(v) => {
+                                    setFormData({ ...formData, condition: v });
+                                    if (v !== '__custom__') setCustomConditionName('');
+                                }}
+                                onSearch={handlePathologySearch}
+                                placeholder="Sélectionner ou rechercher..."
+                                searchPlaceholder="Taper une maladie..."
+                                loading={pathologiesLoading}
+                                externalSearch={true}
+                            />
                             {formData.condition === '__custom__' && (
                                 <Input
+                                    className="mt-2"
                                     placeholder="Saisir la pathologie..."
-                                    onChange={(e) => setFormData({ ...formData, condition: e.target.value })}
+                                    value={customConditionName}
+                                    onChange={(e) => setCustomConditionName(e.target.value)}
                                 />
                             )}
                         </div>
