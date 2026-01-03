@@ -4,7 +4,7 @@
  * Updated: Connected to 'medications' database with SearchableSelect
  */
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -51,7 +51,6 @@ interface Medication {
     medication_name?: string; // Derived from join
     dosage: string | null;
     frequency: string | null;
-    route: string | null;
     start_date: string | null;
     end_date?: string | null;
     prescribing_doctor?: string | null;
@@ -105,7 +104,6 @@ const MedicationsCard = ({ patientId }: MedicationsCardProps) => {
         medication_name: '',
         dosage: '',
         frequency: 'once_daily',
-        route: 'oral',
         start_date: new Date().toISOString().split('T')[0],
         end_date: '',
         prescribing_doctor: '',
@@ -113,12 +111,7 @@ const MedicationsCard = ({ patientId }: MedicationsCardProps) => {
         is_active: true,
     });
 
-    useEffect(() => {
-        fetchData();
-        fetchMedicationList();
-    }, [patientId]);
-
-    const fetchMedicationList = async () => {
+    const fetchMedicationList = useCallback(async () => {
         setMedicationsLoading(true);
         try {
             const { data } = await supabase
@@ -151,10 +144,9 @@ const MedicationsCard = ({ patientId }: MedicationsCardProps) => {
         } finally {
             setMedicationsLoading(false);
         }
-    };
+    }, []);
 
-    // Global Search Handler
-    const handleMedicationSearch = async (query: string) => {
+    const handleMedicationSearch = useCallback(async (query: string) => {
         if (query.length < 3) return;
 
         try {
@@ -166,12 +158,15 @@ const MedicationsCard = ({ patientId }: MedicationsCardProps) => {
             if (error) throw error;
 
             if (data?.results) {
-                const globalOptions: SelectOption[] = data.results.map((r: any) => ({
-                    value: r.id || `glb-${Math.random().toString(36).substr(2, 9)}`,
-                    label: r.name,
-                    description: r.source === 'drugbank' ? 'DrugBank Global' : 'OpenFDA Global',
-                    category: 'Monde'
-                }));
+                const globalOptions: SelectOption[] = data.results.map((r: unknown) => {
+                    const item = r as { id?: string; name: string; source?: string };
+                    return {
+                        value: item.id || `glb-${Math.random().toString(36).substr(2, 9)}`,
+                        label: item.name,
+                        description: item.source === 'drugbank' ? 'DrugBank Global' : 'OpenFDA Global',
+                        category: 'Monde'
+                    };
+                });
 
                 // Merge with existing options avoiding duplicates
                 setMedicationOptions(prev => {
@@ -188,9 +183,9 @@ const MedicationsCard = ({ patientId }: MedicationsCardProps) => {
         } catch (err) {
             console.error('Global med search error:', err);
         }
-    };
+    }, []);
 
-    const fetchData = async () => {
+    const fetchData = useCallback(async () => {
         setLoading(true);
         const { data, error } = await supabase
             .from('patient_medications')
@@ -203,14 +198,22 @@ const MedicationsCard = ({ patientId }: MedicationsCardProps) => {
             toast.error('Erreur chargement traitements');
         } else {
             // Map the joined name to flat property for easier display
-            const mappedData = data?.map(d => ({
-                ...d,
-                medication_name: d.medications?.name || 'Inconnu'
-            })) || [];
-            setMedications(mappedData);
+            const mappedData = data?.map((d: unknown) => {
+                const item = d as { medications?: { name: string } };
+                return {
+                    ...(d as object),
+                    medication_name: item.medications?.name || 'Inconnu'
+                };
+            }) || [];
+            setMedications((mappedData as unknown as Medication[]) || []);
         }
         setLoading(false);
-    };
+    }, [patientId]);
+
+    useEffect(() => {
+        fetchData();
+        fetchMedicationList();
+    }, [fetchData, fetchMedicationList]);
 
     const activeMeds = medications.filter(m => m.is_active);
     const pastMeds = medications.filter(m => !m.is_active);
@@ -221,7 +224,6 @@ const MedicationsCard = ({ patientId }: MedicationsCardProps) => {
             medication_name: '',
             dosage: '',
             frequency: 'once_daily',
-            route: 'oral',
             start_date: new Date().toISOString().split('T')[0],
             end_date: '',
             prescribing_doctor: '',
@@ -243,7 +245,6 @@ const MedicationsCard = ({ patientId }: MedicationsCardProps) => {
             medication_name: isKnownOption ? med.medication_id : '__custom__',
             dosage: med.dosage || '',
             frequency: med.frequency || 'once_daily',
-            route: med.route || 'oral',
             start_date: med.start_date || '',
             end_date: med.end_date || '',
             prescribing_doctor: med.prescribing_doctor || '',
@@ -353,9 +354,10 @@ const MedicationsCard = ({ patientId }: MedicationsCardProps) => {
             setDialogOpen(false);
             setCustomMedName(''); // Reset
             fetchData();
-        } catch (error: any) {
-            console.error('Save error:', error);
-            toast.error('Erreur lors de la sauvegarde: ' + (error.message || 'Unknown'));
+        } catch (error: unknown) {
+            const err = error as { message?: string };
+            console.error('Save error:', err);
+            toast.error('Erreur lors de la sauvegarde: ' + (err.message || 'Unknown'));
         } finally {
             setSaving(false);
         }
@@ -546,17 +548,7 @@ const MedicationsCard = ({ patientId }: MedicationsCardProps) => {
                             </div>
                         </div>
 
-                        <div className="space-y-2">
-                            <Label>Voie d'administration</Label>
-                            <Select value={formData.route} onValueChange={(v) => setFormData({ ...formData, route: v })}>
-                                <SelectTrigger><SelectValue /></SelectTrigger>
-                                <SelectContent>
-                                    {ROUTES.map((r) => (
-                                        <SelectItem key={r.value} value={r.value}>{r.label}</SelectItem>
-                                    ))}
-                                </SelectContent>
-                            </Select>
-                        </div>
+
 
                         <div className="grid grid-cols-2 gap-4">
                             <div className="space-y-2">
@@ -610,6 +602,7 @@ const MedicationsCard = ({ patientId }: MedicationsCardProps) => {
                 open={importDialogOpen}
                 onOpenChange={setImportDialogOpen}
                 patientId={patientId}
+                category="medications"
                 onUploadComplete={() => {
                     toast.success('Document analysé, rechargement des traitements...');
                     fetchData();

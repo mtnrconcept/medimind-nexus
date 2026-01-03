@@ -27,14 +27,14 @@ interface MedicalHistoryCardProps {
 
 interface MedicalHistory {
     id: string;
-    condition_type: string;
-    condition_name: string;
-    diagnosis_date?: string;
-    resolution_date?: string;
+    category: string;
+    title: string;
+    start_date?: string;
+    end_date?: string;
     severity?: string;
-    treatment?: string;
+    description?: string;
     notes?: string;
-    is_chronic: boolean;
+    is_ongoing: boolean;
 }
 
 interface NCBIConcept {
@@ -70,14 +70,14 @@ const MedicalHistoryCard = ({ patientId }: MedicalHistoryCardProps) => {
     const [activeTab, setActiveTab] = useState('all');
 
     const [formData, setFormData] = useState({
-        condition_type: 'disease',
-        condition_name: '',
-        diagnosis_date: '',
-        resolution_date: '',
+        category: 'disease',
+        title: '',
+        start_date: '',
+        end_date: '',
         severity: 'moderate',
-        treatment: '',
+        description: '',
         notes: '',
-        is_chronic: false,
+        is_ongoing: false,
     });
 
     const [pathologyOptions, setPathologyOptions] = useState<SelectOption[]>([]);
@@ -95,8 +95,8 @@ const MedicalHistoryCard = ({ patientId }: MedicalHistoryCardProps) => {
                 .from('patient_medical_history')
                 .select('*')
                 .eq('patient_id', patientId)
-                .order('diagnosis_date', { ascending: false });
-            setHistory(data || []);
+                .order('start_date', { ascending: false });
+            setHistory((data as any) || []);
         } catch (err) {
             console.error('Error fetching medical history:', err);
         } finally {
@@ -189,14 +189,14 @@ const MedicalHistoryCard = ({ patientId }: MedicalHistoryCardProps) => {
     const openAddDialog = () => {
         setEditing(null);
         setFormData({
-            condition_type: 'disease',
-            condition_name: '',
-            diagnosis_date: new Date().toISOString().split('T')[0],
-            resolution_date: '',
+            category: 'disease',
+            title: '',
+            start_date: new Date().toISOString().split('T')[0],
+            end_date: '',
             severity: 'moderate',
-            treatment: '',
+            description: '',
             notes: '',
-            is_chronic: false,
+            is_ongoing: false,
         });
         setCustomConditionName('');
         setCustomTreatmentName('');
@@ -206,21 +206,21 @@ const MedicalHistoryCard = ({ patientId }: MedicalHistoryCardProps) => {
     const openEditDialog = (item: MedicalHistory) => {
         setEditing(item);
         setFormData({
-            condition_type: item.condition_type || 'disease',
-            condition_name: item.condition_name || '',
-            diagnosis_date: item.diagnosis_date || '',
-            resolution_date: item.resolution_date || '',
+            category: item.category || 'disease',
+            title: item.title || '',
+            start_date: item.start_date || '',
+            end_date: item.end_date || '',
             severity: item.severity || 'moderate',
-            treatment: item.treatment || '',
+            description: item.description || '',
             notes: item.notes || '',
-            is_chronic: item.is_chronic || false,
+            is_ongoing: item.is_ongoing || false,
         });
         setDialogOpen(true);
     };
 
     const handleSave = async () => {
-        let conditionName = formData.condition_name;
-        let treatmentName = formData.treatment;
+        let conditionName = formData.title;
+        let treatmentName = formData.description;
 
         if (conditionName === '__custom__') {
             if (!customConditionName.trim()) {
@@ -255,23 +255,23 @@ const MedicalHistoryCard = ({ patientId }: MedicalHistoryCardProps) => {
         try {
             // Build payload with proper null handling for dates
             const payload = {
-                condition_type: formData.condition_type,
-                condition_name: conditionName.trim(),
-                diagnosis_date: formData.diagnosis_date || null,
-                resolution_date: formData.resolution_date || null,
+                category: formData.category,
+                title: conditionName.trim(),
+                start_date: formData.start_date || null,
+                end_date: formData.end_date || null,
                 severity: formData.severity,
-                treatment: treatmentName?.trim() || null,
+                description: treatmentName?.trim() || null,
                 notes: formData.notes?.trim() || null,
-                is_chronic: formData.is_chronic,
+                is_ongoing: formData.is_ongoing,
                 patient_id: patientId
             };
 
             if (editing) {
-                const { error } = await supabase.from('patient_medical_history').update(payload).eq('id', editing.id);
+                const { error } = await supabase.from('patient_medical_history').update(payload as any).eq('id', editing.id);
                 if (error) throw error;
                 toast.success('Antécédent mis à jour');
             } else {
-                const { error } = await supabase.from('patient_medical_history').insert(payload);
+                const { error } = await supabase.from('patient_medical_history').insert(payload as any);
                 if (error) throw error;
                 toast.success('Antécédent ajouté');
             }
@@ -299,7 +299,7 @@ const MedicalHistoryCard = ({ patientId }: MedicalHistoryCardProps) => {
 
     const filteredHistory = activeTab === 'all'
         ? history
-        : history.filter(h => h.condition_type === activeTab);
+        : history.filter(h => h.category === activeTab);
 
     const getTypeIcon = (type: string) => {
         const config = CONDITION_TYPES.find(t => t.value === type);
@@ -338,7 +338,7 @@ const MedicalHistoryCard = ({ patientId }: MedicalHistoryCardProps) => {
                 </TabsList>
             </Tabs>
 
-            <div className="space-y-2 max-h-[300px] overflow-y-auto">
+            <div className="space-y-2">
                 {filteredHistory.length === 0 ? (
                     <div className="text-center py-6 text-muted-foreground text-sm">
                         Aucun antécédent enregistré
@@ -347,12 +347,12 @@ const MedicalHistoryCard = ({ patientId }: MedicalHistoryCardProps) => {
                     filteredHistory.map((item) => (
                         <div key={item.id} className="flex items-start gap-3 p-3 rounded-lg border bg-card hover:bg-accent/50 transition-colors">
                             <div className="p-2 rounded-lg bg-blue-100 dark:bg-blue-900/30 text-blue-600">
-                                {getTypeIcon(item.condition_type)}
+                                {getTypeIcon(item.category)}
                             </div>
                             <div className="flex-1 min-w-0">
                                 <div className="flex items-center gap-2">
-                                    <span className="font-medium text-sm">{item.condition_name}</span>
-                                    {item.is_chronic && <Badge variant="outline" className="text-[10px]">Chronique</Badge>}
+                                    <span className="font-medium text-sm">{item.title}</span>
+                                    {item.is_ongoing && <Badge variant="outline" className="text-[10px]">Chronique</Badge>}
                                     {item.severity && (
                                         <Badge className={SEVERITY_OPTIONS.find(s => s.value === item.severity)?.color || ''}>
                                             {SEVERITY_OPTIONS.find(s => s.value === item.severity)?.label}
@@ -360,14 +360,14 @@ const MedicalHistoryCard = ({ patientId }: MedicalHistoryCardProps) => {
                                     )}
                                 </div>
                                 <div className="text-xs text-muted-foreground mt-1 flex flex-wrap gap-x-3 gap-y-1">
-                                    {item.diagnosis_date && (
+                                    {item.start_date && (
                                         <span className="flex items-center gap-1">
-                                            Diagnostic: {format(new Date(item.diagnosis_date), 'PPP', { locale: fr })}
+                                            Diagnostic: {format(new Date(item.start_date), 'PPP', { locale: fr })}
                                         </span>
                                     )}
-                                    {item.treatment && (
+                                    {item.description && (
                                         <span className="flex items-center gap-1 italic">
-                                            Traitement: {item.treatment}
+                                            Traitement: {item.description}
                                         </span>
                                     )}
                                 </div>
@@ -404,8 +404,8 @@ const MedicalHistoryCard = ({ patientId }: MedicalHistoryCardProps) => {
                         <div className="space-y-2">
                             <Label>Type d'antécédent</Label>
                             <Select
-                                value={formData.condition_type}
-                                onValueChange={(v) => setFormData({ ...formData, condition_type: v })}
+                                value={formData.category}
+                                onValueChange={(v) => setFormData({ ...formData, category: v })}
                             >
                                 <SelectTrigger><SelectValue /></SelectTrigger>
                                 <SelectContent>
@@ -425,9 +425,9 @@ const MedicalHistoryCard = ({ patientId }: MedicalHistoryCardProps) => {
                             <Label>Nom de la condition / Pathologie</Label>
                             <SearchableSelect
                                 options={pathologyOptions}
-                                value={formData.condition_name}
+                                value={formData.title}
                                 onValueChange={(v) => {
-                                    setFormData({ ...formData, condition_name: v });
+                                    setFormData({ ...formData, title: v });
                                     if (v !== '__custom__') setCustomConditionName('');
                                 }}
                                 onSearch={handlePathologySearch}
@@ -436,7 +436,7 @@ const MedicalHistoryCard = ({ patientId }: MedicalHistoryCardProps) => {
                                 loading={pathologiesLoading}
                                 externalSearch={true}
                             />
-                            {formData.condition_name === '__custom__' && (
+                            {formData.title === '__custom__' && (
                                 <Input
                                     className="mt-2"
                                     placeholder="Saisir la condition..."
@@ -450,8 +450,8 @@ const MedicalHistoryCard = ({ patientId }: MedicalHistoryCardProps) => {
                             <Label>Date du diagnostic</Label>
                             <Input
                                 type="date"
-                                value={formData.diagnosis_date}
-                                onChange={(e) => setFormData({ ...formData, diagnosis_date: e.target.value })}
+                                value={formData.start_date}
+                                onChange={(e) => setFormData({ ...formData, start_date: e.target.value })}
                             />
                         </div>
 
@@ -476,9 +476,9 @@ const MedicalHistoryCard = ({ patientId }: MedicalHistoryCardProps) => {
                             <Label>Traitement prescrit</Label>
                             <SearchableSelect
                                 options={treatmentOptions}
-                                value={formData.treatment}
+                                value={formData.description}
                                 onValueChange={(v) => {
-                                    setFormData({ ...formData, treatment: v });
+                                    setFormData({ ...formData, description: v });
                                     if (v !== '__custom__') setCustomTreatmentName('');
                                 }}
                                 onSearch={handleTreatmentSearch}
@@ -487,7 +487,7 @@ const MedicalHistoryCard = ({ patientId }: MedicalHistoryCardProps) => {
                                 loading={treatmentsLoading}
                                 externalSearch={true}
                             />
-                            {formData.treatment === '__custom__' && (
+                            {formData.description === '__custom__' && (
                                 <Input
                                     className="mt-2"
                                     placeholder="Saisir le traitement..."
@@ -500,12 +500,12 @@ const MedicalHistoryCard = ({ patientId }: MedicalHistoryCardProps) => {
                         <div className="flex items-center space-x-2 pt-8">
                             <input
                                 type="checkbox"
-                                id="is_chronic"
-                                checked={formData.is_chronic}
-                                onChange={(e) => setFormData({ ...formData, is_chronic: e.target.checked })}
+                                id="is_ongoing"
+                                checked={formData.is_ongoing}
+                                onChange={(e) => setFormData({ ...formData, is_ongoing: e.target.checked })}
                                 className="rounded border-gray-300"
                             />
-                            <Label htmlFor="is_chronic">Affection chronique</Label>
+                            <Label htmlFor="is_ongoing">Affection chronique</Label>
                         </div>
 
                         <div className="col-span-2 space-y-2">

@@ -3,7 +3,7 @@
  * Features: Imaging types, dates, findings, reports
  */
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -109,20 +109,20 @@ const ImagingCard = ({ patientId }: ImagingCardProps) => {
         is_abnormal: false,
     });
 
-    useEffect(() => {
-        fetchData();
-    }, [patientId]);
-
-    const fetchData = async () => {
+    const fetchData = useCallback(async () => {
         setLoading(true);
         const { data } = await supabase
             .from('patient_imaging')
             .select('*')
             .eq('patient_id', patientId)
             .order('exam_date', { ascending: false });
-        setImaging(data || []);
+        setImaging((data as unknown as Imaging[]) || []);
         setLoading(false);
-    };
+    }, [patientId]);
+
+    useEffect(() => {
+        fetchData();
+    }, [fetchData]);
 
     const openAddDialog = () => {
         setEditing(null);
@@ -343,6 +343,7 @@ const ImagingCard = ({ patientId }: ImagingCardProps) => {
                 open={importDialogOpen}
                 onOpenChange={setImportDialogOpen}
                 patientId={patientId}
+                category="imaging"
                 onUploadComplete={() => {
                     toast.success('Document analysé, rechargement des examens...');
                     fetchData();

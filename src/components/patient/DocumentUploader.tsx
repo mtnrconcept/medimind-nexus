@@ -11,6 +11,7 @@ import { toast } from 'sonner';
 interface DocumentUploaderProps {
     patientId: string;
     onUploadComplete?: () => void;
+    category?: string;
 }
 
 interface UploadingFile {
@@ -49,7 +50,7 @@ const formatFileSize = (bytes: number) => {
     return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 };
 
-export default function DocumentUploader({ patientId, onUploadComplete }: DocumentUploaderProps) {
+export default function DocumentUploader({ patientId, onUploadComplete, category }: DocumentUploaderProps) {
     const [files, setFiles] = useState<UploadingFile[]>([]);
     const [isUploading, setIsUploading] = useState(false);
 
@@ -126,6 +127,9 @@ export default function DocumentUploader({ patientId, onUploadComplete }: Docume
                 formData.append('file', file);
                 formData.append('documentId', docRecord.id);
                 formData.append('patientId', patientId);
+                if (category) {
+                    formData.append('category', category);
+                }
 
                 const { data: { session } } = await supabase.auth.getSession();
 

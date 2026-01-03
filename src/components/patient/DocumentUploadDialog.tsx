@@ -9,6 +9,7 @@ interface DocumentUploadDialogProps {
     patientId: string;
     onUploadComplete?: () => void;
     trigger?: React.ReactNode;
+    category?: string;
 }
 
 export function DocumentUploadDialog({
@@ -16,7 +17,8 @@ export function DocumentUploadDialog({
     onOpenChange,
     patientId,
     onUploadComplete,
-    trigger
+    trigger,
+    category
 }: DocumentUploadDialogProps) {
     return (
         <Dialog open={open} onOpenChange={onOpenChange}>
@@ -37,6 +39,7 @@ export function DocumentUploadDialog({
                 </DialogHeader>
                 <DocumentUploader
                     patientId={patientId}
+                    category={category}
                     onUploadComplete={() => {
                         onUploadComplete?.();
                         onOpenChange(false);

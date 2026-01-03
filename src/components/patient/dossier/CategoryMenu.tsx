@@ -89,7 +89,7 @@ export const CATEGORIES: CategoryConfig[] = [
 
 interface CategoryMenuProps {
     activeCategory: PatientCategory | null;
-    onSelectCategory: (category: PatientCategory, yPosition?: number) => void;
+    onSelectCategory: (category: PatientCategory, rect?: DOMRect) => void;
     className?: string;
     /** Optional: render content directly under category (accordion mode for mobile) */
     renderContent?: (category: PatientCategory) => React.ReactNode;
@@ -115,7 +115,7 @@ const CategoryMenu = ({ activeCategory, onSelectCategory, className, renderConte
                                     )}
                                     onClick={(e) => {
                                         const rect = e.currentTarget.getBoundingClientRect();
-                                        onSelectCategory(cat.key, rect.top);
+                                        onSelectCategory(cat.key, rect);
                                     }}
                                 >
                                     {cat.icon}

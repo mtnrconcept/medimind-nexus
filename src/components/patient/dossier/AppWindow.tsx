@@ -1,4 +1,5 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import Draggable from 'react-draggable';
 import { ResizableBox } from 'react-resizable';
 import { X, Maximize2, Minimize2, Move } from 'lucide-react';
@@ -22,7 +23,7 @@ const AppWindow: React.FC<AppWindowProps> = ({
     children,
     onClose,
     defaultPosition = { x: 100, y: 100 },
-    defaultSize = { width: 450, height: 600 },
+    defaultSize = { width: 480, height: 800 },
     zIndex = 50,
     onFocus
 }) => {
@@ -34,7 +35,7 @@ const AppWindow: React.FC<AppWindowProps> = ({
         setIsMaximized(!isMaximized);
     };
 
-    return (
+    const windowContent = (
         <Draggable
             nodeRef={nodeRef}
             handle=".window-handle"
@@ -46,18 +47,19 @@ const AppWindow: React.FC<AppWindowProps> = ({
                 ref={nodeRef}
                 style={{ zIndex }}
                 className={cn(
-                    "absolute shadow-2xl rounded-xl border border-border/50 bg-background/95 backdrop-blur-md overflow-hidden flex flex-col transition-all duration-200",
+                    "fixed top-0 left-0 shadow-[0_20px_50px_rgba(0,0,0,0.3)] rounded-xl border border-white/20 bg-background/90 backdrop-blur-xl overflow-hidden flex flex-col transition-all duration-200",
+                    "max-h-[calc(100vh-40px)]",
                     isMaximized ? "inset-0 !transform-none !w-full !h-full rounded-none" : ""
                 )}
             >
                 {/* Window Handle / Header */}
                 <div
-                    className="window-handle shrink-0 h-10 bg-muted/30 border-b border-border/10 flex items-center justify-between px-3 cursor-move hover:bg-muted/50 transition-colors"
+                    className="window-handle shrink-0 h-10 bg-muted/40 border-b border-border/10 flex items-center justify-between px-3 cursor-move hover:bg-muted/60 transition-colors"
                     onDoubleClick={toggleMaximize}
                 >
                     <div className="flex items-center gap-2">
-                        <Move className="h-3 w-3 text-muted-foreground" />
-                        <span className="text-xs font-bold uppercase tracking-widest opacity-80">{title}</span>
+                        <Move className="h-3 w-3 text-primary/70" />
+                        <span className="text-[10px] font-bold uppercase tracking-widest opacity-80">{title}</span>
                     </div>
                     <div className="flex items-center gap-1">
                         <button
@@ -83,11 +85,11 @@ const AppWindow: React.FC<AppWindowProps> = ({
                             height={size.height - 40}
                             onResize={(e, { size: newSize }) => setSize({ width: newSize.width, height: newSize.height + 40 })}
                             minConstraints={[300, 200]}
-                            maxConstraints={[1200, 1000]}
+                            maxConstraints={[1200, typeof window !== 'undefined' ? window.innerHeight - 80 : 800]}
                             resizeHandles={['se']}
                             className="flex flex-col h-full"
                         >
-                            <div className="w-full h-full overflow-y-auto custom-scrollbar bg-card/20 p-4">
+                            <div className="w-full h-full overflow-y-auto custom-scrollbar bg-card/10 p-4">
                                 {children}
                             </div>
                         </ResizableBox>
@@ -100,6 +102,8 @@ const AppWindow: React.FC<AppWindowProps> = ({
             </div>
         </Draggable>
     );
+
+    return createPortal(windowContent, document.body);
 };
 
 export default AppWindow;

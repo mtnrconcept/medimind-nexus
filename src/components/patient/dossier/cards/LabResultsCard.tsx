@@ -3,7 +3,7 @@
  * Features: Results by category, abnormal highlighting, trends, add/edit
  */
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -25,7 +25,7 @@ interface LabResult {
     id: string;
     patient_id: string;
     test_name: string;
-    category: string;
+    test_category: string;
     value: number;
     unit: string;
     reference_min?: number;
@@ -33,6 +33,9 @@ interface LabResult {
     test_date: string;
     notes?: string;
     is_abnormal?: boolean;
+    interpretation?: string;
+    laboratory?: string;
+    ordering_physician?: string;
     created_at: string;
 }
 
@@ -61,16 +64,19 @@ const LabResultsCard = ({ patientId }: LabResultsCardProps) => {
 
     const [formData, setFormData] = useState({
         test_name: '',
-        category: 'biochemistry',
+        test_category: 'biochemistry',
         value: '',
         unit: '',
         reference_min: '',
         reference_max: '',
         test_date: new Date().toISOString().split('T')[0],
-        notes: ''
+        notes: '',
+        interpretation: '',
+        laboratory: '',
+        ordering_physician: ''
     });
 
-    const fetchData = async () => {
+    const fetchData = useCallback(async () => {
         setLoading(true);
         try {
             const { data, error } = await supabase
@@ -80,30 +86,33 @@ const LabResultsCard = ({ patientId }: LabResultsCardProps) => {
                 .order('test_date', { ascending: false });
 
             if (error) throw error;
-            setResults(data || []);
+            setResults((data as unknown as LabResult[]) || []);
         } catch (err) {
             console.error('Error fetching lab results:', err);
             toast.error('Erreur lors du chargement des résultats');
         } finally {
             setLoading(false);
         }
-    };
+    }, [patientId]);
 
     useEffect(() => {
         fetchData();
-    }, [patientId]);
+    }, [fetchData]);
 
     const openAddDialog = () => {
         setEditing(null);
         setFormData({
             test_name: '',
-            category: 'biochemistry',
+            test_category: 'biochemistry',
             value: '',
             unit: '',
             reference_min: '',
             reference_max: '',
             test_date: new Date().toISOString().split('T')[0],
-            notes: ''
+            notes: '',
+            interpretation: '',
+            laboratory: '',
+            ordering_physician: ''
         });
         setDialogOpen(true);
     };
@@ -112,13 +121,16 @@ const LabResultsCard = ({ patientId }: LabResultsCardProps) => {
         setEditing(result);
         setFormData({
             test_name: result.test_name,
-            category: result.category,
+            test_category: result.test_category,
             value: String(result.value),
             unit: result.unit,
             reference_min: result.reference_min ? String(result.reference_min) : '',
             reference_max: result.reference_max ? String(result.reference_max) : '',
             test_date: result.test_date,
-            notes: result.notes || ''
+            notes: result.notes || '',
+            interpretation: result.interpretation || '',
+            laboratory: result.laboratory || '',
+            ordering_physician: result.ordering_physician || ''
         });
         setDialogOpen(true);
     };
@@ -140,14 +152,17 @@ const LabResultsCard = ({ patientId }: LabResultsCardProps) => {
             const payload = {
                 patient_id: patientId,
                 test_name: formData.test_name,
-                category: formData.category,
+                test_category: formData.test_category,
                 value,
                 unit: formData.unit,
                 reference_min: refMin,
                 reference_max: refMax,
                 test_date: formData.test_date,
                 notes: formData.notes || null,
-                is_abnormal: isAbnormal
+                is_abnormal: isAbnormal,
+                interpretation: formData.interpretation || null,
+                laboratory: formData.laboratory || null,
+                ordering_physician: formData.ordering_physician || null
             };
 
             if (editing) {
@@ -167,9 +182,10 @@ const LabResultsCard = ({ patientId }: LabResultsCardProps) => {
 
             setDialogOpen(false);
             fetchData();
-        } catch (err) {
+        } catch (error: unknown) {
+            const err = error as { message?: string };
             console.error('Error saving lab result:', err);
-            toast.error('Erreur lors de l\'enregistrement');
+            toast.error('Erreur lors de l\'enregistrement: ' + (err.message || ''));
         } finally {
             setSaving(false);
         }
@@ -214,7 +230,7 @@ const LabResultsCard = ({ patientId }: LabResultsCardProps) => {
         ? results
         : activeTab === 'abnormal'
             ? results.filter(r => r.is_abnormal)
-            : results.filter(r => r.category === activeTab);
+            : results.filter(r => r.test_category === activeTab);
 
     if (loading) {
         return (
@@ -278,7 +294,7 @@ const LabResultsCard = ({ patientId }: LabResultsCardProps) => {
                                                 <Calendar className="h-3 w-3" />
                                                 {new Date(result.test_date).toLocaleDateString('fr-FR')}
                                                 <Badge variant="outline" className="text-xs">
-                                                    {LAB_CATEGORIES.find(c => c.value === result.category)?.label || result.category}
+                                                    {LAB_CATEGORIES.find(c => c.value === result.test_category)?.label || result.test_category}
                                                 </Badge>
                                             </div>
                                         </div>
@@ -337,8 +353,8 @@ const LabResultsCard = ({ patientId }: LabResultsCardProps) => {
                             <div>
                                 <Label>Catégorie</Label>
                                 <Select
-                                    value={formData.category}
-                                    onValueChange={v => setFormData({ ...formData, category: v })}
+                                    value={formData.test_category}
+                                    onValueChange={v => setFormData({ ...formData, test_category: v })}
                                 >
                                     <SelectTrigger>
                                         <SelectValue />
@@ -354,8 +370,8 @@ const LabResultsCard = ({ patientId }: LabResultsCardProps) => {
                                 <Label>Date</Label>
                                 <Input
                                     type="date"
-                                    value={formData.result_date}
-                                    onChange={e => setFormData({ ...formData, result_date: e.target.value })}
+                                    value={formData.test_date}
+                                    onChange={e => setFormData({ ...formData, test_date: e.target.value })}
                                 />
                             </div>
                             <div>
@@ -419,6 +435,7 @@ const LabResultsCard = ({ patientId }: LabResultsCardProps) => {
                 open={importDialogOpen}
                 onOpenChange={setImportDialogOpen}
                 patientId={patientId}
+                category="lab_results"
                 onUploadComplete={() => {
                     toast.success('Document analysé, rechargement des résultats...');
                     fetchData();
