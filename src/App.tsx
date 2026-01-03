@@ -23,6 +23,7 @@ import SwitchCalculator from "./pages/SwitchCalculator";
 import NotFound from "./pages/NotFound";
 import SMARTLaunch from "./pages/smart/Launch";
 import SMARTCallback from "./pages/smart/Callback";
+import PopulateData from "./pages/PopulateData";
 
 const queryClient = new QueryClient();
 
@@ -45,6 +46,7 @@ const AnimatedRoutes = () => {
         <Route path="/discovery-platform" element={<ProtectedRoute><DiscoveryPlatform /></ProtectedRoute>} />
         <Route path="/tools/switch-calculator" element={<ProtectedRoute><SwitchCalculator /></ProtectedRoute>} />
         <Route path="/admin" element={<Admin />} /> {/* TEMPORAIRE: Sans protection pour config initiale */}
+        <Route path="/populate-data" element={<ProtectedRoute><PopulateData /></ProtectedRoute>} />
 
         {/* SMART on FHIR routes */}
         <Route path="/smart/launch" element={<SMARTLaunch />} />
