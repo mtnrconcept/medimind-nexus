@@ -271,8 +271,8 @@ const MedicalHistoryCard = ({ patientId }: MedicalHistoryCardProps) => {
     // 3. Effects
     useEffect(() => {
         fetchData();
-        fetchInitialOptions();
-    }, [fetchData, fetchInitialOptions]);
+        // fetchInitialOptions(); // Disabled to prevent mock data clutter
+    }, [fetchData]);
 
     // 4. Action Handlers
     const openAddDialog = () => {

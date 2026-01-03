@@ -228,8 +228,8 @@ const MedicationsCard = ({ patientId }: MedicationsCardProps) => {
 
     useEffect(() => {
         fetchData();
-        fetchMedicationList();
-    }, [fetchData, fetchMedicationList]);
+        // fetchMedicationList(); // Disabled to prevent mock data clutter
+    }, [fetchData]);
 
     const activeMeds = medications.filter(m => m.is_active);
     const pastMeds = medications.filter(m => !m.is_active);

@@ -38,6 +38,7 @@ import {
     AgeSpecificCard
 } from './cards';
 import { SideEffectAlertPanel } from '../SideEffectAlertPanel';
+import { CriticalAlertsModal } from './CriticalAlertsModal';
 
 interface PatientDossierLayoutProps {
     patientId: string;
@@ -147,6 +148,7 @@ const PatientDossierLayout = ({ patientId, patient }: PatientDossierLayoutProps)
 
     return (
         <div className="relative min-h-[1200px] pb-20 overflow-x-hidden">
+            <CriticalAlertsModal patientId={patientId} />
             {/* Dashboard Area */}
             <div ref={containerRef} className="w-full flex-1 pt-4 px-2">
                 {width > 0 && (

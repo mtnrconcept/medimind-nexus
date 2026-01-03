@@ -1123,12 +1123,12 @@ export type Database = {
         Row: {
           id: string
           patient_id: string
-          category: string
-          title: string
-          description: string | null
-          start_date: string | null
+          condition_type: string
+          condition_name: string
+          treatment: string | null
+          diagnosis_date: string | null
           end_date: string | null
-          is_ongoing: boolean
+          is_chronic: boolean
           severity: string | null
           treating_facility: string | null
           treating_physician: string | null
@@ -1141,12 +1141,12 @@ export type Database = {
         Insert: {
           id?: string
           patient_id: string
-          category: string
-          title: string
-          description?: string | null
-          start_date?: string | null
+          condition_type: string
+          condition_name: string
+          treatment?: string | null
+          diagnosis_date?: string | null
           end_date?: string | null
-          is_ongoing?: boolean
+          is_chronic?: boolean
           severity?: string | null
           treating_facility?: string | null
           treating_physician?: string | null
@@ -1159,12 +1159,12 @@ export type Database = {
         Update: {
           id?: string
           patient_id?: string
-          category?: string
-          title?: string
-          description?: string | null
-          start_date?: string | null
+          condition_type?: string
+          condition_name?: string
+          treatment?: string | null
+          diagnosis_date?: string | null
           end_date?: string | null
-          is_ongoing?: boolean
+          is_chronic?: boolean
           severity?: string | null
           treating_facility?: string | null
           treating_physician?: string | null
