@@ -10,12 +10,17 @@ export interface AIResponse {
 }
 
 export interface AIContentBlock {
-    type: 'text' | 'image';
+    type: 'text' | 'image' | 'document';
     text?: string;
     image_url?: { url: string }; // Standard format
-    source?: {           // Anthropic specific
+    source?: {           // Anthropic specific (images & documents)
         type: 'base64';
         media_type: string;
+        data: string;
+    };
+    document?: {         // Alternative Anthropic format
+        type: 'base64';
+        media_type: 'application/pdf';
         data: string;
     };
     inline_data?: {      // Gemini specific
@@ -57,10 +62,10 @@ export async function callAI(
             content: typeof m.content === 'string'
                 ? m.content
                 : m.content.map(block => {
-                    if (block.type === 'image' && block.source) {
+                    if ((block.type === 'image' || block.type === 'document') && (block.source || block.document)) {
                         return {
-                            type: 'image',
-                            source: block.source
+                            type: block.type === 'document' ? 'document' : 'image',
+                            source: block.source || block.document
                         };
                     }
                     return { type: 'text', text: block.text || '' };
@@ -78,13 +83,14 @@ export async function callAI(
             parts: typeof m.content === 'string'
                 ? [{ text: m.content }]
                 : m.content.map(block => {
-                    if (block.type === 'image') {
+                    if (block.type === 'image' || block.type === 'document') {
                         // Check if it's already in Gemini format or convert from Anthropic format
                         if (block.inline_data) return { inline_data: block.inline_data };
-                        if (block.source) return {
+                        const source = block.source || block.document;
+                        if (source) return {
                             inline_data: {
-                                mime_type: block.source.media_type,
-                                data: block.source.data
+                                mime_type: source.media_type,
+                                data: source.data
                             }
                         };
                     }
@@ -167,7 +173,11 @@ export async function callAI(
         }
     }
 
-    throw new Error('No AI provider available (both Anthropic and Gemini failed or are missing API keys)');
+    return {
+        text: JSON.stringify({ notes: "Erreur: Aucun fournisseur d'IA n'a pu répondre (Anthropic/Gemini indisponibles ou balance épuisée)." }),
+        provider: 'none',
+        model: 'none'
+    };
 }
 
 /**

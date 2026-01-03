@@ -9,7 +9,7 @@ from typing import List, Optional, Dict, Any
 import os
 from Bio import Entrez
 import json
-from anthropic import AsyncAnthropic
+from ..services.ai_client import call_ai
 
 router = APIRouter()
 
@@ -133,13 +133,7 @@ async def perform_deep_research(input: ResearchInput):
         # Format sources for Context
         web_context = "\n".join([f"- \"{s.title}\" ({s.url})\n  Snippet: {s.snippet}" for s in sources])
         
-        # 2. AI Analysis
-        claude_key = os.getenv("CLAUDE_API_KEY") or os.getenv("ANTHROPIC_API_KEY")
-        if not claude_key:
-            raise HTTPException(status_code=500, detail="CLAUDE_API_KEY not configured")
-            
-        client = AsyncAnthropic(api_key=claude_key)
-        
+        # 2. AI Analysis with automatic fallback (Anthropic -> Gemini)
         system_prompt = """You are a medical expert specializing in differential diagnosis. Perform "Deep Research" analyzing the provided symptoms to identify ALL possible pathologies.
         
 IMPORTANT: Answer ONLY in FRENCH.
@@ -188,18 +182,17 @@ Analyze these symptoms and identify pathologies. Include:
 Reply in JSON only.
 """
 
-        print("Calling Claude API...")
-        message = await client.messages.create(
+        print("Calling AI API with fallback (Anthropic -> Gemini)...")
+        ai_response = await call_ai(
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
             model="claude-3-opus-20240229",
             max_tokens=4096,
-            system=system_prompt,
-            messages=[
-                {"role": "user", "content": user_prompt}
-            ],
             temperature=0.3
         )
         
-        content = message.content[0].text
+        content = ai_response.text
+        print(f"AI Response received from {ai_response.provider} ({ai_response.model})")
         
         # Parse JSON
         try:

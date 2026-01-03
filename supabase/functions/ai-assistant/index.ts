@@ -44,6 +44,12 @@ serve(async (req) => {
       const consults = patientContext.consultations?.map((c: any) => `- ${c.consultation_date}: ${c.reason} (${c.physician_name})`).join('\n') || 'Aucune';
       const vaccines = patientContext.vaccinations?.map((v: any) => `- ${v.vaccine_name} (${v.vaccination_date})`).join('\n') || 'Aucun';
 
+      // New Sections
+      const mental = (patientContext as any).mental_health?.map((m: any) => `- ${m.condition_name}: ${m.notes}`).join('\n') || 'Aucune donnée';
+      const repro = (patientContext as any).reproductive_health?.map((r: any) => `- ${r.condition_name}: ${r.notes}`).join('\n') || 'Aucune donnée';
+      const clinical = (patientContext as any).clinical_data?.map((d: any) => `- ${d.data_name}: ${d.data_value} ${d.unit || ''}`).join('\n') || 'Aucune donnée';
+      const labList = (patientContext as any).lab_results_data?.map((l: any) => `- ${l.test_name}: ${l.test_value} ${l.unit} (${l.status})`).join('\n') || 'Aucune donnée';
+
       patientContextStr = `
 ## 👤 PROFIL PATIENT (ID: ${patientContext.patient_id})
 - Âge: ${patientContext.age} ans | Genre: ${patientContext.gender === 'M' ? 'Homme' : 'Femme'} | Nationalité: ${patientContext.nationality}
@@ -59,18 +65,29 @@ ${history}
 ## ⚠️ ALLERGIES
 ${allergies}
 
+## 🔬 RÉSULTATS BIOLOGIQUES (LISTE)
+${labList}
+
+## 🧬 DONNÉES CLINIQUES & CONSTANTES
+${clinical}
+
 ## 💉 VACCINATIONS
 ${vaccines}
 
 ## 📅 CONSULTATIONS RÉCENTES
 ${consults}
 
-## 🔬 RÉSULTATS BIOLOGIQUES & CONSTANTES
-- Glycémie: ${labResults?.glucose_mg_dl} mg/dL
-- Tension: ${labResults?.blood_pressure_sys}/${labResults?.blood_pressure_dia} mmHg
-- Température: ${labResults?.temperature_c}°C
-- SpO2: ${labResults?.spo2_percent}%
-(Autres données brutes disponibles dans le contexte JSON)
+## 🧠 SANTÉ MENTALE
+${mental}
+
+## 🤰 SANTÉ REPRODUCTIVE
+${repro}
+
+## 🔬 SYNTHÈSE BIOLOGIQUE
+- Glycémie: ${labResults?.glucose_mg_dl || 'N/A'} mg/dL
+- Tension: ${labResults?.blood_pressure_sys || 'N/A'}/${labResults?.blood_pressure_dia || 'N/A'} mmHg
+- Température: ${labResults?.temperature_c || 'N/A'}°C
+- SpO2: ${labResults?.spo2_percent || 'N/A'}%
 `;
     }
 
@@ -133,7 +150,7 @@ ${consults}
             },
             {
               model: "claude-3-5-sonnet-20240620",
-              maxTokens: 1024,
+              maxTokens: 4096,
             }
           );
           controller.enqueue(encoder.encode('data: [DONE]\n\n'));

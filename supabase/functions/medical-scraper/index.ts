@@ -1171,7 +1171,7 @@ serve(async (req) => {
       const markdown = scrapeResult.markdown || '';
       console.log('Contenu extraction équivalence, longueur:', markdown.length);
 
-      // Extract equivalence data with Claude
+      // Extract equivalence data using AI with fallback (Anthropic -> Gemini)
       const equivalencePrompt = `Tu es un pharmacologue expert. Extrais les données d'équivalence de cette page.
 
 Catégorie: ${category}
@@ -1198,27 +1198,19 @@ Schéma JSON strict attendu:
 Contenu Markdown:
 ${markdown.substring(0, 40000)}`;
 
-      const claudeApiKey = Deno.env.get('CLAUDE_API_KEY');
-      const response = await fetch('https://api.anthropic.com/v1/messages', {
-        method: 'POST',
-        headers: {
-          'x-api-key': claudeApiKey!,
-          'anthropic-version': '2023-06-01',
-          'content-type': 'application/json'
-        },
-        body: JSON.stringify({
-          model: 'claude-opus-4-5-20251101',
-          max_tokens: 4000,
-          messages: [{ role: 'user', content: equivalencePrompt }]
-        })
-      });
+      // Use callAI which handles Anthropic -> Gemini fallback automatically
+      const aiResponse = await callAI(
+        'Tu es un pharmacologue expert en équivalences médicamenteuses.',
+        equivalencePrompt,
+        {
+          model: 'claude-sonnet-4-20250514',
+          maxTokens: 4000,
+          temperature: 0
+        }
+      );
 
-      if (!response.ok) {
-        throw new Error(`Claude API Error: ${await response.text()}`);
-      }
-
-      const data = await response.json();
-      const content = data.content[0].text;
+      const content = aiResponse.text;
+      console.log(`[scrape-equivalence] AI response from ${aiResponse.provider} (${aiResponse.model})`);
 
       // Parse JSON from Claude response
       const jsonMatch = content.match(/\{[\s\S]*\}/);

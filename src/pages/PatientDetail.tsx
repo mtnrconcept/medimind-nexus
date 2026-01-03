@@ -224,6 +224,17 @@ const PatientDetail = () => {
             weight_kg: patient.weight_kg,
             treatment: patient.treatment,
             medical_notes_nlp: patient.medical_notes_nlp,
+            // Pass all real database relations to the layout for the AI Assistant
+            medications: patient.medications,
+            vaccinations: patient.vaccinations,
+            allergies: patient.allergies,
+            medical_history: patient.medical_history,
+            consultations: patient.consultations,
+            mental_health: patient.mental_health,
+            reproductive_health: patient.reproductive_health,
+            clinical_data: patient.clinical_data,
+            lab_results_data: patient.lab_results_data,
+            lab_results_json: patient.lab_results_json,
           }}
           alerts={alerts}
         />

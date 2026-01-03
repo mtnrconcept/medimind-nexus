@@ -43,6 +43,15 @@ interface PatientDossierLayoutProps {
         treatment?: string;
         medical_notes_nlp?: string;
         lab_results_json?: any;
+        medications?: any[];
+        vaccinations?: any[];
+        allergies?: any[];
+        medical_history?: any[];
+        consultations?: any[];
+        mental_health?: any[];
+        reproductive_health?: any[];
+        clinical_data?: any[];
+        lab_results_data?: any[];
     };
     alerts: any[];
 }
@@ -200,6 +209,16 @@ const PatientDossierLayout = ({ patientId, patient, alerts }: PatientDossierLayo
                                 bmi: patient.height_cm && patient.weight_kg
                                     ? Math.round((patient.weight_kg / ((patient.height_cm / 100) ** 2)) * 10) / 10
                                     : undefined,
+                                // Relayer les données réelles de la DB
+                                medications: (patient as any).medications,
+                                vaccinations: (patient as any).vaccinations,
+                                allergies: (patient as any).allergies,
+                                medical_history: (patient as any).medical_history,
+                                consultations: (patient as any).consultations,
+                                mental_health: (patient as any).mental_health,
+                                reproductive_health: (patient as any).reproductive_health,
+                                clinical_data: (patient as any).clinical_data,
+                                lab_results_data: (patient as any).lab_results_data,
                             } as any}
                         />
                     </div>

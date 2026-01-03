@@ -157,7 +157,46 @@ interface ExtractedMedicalData {
     };
     alerts?: string[];
     notes?: string;
-    documentType?: 'ordonnance' | 'compte_rendu' | 'imagerie' | 'analyse_biologique' | 'certificat' | 'lettre' | 'autre';
+    documentType?: 'ordonnance' | 'compte_rendu' | 'imagerie' | 'analyse_biologique' | 'certificat' | 'lettre' | 'dentaire' | 'examen_fonctionnel' | 'prevention' | 'autre';
+
+    // === NEW CATEGORIES FOR FULL DOSSIER INTEGRATION ===
+    dental?: Array<{
+        procedure: string;
+        tooth_number?: string;
+        findings?: string;
+        date?: string;
+        practitioner?: string;
+    }>;
+    functionalExams?: Array<{
+        exam_type: string;
+        findings?: string;
+        conclusion?: string;
+        date?: string;
+        practitioner?: string;
+    }>;
+    prevention?: Array<{
+        screening_type: string;
+        result?: string;
+        result_status?: string;
+        next_due_date?: string;
+        date?: string;
+    }>;
+    monitoring?: Array<{
+        type: string;
+        value: number;
+        unit?: string;
+        secondary_value?: number;
+        notes?: string;
+        date?: string;
+    }>;
+    communications?: {
+        type: 'letter_in' | 'letter_out' | 'email_in' | 'email_out' | 'referral' | 'report';
+        sender?: string;
+        recipient?: string;
+        subject?: string;
+        content?: string;
+        urgency?: 'routine' | 'urgent' | 'critical';
+    };
 }
 
 // Document category detection keywords
@@ -167,7 +206,10 @@ const categoryKeywords = {
     imagerie: ['radiographie', 'scanner', 'irm', 'échographie', 'imagerie', 'radio', 'tomodensitométrie'],
     analyse_biologique: ['analyse', 'biologie', 'laboratoire', 'glycémie', 'hémoglobine', 'numération', 'formule sanguine', 'bilan'],
     certificat: ['certificat', 'atteste', 'certifie', 'aptitude', 'inaptitude', 'arrêt de travail'],
-    lettre: ['cher confrère', 'adresse à vous', 'correspondance', 'courrier']
+    lettre: ['cher confrère', 'adresse à vous', 'correspondance', 'courrier', 'referral', 'adressage'],
+    dentaire: ['dentaire', 'dentiste', 'carie', 'orthodontie', 'omnivore', 'dents', 'molaire', 'incisive'],
+    examen_fonctionnel: ['ecg', 'electrocardiogramme', 'efr', 'spirometrie', 'audiogramme', 'fond d\'oeil', 'tension oculaire'],
+    prevention: ['depistage', 'mammographie', 'colonoscopie', 'frottis', 'psa', 'prevention', 'check-up']
 };
 
 function detectDocumentCategory(text: string): ExtractedMedicalData['documentType'] {
@@ -182,9 +224,9 @@ function detectDocumentCategory(text: string): ExtractedMedicalData['documentTyp
     return 'autre';
 }
 
-async function analyzeWithClaude(
+async function analyzeWithAI(
     content: string,
-    contentType: 'text' | 'image',
+    contentType: 'text' | 'image' | 'document',
     imageBase64?: string,
     mimeType?: string
 ): Promise<ExtractedMedicalData> {
@@ -256,7 +298,7 @@ Extrais CHAQUE paramètre avec précision:
 Pour chaque entrée: titre, description, date début / fin, sévérité(mild / moderate / severe / critical), médecin traitant, établissement, is_ongoing(chronique = true)
 
 ### 👨‍👩‍👧‍👦 ANTÉCÉDENTS FAMILIAUX(familyHistory):
-** Synonymes **: "ATCD familiaux", "antécédents familiaux", "famille", "hérédité"
+** Synonymes **: "ATCD familiaux", "antécédents familiers", "famille", "hérédité"
 Extraire pour chaque membre:
 - ** relationship **: father / mother / brother / sister / maternal_grandmother / paternal_grandfather / maternal_aunt / paternal_uncle / child
         - ** condition **: pathologie(cancer, diabète, maladie cardiaque, AVC, Alzheimer...)
@@ -360,11 +402,16 @@ Extraire pour chaque membre:
         },
         "mentalHealth": { "mood": "humeur", "anxiety": "niveau", "sleep": "qualité", "diagnosis": "diagnostic" },
         "reproductiveHealth": { "pregnancy_status": "statut", "lmp": "DDR" },
+        "dental": [{ "procedure": "soin", "tooth_number": "18", "findings": "carie", "date": "YYYY-MM-DD", "practitioner": "Dr. Dentist" }],
+        "functionalExams": [{ "exam_type": "ECG", "findings": "rythme sinusal", "conclusion": "normal", "date": "YYYY-MM-DD", "practitioner": "Dr. Cardio" }],
+        "prevention": [{ "screening_type": "Mammographie", "result": "ACR2", "result_status": "normal", "next_due_date": "YYYY-MM-DD", "date": "YYYY-MM-DD" }],
+        "monitoring": [{ "type": "blood_pressure", "value": 120, "unit": "mmHg", "secondary_value": 80, "notes": "repos", "date": "YYYY-MM-DD" }],
+        "communications": { "type": "letter_in|referral|report", "sender": "Dr. X", "recipient": "Dr. Y", "subject": "sujet", "content": "corps du texte", "urgency": "routine|urgent" },
         "patientInfo": { "name": "nom si visible", "birth_date": "YYYY-MM-DD", "address": "adresse" },
         "dates": { "document_date": "YYYY-MM-DD" },
-        "documentType": "ordonnance|compte_rendu|imagerie|analyse_biologique|certificat|lettre|autre",
-            "alerts": ["Liste des alertes cliniques importantes détectées"],
-                "notes": "Résumé global et observations importantes"
+        "documentType": "ordonnance|compte_rendu|imagerie|analyse_biologique|certificat|lettre|dentaire|examen_fonctionnel|prevention|autre",
+        "alerts": ["Liste des alertes cliniques importantes détectées"],
+        "notes": "Résumé global et observations importantes"
     }
 
     NOTE: Omets les champs vides / null mais sois le plus exhaustif possible sur les données présentes.
@@ -372,12 +419,12 @@ Extraire pour chaque membre:
 
     let messages: AIMessage[];
 
-    if (contentType === 'image' && imageBase64 && mimeType) {
+    if ((contentType === 'image' || contentType === 'document') && imageBase64 && mimeType) {
         messages = [{
             role: "user",
             content: [
                 {
-                    type: "image",
+                    type: contentType === 'document' ? 'document' : 'image',
                     source: {
                         type: "base64",
                         media_type: mimeType,
@@ -408,16 +455,23 @@ Extraire pour chaque membre:
 
     const textContent = aiResult.text || '{}';
 
-    let jsonStr = textContent;
-    const jsonMatch = textContent.match(/```(?: json) ?\s * ([\s\S] *?)```/);
+    // Robust JSON extraction
+    let jsonStr = textContent.trim();
+    const jsonMatch = textContent.match(/```(?:json)?\s*([\s\S]*?)```/);
     if (jsonMatch) {
         jsonStr = jsonMatch[1].trim();
+    } else {
+        const firstBrace = textContent.indexOf('{');
+        const lastBrace = textContent.lastIndexOf('}');
+        if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
+            jsonStr = textContent.substring(firstBrace, lastBrace + 1).trim();
+        }
     }
 
     try {
         return JSON.parse(jsonStr);
     } catch (e) {
-        console.error("Failed to parse AI response as JSON:", textContent);
+        console.error("[v2.1] Failed to parse AI response as JSON. Original text:", textContent);
         return { notes: textContent };
     }
 }
@@ -922,6 +976,109 @@ async function autoIntegrateData(
         }
     }
 
+    // 16. Dental -> patient_dental
+    if (extractedData.dental?.length) {
+        for (const dent of extractedData.dental) {
+            try {
+                await supabase.from('patient_dental').insert({
+                    patient_id: patientId,
+                    procedure_date: dent.date || extractedData.dates?.document_date || today,
+                    procedure_name: dent.procedure,
+                    tooth_number: dent.tooth_number,
+                    findings: dent.findings,
+                    dentist_name: dent.practitioner,
+                    notes: 'Extrait via AI'
+                });
+                integrated.push(`Dentaire: ${dent.procedure}`);
+            } catch (e: any) {
+                errors.push(`Dental: ${e.message}`);
+            }
+        }
+    }
+
+    // 17. Functional Exams -> patient_functional_exams
+    if (extractedData.functionalExams?.length) {
+        for (const exam of extractedData.functionalExams) {
+            try {
+                await supabase.from('patient_functional_exams').insert({
+                    patient_id: patientId,
+                    exam_date: exam.date || extractedData.dates?.document_date || today,
+                    exam_type: exam.exam_type,
+                    findings: exam.findings,
+                    conclusion: exam.conclusion,
+                    performed_by: exam.practitioner,
+                    notes: 'Extrait via AI'
+                });
+                integrated.push(`Examen fonct.: ${exam.exam_type}`);
+            } catch (e: any) {
+                errors.push(`Functional Exam: ${e.message}`);
+            }
+        }
+    }
+
+    // 18. Prevention -> patient_prevention
+    if (extractedData.prevention?.length) {
+        for (const prev of extractedData.prevention) {
+            try {
+                await supabase.from('patient_prevention').insert({
+                    patient_id: patientId,
+                    screening_type: prev.screening_type,
+                    last_screening_date: prev.date || extractedData.dates?.document_date || today,
+                    next_due_date: prev.next_due_date,
+                    result: prev.result,
+                    result_status: prev.result_status || 'normal',
+                    notes: 'Extrait via AI'
+                });
+                integrated.push(`Prévention: ${prev.screening_type}`);
+            } catch (e: any) {
+                errors.push(`Prevention: ${e.message}`);
+            }
+        }
+    }
+
+    // 19. Monitoring -> patient_monitoring
+    if (extractedData.monitoring?.length) {
+        for (const mon of extractedData.monitoring) {
+            try {
+                await supabase.from('patient_monitoring').insert({
+                    patient_id: patientId,
+                    monitoring_date: mon.date || extractedData.dates?.document_date || now,
+                    monitoring_type: mon.type,
+                    value: mon.value,
+                    value_unit: mon.unit,
+                    secondary_value: mon.secondary_value,
+                    notes: mon.notes,
+                    source: 'clinical'
+                });
+                integrated.push(`Monitoring: ${mon.type}`);
+            } catch (e: any) {
+                errors.push(`Monitoring: ${e.message}`);
+            }
+        }
+    }
+
+    // 20. Communications -> patient_communications
+    if (extractedData.communications || extractedData.documentType === 'lettre') {
+        try {
+            const comm = extractedData.communications;
+            await supabase.from('patient_communications').insert({
+                patient_id: patientId,
+                communication_date: extractedData.dates?.document_date || today,
+                communication_type: comm?.type || (extractedData.documentType === 'lettre' ? 'letter_in' : 'report'),
+                sender: comm?.sender || 'Inconnu',
+                recipient: comm?.recipient || 'Patient',
+                subject: comm?.subject || extractedData.notes?.substring(0, 100) || 'Document importé',
+                content: comm?.content || extractedData.notes,
+                urgency: comm?.urgency || 'routine',
+                status: 'read',
+                notes: 'Import automatique via AI'
+            });
+            integrated.push(`Communication: ${comm?.subject || 'Courrier'}`);
+        } catch (e: any) {
+            errors.push(`Communication: ${e.message}`);
+        }
+    }
+
     // Mark document as auto-integrated
     if (integrated.length > 0) {
         await supabase.from('patient_documents').update({
@@ -979,12 +1136,16 @@ serve(async (req) => {
             }
 
             typeInfo = { contentType: 'image', imageBase64: base64, mimeType: mimeType };
+        } else if (fileType.includes('pdf') || file.name.toLowerCase().endsWith('.pdf')) {
+            const arrayBuffer = await file.arrayBuffer();
+            const base64 = arrayBufferToBase64(arrayBuffer);
+            typeInfo = { contentType: 'document', imageBase64: base64, mimeType: 'application/pdf' };
         } else {
             contentToAnalyze = await file.text();
             typeInfo = { contentType: 'text', content: contentToAnalyze };
         }
 
-        extractedData = await analyzeWithClaude(
+        extractedData = await analyzeWithAI(
             typeInfo.content || '',
             typeInfo.contentType,
             typeInfo.imageBase64,
