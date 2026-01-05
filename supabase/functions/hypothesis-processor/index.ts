@@ -221,13 +221,27 @@ Retourne JSON strict selon le format spécifié.`;
                 })
                 .eq('id', job.id);
 
-            // Parse JSON
-            const jsonMatch = content.match(/\{[\s\S]*\}/);
-            if (!jsonMatch) {
+            // Parse JSON - Robust extraction
+            // Find the opening brace that marks the start of the JSON object containing "hypotheses"
+            const startMarker = content.search(/\{\s*"hypotheses"/);
+            let jsonString = '';
+
+            if (startMarker !== -1) {
+                const endMarker = content.lastIndexOf('}');
+                if (endMarker > startMarker) {
+                    jsonString = content.substring(startMarker, endMarker + 1);
+                }
+            } else {
+                // Fallback: try finding just the first brace
+                const match = content.match(/\{[\s\S]*\}/);
+                if (match) jsonString = match[0];
+            }
+
+            if (!jsonString) {
                 throw new Error('No JSON found in response');
             }
 
-            const parsed = JSON.parse(jsonMatch[0]);
+            const parsed = JSON.parse(jsonString);
             const hypotheses = parsed.hypotheses || [];
 
             if (hypotheses.length === 0) {
