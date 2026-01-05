@@ -286,8 +286,9 @@ Retourne JSON strict selon le format spécifié.`;
                     repaired = escapeInStrings(repaired);
 
                     // 2. Fix unquoted keys (e.g. { key: "value" } -> { "key": "value" })
-                    // This regex finds a key (alphanumeric) that is NOT quoted, followed by a colon
-                    repaired = repaired.replace(/([{,]\s*)([a-zA-Z0-9_]+)(\s*:)/g, '$1"$2"$3');
+                    // This regex finds a key (alphanumeric start) that is NOT quoted, followed by a colon
+                    // We avoid replacing true/false/null if they happen to be keys (unlikely but safe)
+                    repaired = repaired.replace(/([{,]\s*)([a-zA-Z_][a-zA-Z0-9_]*)(\s*:)/g, '$1"$2"$3');
 
                     // 3. Fix trailing commas (common in AI output)
                     repaired = repaired.replace(/,\s*([}\]])/g, '$1');
@@ -296,6 +297,14 @@ Retourne JSON strict selon le format spécifié.`;
                         parsed = JSON.parse(repaired);
                     } catch (e3) {
                         console.error('Aggressive repair failed:', e3);
+                        // Log the problematic JSON snippet around the error position if possible
+                        if (e3 instanceof SyntaxError && 'position' in (e3 as any) || (e3 as any).message.match(/position (\d+)/)) {
+                            const match = (e3 as any).message.match(/position (\d+)/);
+                            const pos = match ? parseInt(match[1]) : 0;
+                            const start = Math.max(0, pos - 50);
+                            const end = Math.min(repaired.length, pos + 50);
+                            console.error('Error likely near:', repaired.substring(start, end));
+                        }
                         throw e;
                     }
                 }
