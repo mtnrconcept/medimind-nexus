@@ -691,7 +691,7 @@ serve(async (req) => {
                             'Authorization': `Bearer ${supabaseKey}`,
                             'Content-Type': 'application/json'
                         },
-                        body: JSON.stringify({})
+                        body: JSON.stringify({ job_id: job.id })
                     }).catch(e => console.warn('Background trigger failed:', e));
                 } catch (e) {
                     console.warn('Failed to trigger background processor:', e);
