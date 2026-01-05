@@ -23,6 +23,8 @@ import RadialRingsModal from '@/components/cde/RadialRingsModal';
 import { useTheme } from 'next-themes';
 import { cn } from '@/lib/utils';
 import DNAVisualizer from '@/components/nexus/DNAVisualizer';
+import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
+import HypothesisReport from '@/components/nexus/HypothesisReport';
 
 
 // ============================================
@@ -2726,6 +2728,7 @@ const DiscoveryPlatform = () => {
     // Saved Graphs State
     const [savedGraphToLoad, setSavedGraphToLoad] = useState<SavedGraph | null>(null);
     const [isRadialModalOpen, setIsRadialModalOpen] = useState(false);
+    const [isReportModalOpen, setIsReportModalOpen] = useState(false);
     const [refreshSavedGraphs, setRefreshSavedGraphs] = useState(0);
 
     // Update query specifically for search bar
@@ -3105,6 +3108,8 @@ const DiscoveryPlatform = () => {
 
                     setStats(prev => ({ ...prev, hypotheses: prev.hypotheses + 1 }));
                     toast.success('Hypothèse générée avec succès !');
+                    setSelectedHypothesis(newHypothesis);
+                    setIsReportModalOpen(true);
                     setIsGeneratingHypotheses(false);
                 }
 
@@ -3337,7 +3342,10 @@ const DiscoveryPlatform = () => {
                                                     </div>
                                                     <Button
                                                         className="w-full mt-6 bg-gradient-to-r from-blue-600 to-purple-600 border-none text-[10px] uppercase font-bold"
-                                                        onClick={() => setSelectedHypothesis(hypotheses[0])}
+                                                        onClick={() => {
+                                                            setSelectedHypothesis(hypotheses[0]);
+                                                            setIsReportModalOpen(true);
+                                                        }}
                                                     >
                                                         Deep Analysis
                                                     </Button>
@@ -3447,7 +3455,10 @@ const DiscoveryPlatform = () => {
                                         <div className="nexus-card border-indigo-500/10">
                                             <HypothesisPanel
                                                 hypotheses={hypotheses}
-                                                onSelectHypothesis={setSelectedHypothesis}
+                                                onSelectHypothesis={(h) => {
+                                                    setSelectedHypothesis(h);
+                                                    setIsReportModalOpen(true);
+                                                }}
                                                 selectedId={selectedHypothesis?.id}
                                                 comparedIds={comparedHypothesisIds}
                                                 onToggleCompare={handleToggleCompare}
@@ -3515,6 +3526,19 @@ const DiscoveryPlatform = () => {
                         }}
                     />
                 )}
+
+                {/* Hypothesis Report Modal */}
+                <Dialog open={isReportModalOpen} onOpenChange={setIsReportModalOpen}>
+                    <DialogContent className="max-w-[90vw] w-full h-[90vh] p-0 border-none bg-transparent shadow-none" hideCloseButton>
+                        <DialogTitle className="sr-only">Rapport Hypothèse</DialogTitle>
+                        {selectedHypothesis && (
+                            <HypothesisReport
+                                hypothesis={selectedHypothesis}
+                                onClose={() => setIsReportModalOpen(false)}
+                            />
+                        )}
+                    </DialogContent>
+                </Dialog>
 
                 <NexusStatusBar />
             </div>
