@@ -2,7 +2,7 @@
  * DocumentGalleryPanel - Document upload and analysis with auto-dispatch
  */
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -27,6 +27,9 @@ import { toast } from 'sonner';
 import { format } from 'date-fns';
 import { fr } from 'date-fns/locale';
 import {
+    Dialog,
+    DialogContent,
+    DialogDescription,
     DialogHeader,
     DialogTitle,
 } from '@/components/ui/dialog';
@@ -48,6 +51,110 @@ interface Document {
     integration_status?: string;
     created_at: string;
 }
+
+const DocumentCard = ({
+    doc,
+    isSelected,
+    onSelect,
+    onPreview,
+    onDelete,
+    onAnalyze,
+    isAnalyzing
+}: {
+    doc: Document;
+    isSelected: boolean;
+    onSelect: (checked: boolean) => void;
+    onPreview: (doc: Document) => void;
+    onDelete: (doc: Document) => void;
+    onAnalyze: (id: string) => void;
+    isAnalyzing: boolean;
+}) => {
+    const [thumbnailUrl, setThumbnailUrl] = useState<string | null>(null);
+
+    // Fetch thumbnail if image
+    useEffect(() => {
+        if (doc.file_type.startsWith('image/')) {
+            supabase.storage.from('patient-documents').createSignedUrl(doc.file_path, 3600)
+                .then(({ data }) => {
+                    if (data?.signedUrl) setThumbnailUrl(data.signedUrl);
+                });
+        }
+    }, [doc.file_path, doc.file_type]);
+
+    const getIcon = () => {
+        if (doc.file_type.includes('pdf')) return <FileText className="h-8 w-8 text-red-400" />;
+        if (doc.file_type.includes('sheet') || doc.file_type.includes('csv')) return <FileText className="h-8 w-8 text-green-400" />;
+        return <File className="h-8 w-8 text-slate-400" />;
+    };
+
+    return (
+        <div
+            className={cn(
+                "group relative border rounded-lg overflow-hidden transition-all hover:shadow-md cursor-pointer bg-white dark:bg-slate-900 flex flex-col h-[180px]",
+                isSelected ? "ring-2 ring-primary border-primary" : "hover:border-slate-300 dark:hover:border-slate-700"
+            )}
+            onClick={() => onPreview(doc)}
+        >
+            {/* Thumbnail / Icon */}
+            <div className="h-[120px] bg-slate-50 dark:bg-slate-950 flex items-center justify-center relative overflow-hidden">
+                {thumbnailUrl ? (
+                    <img src={thumbnailUrl} alt={doc.file_name} className="w-full h-full object-cover transition-transform group-hover:scale-105" />
+                ) : (
+                    getIcon()
+                )}
+
+                {/* Overlay Checkbox */}
+                <div className={cn("absolute top-2 left-2 z-10 transition-opacity", isSelected ? "opacity-100" : "opacity-0 group-hover:opacity-100")} onClick={(e) => e.stopPropagation()}>
+                    <Checkbox checked={isSelected} onCheckedChange={(c) => onSelect(c as boolean)} className="bg-white/90 border-slate-300 shadow-sm" />
+                </div>
+            </div>
+
+            {/* Content */}
+            <div className="p-2 flex-1 flex flex-col justify-between bg-white dark:bg-slate-900 border-t">
+                <div className="flex items-start justify-between gap-1">
+                    <p className="font-medium text-xs truncate flex-1" title={doc.file_name}>
+                        {doc.file_name}
+                    </p>
+                </div>
+
+                <div className="flex items-center justify-between mt-1">
+                    <span className="text-[10px] text-muted-foreground truncate max-w-[60px]">
+                        {new Date(doc.created_at).toLocaleDateString()}
+                    </span>
+
+                    {/* Actions */}
+                    <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+                        <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-6 w-6 text-slate-400 hover:text-red-500 hover:bg-red-50"
+                            onClick={() => onDelete(doc)}
+                        >
+                            <Trash2 className="h-3 w-3" />
+                        </Button>
+
+                        {doc.status === 'analyzed' ? (
+                            <div className="h-6 w-6 flex items-center justify-center">
+                                <CheckCircle className="w-4 h-4 text-green-500" title="Analysé" />
+                            </div>
+                        ) : (
+                            <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-6 w-6"
+                                onClick={() => onAnalyze(doc.id)}
+                                disabled={isAnalyzing}
+                                title="Analyser avec l'IA"
+                            >
+                                {isAnalyzing ? <Loader2 className="h-3 w-3 animate-spin text-blue-500" /> : <Sparkles className="h-3 w-3 text-yellow-500" />}
+                            </Button>
+                        )}
+                    </div>
+                </div>
+            </div>
+        </div>
+    );
+};
 
 const DocumentGalleryPanel = ({ patientId, onDataIntegrated }: DocumentGalleryPanelProps) => {
     const [documents, setDocuments] = useState<Document[]>([]);
@@ -113,9 +220,9 @@ const DocumentGalleryPanel = ({ patientId, onDataIntegrated }: DocumentGalleryPa
     }, [patientId]);
 
     // Fetch on mount
-    useState(() => {
+    useEffect(() => {
         fetchDocuments();
-    });
+    }, [fetchDocuments]);
 
     const handleUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
         const files = event.target.files;
@@ -288,19 +395,6 @@ const DocumentGalleryPanel = ({ patientId, onDataIntegrated }: DocumentGalleryPa
         return <File className="h-4 w-4" />;
     };
 
-    const getStatusBadge = (status: string, integration?: string) => {
-        if (status === 'analyzed' && integration === 'success') {
-            return <Badge className="bg-green-500/10 text-green-500 text-[10px]"><CheckCircle className="h-3 w-3 mr-1" />Intégré</Badge>;
-        }
-        if (status === 'processing') {
-            return <Badge className="bg-blue-500/10 text-blue-500 text-[10px]"><Loader2 className="h-3 w-3 mr-1 animate-spin" />Analyse...</Badge>;
-        }
-        if (status === 'failed') {
-            return <Badge className="bg-red-500/10 text-red-500 text-[10px]"><AlertCircle className="h-3 w-3 mr-1" />Échec</Badge>;
-        }
-        return <Badge variant="outline" className="text-[10px]">En attente</Badge>;
-    };
-
     return (
         <Card className="h-full">
             <CardHeader className="pb-2">
@@ -362,7 +456,7 @@ const DocumentGalleryPanel = ({ patientId, onDataIntegrated }: DocumentGalleryPa
             </CardHeader>
 
             <CardContent>
-                <ScrollArea className="h-[250px]">
+                <ScrollArea className="h-[250px] pr-4">
                     {loading ? (
                         <div className="flex justify-center py-8">
                             <Loader2 className="h-6 w-6 animate-spin" />
@@ -374,64 +468,18 @@ const DocumentGalleryPanel = ({ patientId, onDataIntegrated }: DocumentGalleryPa
                             <p className="text-xs mt-1">Uploadez des documents pour analyse IA</p>
                         </div>
                     ) : (
-                        <div className="space-y-2">
+                        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 p-1">
                             {documents.map((doc) => (
-                                <div
+                                <DocumentCard
                                     key={doc.id}
-                                    className="p-2 rounded-lg border bg-card hover:bg-muted/50 transition-colors"
-                                >
-                                    <div className="flex items-center gap-2">
-                                        <Checkbox
-                                            checked={selectedIds.includes(doc.id)}
-                                            onCheckedChange={(checked) => handleSelect(doc.id, checked as boolean)}
-                                        />
-                                        <div className="p-2 rounded bg-muted">
-                                            {getFileIcon(doc.file_type)}
-                                        </div>
-                                        <div className="flex-1 min-w-0">
-                                            <div className="text-sm font-medium truncate">{doc.file_name}</div>
-                                            <div className="flex items-center gap-2 mt-1">
-                                                <span className="text-[10px] text-muted-foreground">
-                                                    {format(new Date(doc.created_at), 'dd/MM/yyyy', { locale: fr })}
-                                                </span>
-                                                {getStatusBadge(doc.status, doc.integration_status)}
-                                            </div>
-                                        </div>
-                                        <div className="flex items-center gap-1">
-                                            {doc.status === 'pending' && (
-                                                <Button
-                                                    variant="ghost"
-                                                    size="icon"
-                                                    className="h-7 w-7"
-                                                    onClick={() => analyzeDocument(doc.id)}
-                                                    disabled={analyzing === doc.id}
-                                                >
-                                                    {analyzing === doc.id ? (
-                                                        <Loader2 className="h-3 w-3 animate-spin" />
-                                                    ) : (
-                                                        <Sparkles className="h-3 w-3 text-yellow-500" />
-                                                    )}
-                                                </Button>
-                                            )}
-                                            <Button
-                                                variant="ghost"
-                                                size="icon"
-                                                className="h-7 w-7"
-                                                onClick={() => handlePreview(doc)}
-                                            >
-                                                <Eye className="h-3 w-3" />
-                                            </Button>
-                                            <Button
-                                                variant="ghost"
-                                                size="icon"
-                                                className="h-7 w-7 text-destructive"
-                                                onClick={() => handleDelete(doc)}
-                                            >
-                                                <Trash2 className="h-3 w-3" />
-                                            </Button>
-                                        </div>
-                                    </div>
-                                </div>
+                                    doc={doc}
+                                    isSelected={selectedIds.includes(doc.id)}
+                                    onSelect={(checked) => handleSelect(doc.id, checked)}
+                                    onPreview={handlePreview}
+                                    onDelete={handleDelete}
+                                    onAnalyze={(id) => analyzeDocument(id)}
+                                    isAnalyzing={analyzing === doc.id}
+                                />
                             ))}
                         </div>
                     )}
