@@ -12,6 +12,8 @@ import { useContainerWidth } from '@/hooks/useContainerWidth';
 import { useWindowManager, WindowData } from '@/contexts/WindowManagerContext';
 import AppWindow from './AppWindow';
 
+import CursorDNA from '../../nexus/CursorDNA';
+
 // Styles requis pour le grid layout
 import 'react-grid-layout/css/styles.css';
 import 'react-resizable/css/styles.css';
@@ -75,7 +77,6 @@ const PatientDossierLayout = ({ patientId, patient }: PatientDossierLayoutProps)
         openWindow({
             id: `win-${category}`,
             title: category.replace('_', ' ').charAt(0).toUpperCase() + category.replace('_', ' ').slice(1),
-            // @ts-expect-error PatientCategory is compatible but technically different from WindowCategory
             category: category,
             x,
             y
@@ -138,16 +139,17 @@ const PatientDossierLayout = ({ patientId, patient }: PatientDossierLayoutProps)
     const layouts = {
         lg: [
             { i: 'navigation', x: 0, y: 0, w: 2, h: 10 },
-            { i: 'summary', x: 2, y: 0, w: 2, h: 4 },
-            { i: 'digital-twin', x: 4, y: 0, w: 5, h: 10 },
+            { i: 'digital-twin', x: 2, y: 0, w: 7, h: 10 },
             { i: 'ai-synthesis', x: 9, y: 0, w: 3, h: 6 },
-            { i: 'documents', x: 2, y: 4, w: 2, h: 8 },
+            { i: 'summary', x: 0, y: 10, w: 2, h: 14 },
+            { i: 'documents', x: 2, y: 10, w: 7, h: 10 },
             { i: 'ai-assistant', x: 9, y: 6, w: 3, h: 10 },
         ]
     };
 
     return (
         <div className="relative min-h-[1200px] pb-20 overflow-x-hidden">
+            <CursorDNA />
             <CriticalAlertsModal patientId={patientId} />
             {/* Dashboard Area */}
             <div ref={containerRef} className="w-full flex-1 pt-4 px-2">
