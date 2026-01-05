@@ -46,7 +46,7 @@ const DiscoveryVideoTransition = ({ isOpen, fromRect, onClose, onVideoEnd }: Dis
 
     return (
         <div
-            className={`fixed z-[100] transition-all duration-700 ease-[cubic-bezier(0.22,1,0.36,1)] ${isExpanded
+            className={`fixed z-[100] transition-all duration-700 ease-smooth-out ${isExpanded
                     ? 'inset-0 bg-black/90 backdrop-blur-sm flex items-center justify-center p-4'
                     : ''
                 }`}
@@ -59,7 +59,7 @@ const DiscoveryVideoTransition = ({ isOpen, fromRect, onClose, onVideoEnd }: Dis
             } : {}}
         >
             <div
-                className={`relative overflow-hidden transition-all duration-700 ease-[cubic-bezier(0.22,1,0.36,1)] shadow-2xl ${isExpanded
+                className={`relative overflow-hidden transition-all duration-700 ease-smooth-out shadow-2xl ${isExpanded
                         ? 'w-full max-w-5xl aspect-video rounded-xl bg-black'
                         : 'w-full h-full rounded-md bg-transparent'
                     }`}
