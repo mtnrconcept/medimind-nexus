@@ -277,8 +277,27 @@ Retourne JSON strict selon le format spécifié.`;
                 try {
                     parsed = JSON.parse(escapeInStrings(jsonString));
                 } catch (e2) {
-                    console.error('Failed to parse even after sanitization:', e2);
-                    throw e; // Throw original or new error
+                    console.error('Sanitization failed, attempting aggressive repair...', e2);
+
+                    // Comprehensive repair attempt
+                    let repaired = jsonString;
+
+                    // 1. Fix unescaped control chars (re-apply sanitization)
+                    repaired = escapeInStrings(repaired);
+
+                    // 2. Fix unquoted keys (e.g. { key: "value" } -> { "key": "value" })
+                    // This regex finds a key (alphanumeric) that is NOT quoted, followed by a colon
+                    repaired = repaired.replace(/([{,]\s*)([a-zA-Z0-9_]+)(\s*:)/g, '$1"$2"$3');
+
+                    // 3. Fix trailing commas (common in AI output)
+                    repaired = repaired.replace(/,\s*([}\]])/g, '$1');
+
+                    try {
+                        parsed = JSON.parse(repaired);
+                    } catch (e3) {
+                        console.error('Aggressive repair failed:', e3);
+                        throw e;
+                    }
                 }
             }
             const hypotheses = parsed.hypotheses || [];
