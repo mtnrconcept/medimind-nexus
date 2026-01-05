@@ -1,5 +1,5 @@
 
-import React, { useMemo, useEffect } from 'react';
+import React, { useMemo, useEffect, useCallback } from 'react';
 import {
     ReactFlow,
     Background,
@@ -10,40 +10,114 @@ import {
     Position,
     ConnectionLineType,
     BackgroundVariant,
-    MarkerType
+    MarkerType,
+    useNodesState,
+    useEdgesState
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import { Badge } from '@/components/ui/badge';
 
-// Custom Node Components
-const ClinicalNode = ({ data, selected }: any) => {
-    const getColors = (type: string) => {
+// Node styling based on type - matching the reference image aesthetic
+const ClinicalNode = ({ data, selected }: { data: { label: string; type: string; mechanism?: string; subItems?: string[] }; selected: boolean }) => {
+    const getNodeStyle = (type: string) => {
         switch (type) {
-            case 'pathology': return 'bg-red-950 border-red-500 text-red-50 shadow-red-500/20';
-            case 'symptom': return 'bg-orange-950 border-orange-500 text-orange-50 shadow-orange-500/20';
-            case 'medication': return 'bg-blue-950 border-blue-500 text-blue-50 shadow-blue-500/20';
-            case 'side-effect': return 'bg-amber-950 border-amber-500 text-amber-50 shadow-amber-500/20';
-            case 'resolution': return 'bg-emerald-950 border-emerald-500 text-emerald-50 shadow-emerald-500/20';
-            default: return 'bg-slate-900 border-slate-700 text-slate-100 shadow-slate-500/10';
+            case 'pathology':
+                return {
+                    bg: 'bg-gradient-to-br from-red-700 to-red-900',
+                    border: 'border-red-400',
+                    text: 'text-white',
+                    size: 'min-w-[140px] min-h-[140px] rounded-full',
+                    shadow: 'shadow-[0_0_40px_rgba(239,68,68,0.4)]'
+                };
+            case 'symptom':
+                return {
+                    bg: 'bg-gradient-to-br from-slate-700 to-slate-900',
+                    border: 'border-slate-500',
+                    text: 'text-slate-100',
+                    size: 'min-w-[100px] rounded-full',
+                    shadow: 'shadow-lg'
+                };
+            case 'mechanism':
+                return {
+                    bg: 'bg-gradient-to-br from-purple-800 to-purple-950',
+                    border: 'border-purple-400',
+                    text: 'text-purple-100',
+                    size: 'min-w-[90px] rounded-full',
+                    shadow: 'shadow-lg'
+                };
+            case 'treatment':
+            case 'medication':
+                return {
+                    bg: 'bg-gradient-to-br from-slate-600 to-slate-800',
+                    border: 'border-slate-400',
+                    text: 'text-slate-100',
+                    size: 'min-w-[90px] rounded-full',
+                    shadow: 'shadow-lg'
+                };
+            case 'side-effect':
+            case 'complication':
+                return {
+                    bg: 'bg-gradient-to-br from-amber-700 to-amber-900',
+                    border: 'border-amber-400',
+                    text: 'text-amber-100',
+                    size: 'min-w-[80px] rounded-full',
+                    shadow: 'shadow-lg'
+                };
+            case 'resolution':
+                return {
+                    bg: 'bg-gradient-to-br from-emerald-600 to-emerald-800',
+                    border: 'border-emerald-300',
+                    text: 'text-white',
+                    size: 'min-w-[120px] min-h-[80px] rounded-full',
+                    shadow: 'shadow-[0_0_30px_rgba(16,185,129,0.4)]'
+                };
+            case 'evaluation':
+            case 'monitoring':
+                return {
+                    bg: 'bg-gradient-to-br from-cyan-700 to-cyan-900',
+                    border: 'border-cyan-400',
+                    text: 'text-cyan-100',
+                    size: 'min-w-[80px] rounded-full',
+                    shadow: 'shadow-lg'
+                };
+            default:
+                return {
+                    bg: 'bg-gradient-to-br from-slate-700 to-slate-900',
+                    border: 'border-slate-500',
+                    text: 'text-slate-100',
+                    size: 'min-w-[80px] rounded-full',
+                    shadow: 'shadow-lg'
+                };
         }
     };
 
+    const style = getNodeStyle(data.type);
+
     return (
-        <div className={`px-5 py-3 rounded-xl border-2 shadow-2xl min-w-[180px] max-w-[280px] transition-all duration-300 ${getColors(data.type)} ${selected ? 'ring-4 ring-white/30 scale-110' : ''}`}>
-            <Handle type="target" position={Position.Top} className="w-3 h-3 !bg-slate-600 border-2 border-slate-900" />
-            <div className="flex flex-col gap-1.5 pt-1">
-                <div className="flex justify-between items-center bg-white/5 px-2 py-0.5 rounded text-[8px] font-black uppercase tracking-widest mb-1">
-                    <span>{data.type}</span>
-                    {selected && <span className="animate-pulse text-white font-mono">ON_SELECT</span>}
+        <div className={`
+            ${style.size} ${style.bg} ${style.text} ${style.shadow}
+            border-2 ${style.border}
+            flex flex-col items-center justify-center p-3 text-center
+            transition-all duration-300 cursor-pointer
+            ${selected ? 'ring-4 ring-white/50 scale-110' : 'hover:scale-105'}
+        `}>
+            <Handle type="target" position={Position.Top} className="!w-2 !h-2 !bg-white/30 !border-none" />
+            <Handle type="target" position={Position.Left} className="!w-2 !h-2 !bg-white/30 !border-none" />
+            <Handle type="target" position={Position.Right} className="!w-2 !h-2 !bg-white/30 !border-none" />
+
+            <span className="text-[10px] font-black leading-tight uppercase tracking-tight break-words max-w-[120px]">
+                {data.label}
+            </span>
+
+            {data.subItems && data.subItems.length > 0 && (
+                <div className="mt-1 text-[8px] opacity-70 leading-tight">
+                    {data.subItems.slice(0, 3).join(' • ')}
                 </div>
-                <span className="text-xs font-black leading-tight tracking-tight uppercase break-words">{data.label}</span>
-                {data.mechanism && (
-                    <div className="text-[9px] italic opacity-70 leading-relaxed border-t border-white/10 pt-1.5 mt-1.5 line-clamp-3">
-                        {data.mechanism}
-                    </div>
-                )}
-            </div>
-            <Handle type="source" position={Position.Bottom} className="w-3 h-3 !bg-slate-600 border-2 border-slate-900" />
+            )}
+
+            <Handle type="source" position={Position.Bottom} className="!w-2 !h-2 !bg-white/30 !border-none" />
+            <Handle type="source" position={Position.Left} className="!w-2 !h-2 !bg-white/30 !border-none" />
+            <Handle type="source" position={Position.Right} className="!w-2 !h-2 !bg-white/30 !border-none" />
         </div>
     );
 };
@@ -53,12 +127,36 @@ const nodeTypes = {
 };
 
 interface CausalGraphProps {
-    hypothesis: any;
+    hypothesis: {
+        hypothesis_id?: string;
+        statement?: string;
+        title?: string;
+        causal_graph?: {
+            nodes?: Array<{ id: string; label: string; type: string; mechanism?: string; subItems?: string[] }>;
+            edges?: Array<{ from: string; to: string; label?: string; reason?: string }>;
+        };
+        systemic_cascade?: Array<{ organ: string; impact: string; mechanism?: string }>;
+        therapeutic_resolution_chains?: Array<{
+            intervention: string;
+            pharmacodynamics?: string;
+            side_effects?: Array<{ issue: string; resolution_intervention?: string; recursive_resolution?: string }>;
+        }>;
+    };
+}
+
+// Radial layout algorithm
+function calculateRadialPosition(centerX: number, centerY: number, radius: number, angleIndex: number, totalItems: number, startAngle: number = 0): { x: number; y: number } {
+    const angleStep = (2 * Math.PI) / Math.max(totalItems, 1);
+    const angle = startAngle + (angleIndex * angleStep);
+    return {
+        x: centerX + radius * Math.cos(angle),
+        y: centerY + radius * Math.sin(angle)
+    };
 }
 
 export default function CausalGraph({ hypothesis }: CausalGraphProps) {
     useEffect(() => {
-        console.log('--- CAUSAL GRAPH DEBUG ---');
+        console.log('--- RADIAL CAUSAL GRAPH DEBUG ---');
         console.log('Hypothesis ID:', hypothesis.hypothesis_id);
         console.log('Causal Graph Data present:', !!hypothesis.causal_graph);
         if (hypothesis.causal_graph) {
@@ -68,235 +166,285 @@ export default function CausalGraph({ hypothesis }: CausalGraphProps) {
     }, [hypothesis]);
 
     const { nodes, edges } = useMemo(() => {
-        // 1. Check for explicit causal_graph field (New Schema)
-        if (hypothesis.causal_graph && hypothesis.causal_graph.nodes && hypothesis.causal_graph.nodes.length > 0) {
-            const explicitNodes: Node[] = hypothesis.causal_graph.nodes.map((n: any, idx: number) => ({
-                id: n.id || `n-${idx}`,
-                type: 'clinical',
-                data: {
-                    label: n.label,
-                    type: n.type || 'default',
-                    mechanism: n.mechanism
-                },
-                position: n.position || {
-                    x: 500 + Math.cos(idx * 0.8) * 400,
-                    y: 400 + Math.sin(idx * 0.8) * 300
-                },
-            }));
+        const centerX = 600;
+        const centerY = 400;
+        const innerRadius = 200;
+        const outerRadius = 380;
+        const farRadius = 500;
 
-            const explicitEdges: Edge[] = (hypothesis.causal_graph.edges || []).map((e: any, idx: number) => ({
+        // 1. Check for explicit causal_graph field
+        if (hypothesis.causal_graph?.nodes && hypothesis.causal_graph.nodes.length > 0) {
+            // Compute radial positions for explicit nodes
+            const nodeCount = hypothesis.causal_graph.nodes.length;
+            const pathologyNodes = hypothesis.causal_graph.nodes.filter(n => n.type === 'pathology');
+            const otherNodes = hypothesis.causal_graph.nodes.filter(n => n.type !== 'pathology' && n.type !== 'resolution');
+            const resolutionNodes = hypothesis.causal_graph.nodes.filter(n => n.type === 'resolution');
+
+            const explicitNodes: Node[] = [];
+
+            // Place pathology at center
+            pathologyNodes.forEach((n, idx) => {
+                explicitNodes.push({
+                    id: n.id,
+                    type: 'clinical',
+                    data: { label: n.label, type: n.type, mechanism: n.mechanism, subItems: n.subItems },
+                    position: { x: centerX - 70, y: centerY - 70 }
+                });
+            });
+
+            // Place other nodes radially
+            otherNodes.forEach((n, idx) => {
+                const pos = calculateRadialPosition(centerX, centerY, innerRadius + (idx % 2) * 120, idx, otherNodes.length, -Math.PI / 2);
+                explicitNodes.push({
+                    id: n.id,
+                    type: 'clinical',
+                    data: { label: n.label, type: n.type, mechanism: n.mechanism, subItems: n.subItems },
+                    position: { x: pos.x - 50, y: pos.y - 40 }
+                });
+            });
+
+            // Place resolution nodes on the far right
+            resolutionNodes.forEach((n, idx) => {
+                explicitNodes.push({
+                    id: n.id,
+                    type: 'clinical',
+                    data: { label: n.label, type: n.type, mechanism: n.mechanism, subItems: n.subItems },
+                    position: { x: centerX + farRadius, y: centerY - 50 + (idx * 120) }
+                });
+            });
+
+            const explicitEdges: Edge[] = (hypothesis.causal_graph.edges || []).map((e, idx) => ({
                 id: `e-${idx}`,
                 source: e.from,
                 target: e.to,
                 label: e.label,
-                animated: true,
-                type: ConnectionLineType.SmoothStep,
-                markerEnd: { type: MarkerType.ArrowClosed, color: '#3b82f6', width: 20, height: 20 },
-                style: { strokeWidth: 2, stroke: '#3b82f6' },
-                labelStyle: { fontSize: '10px', fontWeight: 'black', fill: '#60a5fa' },
-                data: { reason: e.reason }
+                type: 'smoothstep',
+                animated: e.label === 'RÉSOUT' || e.label === 'TRAITE',
+                markerEnd: { type: MarkerType.ArrowClosed, color: '#64748b', width: 15, height: 15 },
+                style: { strokeWidth: 2, stroke: '#475569' },
+                labelStyle: { fontSize: '9px', fontWeight: 'bold', fill: '#94a3b8' },
+                labelBgStyle: { fill: '#1e293b', fillOpacity: 0.9 },
+                labelBgPadding: [4, 2] as [number, number]
             }));
 
             return { nodes: explicitNodes, edges: explicitEdges };
         }
 
-        // 2. FALLBACK to robust reconstruction if explicit data is missing
-        console.warn('Causal graph explicit data missing, attempting reconstruction...', {
-            statement: !!hypothesis.statement,
-            cascadeLength: hypothesis.systemic_cascade?.length,
-            chainsLength: hypothesis.therapeutic_resolution_chains?.length
-        });
-
+        // 2. FALLBACK: Build DYNAMIC graph from hypothesis data
+        console.warn('Building dynamic fallback graph from hypothesis data...');
         const nodes: Node[] = [];
         const edges: Edge[] = [];
-        const centerX = 500;
-        let currentY = 50; // Started slightly lower
-        const ySpacing = 220;
-        const xOffset = 380;
 
-        // Root Pathology - ALWAYS PUSHED
-        const rootId = 'root';
+        // Central pathology - USE THE ACTUAL HYPOTHESIS STATEMENT
         const rootLabel = hypothesis.statement || hypothesis.title || 'Pathologie Centrale';
-
         nodes.push({
-            id: rootId,
+            id: 'root',
             type: 'clinical',
-            data: {
-                label: rootLabel.substring(0, 120) + (rootLabel.length > 120 ? '...' : ''),
-                type: 'pathology',
-                mechanism: 'Point d\'entrée de l\'analyse physio-pathologique'
-            },
-            position: { x: centerX, y: currentY },
+            data: { label: rootLabel.substring(0, 60) + (rootLabel.length > 60 ? '...' : ''), type: 'pathology' },
+            position: { x: centerX - 70, y: centerY - 70 }
         });
 
-        let lastMainNodeId = rootId;
-        currentY += ySpacing;
+        let nodeIndex = 0;
 
-        // Reconstruct from systemic cascade (side effects of the pathology)
+        // Build from systemic_cascade (symptoms/impacts of the disease)
         if (hypothesis.systemic_cascade && hypothesis.systemic_cascade.length > 0) {
-            hypothesis.systemic_cascade.forEach((item: any, idx: number) => {
-                const nodeId = `sys-${idx}`;
+            const cascadeCount = hypothesis.systemic_cascade.length;
+            hypothesis.systemic_cascade.forEach((item: { organ: string; impact: string; mechanism?: string }, idx: number) => {
+                const nodeId = `cascade-${idx}`;
+                const angle = (-Math.PI / 2) + ((idx / cascadeCount) * Math.PI); // Spread on left side
+                const radius = innerRadius + (idx % 2) * 80;
+
                 nodes.push({
                     id: nodeId,
                     type: 'clinical',
                     data: {
-                        label: `${item.organ}: ${item.impact}`,
+                        label: item.organ,
                         type: 'symptom',
-                        mechanism: item.mechanism
+                        subItems: [item.impact.substring(0, 50)]
                     },
-                    position: { x: centerX + (idx % 2 === 0 ? -xOffset : xOffset), y: 150 + (idx * 120) },
+                    position: {
+                        x: centerX + radius * Math.cos(angle) - 50,
+                        y: centerY + radius * Math.sin(angle) - 40
+                    }
                 });
-
                 edges.push({
                     id: `e-root-${nodeId}`,
                     source: 'root',
                     target: nodeId,
-                    style: { stroke: '#ef4444', strokeWidth: 2, opacity: 0.6 },
+                    type: 'smoothstep',
                     label: 'IMPACTE',
-                    labelStyle: { fontSize: '8px', fill: '#f87171' }
+                    markerEnd: { type: MarkerType.ArrowClosed, color: '#ef4444' },
+                    style: { stroke: '#ef4444', strokeWidth: 2 },
+                    labelStyle: { fontSize: '8px', fill: '#ef4444' }
                 });
+                nodeIndex++;
             });
         }
 
-        // Reconstruct from therapeutic chains
+        // Build from therapeutic_resolution_chains
         if (hypothesis.therapeutic_resolution_chains && hypothesis.therapeutic_resolution_chains.length > 0) {
-            hypothesis.therapeutic_resolution_chains.forEach((chain: any, cIdx: number) => {
-                const treatmentId = `treat-${cIdx}`;
+            const treatmentY = centerY - 200;
+            let lastTreatmentId = 'root';
+
+            hypothesis.therapeutic_resolution_chains.forEach((chain: {
+                intervention: string;
+                pharmacodynamics?: string;
+                side_effects?: Array<{ issue: string; resolution_intervention?: string }>;
+            }, cIdx: number) => {
+                const treatmentId = `treatment-${cIdx}`;
+
                 nodes.push({
                     id: treatmentId,
                     type: 'clinical',
                     data: {
-                        label: chain.intervention,
-                        type: 'medication',
-                        mechanism: chain.pharmacodynamics
+                        label: chain.intervention?.substring(0, 40) || `Traitement ${cIdx + 1}`,
+                        type: 'treatment'
                     },
-                    position: { x: centerX, y: currentY },
+                    position: { x: centerX + 150 + (cIdx * 180), y: treatmentY }
                 });
 
                 edges.push({
-                    id: `e-${lastMainNodeId}-${treatmentId}`,
-                    source: lastMainNodeId,
+                    id: `e-${lastTreatmentId}-${treatmentId}`,
+                    source: lastTreatmentId,
                     target: treatmentId,
+                    type: 'smoothstep',
+                    label: cIdx === 0 ? 'TRAITE' : 'PUIS',
                     animated: true,
-                    style: { stroke: '#3b82f6', strokeWidth: 3 },
-                    label: 'INTERVENTION',
                     markerEnd: { type: MarkerType.ArrowClosed, color: '#3b82f6' },
-                    labelStyle: { fontSize: '10px', fontWeight: 'bold', fill: '#60a5fa' }
+                    style: { stroke: '#3b82f6', strokeWidth: 2 },
+                    labelStyle: { fontSize: '9px', fontWeight: 'bold', fill: '#3b82f6' }
                 });
 
-                lastMainNodeId = treatmentId;
-                currentY += ySpacing;
+                lastTreatmentId = treatmentId;
 
-                if (chain.side_effects) {
-                    chain.side_effects.forEach((se: any, sIdx: number) => {
+                // Add side effects if present
+                if (chain.side_effects && chain.side_effects.length > 0) {
+                    chain.side_effects.forEach((se: { issue: string; resolution_intervention?: string }, sIdx: number) => {
                         const seId = `se-${cIdx}-${sIdx}`;
-                        const resId = `res-${cIdx}-${sIdx}`;
-
                         nodes.push({
                             id: seId,
                             type: 'clinical',
-                            data: { label: se.issue, type: 'side-effect' },
-                            position: { x: centerX + xOffset, y: currentY },
+                            data: { label: se.issue?.substring(0, 35) || 'Effet Secondaire', type: 'side-effect' },
+                            position: { x: centerX + 150 + (cIdx * 180), y: treatmentY + 120 + (sIdx * 80) }
                         });
-
                         edges.push({
                             id: `e-${treatmentId}-${seId}`,
                             source: treatmentId,
                             target: seId,
-                            style: { stroke: '#fbbf24', strokeWidth: 2 },
+                            type: 'smoothstep',
                             label: 'PROVOQUE',
-                            labelStyle: { fontSize: '8px', fill: '#fbbf24' }
+                            markerEnd: { type: MarkerType.ArrowClosed, color: '#f59e0b' },
+                            style: { stroke: '#f59e0b', strokeWidth: 2 },
+                            labelStyle: { fontSize: '8px', fill: '#f59e0b' }
                         });
 
-                        nodes.push({
-                            id: resId,
-                            type: 'clinical',
-                            data: { label: se.resolution_intervention, type: 'resolution', mechanism: se.recursive_resolution },
-                            position: { x: centerX + xOffset, y: currentY + (ySpacing / 2) },
-                        });
-
-                        edges.push({
-                            id: `e-${seId}-${resId}`,
-                            source: seId,
-                            target: resId,
-                            animated: true,
-                            style: { stroke: '#10b981', strokeWidth: 2 },
-                            label: 'RÉSOUD',
-                            markerEnd: { type: MarkerType.ArrowClosed, color: '#10b981' },
-                            labelStyle: { fontSize: '8px', fill: '#10b981' }
-                        });
-
-                        // Continue the main line from the resolution if present, otherwise from the treatment
-                        lastMainNodeId = resId;
+                        // Add resolution if present
+                        if (se.resolution_intervention) {
+                            const resId = `res-${cIdx}-${sIdx}`;
+                            nodes.push({
+                                id: resId,
+                                type: 'clinical',
+                                data: { label: se.resolution_intervention?.substring(0, 35) || 'Résolution', type: 'resolution' },
+                                position: { x: centerX + 300 + (cIdx * 180), y: treatmentY + 120 + (sIdx * 80) }
+                            });
+                            edges.push({
+                                id: `e-${seId}-${resId}`,
+                                source: seId,
+                                target: resId,
+                                type: 'smoothstep',
+                                label: 'RÉSOUT',
+                                animated: true,
+                                markerEnd: { type: MarkerType.ArrowClosed, color: '#10b981' },
+                                style: { stroke: '#10b981', strokeWidth: 2 },
+                                labelStyle: { fontSize: '8px', fill: '#10b981' }
+                            });
+                        }
                     });
-                    currentY += ySpacing;
                 }
             });
+
+            // Add final resolution node
+            nodes.push({
+                id: 'final-resolution',
+                type: 'clinical',
+                data: { label: 'GUÉRISON / RÉMISSION', type: 'resolution' },
+                position: { x: centerX + 600, y: centerY }
+            });
+            edges.push({
+                id: 'e-last-final',
+                source: lastTreatmentId,
+                target: 'final-resolution',
+                type: 'smoothstep',
+                label: 'ABOUTIT_À',
+                animated: true,
+                markerEnd: { type: MarkerType.ArrowClosed, color: '#10b981' },
+                style: { stroke: '#10b981', strokeWidth: 3 },
+                labelStyle: { fontSize: '9px', fontWeight: 'bold', fill: '#10b981' }
+            });
         }
 
-        // FAILSAFE: If reconstruction produced nothing, add demo nodes
+        // MINIMAL FALLBACK: If still no nodes beyond root, show a placeholder
         if (nodes.length <= 1) {
-            console.warn('Reconstruction yielded only root node. Adding demo pathway for visual verification.');
-            const demoId = 'demo-1';
+            console.warn('No data available for graph reconstruction. Showing placeholder.');
             nodes.push({
-                id: demoId,
+                id: 'placeholder',
                 type: 'clinical',
                 data: {
-                    label: '⚠️ Données insuffisantes pour reconstruction',
-                    type: 'medication',
-                    mechanism: 'Veuillez lancer une nouvelle analyse avec le prompt RCDP v2.5 ou vérifier que les colonnes causal_graph et mermaid_graph existent dans la table discovery_hypotheses.'
+                    label: '⏳ En attente des données IA...',
+                    type: 'mechanism',
+                    subItems: ['Lancez une nouvelle analyse', 'ou vérifiez la migration SQL']
                 },
-                position: { x: centerX, y: currentY + ySpacing },
+                position: { x: centerX + 200, y: centerY }
             });
-
             edges.push({
-                id: 'e-root-demo',
+                id: 'e-root-placeholder',
                 source: 'root',
-                target: demoId,
+                target: 'placeholder',
+                type: 'smoothstep',
                 animated: true,
-                style: { stroke: '#f59e0b', strokeWidth: 3 },
-                label: 'DIAGNOSTIC',
-                markerEnd: { type: MarkerType.ArrowClosed, color: '#f59e0b' },
-                labelStyle: { fontSize: '10px', fontWeight: 'bold', fill: '#fbbf24' }
+                markerEnd: { type: MarkerType.ArrowClosed },
+                style: { stroke: '#94a3b8', strokeWidth: 2, strokeDasharray: '5,5' }
             });
         }
 
-        console.log('Fallback reconstruction complete:', { nodeCount: nodes.length, edgeCount: edges.length });
+        console.log('Dynamic graph complete:', { nodeCount: nodes.length, edgeCount: edges.length });
 
         return { nodes, edges };
     }, [hypothesis]);
 
-
     return (
-        <div className="h-[750px] w-full bg-[#020617] rounded-3xl border border-slate-800 shadow-[inset_0_0_120px_rgba(30,58,138,0.15)] mt-8 overflow-hidden relative group">
-            <div className="absolute top-6 left-6 z-10 p-5 bg-slate-900/40 backdrop-blur-2xl border border-white/5 rounded-3xl shadow-2xl transition-all group-hover:bg-slate-900/60">
-                <div className="flex items-center gap-3 mb-1">
-                    <div className="w-3 h-3 rounded-full bg-emerald-500 animate-[pulse_2s_infinite]" />
-                    <h3 className="text-sm font-black text-white uppercase tracking-tight">
-                        Advanced Causal Discovery Engine
-                    </h3>
-                </div>
-                <p className="text-[10px] text-emerald-400 font-black uppercase tracking-[0.3em] opacity-80">RCDP v2.5 Interactive Interface</p>
+        <div className="h-[800px] w-full bg-[#f5f0e8] rounded-2xl border border-stone-300 shadow-xl mt-8 overflow-hidden relative">
+            {/* Paper texture overlay */}
+            <div className="absolute inset-0 pointer-events-none opacity-30" style={{ backgroundImage: 'url("data:image/svg+xml,%3Csvg viewBox=\'0 0 100 100\' xmlns=\'http://www.w3.org/2000/svg\'%3E%3Cfilter id=\'noiseFilter\'%3E%3CfeTurbulence type=\'fractalNoise\' baseFrequency=\'0.9\' numOctaves=\'4\' stitchTiles=\'stitch\'/%3E%3C/filter%3E%3Crect width=\'100%25\' height=\'100%25\' filter=\'url(%23noiseFilter)\'/%3E%3C/svg%3E")' }} />
 
-                <div className="mt-5 grid grid-cols-2 gap-x-6 gap-y-2">
-                    <div className="flex items-center gap-2 text-[9px] text-slate-400 font-bold uppercase tracking-wider">
-                        <div className="w-2 h-2 rounded-full bg-red-600 shadow-[0_0_8px_rgba(220,38,38,0.5)]" /> Pathologie
+            {/* Legend */}
+            <div className="absolute top-4 left-4 z-10 p-4 bg-white/80 backdrop-blur border border-stone-200 rounded-xl shadow-lg">
+                <h3 className="text-sm font-bold text-stone-800 mb-3 uppercase tracking-wide">
+                    Schéma Causal Complet
+                </h3>
+                <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-[10px]">
+                    <div className="flex items-center gap-2">
+                        <div className="w-4 h-4 rounded-full bg-gradient-to-br from-red-700 to-red-900 border border-red-400" />
+                        <span className="text-stone-700 font-medium">Pathologie</span>
                     </div>
-                    <div className="flex items-center gap-2 text-[9px] text-slate-400 font-bold uppercase tracking-wider">
-                        <div className="w-2 h-2 rounded-full bg-blue-600 shadow-[0_0_8px_rgba(37,99,235,0.5)]" /> Traitement
+                    <div className="flex items-center gap-2">
+                        <div className="w-4 h-4 rounded-full bg-gradient-to-br from-slate-600 to-slate-800 border border-slate-400" />
+                        <span className="text-stone-700 font-medium">Traitement</span>
                     </div>
-                    <div className="flex items-center gap-2 text-[9px] text-slate-400 font-bold uppercase tracking-wider">
-                        <div className="w-2 h-2 rounded-full bg-amber-600 shadow-[0_0_8px_rgba(217,119,6,0.5)]" /> Effet Sec.
+                    <div className="flex items-center gap-2">
+                        <div className="w-4 h-4 rounded-full bg-gradient-to-br from-amber-700 to-amber-900 border border-amber-400" />
+                        <span className="text-stone-700 font-medium">Effet Secondaire</span>
                     </div>
-                    <div className="flex items-center gap-2 text-[9px] text-slate-400 font-bold uppercase tracking-wider">
-                        <div className="w-2 h-2 rounded-full bg-emerald-600 shadow-[0_0_8px_rgba(5,150,105,0.5)]" /> Résolution
+                    <div className="flex items-center gap-2">
+                        <div className="w-4 h-4 rounded-full bg-gradient-to-br from-emerald-600 to-emerald-800 border border-emerald-300" />
+                        <span className="text-stone-700 font-medium">Guérison</span>
                     </div>
                 </div>
             </div>
 
-            <div className="absolute top-6 right-6 z-10">
-                <Badge className="bg-white/5 hover:bg-white/10 text-slate-400 border-white/10 backdrop-blur-md px-3 py-1 text-[10px] font-mono lowercase tracking-tighter">
-                    NODE COUNT: {nodes.length} | EDGE COUNT: {edges.length}
+            <div className="absolute top-4 right-4 z-10">
+                <Badge className="bg-stone-800 text-stone-100 border-none px-3 py-1 text-[10px] font-mono">
+                    {nodes.length} nœuds • {edges.length} liens
                 </Badge>
             </div>
 
@@ -305,16 +453,15 @@ export default function CausalGraph({ hypothesis }: CausalGraphProps) {
                 edges={edges}
                 nodeTypes={nodeTypes}
                 fitView
-                colorMode="dark"
-                minZoom={0.05}
-                maxZoom={4}
+                minZoom={0.3}
+                maxZoom={2}
+                defaultEdgeOptions={{
+                    type: 'smoothstep',
+                }}
             >
-                <Background gap={40} color="#1e293b" size={1} variant={BackgroundVariant.Lines} />
-                <Controls className="!bg-slate-900/60 !border-white/5 !rounded-2xl !overflow-hidden fill-white backdrop-blur-md shadow-2xl scale-90 origin-bottom-left" />
+                <Background gap={30} color="#d4c8b8" size={1} variant={BackgroundVariant.Lines} />
+                <Controls className="!bg-white/80 !border-stone-200 !rounded-xl !overflow-hidden shadow-lg" />
             </ReactFlow>
-
-            {/* Grid Overlay for Premium Feel */}
-            <div className="absolute inset-0 pointer-events-none bg-[radial-gradient(circle_at_center,_transparent_0%,_#020617_90%)] opacity-60" />
         </div>
     );
 }

@@ -111,11 +111,22 @@ LOGIQUE DE RÉSOLUTION SANS LIMITE :
 - Continue jusqu'à ce que la balance homéostatique soit parfaite.
 - Détaille les interactions CYP/P-gp/OATP pour CHAQUE molécule.
 
-INSTRUCTION GRAPH VISUEL (CRITIQUE : ATOMISATION) :
+INSTRUCTION GRAPH VISUEL (CRITIQUE : CHAÎNE PATHOPHYSIOLOGIQUE SÉRIÉE COMPLÈTE) :
 Tu dois impérativement fournir un champ "causal_graph" dans le JSON. 
-- Chaque nœud doit être un concept atomique (ex: "Inhibiteur SGLT2", "Hyperglycémie", "Acidose", "Insuline") et non une phrase.
-- CHAQUE LIEN (edge) doit avoir un label (ex: "Inhibe", "Active", "Cause", "Résout") et une explication technique courte. 
-- Le graphe doit montrer le chemin complet de l'état pathologique initial jusqu'à l'éradication totale (Homeostasie).
+- Chaque nœud doit être un concept atomique et représenter UNE ÉTAPE dans la cascade pathologique.
+- Le graphe doit être une CHAÎNE LINÉAIRE CONNECTÉE de la cause racine jusqu'à l'aboutissement (ESKD/Résolution).
+- CHAQUE LIEN (edge) doit avoir un label causal (CIBLE, PROVOQUE, MÈNE_À, RÉSOUT, TRAITE) et une explication technique courte.
+
+EXEMPLE DE STRUCTURE ATTENDUE (NÉPHROLOGIE - À ADAPTER À CHAQUE PATHOLOGIE) :
+Auto-immunité B/T -> Anticorps Anti-Néphrine -> Rupture Slit Diaphragm -> Protéinurie Massive -> Hypoalbuminémie -> Cascade Systémique (Œdèmes/Dyslipidémie/Thrombose) -> ESKD
+
+TYPES DE NŒUDS OBLIGATOIRES :
+- "pathology" : Condition ou processus pathologique
+- "mechanism" : Mécanisme moléculaire ou cellulaire
+- "symptom" : Manifestation clinique
+- "treatment" : Intervention thérapeutique
+- "complication" : Effet secondaire ou complication
+- "resolution" : État de résolution ou homéostasie
 
 FORMAT DE SORTIE JSON (OBLIGATOIRE - SI CE CHAMP MANQUE, L'ANALYSE EST ÉCHEC) :
 {
@@ -126,18 +137,29 @@ FORMAT DE SORTIE JSON (OBLIGATOIRE - SI CE CHAMP MANQUE, L'ANALYSE EST ÉCHEC) :
       
       "causal_graph": {
         "nodes": [
-          { "id": "p1", "label": "Concept Pathologique", "type": "pathology", "mechanism": "Détail technique" },
-          { "id": "t1", "label": "Intervention 1", "type": "medication", "mechanism": "Détail technique" },
-          { "id": "s1", "label": "Effet Secondaire X", "type": "side-effect", "mechanism": "Détail technique" },
-          { "id": "r1", "label": "Résolution Y", "type": "resolution", "mechanism": "Détail technique" }
+          { "id": "n1", "label": "Dysrégulation Immunitaire (Lymphocytes B/T autoréactifs)", "type": "pathology", "mechanism": "Perte de tolérance au self, expansion clonale pathologique" },
+          { "id": "n2", "label": "Anticorps Anti-Néphrine/Podocine", "type": "mechanism", "mechanism": "Auto-anticorps ciblant les protéines du diaphragme de fente" },
+          { "id": "n3", "label": "Rupture du Slit Diaphragm", "type": "mechanism", "mechanism": "Désorganisation des protéines de jonction podocytaires" },
+          { "id": "n4", "label": "Protéinurie Massive (>3.5g/24h)", "type": "symptom", "mechanism": "Fuite des protéines sériques à travers la barrière glomérulaire" },
+          { "id": "n5", "label": "Hypoalbuminémie Critique (<25g/L)", "type": "symptom", "mechanism": "Déplétion du pool albumine sérique" },
+          { "id": "n6", "label": "Cascade Systémique (Œdèmes/Dyslipidémie/Hypercoagulabilité)", "type": "complication", "mechanism": "Pression oncotique effondrée, compensation hépatique, perte AT-III" },
+          { "id": "n7", "label": "Insuffisance Rénale Terminale (ESKD)", "type": "pathology", "mechanism": "Fibrose glomérulaire irréversible, GFR <15 mL/min" },
+          { "id": "t1", "label": "Immunosuppression (Rituximab/Cyclophosphamide)", "type": "treatment", "mechanism": "Déplétion lymphocytes B CD20+, arrêt production auto-anticorps" },
+          { "id": "r1", "label": "Rémission Complète (Protéinurie <0.3g/24h)", "type": "resolution", "mechanism": "Régénération podocytaire, restauration barrière de filtration" }
         ],
         "edges": [
-          { "from": "p1", "to": "t1", "label": "CIBLE", "reason": "Pourquoi ce traitement ?" },
-          { "from": "t1", "to": "s1", "label": "PROVOQUE", "reason": "Mécanisme de l'effet secondaire" },
-          { "from": "s1", "to": "r1", "label": "RÉSOUT", "reason": "Comment la résolution stabilise l'homéostasie" }
+          { "from": "n1", "to": "n2", "label": "PRODUIT", "reason": "Les lymphocytes autoréactifs génèrent des auto-anticorps spécifiques" },
+          { "from": "n2", "to": "n3", "label": "CIBLE", "reason": "Fixation et destruction des protéines du diaphragme de fente" },
+          { "from": "n3", "to": "n4", "label": "PROVOQUE", "reason": "Perte d'intégrité de la barrière de filtration glomérulaire" },
+          { "from": "n4", "to": "n5", "label": "MÈNE_À", "reason": "Perte urinaire massive d'albumine" },
+          { "from": "n5", "to": "n6", "label": "DÉCLENCHE", "reason": "Effondrement pression oncotique et mécanismes compensatoires" },
+          { "from": "n6", "to": "n7", "label": "ABOUTIT_À", "reason": "Dommages glomérulaires irréversibles en absence de traitement" },
+          { "from": "t1", "to": "n1", "label": "TRAITE", "reason": "Suppression de la réponse immunitaire auto-réactive" },
+          { "from": "t1", "to": "r1", "label": "RÉSOUT", "reason": "Arrêt de la cascade pathologique et régénération tissulaire" }
         ]
       },
-      "mermaid_graph": "graph TD; p1[Concept Pathologique] -->|CIBLE| t1[Intervention 1]; t1 -->|PROVOQUE| s1[Effet Secondaire X]; s1 -->|RÉSOUT| r1[Résolution Y];",
+      "mermaid_graph": "graph TD; n1[Dysrégulation Immunitaire B/T] -->|PRODUIT| n2[Anticorps Anti-Néphrine]; n2 -->|CIBLE| n3[Rupture Slit Diaphragm]; n3 -->|PROVOQUE| n4[Protéinurie Massive]; n4 -->|MÈNE_À| n5[Hypoalbuminémie]; n5 -->|DÉCLENCHE| n6[Cascade Systémique]; n6 -->|ABOUTIT_À| n7[ESKD]; t1[Immunosuppression] -->|TRAITE| n1; t1 -->|RÉSOUT| r1[Rémission Complète];",
+
 
       "executive_summary": {
         "context": "Rédige ici un essai de 2000 mots sur le paysage actuel.",
