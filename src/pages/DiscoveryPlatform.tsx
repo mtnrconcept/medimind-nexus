@@ -23,7 +23,7 @@ import RadialRingsModal from '@/components/cde/RadialRingsModal';
 import { useTheme } from 'next-themes';
 import { cn } from '@/lib/utils';
 import DNAVisualizer from '@/components/nexus/DNAVisualizer';
-import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import HypothesisReport from '@/components/nexus/HypothesisReport';
 
 
@@ -3529,8 +3529,11 @@ const DiscoveryPlatform = () => {
 
                 {/* Hypothesis Report Modal */}
                 <Dialog open={isReportModalOpen} onOpenChange={setIsReportModalOpen}>
-                    <DialogContent className="max-w-[90vw] w-full h-[90vh] p-0 border-none bg-transparent shadow-none" hideCloseButton>
-                        <DialogTitle className="sr-only">Rapport Hypothèse</DialogTitle>
+                    <DialogContent className="max-w-[90vw] w-full h-[90vh] p-0 border-none bg-transparent shadow-none">
+                        <DialogTitle className="sr-only">Rapport Hypothèse Détaillé</DialogTitle>
+                        <DialogDescription className="sr-only">
+                            Vue détaillée du rapport de l'hypothèse scientifique générée par l'IA.
+                        </DialogDescription>
                         {selectedHypothesis && (
                             <HypothesisReport
                                 hypothesis={selectedHypothesis}

@@ -7,9 +7,26 @@ import { Separator } from '@/components/ui/separator';
 import {
     FileText, Download, Printer, Share2,
     AlertTriangle, CheckCircle2, ShieldAlert,
-    FlaskConical, Scale, Target, Copy
+    FlaskConical, Scale, Target, Copy, Shield, Zap, Workflow, ListTree, Dna
 } from 'lucide-react';
 import { toast } from 'sonner';
+import CausalGraph from './CausalGraph';
+
+// Base64 helper for mermaid.ink
+const encodeMermaid = (code: string) => {
+    try {
+        if (!code) return '';
+        return btoa(unescape(encodeURIComponent(code)));
+    } catch (e) {
+        console.error('Error encoding mermaid:', e);
+        return '';
+    }
+};
+
+const PREMIUM_HEADER_URL = '/C:/Users/Raph/.gemini/antigravity/brain/41db1a14-23b3-4deb-8609-0cd0514ce8a1/scientific_report_header_premium_1767585690056.png';
+
+
+
 
 interface HypothesisReportProps {
     hypothesis: any; // Using any for flexibility with the complex JSON structure
@@ -115,19 +132,155 @@ export default function HypothesisReport({ hypothesis, onClose }: HypothesisRepo
                     <div className="border-b-4 border-blue-900 pb-6 mb-8">
                         <div className="flex justify-between items-start">
                             <div>
-                                <h1 className="text-3xl font-bold text-slate-900 leading-tight mb-2">
-                                    Scientific Advisory Report
-                                </h1>
-                                <p className="text-blue-600 font-medium text-lg">
+                                <div className="flex items-center gap-2 mb-2">
+                                    <h1 className="text-3xl font-bold text-slate-900 leading-tight">
+                                        Scientific Advisory Report
+                                    </h1>
+                                    {hypothesis.is_complete_resolution && (
+                                        <Badge className="bg-emerald-500 hover:bg-emerald-600 text-white border-none gap-1 py-1">
+                                            <Shield className="w-3 h-3" /> FULLY CLOSED LOOP
+                                        </Badge>
+                                    )}
+                                </div>
+                                <p className="text-blue-600 font-medium text-lg italic">
                                     {hypothesis.statement}
                                 </p>
                             </div>
                             <div className="text-right">
                                 <div className="text-sm font-bold text-slate-500 uppercase tracking-wider">MediMind Nexus</div>
-                                <div className="text-xs text-slate-400">AI-Augmented Research</div>
+                                <div className="text-xs text-slate-400">RCDP Engine v2.5</div>
                             </div>
                         </div>
                     </div>
+
+                    {/* Visual Interaction Network (New Section) */}
+                    <section>
+                        <h2 className="text-lg font-bold text-slate-900 uppercase tracking-wide mb-4 flex items-center gap-2">
+                            <Workflow className="w-5 h-5 text-blue-600" /> Multi-Scale Visual Interaction Network
+                        </h2>
+                        <CausalGraph hypothesis={hypothesis} />
+                        <p className="text-[10px] text-slate-400 mt-2 italic">
+                            * Ce graphe est interactif. Vous pouvez glisser les nœuds pour explorer les causalités récursives.
+                        </p>
+                    </section>
+
+
+                    {/* Systemic Cascade Section */}
+                    {hypothesis.systemic_cascade && (
+                        <section className="bg-slate-50 p-6 rounded-lg border border-slate-200">
+                            <h2 className="text-lg font-bold text-blue-900 uppercase tracking-wide mb-4 flex items-center gap-2">
+                                <ListTree className="w-5 h-5 text-blue-600" /> Systemic Pathophysiological Cascade
+                            </h2>
+                            <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+                                {hypothesis.systemic_cascade.map((item: any, i: number) => (
+                                    <div key={i} className="bg-white p-3 rounded border border-slate-200 shadow-sm">
+                                        <div className="flex justify-between items-start mb-1">
+                                            <span className="font-bold text-slate-900 text-xs uppercase">{item.organ}</span>
+                                            <Badge variant="outline" className={
+                                                item.severity === 'Critical' ? 'text-red-600 border-red-200 bg-red-50' :
+                                                    item.severity === 'High' ? 'text-orange-600 border-orange-200 bg-orange-50' :
+                                                        'text-blue-600 border-blue-200 bg-blue-50'
+                                            }>
+                                                {item.severity}
+                                            </Badge>
+                                        </div>
+                                        <p className="text-xs text-slate-700 font-medium mb-1">{item.impact}</p>
+                                        <p className="text-[10px] text-slate-500 leading-tight italic">{item.mechanism}</p>
+                                    </div>
+                                ))}
+                            </div>
+                        </section>
+                    )}
+
+                    {/* Etiology Depth Section */}
+                    {hypothesis.etiology_depth && (
+                        <section className="p-6 rounded-lg border border-emerald-100 bg-emerald-50/30">
+                            <h2 className="text-lg font-bold text-emerald-900 uppercase tracking-wide mb-4 flex items-center gap-2">
+                                <Dna className="w-5 h-5 text-emerald-600" /> Etiological Depth & Root Analysis
+                            </h2>
+                            <div className="space-y-4">
+                                <div className="grid grid-cols-2 gap-4">
+                                    <div className="bg-white p-4 rounded-lg border border-emerald-100">
+                                        <span className="text-[10px] font-bold text-emerald-700 uppercase block mb-2">Root Causes (Biological Origin)</span>
+                                        <ul className="list-disc list-inside text-xs text-slate-700 space-y-1">
+                                            {hypothesis.etiology_depth.root_causes?.map((cause: string, i: number) => (
+                                                <li key={i}>{cause}</li>
+                                            ))}
+                                        </ul>
+                                    </div>
+                                    <div className="bg-white p-4 rounded-lg border border-emerald-100">
+                                        <span className="text-[10px] font-bold text-emerald-700 uppercase block mb-2">Environmental & Set-off Triggers</span>
+                                        <ul className="list-disc list-inside text-xs text-slate-700 space-y-1">
+                                            {hypothesis.etiology_depth.triggers?.map((trigger: string, i: number) => (
+                                                <li key={i}>{trigger}</li>
+                                            ))}
+                                        </ul>
+                                    </div>
+                                </div>
+                                <div className="p-3 bg-white rounded border border-emerald-100">
+                                    <span className="text-[10px] font-bold text-emerald-700 uppercase block mb-1">Primary Pathway Origin</span>
+                                    <p className="text-sm font-mono text-emerald-900">{hypothesis.etiology_depth.pathway_origin}</p>
+                                </div>
+                            </div>
+                        </section>
+                    )}
+
+                    {/* Recursive Resolution Loop Section */}
+                    {hypothesis.therapeutic_resolution_chains && (
+                        <section className="p-6 rounded-lg border border-indigo-200 bg-indigo-50/30">
+                            <h2 className="text-lg font-bold text-indigo-900 uppercase tracking-wide mb-4 flex items-center gap-2">
+                                <Workflow className="w-5 h-5 text-indigo-600" /> Recursive Therapeutic Resolution Loops
+                            </h2>
+                            <div className="space-y-6">
+                                {hypothesis.therapeutic_resolution_chains.map((chain: any, i: number) => (
+                                    <div key={i} className="relative pl-8">
+                                        <div className="absolute left-0 top-0 bottom-0 w-0.5 bg-indigo-200"></div>
+                                        <div className="absolute left-[-4px] top-2 w-2.5 h-2.5 rounded-full bg-indigo-500"></div>
+
+                                        <div className="bg-white p-4 rounded-lg border border-indigo-100 shadow-sm mb-4">
+                                            <div className="flex justify-between items-center mb-2">
+                                                <span className="text-[10px] font-bold text-indigo-600 uppercase">Step {chain.step}: Primary Intervention</span>
+                                                <Badge className="bg-indigo-100 text-indigo-700 border-none">TARGETING CORE</Badge>
+                                            </div>
+                                            <h3 className="text-md font-bold text-slate-900 mb-1">{chain.intervention}</h3>
+                                            <p className="text-xs text-slate-600 italic">Expected Outcome: {chain.expected_outcome}</p>
+                                        </div>
+
+                                        {chain.side_effects?.map((se: any, j: number) => (
+                                            <div key={j} className="ml-4 mt-3 relative pl-6 border-l-2 border-dashed border-orange-200">
+                                                <div className="absolute left-[-5px] top-3 w-2 h-2 rounded-full bg-orange-400"></div>
+                                                <div className="bg-orange-50/50 p-3 rounded-lg border border-orange-100">
+                                                    <div className="flex items-center gap-2 text-[10px] font-bold text-orange-700 uppercase mb-1">
+                                                        <Zap className="w-3 h-3" /> Side Effect Detected: {se.issue}
+                                                    </div>
+                                                    <div className="grid grid-cols-2 gap-3 mt-2">
+                                                        <div className="bg-white p-2 rounded border border-orange-100">
+                                                            <span className="text-[9px] font-bold text-slate-500 block">Resolution</span>
+                                                            <p className="text-xs text-slate-800 font-bold">{se.resolution_intervention}</p>
+                                                        </div>
+                                                        <div className="bg-emerald-50 p-2 rounded border border-emerald-100">
+                                                            <span className="text-[9px] font-bold text-emerald-600 block">Interaction Safety</span>
+                                                            <p className="text-xs text-emerald-800">{se.interaction_safety}</p>
+                                                        </div>
+                                                    </div>
+                                                    <p className="text-[10px] text-slate-500 mt-2 italic">Loop Closure: {se.recursive_resolution}</p>
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                ))}
+
+                                {hypothesis.mechanistic_model?.loop_closure_proof && (
+                                    <div className="mt-6 p-4 bg-emerald-900 text-emerald-50 rounded-lg shadow-inner">
+                                        <div className="flex items-center gap-2 mb-2 font-bold uppercase tracking-widest text-xs">
+                                            <CheckCircle2 className="w-4 h-4" /> Loop Closure Proof
+                                        </div>
+                                        <p className="text-sm leading-relaxed">{hypothesis.mechanistic_model.loop_closure_proof}</p>
+                                    </div>
+                                )}
+                            </div>
+                        </section>
+                    )}
 
                     {/* Executive Summary */}
                     <section className="bg-slate-50 p-6 rounded-lg border border-slate-200">
@@ -314,7 +467,18 @@ export default function HypothesisReport({ hypothesis, onClose }: HypothesisRepo
 
 // Function to generate pure HTML for printing
 function generatePrintableHTML(h: any) {
+    const encodedMermaid = h.mermaid_graph ? btoa(unescape(encodeURIComponent(h.mermaid_graph))) : '';
+    const diagramUrl = encodedMermaid ? `https://mermaid.ink/img/${encodedMermaid}` : null;
+
+    // In a real browser context, we can use the relative path or base64
+    // For local dev, we might need a placeholder or the actual path if file:// is allowed
+    const headerImg = PREMIUM_HEADER_URL;
+
     return `
+        <div style="text-align: center; margin-bottom: 30px;">
+            <img src="${headerImg}" style="width: 100%; border-radius: 8px; margin-bottom: 10px;" />
+        </div>
+
         <div class="header">
             <div>
                 <h1>${h.hypothesis_id}</h1>
@@ -328,7 +492,93 @@ function generatePrintableHTML(h: any) {
         <div class="section-box" style="background: #eff6ff; border-color: #bfdbfe;">
             <h3>HYPOTHESIS STATEMENT</h3>
             <p style="font-size: 14px; font-weight: bold; color: #1e3a8a;">${h.statement}</p>
+            ${h.is_complete_resolution ? '<div style="background: #10b981; color: white; padding: 4px 12px; border-radius: 999px; font-size: 12px; display: inline-block; margin-top: 8px;">FULLY CLOSED LOOP RESOLUTION</div>' : ''}
         </div>
+
+        ${diagramUrl ? `
+            <h2>CAUSAL SCHEMA</h2>
+            <div style="text-align: center; margin: 20px 0; background: white; padding: 20px; border: 1px solid #e2e8f0; border-radius: 8px;">
+                <img src="${diagramUrl}" style="max-width: 100%; height: auto;" />
+                <p style="font-size: 9px; color: #64748b; margin-top: 10px;">Generated by MediMind AI • Causal Nodal Network v2.5</p>
+            </div>
+        ` : ''}
+
+
+        ${h.systemic_cascade ? `
+            <h2>SYSTEMIC IMPACT CASCADE</h2>
+            <div class="grid">
+                ${h.systemic_cascade.map((item: any) => `
+                    <div class="section-box">
+                        <div style="display: flex; justify-content: space-between;">
+                             <strong>${item.organ}</strong>
+                             <span class="badge ${item.severity === 'Critical' ? 'badge-red' : 'badge-blue'}">${item.severity}</span>
+                        </div>
+                        <p style="font-weight: bold; margin-top: 4px;">${item.impact}</p>
+                        <p style="font-size: 10px; color: #64748b;">${item.mechanism}</p>
+                    </div>
+                `).join('')}
+            </div>
+        ` : ''}
+
+        ${h.etiology_depth ? `
+            <h2>ETIOLOGICAL DEPTH & ROOT ANALYSIS</h2>
+            <div class="section-box" style="background: #ecfdf5; border-color: #a7f3d0;">
+                <div class="grid">
+                    <div>
+                        <strong style="font-size: 10px; color: #047857; text-transform: uppercase;">Root Causes (Biological Origin)</strong>
+                        <ul style="list-style: disc; margin-left: 20px; font-size: 11px; color: #1a202c;">
+                            ${h.etiology_depth.root_causes?.map((cause: string) => `<li>${cause}</li>`).join('')}
+                        </ul>
+                    </div>
+                    <div>
+                        <strong style="font-size: 10px; color: #047857; text-transform: uppercase;">Environmental & Set-off Triggers</strong>
+                        <ul style="list-style: disc; margin-left: 20px; font-size: 11px; color: #1a202c;">
+                            ${h.etiology_depth.triggers?.map((trigger: string) => `<li>${trigger}</li>`).join('')}
+                        </ul>
+                    </div>
+                </div>
+                <div style="margin-top: 12px; padding: 8px; background: white; border: 1px solid #d1fae5; border-radius: 4px;">
+                    <strong style="font-size: 10px; color: #047857; text-transform: uppercase;">Primary Pathway Origin</strong>
+                    <p style="font-size: 12px; font-family: monospace; color: #065f46;">${h.etiology_depth.pathway_origin}</p>
+                </div>
+            </div>
+        ` : ''}
+
+        ${h.therapeutic_resolution_chains ? `
+            <h2>RECURSIVE THERAPEUTIC RESOLUTION</h2>
+            ${h.therapeutic_resolution_chains.map((chain: any) => `
+                <div class="section-box" style="border-left: 4px solid #4f46e5;">
+                    <div style="font-size: 10px; font-weight: bold; color: #4f46e5; text-transform: uppercase;">Step ${chain.step}: Intervention</div>
+                    <p style="font-size: 16px; font-weight: bold; margin: 4px 0;">${chain.intervention}</p>
+                    <p style="font-size: 11px; margin-bottom: 8px;"><em>Expected: ${chain.expected_outcome}</em></p>
+                    
+                    ${chain.side_effects?.map((se: any) => `
+                        <div style="margin-left: 16px; padding: 8px; background: #fff7ed; border: 1px solid #ffedd5; border-radius: 4px; margin-top: 8px;">
+                            <div style="font-size: 9px; font-weight: bold; color: #c2410c; text-transform: uppercase;">Side Effect: ${se.issue}</div>
+                            <div style="display: flex; gap: 8px; margin-top: 4px;">
+                                <div style="flex: 1; background: white; padding: 4px; border-radius: 2px;">
+                                    <span style="font-size: 8px; color: #64748b;">Correction:</span>
+                                    <div style="font-size: 11px; font-weight: bold;">${se.resolution_intervention}</div>
+                                </div>
+                                <div style="flex: 1; background: #ecfdf5; padding: 4px; border-radius: 2px;">
+                                    <span style="font-size: 8px; color: #059669;">Safety:</span>
+                                    <div style="font-size: 10px;">${se.interaction_safety}</div>
+                                </div>
+                            </div>
+                        </div>
+                    `).join('')}
+                </div>
+            `).join('')}
+            
+            ${h.mechanistic_model?.loop_closure_proof ? `
+                <div class="section-box" style="background: #022c22; color: #ecfdf5;">
+                    <strong style="font-size: 12px; color: #10b981; display: block; margin-bottom: 4px;">LOOP CLOSURE PROOF</strong>
+                    <p style="font-size: 12px; margin: 0;">${h.mechanistic_model.loop_closure_proof}</p>
+                </div>
+            ` : ''}
+        ` : ''}
+
+        <div class="page-break"></div>
 
         <h2>EXECUTIVE SUMMARY</h2>
         <div class="grid">
@@ -355,10 +605,10 @@ function generatePrintableHTML(h: any) {
             <tbody>
                 ${h.executive_summary?.go_nogo_table?.map((row: any) => `
                     <tr>
-                        <td>${row.block}</td>
-                        <td>${row.minimal_design}</td>
-                        <td>${row.primary_endpoint}</td>
-                        <td><span class="badge ${row.go_nogo_signal.includes('GO') ? 'badge-green' : 'badge-red'}">${row.go_nogo_signal}</span></td>
+                        <td>${row.block || ''}</td>
+                        <td>${row.minimal_design || ''}</td>
+                        <td>${row.primary_endpoint || ''}</td>
+                        <td><span class="badge ${(row.go_nogo_signal || '').includes('GO') ? 'badge-green' : 'badge-red'}">${row.go_nogo_signal || 'N/A'}</span></td>
                     </tr>
                 `).join('') || '<tr><td colspan="4">No data</td></tr>'}
             </tbody>
@@ -393,10 +643,10 @@ function generatePrintableHTML(h: any) {
             <tbody>
                 ${h.evidence_snapshot?.map((row: any) => `
                     <tr>
-                        <td>${row.claim}</td>
-                        <td>${row.context_population}</td>
-                        <td><span class="badge badge-blue">Level ${row.oxford_level}</span></td>
-                        <td>${row.key_references?.join(', ') || ''}</td>
+                        <td>${row.claim || ''}</td>
+                        <td>${row.context_population || ''}</td>
+                        <td><span class="badge badge-blue">Level ${row.oxford_level || 'N/A'}</span></td>
+                        <td>${row.key_references?.join(', ') || 'N/A'}</td>
                     </tr>
                 `).join('') || '<tr><td colspan="4">No data</td></tr>'}
             </tbody>

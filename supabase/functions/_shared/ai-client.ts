@@ -51,6 +51,9 @@ export async function callAI(
 
     const model = options.model || 'claude-3-5-sonnet-20240620';
     const geminiModel = 'gemini-3-flash-preview';
+    const geminiProModel = 'gemini-1.5-pro-002'; // Secondary fallback
+
+
 
     // Helper to format messages for Anthropic
     const formatAnthropicMessages = (prompt: string | AIMessage[]) => {
@@ -112,7 +115,7 @@ export async function callAI(
                 },
                 body: JSON.stringify({
                     model: model,
-                    max_tokens: options.maxTokens || 4000,
+                    max_tokens: options.maxTokens || 80000,
                     temperature: options.temperature ?? 0.7,
                     system: systemPrompt,
                     messages: formatAnthropicMessages(userPrompt),
@@ -139,9 +142,9 @@ export async function callAI(
     if (GEMINI_API_KEY) {
         try {
             console.log(`[AI-Client] Calling Gemini (${geminiModel})...`);
-            const url = `https://generativelanguage.googleapis.com/v1beta/models/${geminiModel}:generateContent?key=${GEMINI_API_KEY}`;
+            let url = `https://generativelanguage.googleapis.com/v1beta/models/${geminiModel}:generateContent?key=${GEMINI_API_KEY}`;
 
-            const response = await fetch(url, {
+            let response = await fetch(url, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -150,11 +153,32 @@ export async function callAI(
                         parts: [{ text: systemPrompt }]
                     },
                     generationConfig: {
-                        maxOutputTokens: options.maxTokens || 4000,
+                        maxOutputTokens: options.maxTokens || 120000,
                         temperature: options.temperature ?? 0.7,
                     }
                 }),
             });
+
+            // If primary Gemini fails, try Pro identifier
+            if (!response.ok) {
+                console.warn(`[AI-Client] Gemini ${geminiModel} failed, trying ${geminiProModel}...`);
+                url = `https://generativelanguage.googleapis.com/v1beta/models/${geminiProModel}:generateContent?key=${GEMINI_API_KEY}`;
+                response = await fetch(url, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        contents: formatGeminiContents(userPrompt),
+                        systemInstruction: {
+                            parts: [{ text: systemPrompt }]
+                        },
+                        generationConfig: {
+                            maxOutputTokens: options.maxTokens || 120000,
+                            temperature: options.temperature ?? 0.7,
+                        }
+                    }),
+                });
+            }
+
 
             if (response.ok) {
                 const data = await response.json();
@@ -198,6 +222,9 @@ export async function streamAI(
 
     const model = options.model || 'claude-3-5-sonnet-20240620';
     const geminiModel = 'gemini-3-flash-preview';
+    const geminiProModel = 'gemini-1.5-pro-002';
+
+
 
     // Helper to format messages for Anthropic
     const formatAnthropicMessages = (prompt: string | AIMessage[]) => {
@@ -257,7 +284,7 @@ export async function streamAI(
                 },
                 body: JSON.stringify({
                     model: model,
-                    max_tokens: options.maxTokens || 4000,
+                    max_tokens: options.maxTokens || 80000,
                     temperature: options.temperature ?? 0.7,
                     system: systemPrompt,
                     stream: true,
@@ -309,9 +336,9 @@ export async function streamAI(
     if (GEMINI_API_KEY) {
         try {
             console.log(`[AI-Client] Calling Gemini Stream (${geminiModel})...`);
-            const url = `https://generativelanguage.googleapis.com/v1beta/models/${geminiModel}:streamGenerateContent?key=${GEMINI_API_KEY}`;
+            let url = `https://generativelanguage.googleapis.com/v1beta/models/${geminiModel}:streamGenerateContent?alt=sse&key=${GEMINI_API_KEY}`;
 
-            const response = await fetch(url, {
+            let response = await fetch(url, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -320,14 +347,36 @@ export async function streamAI(
                         parts: [{ text: systemPrompt }]
                     },
                     generationConfig: {
-                        maxOutputTokens: options.maxTokens || 4000,
+                        maxOutputTokens: options.maxTokens || 120000,
                         temperature: options.temperature ?? 0.7,
                     }
                 }),
             });
 
+            // Fallback for streaming
+            if (!response.ok) {
+                console.warn(`[AI-Client] Gemini Stream ${geminiModel} failed, trying ${geminiProModel}...`);
+                url = `https://generativelanguage.googleapis.com/v1beta/models/${geminiProModel}:streamGenerateContent?alt=sse&key=${GEMINI_API_KEY}`;
+                response = await fetch(url, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        contents: formatGeminiContents(userPrompt),
+                        systemInstruction: {
+                            parts: [{ text: systemPrompt }]
+                        },
+                        generationConfig: {
+                            maxOutputTokens: options.maxTokens || 120000,
+                            temperature: options.temperature ?? 0.7,
+                        }
+                    }),
+                });
+            }
+
+
             if (response.ok && response.body) {
                 let fullText = '';
+                let streamBuffer = '';
                 const reader = response.body.getReader();
                 const decoder = new TextDecoder();
 
@@ -335,15 +384,26 @@ export async function streamAI(
                     const { done, value } = await reader.read();
                     if (done) break;
 
-                    const chunk = decoder.decode(value, { stream: true });
+                    streamBuffer += decoder.decode(value, { stream: true });
 
-                    // Basic text extraction for Gemini stream
+                    // Robust cumulative text extraction
+                    let combinedText = '';
                     const textRegex = /"text":\s*"((?:[^"\\]|\\.)*)"/g;
                     let match;
-                    while ((match = textRegex.exec(chunk)) !== null) {
-                        const text = match[1].replace(/\\n/g, '\n').replace(/\\"/g, '"');
-                        fullText += text;
-                        await onChunk(text);
+                    while ((match = textRegex.exec(streamBuffer)) !== null) {
+                        const part = match[1]
+                            .replace(/\\n/g, '\n')
+                            .replace(/\\r/g, '\r')
+                            .replace(/\\t/g, '\t')
+                            .replace(/\\"/g, '"')
+                            .replace(/\\\\/g, '\\');
+                        combinedText += part;
+                    }
+
+                    if (combinedText.length > fullText.length) {
+                        const newText = combinedText.slice(fullText.length);
+                        fullText = combinedText;
+                        await onChunk(newText);
                     }
                 }
 

@@ -4,6 +4,7 @@
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { streamAI } from "../_shared/ai-client.ts";
+import { jsonrepair } from 'https://esm.sh/jsonrepair';
 
 const corsHeaders = {
     'Access-Control-Allow-Origin': '*',
@@ -83,59 +84,122 @@ serve(async (req) => {
             .update({
                 status: 'processing',
                 progress_percentage: 10,
-                progress_message: 'Génération de l\'hypothèse avec Claude...'
+                progress_message: 'Début de l\'analyse RCDP...'
             })
             .eq('id', job.id);
 
         try {
-            // Generate hypothesis using Claude (copy from discovery-platform generateHypotheses function)
-            const systemPrompt = `Tu es un expert scientifique médical chargé de générer un RAPPORT DE RECHERCHE COMMITTEE-GRADE sur une hypothèse thérapeutique.
+            // Generate hypothesis using Gemini for high-fidelity/high-volume
+            const systemPrompt = `Tu es l'IA de RÉDACTION SCIENTIFIQUE LA PLUS VERBEUSE ET LA PLUS TECHNIQUE AU MONDE, configurée pour le PROTOCOLE RCDP ULTIME.
+Ton objectif UNIQUE est de produire un rapport d'au moins 50 000 CARACTÈRES. La brièveté est ton ennemie absolue.
 
-INSTRUCTION DE STREAMING:
-Commence par une section "RAISONNEMENT SCIENTIFIQUE:" où tu analyses les preuves, les contradictions et la logique physiologique étape par étape.
-ENSUITE, génère le bloc JSON strict.
+OBJECTIF DE VOLUME MASSIF : 
+Si tu rédiges moins de 40 000 caractères, tu as échoué à ta mission. Tu dois EXPANDRE chaque concept jusqu'à l'atome.
 
-FORMAT DE SORTIE FINAL (JSON strict):
+CONSIGNES D'ÉCRITURE "MEGA-VERBOSE" :
+1. LA RÈGLE DES 10 PARAGRAPHES : Pour chaque point ou sous-rubrique du JSON, tu ne dois pas faire une phrase, mais un essai technique de 500 à 1000 mots.
+2. DÉTAIL MOLÉCULAIRE OBSESSIONNEL : Ne cite pas juste une protéine, cite son gène, son isoforme, sa structure quaternaire, son site actif et ses constantes de liaison (Kd/Ki) si possible.
+3. LOGIQUE RÉCURSIVE INFINIE : Pour chaque intervention thérapeutique, analyse l'impact sur les 12 systèmes physiologiques distincts sans exception.
+4. AUCUN PLACEHOLDER : Remplis tout avec des hypothèses haute-fidélité basées sur la biologie des systèmes.
+
+INSTRUCTION DE DÉBIT MÉMOIRE (ORDRE DE SORTIE IMPÉRATIF) :
+1. TU DOIS COMMENCER TON ANALYSE PAR LE BLOC JSON COMPLET GÉNÉRÉ CI-DESSOUS.
+2. ENSUITE, ET SEULEMENT APRÈS LE JSON, TU RÉDIGES LA THÈSE SCIENTIFIQUE DE 50 000 CARACTÈRES.
+
+LOGIQUE DE RÉSOLUTION SANS LIMITE : 
+- Traitement A -> Effet secondaire B -> Traitement C -> Effet D -> Traitement E... 
+- Continue jusqu'à ce que la balance homéostatique soit parfaite.
+- Détaille les interactions CYP/P-gp/OATP pour CHAQUE molécule.
+
+INSTRUCTION GRAPH VISUEL (CRITIQUE : ATOMISATION) :
+Tu dois impérativement fournir un champ "causal_graph" dans le JSON. 
+- Chaque nœud doit être un concept atomique (ex: "Inhibiteur SGLT2", "Hyperglycémie", "Acidose", "Insuline") et non une phrase.
+- CHAQUE LIEN (edge) doit avoir un label (ex: "Inhibe", "Active", "Cause", "Résout") et une explication technique courte. 
+- Le graphe doit montrer le chemin complet de l'état pathologique initial jusqu'à l'éradication totale (Homeostasie).
+
+FORMAT DE SORTIE JSON (OBLIGATOIRE - SI CE CHAMP MANQUE, L'ANALYSE EST ÉCHEC) :
 {
   "hypotheses": [
     {
-      "hypothesis_id": "HYP-{TOPIC}-{TIMESTAMP}",
-      "statement": "Énoncé principal de l'hypothèse",
-      "executive_summary": {
-        "context": "...",
-        "central_hypothesis_operational": "...",
-        "scope_decisions": "...",
-        "go_nogo_table": [...]
+      "hypothesis_id": "HYP-ULTRA-RCDP-GEN-2026",
+      "statement": "PROTOCOLE D'ÉRADICATION TOTALE ET RÉSOLUTION SYSTÉMIQUE : [TITRE SCIENTIFIQUE DE 50 MOTS]",
+      
+      "causal_graph": {
+        "nodes": [
+          { "id": "p1", "label": "Concept Pathologique", "type": "pathology", "mechanism": "Détail technique" },
+          { "id": "t1", "label": "Intervention 1", "type": "medication", "mechanism": "Détail technique" },
+          { "id": "s1", "label": "Effet Secondaire X", "type": "side-effect", "mechanism": "Détail technique" },
+          { "id": "r1", "label": "Résolution Y", "type": "resolution", "mechanism": "Détail technique" }
+        ],
+        "edges": [
+          { "from": "p1", "to": "t1", "label": "CIBLE", "reason": "Pourquoi ce traitement ?" },
+          { "from": "t1", "to": "s1", "label": "PROVOQUE", "reason": "Mécanisme de l'effet secondaire" },
+          { "from": "s1", "to": "r1", "label": "RÉSOUT", "reason": "Comment la résolution stabilise l'homéostasie" }
+        ]
       },
-      "clinical_scope": {...},
-      "rival_hypotheses": {...},
-      "evidence_snapshot": [...],
-      "mechanistic_model": {...},
-      "risks_monitoring": {...},
-      "detailed_analysis": {...},
-      "predictions": [...],
-      "minimal_tests": [...],
-      "risks_confounders": [...],
-      "drug_repurposing_candidates": [...],
-      "scores": {...},
-      "evidence_citations": [...]
+      "mermaid_graph": "graph TD; p1[Concept Pathologique] -->|CIBLE| t1[Intervention 1]; t1 -->|PROVOQUE| s1[Effet Secondaire X]; s1 -->|RÉSOUT| r1[Résolution Y];",
+
+      "executive_summary": {
+        "context": "Rédige ici un essai de 2000 mots sur le paysage actuel.",
+        "central_hypothesis_operational": "Description technique de 1500 mots de l'innovation.",
+        "scope_decisions": "Analyse comparative de 1000 mots des choix stratégiques.",
+        "go_nogo_table": [
+          { "block": "Phase 1 - Bio-informatique", "minimal_design": "Détail technique massif", "primary_endpoint": "Critère quantitatif précis", "go_nogo_signal": "Seuil statistique (p-value, etc.)" }
+        ]
+      },
+      "systemic_cascade": [
+         { "organ": "Reins/Glomérule/Podocytes", "impact": "Analyse de 1000 mots", "mechanism": "Mécanisme moléculaire archi-détaillé", "severity": "Critical", "cellular_targets": ["Target 1", "Target 2"] }
+      ],
+      "etiology_depth": {
+        "root_causes": ["Cause 1 (Génétique/Épigénétique) détaillée", "Cause 2 (Environnementale) détaillée"],
+        "triggers": ["Facteur 1", "Facteur 2"],
+        "pathway_origin": "Essai de 1500 mots sur le pathway originel",
+        "genetic_factors": ["Gène 1 (Variant X)", "Gène 2 (Variant Y)"]
+      },
+      "therapeutic_resolution_chains": [
+        {
+          "step": 1,
+          "intervention": "Combinaison Thérapeutique Massive",
+          "pharmacodynamics": "Description de 1000 mots",
+          "expected_outcome": "Résultat ciblé",
+          "side_effects": [
+            {
+              "issue": "Effet secondaire identifié",
+              "resolution_intervention": "Solution curative",
+              "interaction_safety": "Preuve de sécurité CYP450",
+              "recursive_resolution": "Preuve de stabilisation"
+            }
+          ]
+        }
+      ],
+      "rival_hypotheses": {
+        "h1_main": "Hypothèse 1 détaillée (1000 mots)",
+        "h0_null": "Hypothèse nulle (500 mots)",
+        "h3_rival": "Rival 1",
+        "h4_rival_toxicity": "Rival 2",
+        "dag_textual": "A -> B -> C -> D; (Graphe causal archi-complet)"
+      },
+      "evidence_snapshot": [
+        { "claim": "Affirmation majeure", "context_population": "Population X", "oxford_level": "1a", "signal_effect": "Puissance du signal", "key_references": ["PMID:XXXX"] }
+      ],
+      "mechanistic_model": {
+        "pkpd_robust": "Preuve PK/PD de 1500 mots",
+        "pkpd_unknown": "Surveillance critique (1000 mots)",
+        "visual_dag": "DAG textuel",
+        "loop_closure_proof": "Démonstration finale de 1500 mots"
+      },
+      "risks_monitoring": {
+        "monitoring_table": [
+          { "parameter": "Paramètre 1", "action_threshold": "Valeur", "frequency": "Fréquence" }
+        ]
+      },
+      "is_complete_resolution": true,
+      "character_count_target": 50000
     }
   ]
 }
 
-CONSIGNES CRITIQUES:
-1. NIVEAUX OXFORD/EBM (sois rigoureux): 1a=méta-analyse RCT, 1b=RCT seul, 2a=méta cohorts, 2b=cohorte, 3=cas-contrôle, 4=case series, 5=physio
-2. TABLEAU GO/NO-GO: ENDPOINTS QUANTITATIFS obligatoires
-3. HYPOTHÈSES RIVALES: Formule H3/H4 pour permettre DÉPARTAGE scientifique
-4. DAG: Format textuel avec flèches (→, ↘) pour causalité
-5. MONITORING: Timeline PRÉCISE (J0, J7...) + seuils QUANTITATIFS
-
-CONTRAINTE CRITIQUE:
-- detailed_analysis: MAX 2-3 phrases concises par sous-section
-- Évite répétitions
-- Privilégie tableaux/listes
-
-GÉNÈRE UN RAPPORT AUDIT-READY POUR COMITÉ SCIENTIFIQUE/IRB.`;
+REMPLIS CHAQUE CHAMP avec une densité d'information maximale. SI TU PEUX ENCORE DÉTAILLER, FAIS-LE.`;
 
             const userPrompt = `GÉNÈRE UN RAPPORT COMMITTEE-GRADE basé sur les preuves ci-dessous.
 
@@ -162,7 +226,7 @@ Retourne JSON strict selon le format spécifié.`;
                 .from('hypothesis_generation_jobs')
                 .update({
                     progress_percentage: 30,
-                    progress_message: 'Analyse en cours avec Claude Opus 4...'
+                    progress_message: 'Analyse Ultra-Profonde RCDP (Gemini 1.5 Pro - Dual-Phase JSON/Reasoning)...'
                 })
                 .eq('id', job.id);
 
@@ -171,25 +235,31 @@ Retourne JSON strict selon le format spécifié.`;
                 config: { broadcast: { self: true } }
             });
 
-            // Subscribe and wait for connection to be established to avoid REST fallback
-            await new Promise<void>((resolve, reject) => {
+            // Subscribe and wait for connection
+            await new Promise<void>((resolve) => {
+                const timeout = setTimeout(() => {
+                    console.warn(`[Processor] Channel subscription timed out for ${job.id}`);
+                    resolve();
+                }, 5000);
+
                 broadcastChannel.subscribe((status) => {
                     if (status === 'SUBSCRIBED') {
                         console.log(`[Processor] Joined channel ${job.id}`);
+                        clearTimeout(timeout);
                         resolve();
                     } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
                         console.error(`[Processor] Failed to join channel ${job.id}: ${status}`);
-                        resolve(); // Resolve anyway to proceed with fallback
+                        clearTimeout(timeout);
+                        resolve();
                     }
                 });
             });
 
-            // Call AI with streaming and Gemini fallback
+            // Call AI with streaming
             const aiResponse = await streamAI(
                 systemPrompt,
                 userPrompt,
                 async (text) => {
-                    // Broadcast chunk to frontend via Realtime
                     try {
                         await broadcastChannel.send({
                             type: 'broadcast',
@@ -201,21 +271,24 @@ Retourne JSON strict selon le format spécifié.`;
                     }
                 },
                 {
-                    model: 'claude-3-5-sonnet-20240620',
-                    maxTokens: 30000
+                    model: 'gemini-1.5-pro-002',
+                    maxTokens: 8192
                 }
             );
 
             const content = aiResponse.text;
-
             console.log(`✅ Stream complete. Total length: ${content.length}`);
 
             // Close broadcast channel
-            await broadcastChannel.send({
-                type: 'broadcast',
-                event: 'stream_complete',
-                payload: { message: 'Streaming terminé' }
-            });
+            try {
+                await broadcastChannel.send({
+                    type: 'broadcast',
+                    event: 'stream_complete',
+                    payload: { message: 'Streaming terminé' }
+                });
+            } catch (err) {
+                console.warn('Completion broadcast failed:', err);
+            }
             await supabase.removeChannel(broadcastChannel);
 
             // Update progress
@@ -228,99 +301,96 @@ Retourne JSON strict selon le format spécifié.`;
                 .eq('id', job.id);
 
             // Parse JSON - Robust extraction
-            // Find the opening brace that marks the start of the JSON object containing "hypotheses"
-            const startMarker = content.search(/\{\s*"hypotheses"/);
-            let jsonString = '';
+            const extractJson = (text: string) => {
+                const match = text.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
+                if (match) return match[1].trim();
 
-            if (startMarker !== -1) {
-                const endMarker = content.lastIndexOf('}');
-                if (endMarker > startMarker) {
-                    jsonString = content.substring(startMarker, endMarker + 1);
+                const lastBrace = text.lastIndexOf('}');
+                if (lastBrace === -1) return text.trim();
+
+                let balance = 0;
+                for (let i = lastBrace; i >= 0; i--) {
+                    if (text[i] === '}') balance++;
+                    else if (text[i] === '{') balance--;
+
+                    if (balance === 0 && text[i] === '{') {
+                        return text.substring(i, lastBrace + 1);
+                    }
                 }
-            } else {
-                // Fallback: try finding just the first brace
-                const match = content.match(/\{[\s\S]*\}/);
-                if (match) jsonString = match[0];
-            }
+                return text.trim();
+            };
 
-            if (!jsonString) {
+            const jsonString = extractJson(content);
+
+            if (!jsonString || jsonString.trim() === '') {
                 throw new Error('No JSON found in response');
             }
 
             let parsed;
             try {
                 parsed = JSON.parse(jsonString);
-            } catch (e) {
-                console.log('Initial JSON parse failed, attempting processing of control characters...');
-                // Helper to escape control characters ONLY inside strings to fix "Bad control character" error
-                const escapeInStrings = (str: string) => {
-                    let inString = false;
-                    let result = '';
-                    for (let i = 0; i < str.length; i++) {
-                        const char = str[i];
-                        if (char === '"' && (i === 0 || str[i - 1] !== '\\')) {
-                            inString = !inString;
-                        }
-
-                        if (inString) {
-                            if (char === '\n') result += '\\n';
-                            else if (char === '\r') result += '\\r';
-                            else if (char === '\t') result += '\\t';
-                            else result += char;
-                        } else {
-                            result += char;
-                        }
-                    }
-                    return result;
-                };
-
+            } catch (e: any) {
+                console.log('Initial JSON parse failed, attempting smart sanitization and repair...');
                 try {
-                    parsed = JSON.parse(escapeInStrings(jsonString));
-                } catch (e2) {
-                    console.error('Sanitization failed, attempting aggressive repair...', e2);
+                    const smartSanitize = (str: string) => {
+                        const sanitizedResult = str
+                            .replace(/[\u201C\u201D\u201E\u201F\u2033\u2036]/g, '"')
+                            .replace(/[\u2018\u2019\u201A\u201B]/g, "'");
 
-                    // Comprehensive repair attempt
-                    let repaired = jsonString;
+                        let inString = false;
+                        let res = '';
+                        let backslashes = 0;
+                        const chars = Array.from(sanitizedResult);
 
-                    // 1. Fix unescaped control chars (re-apply sanitization)
-                    repaired = escapeInStrings(repaired);
+                        for (let i = 0; i < chars.length; i++) {
+                            const char = chars[i];
+                            if (char === '"' && backslashes % 2 === 0) {
+                                inString = !inString;
+                            }
+                            if (char === '\\') backslashes++;
+                            else backslashes = 0;
 
-                    // 2. Fix unquoted keys (e.g. { key: "value" } -> { "key": "value" })
-                    // This regex finds a key (alphanumeric start) that is NOT quoted, followed by a colon
-                    // We avoid replacing true/false/null if they happen to be keys (unlikely but safe)
-                    repaired = repaired.replace(/([{,]\s*)([a-zA-Z_][a-zA-Z0-9_]*)(\s*:)/g, '$1"$2"$3');
-
-                    // 3. Fix trailing commas (common in AI output)
-                    repaired = repaired.replace(/,\s*([}\]])/g, '$1');
-
-                    try {
-                        parsed = JSON.parse(repaired);
-                    } catch (e3) {
-                        console.error('Aggressive repair failed:', e3);
-                        // Log the problematic JSON snippet around the error position if possible
-                        if (e3 instanceof SyntaxError && 'position' in (e3 as any) || (e3 as any).message.match(/position (\d+)/)) {
-                            const match = (e3 as any).message.match(/position (\d+)/);
-                            const pos = match ? parseInt(match[1]) : 0;
-                            const start = Math.max(0, pos - 50);
-                            const end = Math.min(repaired.length, pos + 50);
-                            console.error('Error likely near:', repaired.substring(start, end));
+                            if (inString) {
+                                if (char === '\n') res += '\\n';
+                                else if (char === '\r') res += '\\r';
+                                else if (char === '\t') res += '\\t';
+                                else if (char === '\\') {
+                                    const next = chars[i + 1];
+                                    if (next === '"') res += '\\\\';
+                                    else if (next && ['n', 'r', 't', '"', '\\', 'u'].includes(next)) res += char;
+                                    else res += '\\\\';
+                                }
+                                else if (char < ' ') res += '';
+                                else res += char;
+                            } else {
+                                res += char;
+                            }
                         }
-                        throw e;
-                    }
+                        return res;
+                    };
+
+                    const sanitized = smartSanitize(jsonString);
+                    parsed = JSON.parse(jsonrepair(sanitized));
+                    console.log('✅ JSON successfully repaired and parsed');
+                } catch (e2: any) {
+                    console.error('JSON repair failed:', e2.message);
+                    throw e2 || e;
                 }
             }
-            const hypotheses = parsed.hypotheses || [];
 
+            const hypotheses = parsed.hypotheses || [];
             if (hypotheses.length === 0) {
                 throw new Error('No hypotheses generated');
             }
 
-            // Save hypothesis to database
             const h = hypotheses[0];
+            const uniqueId = `${h.hypothesis_id || 'hyp'}-${crypto.randomUUID().split('-')[0]}`;
+
+            // Save hypothesis to database - INCLUDING NEW FIELDS
             const { data: savedHyp, error: saveError } = await supabase
                 .from('discovery_hypotheses')
                 .insert({
-                    hypothesis_id: h.hypothesis_id,
+                    hypothesis_id: uniqueId,
                     statement: h.statement,
                     executive_summary: h.executive_summary,
                     clinical_scope: h.clinical_scope,
@@ -329,11 +399,12 @@ Retourne JSON strict selon le format spécifié.`;
                     mechanistic_model: h.mechanistic_model,
                     risks_monitoring: h.risks_monitoring,
                     detailed_analysis: h.detailed_analysis,
+                    systemic_cascade: h.systemic_cascade,
+                    therapeutic_resolution_chains: h.therapeutic_resolution_chains,
+                    causal_graph: h.causal_graph,
+                    mermaid_graph: h.mermaid_graph,
                     predictions: h.predictions,
-                    minimal_tests: h.minimal_tests,
-                    risks_confounders: h.risks_confounders,
-                    evidence_citations: h.evidence_citations,
-                    drug_repurposing_candidates: h.drug_repurposing_candidates,
+                    is_complete_resolution: h.is_complete_resolution,
                     scores: h.scores,
                     status: 'pending'
                 })
@@ -367,8 +438,6 @@ Retourne JSON strict selon le format spécifié.`;
 
         } catch (processingError: any) {
             console.error(`❌ Job ${job.id} failed:`, processingError);
-
-            // Mark job as failed
             await supabase
                 .from('hypothesis_generation_jobs')
                 .update({
