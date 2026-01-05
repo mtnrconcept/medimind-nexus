@@ -171,11 +171,17 @@ Retourne JSON strict selon le format spécifié.`;
                 config: { broadcast: { self: true } }
             });
 
-            // Subscribe safely (non-awaiting to avoid blocking, but initiates connection)
-            broadcastChannel.subscribe((status) => {
-                if (status === 'SUBSCRIBED') {
-                    console.log(`[Processor] Joined channel ${job.id}`);
-                }
+            // Subscribe and wait for connection to be established to avoid REST fallback
+            await new Promise<void>((resolve, reject) => {
+                broadcastChannel.subscribe((status) => {
+                    if (status === 'SUBSCRIBED') {
+                        console.log(`[Processor] Joined channel ${job.id}`);
+                        resolve();
+                    } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+                        console.error(`[Processor] Failed to join channel ${job.id}: ${status}`);
+                        resolve(); // Resolve anyway to proceed with fallback
+                    }
+                });
             });
 
             // Call AI with streaming and Gemini fallback
