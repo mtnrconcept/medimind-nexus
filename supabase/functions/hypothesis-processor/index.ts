@@ -111,54 +111,89 @@ LOGIQUE DE RÉSOLUTION SANS LIMITE :
 - Continue jusqu'à ce que la balance homéostatique soit parfaite.
 - Détaille les interactions CYP/P-gp/OATP pour CHAQUE molécule.
 
-INSTRUCTION GRAPH VISUEL (CRITIQUE : CHAÎNE PATHOPHYSIOLOGIQUE SÉRIÉE COMPLÈTE) :
-Tu dois impérativement fournir un champ "causal_graph" dans le JSON. 
-- Chaque nœud doit être un concept atomique et représenter UNE ÉTAPE dans la cascade pathologique.
-- Le graphe doit être une CHAÎNE LINÉAIRE CONNECTÉE de la cause racine jusqu'à l'aboutissement (ESKD/Résolution).
-- CHAQUE LIEN (edge) doit avoir un label causal (CIBLE, PROVOQUE, MÈNE_À, RÉSOUT, TRAITE) et une explication technique courte.
+INSTRUCTION GRAPH VISUEL (CHAÎNE THÉRAPEUTIQUE RÉCURSIVE VERS GUÉRISON) :
+Tu dois impérativement fournir un champ "causal_graph" dans le JSON.
 
-EXEMPLE DE STRUCTURE ATTENDUE (NÉPHROLOGIE - À ADAPTER À CHAQUE PATHOLOGIE) :
-Auto-immunité B/T -> Anticorps Anti-Néphrine -> Rupture Slit Diaphragm -> Protéinurie Massive -> Hypoalbuminémie -> Cascade Systémique (Œdèmes/Dyslipidémie/Thrombose) -> ESKD
+RÈGLES CRITIQUES :
+1. NŒUD CENTRAL = Pathologie ciblée (type: "pathology") - UN SEUL
+2. NŒUD TERMINUS = "GUÉRISON / Rémission Complète" (type: "resolution") - TOUS les chemins DOIVENT y converger
+3. NOMS RÉELS DE MÉDICAMENTS avec DCI et dosage (ex: "Prednisone 60mg/j" pas "Corticoïdes")
+4. MAXIMUM 12-15 NŒUDS pour lisibilité visuelle
 
-TYPES DE NŒUDS OBLIGATOIRES :
-- "pathology" : Condition ou processus pathologique
-- "mechanism" : Mécanisme moléculaire ou cellulaire
-- "symptom" : Manifestation clinique
-- "treatment" : Intervention thérapeutique
-- "complication" : Effet secondaire ou complication
-- "resolution" : État de résolution ou homéostasie
+LOGIQUE DE CHAÎNE RÉCURSIVE (CRITIQUE) :
+Pour chaque médicament administré :
+1. SI le médicament PROVOQUE un effet secondaire significatif → créer nœud "side_effect"
+2. SI cet effet secondaire nécessite un traitement correctif → créer nouveau nœud "treatment"
+3. Répéter la logique jusqu'à ce que tous les effets soient maîtrisés
+4. Le dernier traitement de chaque chaîne → RÉSOUT → GUÉRISON
 
-FORMAT DE SORTIE JSON (OBLIGATOIRE - SI CE CHAMP MANQUE, L'ANALYSE EST ÉCHEC) :
+STRUCTURE ATTENDUE :
+[Pathologie] ← TRAITE ← [Médicament 1] → PROVOQUE → [Effet Sec. 1] ← TRAITE ← [Médicament 2] → RÉSOUT → [GUÉRISON]
+
+TYPES DE NŒUDS (6 TYPES) :
+- "pathology" : Nœud CENTRAL unique - La maladie ciblée
+- "treatment" : Médicaments avec NOM DCI RÉEL + DOSAGE
+- "symptom" : Symptômes cliniques de la pathologie
+- "side_effect" : Effets secondaires des traitements (à traiter)
+- "complication" : Complications évitées par le traitement
+- "resolution" : GUÉRISON - Terminus obligatoire (UN SEUL nœud)
+
+LABELS DE LIENS :
+TRAITE, PROVOQUE, RÉSOUT, MANIFESTE, PRÉVIENT, AGGRAVE, CORRIGE
+
+FORMAT DE SORTIE JSON (OBLIGATOIRE) :
 {
   "hypotheses": [
     {
       "hypothesis_id": "HYP-ULTRA-RCDP-GEN-2026",
-      "statement": "PROTOCOLE D'ÉRADICATION TOTALE ET RÉSOLUTION SYSTÉMIQUE : [TITRE SCIENTIFIQUE DE 50 MOTS]",
+      "statement": "PROTOCOLE THÉRAPEUTIQUE COMPLET VERS GUÉRISON : [TITRE]",
       
       "causal_graph": {
         "nodes": [
-          { "id": "n1", "label": "Dysrégulation Immunitaire (Lymphocytes B/T autoréactifs)", "type": "pathology", "mechanism": "Perte de tolérance au self, expansion clonale pathologique" },
-          { "id": "n2", "label": "Anticorps Anti-Néphrine/Podocine", "type": "mechanism", "mechanism": "Auto-anticorps ciblant les protéines du diaphragme de fente" },
-          { "id": "n3", "label": "Rupture du Slit Diaphragm", "type": "mechanism", "mechanism": "Désorganisation des protéines de jonction podocytaires" },
-          { "id": "n4", "label": "Protéinurie Massive (>3.5g/24h)", "type": "symptom", "mechanism": "Fuite des protéines sériques à travers la barrière glomérulaire" },
-          { "id": "n5", "label": "Hypoalbuminémie Critique (<25g/L)", "type": "symptom", "mechanism": "Déplétion du pool albumine sérique" },
-          { "id": "n6", "label": "Cascade Systémique (Œdèmes/Dyslipidémie/Hypercoagulabilité)", "type": "complication", "mechanism": "Pression oncotique effondrée, compensation hépatique, perte AT-III" },
-          { "id": "n7", "label": "Insuffisance Rénale Terminale (ESKD)", "type": "pathology", "mechanism": "Fibrose glomérulaire irréversible, GFR <15 mL/min" },
-          { "id": "t1", "label": "Immunosuppression (Rituximab/Cyclophosphamide)", "type": "treatment", "mechanism": "Déplétion lymphocytes B CD20+, arrêt production auto-anticorps" },
-          { "id": "r1", "label": "Rémission Complète (Protéinurie <0.3g/24h)", "type": "resolution", "mechanism": "Régénération podocytaire, restauration barrière de filtration" }
+          { "id": "p1", "label": "Syndrome Néphrotique Cortico-Résistant", "type": "pathology", "mechanism": "Glomérulopathie avec protéinurie massive réfractaire" },
+          
+          { "id": "t1", "label": "Prednisone 1mg/kg/j (max 80mg)", "type": "treatment", "mechanism": "Glucocorticoïde - Immunosuppression anti-inflammatoire" },
+          { "id": "e1", "label": "Hyperglycémie cortico-induite", "type": "side_effect", "mechanism": "Néoglucogenèse hépatique accrue, résistance insuline" },
+          { "id": "t2", "label": "Metformine 500mg x2/j", "type": "treatment", "mechanism": "Biguanide - Sensibilisateur insuline, inhibe néoglucogenèse" },
+          
+          { "id": "t3", "label": "Rituximab 375mg/m² IV (J1, J8, J15, J22)", "type": "treatment", "mechanism": "Anti-CD20 - Déplétion lymphocytes B autoréactifs" },
+          { "id": "e2", "label": "Lymphopénie B prolongée", "type": "side_effect", "mechanism": "Déplétion CD19+ durable, risque infectieux" },
+          { "id": "t4", "label": "Cotrimoxazole 400/80mg 3x/sem", "type": "treatment", "mechanism": "Prophylaxie Pneumocystis jirovecii" },
+          
+          { "id": "t5", "label": "IEC/ARA2 (Ramipril 5mg/j)", "type": "treatment", "mechanism": "Néphroprotection, réduction protéinurie" },
+          { "id": "e3", "label": "Hyperkaliémie", "type": "side_effect", "mechanism": "Inhibition aldostérone, rétention K+" },
+          { "id": "t6", "label": "Kayexalate 15g/j PRN", "type": "treatment", "mechanism": "Résine échangeuse cations, élimination K+" },
+          
+          { "id": "s1", "label": "Œdèmes généralisés", "type": "symptom", "mechanism": "Hypoalbuminémie, fuite capillaire" },
+          { "id": "t7", "label": "Furosémide 40-80mg/j", "type": "treatment", "mechanism": "Diurétique de l'anse, natriurèse" },
+          
+          { "id": "g1", "label": "GUÉRISON - Rémission Complète", "type": "resolution", "mechanism": "Protéinurie <0.3g/24h, albumine >35g/L, fonction rénale préservée" }
         ],
         "edges": [
-          { "from": "n1", "to": "n2", "label": "PRODUIT", "reason": "Les lymphocytes autoréactifs génèrent des auto-anticorps spécifiques" },
-          { "from": "n2", "to": "n3", "label": "CIBLE", "reason": "Fixation et destruction des protéines du diaphragme de fente" },
-          { "from": "n3", "to": "n4", "label": "PROVOQUE", "reason": "Perte d'intégrité de la barrière de filtration glomérulaire" },
-          { "from": "n4", "to": "n5", "label": "MÈNE_À", "reason": "Perte urinaire massive d'albumine" },
-          { "from": "n5", "to": "n6", "label": "DÉCLENCHE", "reason": "Effondrement pression oncotique et mécanismes compensatoires" },
-          { "from": "n6", "to": "n7", "label": "ABOUTIT_À", "reason": "Dommages glomérulaires irréversibles en absence de traitement" },
-          { "from": "t1", "to": "n1", "label": "TRAITE", "reason": "Suppression de la réponse immunitaire auto-réactive" },
-          { "from": "t1", "to": "r1", "label": "RÉSOUT", "reason": "Arrêt de la cascade pathologique et régénération tissulaire" }
+          { "from": "p1", "to": "s1", "label": "MANIFESTE", "reason": "Symptôme cardinal" },
+          
+          { "from": "t1", "to": "p1", "label": "TRAITE", "reason": "Première ligne immunosuppressive" },
+          { "from": "t1", "to": "e1", "label": "PROVOQUE", "reason": "Effet métabolique des corticoïdes" },
+          { "from": "t2", "to": "e1", "label": "CORRIGE", "reason": "Contrôle glycémique" },
+          
+          { "from": "t3", "to": "p1", "label": "TRAITE", "reason": "Thérapie ciblée anti-B" },
+          { "from": "t3", "to": "e2", "label": "PROVOQUE", "reason": "Mécanisme d'action anti-CD20" },
+          { "from": "t4", "to": "e2", "label": "CORRIGE", "reason": "Prévention infection opportuniste" },
+          
+          { "from": "t5", "to": "p1", "label": "TRAITE", "reason": "Réduction protéinurie" },
+          { "from": "t5", "to": "e3", "label": "PROVOQUE", "reason": "Effet SRAA" },
+          { "from": "t6", "to": "e3", "label": "CORRIGE", "reason": "Élimination potassium" },
+          
+          { "from": "t7", "to": "s1", "label": "TRAITE", "reason": "Symptomatique œdèmes" },
+          
+          { "from": "t2", "to": "g1", "label": "RÉSOUT", "reason": "Contrôle métabolique atteint" },
+          { "from": "t4", "to": "g1", "label": "RÉSOUT", "reason": "Protection infectieuse assurée" },
+          { "from": "t6", "to": "g1", "label": "RÉSOUT", "reason": "Équilibre ionique restauré" },
+          { "from": "t7", "to": "g1", "label": "RÉSOUT", "reason": "Œdèmes résolus" },
+          { "from": "t3", "to": "g1", "label": "RÉSOUT", "reason": "Rémission immunologique" }
         ]
       },
-      "mermaid_graph": "graph TD; n1[Dysrégulation Immunitaire B/T] -->|PRODUIT| n2[Anticorps Anti-Néphrine]; n2 -->|CIBLE| n3[Rupture Slit Diaphragm]; n3 -->|PROVOQUE| n4[Protéinurie Massive]; n4 -->|MÈNE_À| n5[Hypoalbuminémie]; n5 -->|DÉCLENCHE| n6[Cascade Systémique]; n6 -->|ABOUTIT_À| n7[ESKD]; t1[Immunosuppression] -->|TRAITE| n1; t1 -->|RÉSOUT| r1[Rémission Complète];",
+      "mermaid_graph": "graph TD; p1((Pathologie)) --> t1[Prednisone]; t1 --> e1[Hyperglycémie]; t2[Metformine] --> e1; t3[Rituximab] --> p1; t3 --> e2[Lymphopénie]; t4[Cotrimoxazole] --> e2; t2 --> g1((GUÉRISON)); t4 --> g1; t3 --> g1;",
 
 
       "executive_summary": {

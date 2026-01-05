@@ -17,11 +17,12 @@ import {
 import '@xyflow/react/dist/style.css';
 import { Badge } from '@/components/ui/badge';
 
-// Node styling based on type - matching the reference image aesthetic
+// Node styling based on type - matching the radial graph structure
 const ClinicalNode = ({ data, selected }: { data: { label: string; type: string; mechanism?: string; subItems?: string[] }; selected: boolean }) => {
     const getNodeStyle = (type: string) => {
         switch (type) {
             case 'pathology':
+                // Central node - red, larger, glowing
                 return {
                     bg: 'bg-gradient-to-br from-red-700 to-red-900',
                     border: 'border-red-400',
@@ -30,40 +31,62 @@ const ClinicalNode = ({ data, selected }: { data: { label: string; type: string;
                     shadow: 'shadow-[0_0_40px_rgba(239,68,68,0.4)]'
                 };
             case 'symptom':
-                return {
-                    bg: 'bg-gradient-to-br from-slate-700 to-slate-900',
-                    border: 'border-slate-500',
-                    text: 'text-slate-100',
-                    size: 'min-w-[100px] rounded-full',
-                    shadow: 'shadow-lg'
-                };
-            case 'mechanism':
-                return {
-                    bg: 'bg-gradient-to-br from-purple-800 to-purple-950',
-                    border: 'border-purple-400',
-                    text: 'text-purple-100',
-                    size: 'min-w-[90px] rounded-full',
-                    shadow: 'shadow-lg'
-                };
-            case 'treatment':
-            case 'medication':
+                // Gray/slate for symptoms
                 return {
                     bg: 'bg-gradient-to-br from-slate-600 to-slate-800',
                     border: 'border-slate-400',
                     text: 'text-slate-100',
-                    size: 'min-w-[90px] rounded-full',
+                    size: 'min-w-[100px] rounded-full',
                     shadow: 'shadow-lg'
                 };
-            case 'side-effect':
-            case 'complication':
+            case 'molecule':
+                // Purple for molecular targets
                 return {
-                    bg: 'bg-gradient-to-br from-amber-700 to-amber-900',
-                    border: 'border-amber-400',
-                    text: 'text-amber-100',
+                    bg: 'bg-gradient-to-br from-purple-700 to-purple-900',
+                    border: 'border-purple-400',
+                    text: 'text-purple-100',
+                    size: 'min-w-[90px] rounded-full',
+                    shadow: 'shadow-[0_0_20px_rgba(147,51,234,0.3)]'
+                };
+            case 'treatment':
+            case 'medication':
+                // Blue for treatments/medications
+                return {
+                    bg: 'bg-gradient-to-br from-blue-600 to-blue-800',
+                    border: 'border-blue-400',
+                    text: 'text-blue-100',
+                    size: 'min-w-[100px] rounded-full',
+                    shadow: 'shadow-[0_0_20px_rgba(59,130,246,0.3)]'
+                };
+            case 'side_effect':
+                // Yellow/amber for side effects
+                return {
+                    bg: 'bg-gradient-to-br from-yellow-600 to-amber-800',
+                    border: 'border-yellow-400',
+                    text: 'text-yellow-100',
                     size: 'min-w-[80px] rounded-full',
                     shadow: 'shadow-lg'
                 };
+            case 'complication':
+                // Orange for complications
+                return {
+                    bg: 'bg-gradient-to-br from-orange-600 to-orange-800',
+                    border: 'border-orange-400',
+                    text: 'text-orange-100',
+                    size: 'min-w-[90px] rounded-full',
+                    shadow: 'shadow-lg'
+                };
+            case 'research':
+                // Teal/cyan for research projects
+                return {
+                    bg: 'bg-gradient-to-br from-teal-600 to-teal-800',
+                    border: 'border-teal-300',
+                    text: 'text-teal-100',
+                    size: 'min-w-[100px] rounded-full',
+                    shadow: 'shadow-[0_0_25px_rgba(20,184,166,0.3)]'
+                };
             case 'resolution':
+                // Green for resolution (kept for backward compatibility)
                 return {
                     bg: 'bg-gradient-to-br from-emerald-600 to-emerald-800',
                     border: 'border-emerald-300',
@@ -71,8 +94,10 @@ const ClinicalNode = ({ data, selected }: { data: { label: string; type: string;
                     size: 'min-w-[120px] min-h-[80px] rounded-full',
                     shadow: 'shadow-[0_0_30px_rgba(16,185,129,0.4)]'
                 };
+            case 'mechanism':
             case 'evaluation':
             case 'monitoring':
+                // Cyan for mechanisms/monitoring (kept for backward compatibility)
                 return {
                     bg: 'bg-gradient-to-br from-cyan-700 to-cyan-900',
                     border: 'border-cyan-400',
@@ -90,6 +115,7 @@ const ClinicalNode = ({ data, selected }: { data: { label: string; type: string;
                 };
         }
     };
+
 
     const style = getNodeStyle(data.type);
 
@@ -418,29 +444,39 @@ export default function CausalGraph({ hypothesis }: CausalGraphProps) {
             <div className="absolute inset-0 pointer-events-none opacity-30" style={{ backgroundImage: 'url("data:image/svg+xml,%3Csvg viewBox=\'0 0 100 100\' xmlns=\'http://www.w3.org/2000/svg\'%3E%3Cfilter id=\'noiseFilter\'%3E%3CfeTurbulence type=\'fractalNoise\' baseFrequency=\'0.9\' numOctaves=\'4\' stitchTiles=\'stitch\'/%3E%3C/filter%3E%3Crect width=\'100%25\' height=\'100%25\' filter=\'url(%23noiseFilter)\'/%3E%3C/svg%3E")' }} />
 
             {/* Legend */}
-            <div className="absolute top-4 left-4 z-10 p-4 bg-white/80 backdrop-blur border border-stone-200 rounded-xl shadow-lg">
+            <div className="absolute top-4 left-4 z-10 p-4 bg-white/90 backdrop-blur border border-stone-200 rounded-xl shadow-lg">
                 <h3 className="text-sm font-bold text-stone-800 mb-3 uppercase tracking-wide">
-                    Schéma Causal Complet
+                    Légende du Graphe
                 </h3>
-                <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-[10px]">
+                <div className="grid grid-cols-2 gap-x-6 gap-y-2 text-[10px]">
                     <div className="flex items-center gap-2">
-                        <div className="w-4 h-4 rounded-full bg-gradient-to-br from-red-700 to-red-900 border border-red-400" />
-                        <span className="text-stone-700 font-medium">Pathologie</span>
+                        <div className="w-4 h-4 rounded-full bg-gradient-to-br from-red-700 to-red-900 border border-red-400 shadow-sm" />
+                        <span className="text-stone-700 font-medium">Pathologie ciblée</span>
                     </div>
                     <div className="flex items-center gap-2">
-                        <div className="w-4 h-4 rounded-full bg-gradient-to-br from-slate-600 to-slate-800 border border-slate-400" />
+                        <div className="w-4 h-4 rounded-full bg-gradient-to-br from-blue-600 to-blue-800 border border-blue-400 shadow-sm" />
                         <span className="text-stone-700 font-medium">Traitement</span>
                     </div>
                     <div className="flex items-center gap-2">
-                        <div className="w-4 h-4 rounded-full bg-gradient-to-br from-amber-700 to-amber-900 border border-amber-400" />
-                        <span className="text-stone-700 font-medium">Effet Secondaire</span>
+                        <div className="w-4 h-4 rounded-full bg-gradient-to-br from-slate-600 to-slate-800 border border-slate-400 shadow-sm" />
+                        <span className="text-stone-700 font-medium">Symptôme</span>
                     </div>
                     <div className="flex items-center gap-2">
-                        <div className="w-4 h-4 rounded-full bg-gradient-to-br from-emerald-600 to-emerald-800 border border-emerald-300" />
-                        <span className="text-stone-700 font-medium">Guérison</span>
+                        <div className="w-4 h-4 rounded-full bg-gradient-to-br from-yellow-600 to-amber-800 border border-yellow-400 shadow-sm" />
+                        <span className="text-stone-700 font-medium">Effet secondaire</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                        <div className="w-4 h-4 rounded-full bg-gradient-to-br from-orange-600 to-orange-800 border border-orange-400 shadow-sm" />
+                        <span className="text-stone-700 font-medium">Complication</span>
+                    </div>
+                    <div className="flex items-center gap-2 col-span-2">
+                        <div className="w-5 h-5 rounded-full bg-gradient-to-br from-emerald-500 to-emerald-700 border-2 border-emerald-300 shadow-[0_0_10px_rgba(16,185,129,0.4)]" />
+                        <span className="text-emerald-700 font-bold">GUÉRISON</span>
                     </div>
                 </div>
             </div>
+
+
 
             <div className="absolute top-4 right-4 z-10">
                 <Badge className="bg-stone-800 text-stone-100 border-none px-3 py-1 text-[10px] font-mono">

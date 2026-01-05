@@ -128,6 +128,28 @@ interface Hypothesis {
     mechanistic_model?: MechanisticModel;
     risks_monitoring?: RisksMonitoring;
 
+    // Causal Graph & Cascade Fields (for CausalGraph component)
+    causal_graph?: {
+        nodes?: Array<{ id: string; label: string; type: string; mechanism?: string; subItems?: string[] }>;
+        edges?: Array<{ from: string; to: string; label?: string; reason?: string }>;
+    };
+    systemic_cascade?: Array<{ organ: string; impact: string; mechanism?: string; severity?: string }>;
+    therapeutic_resolution_chains?: Array<{
+        step?: number;
+        intervention: string;
+        pharmacodynamics?: string;
+        expected_outcome?: string;
+        side_effects?: Array<{ issue: string; resolution_intervention?: string; interaction_safety?: string; recursive_resolution?: string }>;
+    }>;
+    etiology_depth?: {
+        root_causes?: string[];
+        triggers?: string[];
+        pathway_origin?: string;
+        genetic_factors?: string[];
+    };
+    mermaid_graph?: string;
+    is_complete_resolution?: boolean;
+
     // Existing Fields
     predictions?: string[];
     minimal_tests?: any[];
@@ -2802,6 +2824,22 @@ const DiscoveryPlatform = () => {
                     id: h.id,
                     hypothesis_id: h.hypothesis_id,
                     statement: h.statement,
+                    // Committee-Grade Fields
+                    executive_summary: h.executive_summary,
+                    clinical_scope: h.clinical_scope,
+                    rival_hypotheses: h.rival_hypotheses,
+                    evidence_snapshot: h.evidence_snapshot,
+                    mechanistic_model: h.mechanistic_model,
+                    risks_monitoring: h.risks_monitoring,
+                    detailed_analysis: h.detailed_analysis,
+                    // Causal Graph & Cascade Fields - CRITICAL for graph visualization
+                    causal_graph: h.causal_graph,
+                    systemic_cascade: h.systemic_cascade,
+                    therapeutic_resolution_chains: h.therapeutic_resolution_chains,
+                    etiology_depth: h.etiology_depth,
+                    mermaid_graph: h.mermaid_graph,
+                    is_complete_resolution: h.is_complete_resolution,
+                    // Other fields
                     scores: h.scores || { novelty: 0, plausibility: 0, strength: 0, feasibility: 0, impact: 0, total: 0 },
                     status: h.status || 'pending',
                     created_at: h.created_at
@@ -3076,7 +3114,7 @@ const DiscoveryPlatform = () => {
                         return;
                     }
 
-                    // Add hypothesis to state
+                    // Add hypothesis to state - including causal graph fields
                     const newHypothesis: Hypothesis = {
                         id: hypothesis.id,
                         hypothesis_id: hypothesis.hypothesis_id || `H-${Date.now()}`,
@@ -3088,6 +3126,14 @@ const DiscoveryPlatform = () => {
                         mechanistic_model: hypothesis.mechanistic_model,
                         risks_monitoring: hypothesis.risks_monitoring,
                         detailed_analysis: hypothesis.detailed_analysis,
+                        // Causal Graph & Cascade Fields - CRITICAL for graph visualization
+                        causal_graph: hypothesis.causal_graph,
+                        systemic_cascade: hypothesis.systemic_cascade,
+                        therapeutic_resolution_chains: hypothesis.therapeutic_resolution_chains,
+                        etiology_depth: hypothesis.etiology_depth,
+                        mermaid_graph: hypothesis.mermaid_graph,
+                        is_complete_resolution: hypothesis.is_complete_resolution,
+                        // Existing fields
                         drug_repurposing_candidates: hypothesis.drug_repurposing_candidates || [],
                         predictions: hypothesis.predictions || [],
                         minimal_tests: hypothesis.minimal_tests || [],
