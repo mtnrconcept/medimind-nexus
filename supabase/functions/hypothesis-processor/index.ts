@@ -247,7 +247,40 @@ Retourne JSON strict selon le format spécifié.`;
                 throw new Error('No JSON found in response');
             }
 
-            const parsed = JSON.parse(jsonString);
+            let parsed;
+            try {
+                parsed = JSON.parse(jsonString);
+            } catch (e) {
+                console.log('Initial JSON parse failed, attempting processing of control characters...');
+                // Helper to escape control characters ONLY inside strings to fix "Bad control character" error
+                const escapeInStrings = (str: string) => {
+                    let inString = false;
+                    let result = '';
+                    for (let i = 0; i < str.length; i++) {
+                        const char = str[i];
+                        if (char === '"' && (i === 0 || str[i - 1] !== '\\')) {
+                            inString = !inString;
+                        }
+
+                        if (inString) {
+                            if (char === '\n') result += '\\n';
+                            else if (char === '\r') result += '\\r';
+                            else if (char === '\t') result += '\\t';
+                            else result += char;
+                        } else {
+                            result += char;
+                        }
+                    }
+                    return result;
+                };
+
+                try {
+                    parsed = JSON.parse(escapeInStrings(jsonString));
+                } catch (e2) {
+                    console.error('Failed to parse even after sanitization:', e2);
+                    throw e; // Throw original or new error
+                }
+            }
             const hypotheses = parsed.hypotheses || [];
 
             if (hypotheses.length === 0) {
