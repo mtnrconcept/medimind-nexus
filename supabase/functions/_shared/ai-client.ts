@@ -5,7 +5,7 @@
 
 export interface AIResponse {
     text: string;
-    provider: 'anthropic' | 'google';
+    provider: 'anthropic' | 'google' | 'none';
     model: string;
 }
 
@@ -186,7 +186,7 @@ export async function callAI(
 export async function streamAI(
     systemPrompt: string,
     userPrompt: string | AIMessage[],
-    onChunk: (text: string) => void,
+    onChunk: (text: string) => void | Promise<void>,
     options: {
         model?: string;
         maxTokens?: number;
@@ -289,7 +289,7 @@ export async function streamAI(
                                 if (event.type === 'content_block_delta' && event.delta?.text) {
                                     const text = event.delta.text;
                                     fullText += text;
-                                    onChunk(text);
+                                    await onChunk(text);
                                 }
                             } catch (e) { /* ignore */ }
                         }
@@ -343,7 +343,7 @@ export async function streamAI(
                     while ((match = textRegex.exec(chunk)) !== null) {
                         const text = match[1].replace(/\\n/g, '\n').replace(/\\"/g, '"');
                         fullText += text;
-                        onChunk(text);
+                        await onChunk(text);
                     }
                 }
 

@@ -91,7 +91,11 @@ serve(async (req) => {
             // Generate hypothesis using Claude (copy from discovery-platform generateHypotheses function)
             const systemPrompt = `Tu es un expert scientifique médical chargé de générer un RAPPORT DE RECHERCHE COMMITTEE-GRADE sur une hypothèse thérapeutique.
 
-FORMAT DE SORTIE (JSON strict):
+INSTRUCTION DE STREAMING:
+Commence par une section "RAISONNEMENT SCIENTIFIQUE:" où tu analyses les preuves, les contradictions et la logique physiologique étape par étape.
+ENSUITE, génère le bloc JSON strict.
+
+FORMAT DE SORTIE FINAL (JSON strict):
 {
   "hypotheses": [
     {
@@ -167,20 +171,31 @@ Retourne JSON strict selon le format spécifié.`;
                 config: { broadcast: { self: true } }
             });
 
+            // Subscribe safely (non-awaiting to avoid blocking, but initiates connection)
+            broadcastChannel.subscribe((status) => {
+                if (status === 'SUBSCRIBED') {
+                    console.log(`[Processor] Joined channel ${job.id}`);
+                }
+            });
+
             // Call AI with streaming and Gemini fallback
             const aiResponse = await streamAI(
                 systemPrompt,
                 userPrompt,
                 async (text) => {
                     // Broadcast chunk to frontend via Realtime
-                    await broadcastChannel.send({
-                        type: 'broadcast',
-                        event: 'chunk',
-                        payload: { text }
-                    });
+                    try {
+                        await broadcastChannel.send({
+                            type: 'broadcast',
+                            event: 'chunk',
+                            payload: { text }
+                        });
+                    } catch (err) {
+                        console.warn('Realtime send failed:', err);
+                    }
                 },
                 {
-                    model: 'claude-3-opus-20240229',
+                    model: 'claude-3-5-sonnet-20240620',
                     maxTokens: 30000
                 }
             );

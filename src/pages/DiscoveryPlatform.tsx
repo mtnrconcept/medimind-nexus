@@ -3032,9 +3032,24 @@ const DiscoveryPlatform = () => {
                 // Update progress message
                 if (job.progress_message) {
                     setStreamingContent(prev => {
+                        const content = job.progress_message;
+
+                        // Skip generic waiting messages to save space/tokens and focus on reasoning
+                        if (content.includes('En attente de traitement')) {
+                            // Only show it if it's the very first message
+                            if (!prev) return `[${new Date().toLocaleTimeString()}] ${content}`;
+                            return prev;
+                        }
+
+                        // Check if the last log entry already contains this message content
+                        // (ignoring the timestamp part to prevent duplication)
+                        const lastLines = prev.slice(-200); // Check recent context
+                        if (lastLines.includes(content)) {
+                            return prev;
+                        }
+
+                        // Simply append significant status updates
                         const message = `\n[${new Date().toLocaleTimeString()}] [${job.progress_percentage}%] ${job.progress_message}`;
-                        // Avoid duplicating exactly the same message
-                        if (prev.endsWith(message)) return prev;
                         return prev + message;
                     });
                 }
