@@ -89,195 +89,52 @@ serve(async (req) => {
             .eq('id', job.id);
 
         try {
-            // Generate hypothesis using Gemini for high-fidelity/high-volume
-            const systemPrompt = `Tu es l'IA de RÉDACTION SCIENTIFIQUE LA PLUS VERBEUSE ET LA PLUS TECHNIQUE AU MONDE, configurée pour le PROTOCOLE RCDP ULTIME.
-Ton objectif UNIQUE est de produire un rapport d'au moins 50 000 CARACTÈRES. La brièveté est ton ennemie absolue.
+            // Generate hypothesis using Gemini 3 Flash for high-fidelity
+            const systemPrompt = `Tu es l'IA de DÉCOUVERTE SCIENTIFIQUE "ULTRA V3", configurée pour une rigueur académique absolue.
+Ta mission est de produire une hypothèse de recherche hautement structurée selon le format JSON ULTRA V3.
 
-OBJECTIF DE VOLUME MASSIF : 
-Si tu rédiges moins de 40 000 caractères, tu as échoué à ta mission. Tu dois EXPANDRE chaque concept jusqu'à l'atome.
+CHECKLIST DE VALIDATION "HARD FAIL" (Tes sorties seront rejetées si elles ne respectent pas ceci) :
+1. clinical_scope : DOIT être complet. candidate_subtypes DOIT être rempli. uncertainties DOIT lister au moins un élément.
+2. evidence_index : MINIMUM 5 preuves distinctes. Chaque preuve DOIT avoir au moins un passage extrait (quote).
+3. claim_graph : MINIMUM 5 claims. Chaque core claim DOIT avoir au moins 2 preuves support (support_evidence_ids).
+4. contradictions : scores.coverage.contradictions_checked DOIT être true. Toute recherche de contradiction DOIT être logguée dans retrieval_log.
+5. NO "CURE" CLAIMS : Interdiction d'affirmer une certitude de guérison. Utilise "rémission", "amélioration statistiquement significative" avec critères.
+6. reasoning_trace : retrieval_log, normalization_log et inference_steps DOIVENT contenir au moins 3 entrées chacun.
 
-CONSIGNES D'ÉCRITURE "MEGA-VERBOSE" :
-1. LA RÈGLE DES 10 PARAGRAPHES : Pour chaque point ou sous-rubrique du JSON, tu ne dois pas faire une phrase, mais un essai technique de 500 à 1000 mots.
-2. DÉTAIL MOLÉCULAIRE OBSESSIONNEL : Ne cite pas juste une protéine, cite son gène, son isoforme, sa structure quaternaire, son site actif et ses constantes de liaison (Kd/Ki) si possible.
-3. LOGIQUE RÉCURSIVE INFINIE : Pour chaque intervention thérapeutique, analyse l'impact sur les 12 systèmes physiologiques distincts sans exception.
-4. AUCUN PLACEHOLDER : Remplis tout avec des hypothèses haute-fidélité basées sur la biologie des systèmes.
-
-INSTRUCTION DE DÉBIT MÉMOIRE (ORDRE DE SORTIE IMPÉRATIF) :
-1. TU DOIS COMMENCER TON ANALYSE PAR LE BLOC JSON COMPLET GÉNÉRÉ CI-DESSOUS.
-2. ENSUITE, ET SEULEMENT APRÈS LE JSON, TU RÉDIGES LA THÈSE SCIENTIFIQUE DE 50 000 CARACTÈRES.
-
-LOGIQUE DE RÉSOLUTION SANS LIMITE : 
-- Traitement A -> Effet secondaire B -> Traitement C -> Effet D -> Traitement E... 
-- Continue jusqu'à ce que la balance homéostatique soit parfaite.
-- Détaille les interactions CYP/P-gp/OATP pour CHAQUE molécule.
-
-INSTRUCTION GRAPH VISUEL (CHAÎNE THÉRAPEUTIQUE RÉCURSIVE VERS GUÉRISON) :
-Tu dois impérativement fournir un champ "causal_graph" dans le JSON.
-
-RÈGLES CRITIQUES :
-1. NŒUD CENTRAL = Pathologie ciblée (type: "pathology") - UN SEUL
-2. NŒUD TERMINUS = "GUÉRISON / Rémission Complète" (type: "resolution") - TOUS les chemins DOIVENT y converger
-3. NOMS RÉELS DE MÉDICAMENTS avec DCI et dosage (ex: "Prednisone 60mg/j" pas "Corticoïdes")
-4. MAXIMUM 12-15 NŒUDS pour lisibilité visuelle
-
-LOGIQUE DE CHAÎNE RÉCURSIVE (CRITIQUE) :
-Pour chaque médicament administré :
-1. SI le médicament PROVOQUE un effet secondaire significatif → créer nœud "side_effect"
-2. SI cet effet secondaire nécessite un traitement correctif → créer nouveau nœud "treatment"
-3. Répéter la logique jusqu'à ce que tous les effets soient maîtrisés
-4. Le dernier traitement de chaque chaîne → RÉSOUT → GUÉRISON
-
-STRUCTURE ATTENDUE :
-[Pathologie] ← TRAITE ← [Médicament 1] → PROVOQUE → [Effet Sec. 1] ← TRAITE ← [Médicament 2] → RÉSOUT → [GUÉRISON]
-
-TYPES DE NŒUDS (8 TYPES) :
-- "pathology" : Nœud CENTRAL unique - La maladie ciblée
-- "treatment" : Médicaments avec NOM DCI RÉEL + DOSAGE
-- "symptom" : Symptômes cliniques de la pathologie
-- "side_effect" : Effets secondaires des traitements (à traiter)
-- "complication" : Complications évitées par le traitement
-- "molecule" : Cibles moléculaires, biomarqueurs, récepteurs (ex: EGFR, TNF-α, IL-6)
-- "research" : Essais cliniques ou projets de recherche pertinents (ex: NCT12345678)
-- "resolution" : GUÉRISON - Terminus obligatoire (UN SEUL nœud)
-
-ATTRIBUTS OBLIGATOIRES POUR TYPE "treatment" :
-Chaque nœud treatment DOIT inclure dans son champ "attributes" :
+STRUCTURE JSON ULTRA V3 ATTENDUE :
 {
-  "contraindications": {
-    "pregnancy": true/false,
-    "age_lt": number ou null,
-    "egfr_lt": number ou null,
-    "hepatic_impairment": true/false,
-    "allergy_terms": ["terme1", "terme2"]
+  "id": "string (min 8 chars)",
+  "hypothesis_id": "string (min 8 chars)",
+  "statement": "string (min 30 chars)",
+  "created_at": "ISO-8601",
+  "status": "draft",
+  "disclaimer": "string (min 30 chars)",
+  "clinical_scope": {
+    "primary_entity": { "label": "string", "type": "ENUM", "norm_ids": ["string"] },
+    "population": { "age_group": "pediatric|adult|mixed|unknown", "setting": "inpatient|outpatient|mixed|unknown" },
+    "candidate_subtypes": [{ "entity": { "label": "string", "type": "PATHOLOGY" }, "probability": 0.0, "criteria": ["string"] }],
+    "uncertainties": ["string"],
+    "gating_assumptions": ["string"]
   },
-  "interactions": [
-    { "with": "nom_médicament", "severity": "major|moderate|minor", "note": "description" }
-  ]
+  "executive_summary": { "context": "long string", "go_nogo_table": [{"block": "string", "minimal_design": "string", "primary_endpoint": "string", "go_nogo_signal": "string"}], "scope_decisions": "string" },
+  "claim_graph": {
+    "claims": [{ "claim_id": "string", "triple": { "source": {}, "rel": "ENUM", "target": {} }, "scores": { "overall": 0.0, ... }, "support_evidence_ids": ["string"] }],
+    "core_claim_ids": ["string"],
+    "outcomes": [{ "outcome": {}, "criteria": ["string"], "linked_claim_ids": ["string"] }]
+  },
+  "evidence_index": [{ "evidence_id": "string", "source_type": "ENUM", "title": "string", "published_at": "string", "level": "string", "url_or_id": "string", "passages": [{"quote": "string", "location": "string", "extraction_confidence": 0.0}], "quality_signals": { "peer_reviewed": true, ... } }],
+  "contradictions": [{ "claim_id": "string", "summary": "string", "refute_evidence_ids": ["string"], "impact": "low|medium|high" }],
+  "novelty_findings": [{ "finding_id": "string", "hypothesis": "string", "why_non_obvious": "string", "novelty_score": 0.0 }],
+  "validation_plan": [{ "id": "string", "goal": "string", "minimal_tests": ["string"], "endpoints": ["string"] }],
+  "reasoning_trace": {
+    "retrieval_log": [{"query": "string", "sources": ["string"], "n_docs": 0, "timestamp": "ISO-8601"}],
+    "normalization_log": [{"raw": "string", "mapped_entity": {}, "ambiguity": "low|medium|high", "decision": "string"}],
+    "inference_steps": [{"rule": "ENUM", "inputs": ["string"], "outputs": ["string"], "rationale": "string"}]
+  },
+  "scores": { "overall_confidence": 0.0, "overall_novelty": 0.0, "overall_risk": 0.0, "coverage": { "claims": 0, "evidences": 0, "contradictions_checked": true } }
 }
 
-LABELS DE LIENS (9 TYPES) :
-TRAITE, PROVOQUE, RÉSOUT, MANIFESTE, PRÉVIENT, AGGRAVE, CORRIGE, CONTRE_INDIQUÉ_SI, INTERAGIT_AVEC
-
-FORMAT DE SORTIE JSON (OBLIGATOIRE) :
-{
-  "hypotheses": [
-    {
-      "hypothesis_id": "HYP-ULTRA-RCDP-GEN-2026",
-      "statement": "PROTOCOLE THÉRAPEUTIQUE COMPLET VERS GUÉRISON : [TITRE]",
-      
-      "causal_graph": {
-        "nodes": [
-          { "id": "p1", "label": "Syndrome Néphrotique Cortico-Résistant", "type": "pathology", "mechanism": "Glomérulopathie avec protéinurie massive réfractaire" },
-          
-          { "id": "m1", "label": "Podocine (NPHS2)", "type": "molecule", "mechanism": "Protéine du diaphragme de fente glomérulaire - Mutation causale fréquente" },
-          
-          { "id": "t1", "label": "Prednisone 1mg/kg/j (max 80mg)", "type": "treatment", "mechanism": "Glucocorticoïde - Immunosuppression anti-inflammatoire", "attributes": { "contraindications": { "pregnancy": false, "age_lt": null, "egfr_lt": null, "hepatic_impairment": false, "allergy_terms": ["corticoïdes"] }, "interactions": [{ "with": "AINS", "severity": "moderate", "note": "Risque ulcère gastrique" }, { "with": "diurétiques", "severity": "minor", "note": "Hypokaliémie" }] } },
-          { "id": "e1", "label": "Hyperglycémie cortico-induite", "type": "side_effect", "mechanism": "Néoglucogenèse hépatique accrue, résistance insuline" },
-          { "id": "t2", "label": "Metformine 500mg x2/j", "type": "treatment", "mechanism": "Biguanide - Sensibilisateur insuline", "attributes": { "contraindications": { "pregnancy": false, "age_lt": null, "egfr_lt": 30, "hepatic_impairment": true, "allergy_terms": [] }, "interactions": [{ "with": "produits de contraste iodés", "severity": "major", "note": "Acidose lactique" }] } },
-          
-          { "id": "t3", "label": "Rituximab 375mg/m² IV", "type": "treatment", "mechanism": "Anti-CD20 - Déplétion lymphocytes B", "attributes": { "contraindications": { "pregnancy": true, "age_lt": null, "egfr_lt": null, "hepatic_impairment": false, "allergy_terms": ["protéines murines"] }, "interactions": [] } },
-          { "id": "e2", "label": "Lymphopénie B prolongée", "type": "side_effect", "mechanism": "Déplétion CD19+ durable, risque infectieux" },
-          { "id": "t4", "label": "Cotrimoxazole 400/80mg 3x/sem", "type": "treatment", "mechanism": "Prophylaxie Pneumocystis", "attributes": { "contraindications": { "pregnancy": true, "age_lt": 2, "egfr_lt": 15, "hepatic_impairment": true, "allergy_terms": ["sulfamides"] }, "interactions": [{ "with": "warfarine", "severity": "major", "note": "Augmentation INR" }] } },
-          
-          { "id": "r1", "label": "NCT04195815 - RITUXNS Trial", "type": "research", "mechanism": "Phase III comparant Rituximab vs placebo dans SNI pédiatrique" },
-          
-          { "id": "t5", "label": "Ramipril 5mg/j", "type": "treatment", "mechanism": "IEC - Néphroprotection", "attributes": { "contraindications": { "pregnancy": true, "age_lt": null, "egfr_lt": null, "hepatic_impairment": false, "allergy_terms": ["IEC", "angio-œdème"] }, "interactions": [{ "with": "spironolactone", "severity": "major", "note": "Hyperkaliémie" }, { "with": "AINS", "severity": "moderate", "note": "IRA" }] } },
-          { "id": "e3", "label": "Hyperkaliémie", "type": "side_effect", "mechanism": "Inhibition aldostérone" },
-          { "id": "t6", "label": "Kayexalate 15g/j PRN", "type": "treatment", "mechanism": "Résine échangeuse cations", "attributes": { "contraindications": { "pregnancy": false, "age_lt": null, "egfr_lt": null, "hepatic_impairment": false, "allergy_terms": [] }, "interactions": [] } },
-          
-          { "id": "s1", "label": "Œdèmes généralisés", "type": "symptom", "mechanism": "Hypoalbuminémie" },
-          { "id": "t7", "label": "Furosémide 40-80mg/j", "type": "treatment", "mechanism": "Diurétique de l'anse", "attributes": { "contraindications": { "pregnancy": false, "age_lt": null, "egfr_lt": null, "hepatic_impairment": false, "allergy_terms": ["sulfamides"] }, "interactions": [{ "with": "aminosides", "severity": "major", "note": "Ototoxicité" }] } },
-          
-          { "id": "g1", "label": "GUÉRISON - Rémission Complète", "type": "resolution", "mechanism": "Protéinurie <0.3g/24h, albumine >35g/L" }
-        ],
-        "edges": [
-          { "from": "p1", "to": "s1", "label": "MANIFESTE", "reason": "Symptôme cardinal" },
-          
-          { "from": "t1", "to": "p1", "label": "TRAITE", "reason": "Première ligne immunosuppressive" },
-          { "from": "t1", "to": "e1", "label": "PROVOQUE", "reason": "Effet métabolique des corticoïdes" },
-          { "from": "t2", "to": "e1", "label": "CORRIGE", "reason": "Contrôle glycémique" },
-          
-          { "from": "t3", "to": "p1", "label": "TRAITE", "reason": "Thérapie ciblée anti-B" },
-          { "from": "t3", "to": "e2", "label": "PROVOQUE", "reason": "Mécanisme d'action anti-CD20" },
-          { "from": "t4", "to": "e2", "label": "CORRIGE", "reason": "Prévention infection opportuniste" },
-          
-          { "from": "t5", "to": "p1", "label": "TRAITE", "reason": "Réduction protéinurie" },
-          { "from": "t5", "to": "e3", "label": "PROVOQUE", "reason": "Effet SRAA" },
-          { "from": "t6", "to": "e3", "label": "CORRIGE", "reason": "Élimination potassium" },
-          
-          { "from": "t7", "to": "s1", "label": "TRAITE", "reason": "Symptomatique œdèmes" },
-          
-          { "from": "t2", "to": "g1", "label": "RÉSOUT", "reason": "Contrôle métabolique atteint" },
-          { "from": "t4", "to": "g1", "label": "RÉSOUT", "reason": "Protection infectieuse assurée" },
-          { "from": "t6", "to": "g1", "label": "RÉSOUT", "reason": "Équilibre ionique restauré" },
-          { "from": "t7", "to": "g1", "label": "RÉSOUT", "reason": "Œdèmes résolus" },
-          { "from": "t3", "to": "g1", "label": "RÉSOUT", "reason": "Rémission immunologique" }
-        ]
-      },
-      "mermaid_graph": "graph TD; p1((Pathologie)) --> t1[Prednisone]; t1 --> e1[Hyperglycémie]; t2[Metformine] --> e1; t3[Rituximab] --> p1; t3 --> e2[Lymphopénie]; t4[Cotrimoxazole] --> e2; t2 --> g1((GUÉRISON)); t4 --> g1; t3 --> g1;",
-
-
-      "executive_summary": {
-        "context": "Rédige ici un essai de 2000 mots sur le paysage actuel.",
-        "central_hypothesis_operational": "Description technique de 1500 mots de l'innovation.",
-        "scope_decisions": "Analyse comparative de 1000 mots des choix stratégiques.",
-        "go_nogo_table": [
-          { "block": "Phase 1 - Bio-informatique", "minimal_design": "Détail technique massif", "primary_endpoint": "Critère quantitatif précis", "go_nogo_signal": "Seuil statistique (p-value, etc.)" }
-        ]
-      },
-      "systemic_cascade": [
-         { "organ": "Reins/Glomérule/Podocytes", "impact": "Analyse de 1000 mots", "mechanism": "Mécanisme moléculaire archi-détaillé", "severity": "Critical", "cellular_targets": ["Target 1", "Target 2"] }
-      ],
-      "etiology_depth": {
-        "root_causes": ["Cause 1 (Génétique/Épigénétique) détaillée", "Cause 2 (Environnementale) détaillée"],
-        "triggers": ["Facteur 1", "Facteur 2"],
-        "pathway_origin": "Essai de 1500 mots sur le pathway originel",
-        "genetic_factors": ["Gène 1 (Variant X)", "Gène 2 (Variant Y)"]
-      },
-      "therapeutic_resolution_chains": [
-        {
-          "step": 1,
-          "intervention": "Combinaison Thérapeutique Massive",
-          "pharmacodynamics": "Description de 1000 mots",
-          "expected_outcome": "Résultat ciblé",
-          "side_effects": [
-            {
-              "issue": "Effet secondaire identifié",
-              "resolution_intervention": "Solution curative",
-              "interaction_safety": "Preuve de sécurité CYP450",
-              "recursive_resolution": "Preuve de stabilisation"
-            }
-          ]
-        }
-      ],
-      "rival_hypotheses": {
-        "h1_main": "Hypothèse 1 détaillée (1000 mots)",
-        "h0_null": "Hypothèse nulle (500 mots)",
-        "h3_rival": "Rival 1",
-        "h4_rival_toxicity": "Rival 2",
-        "dag_textual": "A -> B -> C -> D; (Graphe causal archi-complet)"
-      },
-      "evidence_snapshot": [
-        { "claim": "Affirmation majeure", "context_population": "Population X", "oxford_level": "1a", "signal_effect": "Puissance du signal", "key_references": ["PMID:XXXX"] }
-      ],
-      "mechanistic_model": {
-        "pkpd_robust": "Preuve PK/PD de 1500 mots",
-        "pkpd_unknown": "Surveillance critique (1000 mots)",
-        "visual_dag": "DAG textuel",
-        "loop_closure_proof": "Démonstration finale de 1500 mots"
-      },
-      "risks_monitoring": {
-        "monitoring_table": [
-          { "parameter": "Paramètre 1", "action_threshold": "Valeur", "frequency": "Fréquence" }
-        ]
-      },
-      "is_complete_resolution": true,
-      "character_count_target": 50000
-    }
-  ]
-}
-
-REMPLIS CHAQUE CHAMP avec une densité d'information maximale. SI TU PEUX ENCORE DÉTAILLER, FAIS-LE.`;
+DÉTAILLE CHAQUE CHAMP. L'exactitude et la traçabilité sont tes seules priorités.`;
 
             const userPrompt = `GÉNÈRE UN RAPPORT COMMITTEE-GRADE basé sur les preuves ci-dessous.
 
@@ -304,7 +161,7 @@ Retourne JSON strict selon le format spécifié.`;
                 .from('hypothesis_generation_jobs')
                 .update({
                     progress_percentage: 30,
-                    progress_message: 'Analyse Ultra-Profonde RCDP (Gemini 1.5 Pro - Dual-Phase JSON/Reasoning)...'
+                    progress_message: 'Analyse Ultra-Profonde RCDP (Gemini 3 Flash - Dual-Phase JSON/Reasoning)...'
                 })
                 .eq('id', job.id);
 
@@ -349,8 +206,8 @@ Retourne JSON strict selon le format spécifié.`;
                     }
                 },
                 {
-                    model: 'gemini-1.5-pro-002',
-                    maxTokens: 8192
+                    model: 'gemini-3-flash-preview',
+                    maxTokens: 50000
                 }
             );
 
@@ -456,15 +313,72 @@ Retourne JSON strict selon le format spécifié.`;
                 }
             }
 
-            const hypotheses = parsed.hypotheses || [];
-            if (hypotheses.length === 0) {
-                throw new Error('No hypotheses generated');
+            // ===== ULTRA V3 HARD-FAIL VALIDATION =====
+            const validateV3 = (h: any) => {
+                const errors: string[] = [];
+
+                // 1. Scope
+                if (!h.clinical_scope) errors.push('clinical_scope missing');
+                else {
+                    if (!h.clinical_scope.candidate_subtypes || h.clinical_scope.candidate_subtypes.length === 0)
+                        errors.push('candidate_subtypes empty');
+                    if (!h.clinical_scope.uncertainties || h.clinical_scope.uncertainties.length === 0)
+                        errors.push('uncertainties empty');
+                }
+
+                // 2. Evidence-Based
+                const evidenceLen = h.evidence_index?.length || 0;
+                if (!h.evidence_index || evidenceLen < 5)
+                    errors.push(`evidence_index insufficient (${evidenceLen}/5)`);
+                else {
+                    h.evidence_index.forEach((ev: any, idx: number) => {
+                        if (!ev.passages || ev.passages.length === 0)
+                            errors.push(`Evidence [${idx}] has no passages`);
+                    });
+                }
+
+                // 3. Claim Graph
+                if (!h.claim_graph || !h.claim_graph.claims || h.claim_graph.claims.length < 5)
+                    errors.push('claim_graph claims insufficient (<5)');
+
+                const coreClaimIds = h.claim_graph?.core_claim_ids || [];
+                coreClaimIds.forEach((cid: string) => {
+                    const claim = h.claim_graph.claims?.find((c: any) => c.claim_id === cid);
+                    if (claim && (!claim.support_evidence_ids || claim.support_evidence_ids.length < 2))
+                        errors.push(`Core claim ${cid} has insufficient support evidence (<2)`);
+                });
+
+                // 4. Contradictions & Trace
+                if (!h.scores?.coverage?.contradictions_checked)
+                    errors.push('contradictions_checked must be true');
+
+                const trace = h.reasoning_trace;
+                if (!trace) errors.push('reasoning_trace missing');
+                else {
+                    if (!trace.retrieval_log || trace.retrieval_log.length < 3) errors.push('retrieval_log insufficient');
+                    if (!trace.normalization_log || trace.normalization_log.length < 3) errors.push('normalization_log insufficient');
+                    if (!trace.inference_steps || trace.inference_steps.length < 3) errors.push('inference_steps insufficient');
+                }
+
+                // 5. No Guaranteed Cure
+                const forbiddenKeywords = ['guérison garantie', 'certitude absolue', 'guérison totale'];
+                const fullText = JSON.stringify(h).toLowerCase();
+                if (forbiddenKeywords.some(kw => fullText.includes(kw)))
+                    errors.push('Contains forbidden absolute certainty terms (guérison garantie, etc.)');
+
+                return errors;
+            };
+
+            const validationErrors = validateV3(parsed);
+            if (validationErrors.length > 0) {
+                console.error('❌ ULTRA V3 Validation Failed:', validationErrors);
+                throw new Error(`Validation Violation: ${validationErrors.join(', ')}`);
             }
 
-            const h = hypotheses[0];
+            const h = parsed;
             const uniqueId = `${h.hypothesis_id || 'hyp'}-${crypto.randomUUID().split('-')[0]}`;
 
-            // Save hypothesis to database - INCLUDING NEW FIELDS
+            // Save hypothesis to database - INCLUDING NEW V3 FIELDS
             const { data: savedHyp, error: saveError } = await supabase
                 .from('discovery_hypotheses')
                 .insert({
@@ -472,17 +386,11 @@ Retourne JSON strict selon le format spécifié.`;
                     statement: h.statement,
                     executive_summary: h.executive_summary,
                     clinical_scope: h.clinical_scope,
-                    rival_hypotheses: h.rival_hypotheses,
-                    evidence_snapshot: h.evidence_snapshot,
-                    mechanistic_model: h.mechanistic_model,
-                    risks_monitoring: h.risks_monitoring,
-                    detailed_analysis: h.detailed_analysis,
-                    systemic_cascade: h.systemic_cascade,
-                    therapeutic_resolution_chains: h.therapeutic_resolution_chains,
-                    causal_graph: h.causal_graph,
-                    mermaid_graph: h.mermaid_graph,
-                    predictions: h.predictions,
-                    is_complete_resolution: h.is_complete_resolution,
+                    evidence_snapshot: h.evidence_index, // V3 Evidence Index
+                    contradictions: h.contradictions,
+                    novelty_findings: h.novelty_findings,
+                    validation_plan: h.validation_plan,
+                    detailed_analysis: h.reasoning_trace, // Reasoning trace as detailed analysis
                     scores: h.scores,
                     status: 'pending'
                 })
@@ -493,67 +401,57 @@ Retourne JSON strict selon le format spécifié.`;
                 throw new Error(`Failed to save hypothesis: ${saveError.message}`);
             }
 
-            // ===== PHASE 2: Persist structured graph nodes/edges =====
-            const causalGraph = h.causal_graph;
-            if (causalGraph?.nodes && causalGraph?.edges && savedHyp?.id) {
-                console.log(`📊 Persisting ${causalGraph.nodes.length} nodes and ${causalGraph.edges.length} edges...`);
+            // ===== PHASE 2: Persist structured graph nodes/edges from V3 claim_graph =====
+            try {
+                const claimGraph = h.claim_graph;
+                if (claimGraph?.claims && savedHyp?.id) {
+                    console.log(`📊 Persisting ${claimGraph.claims.length} V3 claims into graph layer...`);
 
-                // Insert nodes into graph_nodes table
-                const nodeInserts = causalGraph.nodes.map((node: any) => ({
-                    hypothesis_id: savedHyp.id,
-                    node_key: node.id,
-                    node_type: node.type,
-                    label: node.label,
-                    mechanism: node.mechanism || null,
-                    attributes: node.attributes || {}
-                }));
+                    const nodesMap = new Map();
+                    claimGraph.claims.forEach((claim: any) => {
+                        const s = claim.triple.source;
+                        const t = claim.triple.target;
+                        if (!nodesMap.has(s.label)) nodesMap.set(s.label, { label: s.label, type: s.type, norm_ids: s.norm_ids });
+                        if (!nodesMap.has(t.label)) nodesMap.set(t.label, { label: t.label, type: t.type, norm_ids: t.norm_ids });
+                    });
 
-                const { error: nodesError } = await supabase
-                    .from('graph_nodes')
-                    .insert(nodeInserts);
-
-                if (nodesError) {
-                    console.warn('⚠️ Failed to insert graph nodes:', nodesError.message);
-                } else {
-                    console.log(`✅ Inserted ${nodeInserts.length} graph nodes`);
-                }
-
-                // Insert edges into graph_edges table
-                const edgeInserts = causalGraph.edges.map((edge: any) => ({
-                    hypothesis_id: savedHyp.id,
-                    source_key: edge.from,
-                    target_key: edge.to,
-                    edge_type: edge.label || 'ASSOCIATED_WITH',
-                    label: edge.label,
-                    reason: edge.reason || null,
-                    weight: 0.5  // Default weight, can be enhanced later
-                }));
-
-                const { error: edgesError } = await supabase
-                    .from('graph_edges')
-                    .insert(edgeInserts);
-
-                if (edgesError) {
-                    console.warn('⚠️ Failed to insert graph edges:', edgesError.message);
-                } else {
-                    console.log(`✅ Inserted ${edgeInserts.length} graph edges`);
-                }
-
-                // Audit log for creation
-                const auditInserts = [
-                    ...nodeInserts.map((n: any) => ({
-                        actor: 'hypothesis-processor',
-                        action: 'create',
-                        entity_type: 'node',
-                        entity_id: savedHyp.id,
+                    const nodeInserts = Array.from(nodesMap.values()).map((node: any, idx: number) => ({
                         hypothesis_id: savedHyp.id,
-                        after_state: n
-                    })),
-                ];
+                        node_key: `n${idx}`,
+                        node_type: node.type.toLowerCase(),
+                        label: node.label,
+                        mechanism: `V3 Entity: ${node.label}`,
+                        attributes: { norm_ids: node.norm_ids }
+                    }));
 
-                await supabase.from('graph_audit_log').insert(auditInserts).catch(() => {
-                    console.warn('⚠️ Audit log insert failed (non-blocking)');
-                });
+                    const { error: nodesError } = await supabase
+                        .from('graph_nodes')
+                        .insert(nodeInserts);
+
+                    if (nodesError) console.warn('⚠️ Graph nodes insert failed:', nodesError.message);
+
+                    const edgeInserts = claimGraph.claims.map((claim: any) => {
+                        const sNode = nodeInserts.find(n => n.label === claim.triple.source.label);
+                        const tNode = nodeInserts.find(n => n.label === claim.triple.target.label);
+                        return {
+                            hypothesis_id: savedHyp.id,
+                            source_key: sNode?.node_key || 'unknown',
+                            target_key: tNode?.node_key || 'unknown',
+                            edge_type: claim.triple.rel,
+                            label: claim.triple.rel,
+                            reason: claim.notes || 'V3 Logic',
+                            weight: claim.scores?.aggregate || 0.5
+                        };
+                    });
+
+                    const { error: edgesError } = await supabase
+                        .from('graph_edges')
+                        .insert(edgeInserts);
+
+                    if (edgesError) console.warn('⚠️ Graph edges insert failed:', edgesError.message);
+                }
+            } catch (graphError: any) {
+                console.warn('⚠️ Graph persistence failed:', graphError.message);
             }
 
             // Mark job as completed
@@ -563,7 +461,7 @@ Retourne JSON strict selon le format spécifié.`;
                     status: 'completed',
                     hypothesis_id: savedHyp.id,
                     progress_percentage: 100,
-                    progress_message: 'Hypothèse générée avec succès!'
+                    progress_message: 'Hypothèse ULTRA V3 générée avec succès!'
                 })
                 .eq('id', job.id);
 

@@ -71,7 +71,7 @@ interface RisksMonitoring {
 interface DetailedAnalysis {
     background_context?: string;
     pathophysiology?: string;
-    [key: string]: any;
+    [key: string]: string | number | boolean | undefined | null | object;
 }
 
 interface Hypothesis {
@@ -86,9 +86,35 @@ interface Hypothesis {
     mechanistic_model?: MechanisticModel;
     risks_monitoring?: RisksMonitoring;
 
-    // Legacy Fields
+    // Legacy/Dynamic Fields
     detailed_analysis?: DetailedAnalysis;
     predictions?: string[];
+    mermaid_graph?: string;
+    systemic_cascade?: Array<{
+        organ: string;
+        impact: string;
+        mechanism?: string;
+        severity?: string;
+    }>;
+    therapeutic_resolution_chains?: Array<{
+        step?: number;
+        intervention: string;
+        pharmacodynamics?: string;
+        expected_outcome?: string;
+        side_effects?: Array<{
+            issue: string;
+            resolution_intervention?: string;
+            interaction_safety?: string;
+            recursive_resolution?: string;
+        }>;
+    }>;
+    etiology_depth?: {
+        root_causes?: string[];
+        triggers?: string[];
+        pathway_origin?: string;
+        genetic_factors?: string[];
+    };
+    is_complete_resolution?: boolean;
     scores?: {
         novelty: number;
         plausibility: number;
@@ -105,11 +131,11 @@ interface PDFData {
     date: string;
     author?: string;
     institution?: string;
-    searchResults: any[];
+    searchResults: Record<string, unknown>[];
     evidencePack?: {
         paper_count?: number;
-        entities?: any[];
-        relations?: any[];
+        entities?: Record<string, unknown>[];
+        relations?: Record<string, unknown>[];
     };
 }
 
@@ -125,7 +151,7 @@ function cleanText(text: string | undefined): string {
         .replace(/__/g, '')
         .replace(/_/g, '')
         .replace(/^#+\s+/gm, '')
-        .replace(/\[([^\]]+)\]\([^\)]+\)/g, '$1')
+        .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
         .replace(/```[\s\S]*?```/g, '')
         .replace(/`([^`]+)`/g, '$1')
         .replace(/–/g, '-')
@@ -145,11 +171,49 @@ function cleanText(text: string | undefined): string {
         .trim();
 }
 
+async function addGraphImage(doc: jsPDF, mermaidCode: string, y: number, pageWidth: number): Promise<number> {
+    try {
+        const encoded = btoa(unescape(encodeURIComponent(mermaidCode)));
+        const url = `https://mermaid.ink/img/${encoded}`;
+
+        return new Promise((resolve) => {
+            const img = new Image();
+            img.crossOrigin = "anonymous";
+            img.onload = () => {
+                const canvas = document.createElement('canvas');
+                canvas.width = img.width;
+                canvas.height = img.height;
+                const ctx = canvas.getContext('2d');
+                if (ctx) {
+                    ctx.drawImage(img, 0, 0);
+                    const dataUrl = canvas.toDataURL('image/png');
+                    const imgWidth = pageWidth - 40;
+                    const imgHeight = (img.height * imgWidth) / img.width;
+
+                    // Add white background for the graph area
+                    doc.setFillColor(255, 255, 255);
+                    doc.rect(20, y, imgWidth, imgHeight, 'F');
+
+                    doc.addImage(dataUrl, 'PNG', 20, y, imgWidth, imgHeight);
+                    resolve(y + imgHeight + 10);
+                } else {
+                    resolve(y);
+                }
+            };
+            img.onerror = () => resolve(y);
+            img.src = url;
+        });
+    } catch (e) {
+        console.error('Mermaid export error:', e);
+        return y;
+    }
+}
+
 // ============================================
 // MAIN EXPORT FUNCTION
 // ============================================
 
-export function generateCommitteeGradePDF(data: PDFData): void {
+export async function generateCommitteeGradePDF(data: PDFData): Promise<void> {
     const doc = new jsPDF();
     doc.setLanguage("fr");
 
@@ -178,10 +242,10 @@ export function generateCommitteeGradePDF(data: PDFData): void {
 
     // Main title
     doc.setTextColor(30, 58, 138);
-    doc.setFontSize(18);
+    doc.setFontSize(22); // Larger title
     doc.setFont('helvetica', 'bold');
     const titleLines = doc.splitTextToSize(cleanText(data.query), contentWidth - 40);
-    doc.text(titleLines, pageWidth / 2, 90, { align: 'center' });
+    doc.text(titleLines, pageWidth / 2, 85, { align: 'center' });
 
     // Metadata box
     y = 120 + titleLines.length * 8;
@@ -225,6 +289,34 @@ export function generateCommitteeGradePDF(data: PDFData): void {
     doc.text(data.date, pageWidth / 2, pageHeight - 12, { align: 'center' });
 
     // ========================================
+    // PAGE 1.5: CAUSAL GRAPH (MERMAID)
+    // ========================================
+    if (data.hypothesis.mermaid_graph) {
+        doc.addPage();
+        y = 25;
+
+        doc.setFillColor(30, 58, 138);
+        doc.rect(0, 0, pageWidth, 15, 'F');
+        doc.setTextColor(255, 255, 255);
+        doc.setFontSize(10);
+        doc.text('CARTOGRAPHIE DES MÉCANISMES', leftMargin, 10);
+
+        doc.setTextColor(30, 58, 138);
+        doc.setFontSize(16);
+        doc.setFont('helvetica', 'bold');
+        doc.text('Carte causale de l\'hypothèse', leftMargin, y);
+        y += 15;
+
+        y = await addGraphImage(doc, data.hypothesis.mermaid_graph, y, pageWidth);
+
+        doc.setFont('helvetica', 'italic');
+        doc.setFontSize(8);
+        doc.setTextColor(107, 114, 128);
+        const graphCaption = "Visualisation automatisée des relations pathophysiologiques et points d'intervention.";
+        doc.text(graphCaption, pageWidth / 2, y, { align: 'center' });
+    }
+
+    // ========================================
     // PAGE 2: EXECUTIVE SUMMARY + GO/NO-GO
     // ========================================
     doc.addPage();
@@ -234,14 +326,11 @@ export function generateCommitteeGradePDF(data: PDFData): void {
     doc.rect(0, 0, pageWidth, 15, 'F');
     doc.setTextColor(255, 255, 255);
     doc.setFontSize(10);
-    doc.text('RÉSUMÉ EXÉCUTIF', leftMargin, 10);
+    doc.setFont('helvetica', 'bold');
+    doc.text('1. RÉSUMÉ EXÉCUTIF', leftMargin, 10);
     doc.text(data.hypothesis.hypothesis_id, pageWidth - 50, 10);
 
-    doc.setTextColor(30, 58, 138);
-    doc.setFontSize(16);
-    doc.setFont('helvetica', 'bold');
-    doc.text('1. Résumé Exécutif', leftMargin, y);
-    y += 12;
+    y = 25;
 
     const execSum = data.hypothesis.executive_summary;
 
@@ -341,6 +430,116 @@ export function generateCommitteeGradePDF(data: PDFData): void {
     }
 
     // ========================================
+    // PAGE 2.5: SYSTEMIC CASCADE
+    // ========================================
+    if (data.hypothesis.systemic_cascade && data.hypothesis.systemic_cascade.length > 0) {
+        doc.addPage();
+        y = 25;
+
+        doc.setFillColor(30, 58, 138);
+        doc.rect(0, 0, pageWidth, 15, 'F');
+        doc.setTextColor(255, 255, 255);
+        doc.setFontSize(10);
+        doc.text('CASCADE SYSTÉMIQUE', leftMargin, 10);
+
+        doc.setTextColor(30, 58, 138);
+        doc.setFontSize(16);
+        doc.setFont('helvetica', 'bold');
+        doc.text('1.2 Cascade systémique et impacts organiques', leftMargin, y);
+        y += 12;
+
+        data.hypothesis.systemic_cascade.forEach((item, idx) => {
+            if (y > 250) {
+                doc.addPage();
+                y = 25;
+            }
+
+            doc.setFillColor(249, 250, 251);
+            doc.roundedRect(leftMargin, y, contentWidth, 35, 2, 2, 'F');
+
+            doc.setFont('helvetica', 'bold');
+            doc.setFontSize(11);
+            doc.setTextColor(item.severity === 'Critical' ? 185 : 30, item.severity === 'Critical' ? 28 : 58, item.severity === 'Critical' ? 28 : 138);
+            doc.text(`${item.organ}${item.severity ? ` [${item.severity}]` : ''}`, leftMargin + 5, y + 8);
+
+            doc.setFont('helvetica', 'normal');
+            doc.setFontSize(9);
+            doc.setTextColor(31, 41, 55);
+
+            const impactLines = doc.splitTextToSize(`Impact: ${cleanText(item.impact)}`, contentWidth - 15);
+            doc.text(impactLines, leftMargin + 5, y + 16);
+
+            if (item.mechanism) {
+                doc.setFont('helvetica', 'italic');
+                const mechLines = doc.splitTextToSize(`Mécanisme: ${cleanText(item.mechanism)}`, contentWidth - 15);
+                doc.text(mechLines, leftMargin + 5, y + 22 + (impactLines.length * 2));
+            }
+
+            y += 42;
+        });
+    }
+
+    // ========================================
+    // PAGE 2.6: THERAPEUTIC RESOLUTION CHAINS
+    // ========================================
+    if (data.hypothesis.therapeutic_resolution_chains && data.hypothesis.therapeutic_resolution_chains.length > 0) {
+        doc.addPage();
+        y = 25;
+
+        doc.setFillColor(30, 58, 138);
+        doc.rect(0, 0, pageWidth, 15, 'F');
+        doc.setTextColor(255, 255, 255);
+        doc.setFontSize(10);
+        doc.text('CHAÎNES DE RÉSOLUTION', leftMargin, 10);
+
+        doc.setTextColor(30, 58, 138);
+        doc.setFontSize(16);
+        doc.setFont('helvetica', 'bold');
+        doc.text('1.3 Chaînes de résolution thérapeutique récursive', leftMargin, y);
+        y += 12;
+
+        data.hypothesis.therapeutic_resolution_chains.forEach((chain, idx) => {
+            if (y > 230) {
+                doc.addPage();
+                y = 25;
+            }
+
+            doc.setFillColor(240, 249, 255);
+            doc.roundedRect(leftMargin, y, contentWidth, 45, 2, 2, 'F');
+
+            doc.setFont('helvetica', 'bold');
+            doc.setFontSize(11);
+            doc.setTextColor(30, 58, 138);
+            doc.text(`Étape ${chain.step || idx + 1}: ${chain.intervention}`, leftMargin + 5, y + 8);
+
+            doc.setFont('helvetica', 'normal');
+            doc.setFontSize(9);
+            doc.setTextColor(31, 41, 55);
+
+            const pdLines = doc.splitTextToSize(`Pharmacodynamie: ${cleanText(chain.pharmacodynamics)}`, contentWidth - 15);
+            doc.text(pdLines, leftMargin + 5, y + 16);
+
+            const outcomeLines = doc.splitTextToSize(`Résultat attendu: ${cleanText(chain.expected_outcome)}`, contentWidth - 15);
+            doc.text(outcomeLines, leftMargin + 5, y + pdLines.length * 5 + 16);
+
+            if (chain.side_effects && chain.side_effects.length > 0) {
+                doc.setFont('helvetica', 'bold');
+                doc.setFontSize(8);
+                doc.setTextColor(185, 28, 28);
+                doc.text('Résolution des effets secondaires:', leftMargin + 5, y + 38);
+
+                chain.side_effects.forEach((se, si) => {
+                    doc.setFont('helvetica', 'normal');
+                    doc.text(`• ${se.issue} -> ${se.resolution_intervention}`, leftMargin + 8, y + 42 + (si * 4));
+                });
+                y += (chain.side_effects.length * 4);
+            }
+
+            y += 55;
+        });
+    }
+
+    // ========================================
     // PAGE 3: CLINICAL SCOPE
     // ========================================
     doc.addPage();
@@ -350,13 +549,10 @@ export function generateCommitteeGradePDF(data: PDFData): void {
     doc.rect(0, 0, pageWidth, 15, 'F');
     doc.setTextColor(255, 255, 255);
     doc.setFontSize(10);
-    doc.text('PÉRIMÈTRE CLINIQUE', leftMargin, 10);
-
-    doc.setTextColor(30, 58, 138);
-    doc.setFontSize(16);
     doc.setFont('helvetica', 'bold');
-    doc.text('2. Périmètre clinique et définitions', leftMargin, y);
-    y += 12;
+    doc.text('2. PÉRIMÈTRE CLINIQUE', leftMargin, 10);
+
+    y = 25;
 
     const clinScope = data.hypothesis.clinical_scope;
 
@@ -401,13 +597,10 @@ export function generateCommitteeGradePDF(data: PDFData): void {
     doc.rect(0, 0, pageWidth, 15, 'F');
     doc.setTextColor(255, 255, 255);
     doc.setFontSize(10);
-    doc.text("SNAPSHOT DE L'ÉVIDENCE", leftMargin, 10);
-
-    doc.setTextColor(30, 58, 138);
-    doc.setFontSize(16);
     doc.setFont('helvetica', 'bold');
-    doc.text("3. Snapshot de l'évidence (Ledger synthétique)", leftMargin, y);
-    y += 12;
+    doc.text("3. SNAPSHOT DE L'ÉVIDENCE (Ledger synthétique)", leftMargin, 10);
+
+    y = 25;
 
     const evidence = data.hypothesis.evidence_snapshot;
 
@@ -491,13 +684,10 @@ export function generateCommitteeGradePDF(data: PDFData): void {
     doc.rect(0, 0, pageWidth, 15, 'F');
     doc.setTextColor(255, 255, 255);
     doc.setFontSize(10);
-    doc.text('HYPOTHÈSES MÉCANISTIQUES', leftMargin, 10);
-
-    doc.setTextColor(30, 58, 138);
-    doc.setFontSize(16);
     doc.setFont('helvetica', 'bold');
-    doc.text('4. Hypothèse mécanistique et hypothèses rivales', leftMargin, y);
-    y += 12;
+    doc.text('4. HYPOTHÈSES RIVALES ET RÉPONSES', leftMargin, 10);
+
+    y = 25;
 
     const rivals = data.hypothesis.rival_hypotheses;
 
@@ -613,13 +803,10 @@ export function generateCommitteeGradePDF(data: PDFData): void {
     doc.rect(0, 0, pageWidth, 15, 'F');
     doc.setTextColor(255, 255, 255);
     doc.setFontSize(10);
-    doc.text('MODÈLE MÉCANISTIQUE', leftMargin, 10);
-
-    doc.setTextColor(30, 58, 138);
-    doc.setFontSize(16);
     doc.setFont('helvetica', 'bold');
-    doc.text('5. Modèle mécanistique (PK/PD, organes, cibles)', leftMargin, y);
-    y += 12;
+    doc.text('5. MODÈLE MÉCANISTIQUE (PK/PD)', leftMargin, 10);
+
+    y = 25;
 
     const mechModel = data.hypothesis.mechanistic_model;
 
@@ -707,13 +894,10 @@ export function generateCommitteeGradePDF(data: PDFData): void {
     doc.rect(0, 0, pageWidth, 15, 'F');
     doc.setTextColor(255, 255, 255);
     doc.setFontSize(10);
-    doc.text('RISQUES & MONITORING', leftMargin, 10);
-
-    doc.setTextColor(30, 58, 138);
-    doc.setFontSize(16);
     doc.setFont('helvetica', 'bold');
-    doc.text('6. Risques, facteurs de confusion et plan de monitoring', leftMargin, y);
-    y += 12;
+    doc.text('6. RISQUES & MONITORING', leftMargin, 10);
+
+    y = 25;
 
     const risksMonitor = data.hypothesis.risks_monitoring;
 

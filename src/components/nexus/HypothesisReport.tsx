@@ -297,12 +297,12 @@ export default function HypothesisReport({ hypothesis, onClose }: HypothesisRepo
                             <div>
                                 <span className="font-bold text-slate-700 block text-sm uppercase mb-1">Hypothèse Opérationnelle</span>
                                 <p className="text-sm text-slate-800 font-medium bg-white p-3 rounded border border-slate-200">
-                                    {hypothesis.executive_summary?.central_hypothesis_operational || 'N/A'}
+                                    {hypothesis.executive_summary?.central_hypothesis_operational || hypothesis.statement || 'N/A'}
                                 </p>
                             </div>
                             <div className="grid grid-cols-2 gap-4">
                                 <div>
-                                    <span className="font-bold text-slate-700 block text-sm uppercase mb-1">Décope & Limitations</span>
+                                    <span className="font-bold text-slate-700 block text-sm uppercase mb-1">Périmètre & Limitations</span>
                                     <p className="text-xs text-slate-600">
                                         {hypothesis.executive_summary?.scope_decisions || 'N/A'}
                                     </p>
@@ -379,7 +379,7 @@ export default function HypothesisReport({ hypothesis, onClose }: HypothesisRepo
                         )}
                     </section>
 
-                    {/* Evidence Snapshot */}
+                    {/* Evidence Snapshot / V3 Evidence Index */}
                     <section>
                         <h2 className="text-lg font-bold text-blue-900 uppercase tracking-wide mb-4 border-b border-slate-200 pb-2 flex items-center gap-2">
                             <FlaskConical className="w-5 h-5" /> Evidence Snapshot (Oxford Levels)
@@ -389,26 +389,33 @@ export default function HypothesisReport({ hypothesis, onClose }: HypothesisRepo
                                 <thead className="bg-slate-100 text-slate-700 font-bold uppercase text-xs">
                                     <tr>
                                         <th className="p-3 border-r border-slate-200 w-1/3">Claim / Assertion</th>
-                                        <th className="p-3 border-r border-slate-200">Population / Context</th>
+                                        <th className="p-3 border-r border-slate-200">Title / Source</th>
                                         <th className="p-3 border-r border-slate-200 w-24">Level</th>
-                                        <th className="p-3">Signal / Effect Size</th>
+                                        <th className="p-3">Signal / Highlights</th>
                                     </tr>
                                 </thead>
                                 <tbody className="divide-y divide-slate-200">
-                                    {hypothesis.evidence_snapshot?.map((row: any, i: number) => (
+                                    {/* Handle both V2 evidence_snapshot and V3 evidence_index */}
+                                    {(hypothesis.evidence_snapshot || hypothesis.evidence_index)?.map((row: any, i: number) => (
                                         <tr key={i} className="hover:bg-slate-50">
-                                            <td className="p-3 border-r border-slate-200 font-medium text-slate-800">{row.claim}</td>
-                                            <td className="p-3 border-r border-slate-200 text-slate-600">{row.context_population}</td>
+                                            <td className="p-3 border-r border-slate-200 font-medium text-slate-800">
+                                                {row.claim || row.title || 'N/A'}
+                                            </td>
+                                            <td className="p-3 border-r border-slate-200 text-slate-600 text-xs">
+                                                {row.context_population || row.source_type || 'N/A'}
+                                            </td>
                                             <td className="p-3 border-r border-slate-200">
                                                 <Badge className={
-                                                    ['1a', '1b'].includes(row.oxford_level) ? 'bg-green-100 text-green-800 hover:bg-green-200' :
-                                                        ['2a', '2b'].includes(row.oxford_level) ? 'bg-blue-100 text-blue-800 hover:bg-blue-200' :
+                                                    ['1a', '1b'].includes(row.oxford_level || row.level) ? 'bg-green-100 text-green-800 hover:bg-green-200' :
+                                                        ['2a', '2b'].includes(row.oxford_level || row.level) ? 'bg-blue-100 text-blue-800 hover:bg-blue-200' :
                                                             'bg-slate-100 text-slate-600 hover:bg-slate-200'
                                                 }>
-                                                    Level {row.oxford_level}
+                                                    Level {row.oxford_level || row.level || '?'}
                                                 </Badge>
                                             </td>
-                                            <td className="p-3 text-slate-700 text-xs">{row.signal_effect}</td>
+                                            <td className="p-3 text-slate-700 text-xs">
+                                                {row.signal_effect || (row.passages && row.passages[0]?.quote) || 'N/A'}
+                                            </td>
                                         </tr>
                                     )) || (
                                             <tr><td colSpan={4} className="p-4 text-center text-slate-400">Aucune donnée disponible</td></tr>
@@ -485,7 +492,7 @@ function generatePrintableHTML(h: any) {
                 <p>${new Date(h.created_at).toLocaleDateString()}</p>
             </div>
             <div>
-                <h2>SCIENTIFIC REPORT</h2>
+                <h2>SCIENTIFIC ADVISORY REPORT (V3 ULTRA)</h2>
             </div>
         </div>
 
@@ -499,10 +506,22 @@ function generatePrintableHTML(h: any) {
             <h2>CAUSAL SCHEMA</h2>
             <div style="text-align: center; margin: 20px 0; background: white; padding: 20px; border: 1px solid #e2e8f0; border-radius: 8px;">
                 <img src="${diagramUrl}" style="max-width: 100%; height: auto;" />
-                <p style="font-size: 9px; color: #64748b; margin-top: 10px;">Generated by MediMind AI • Causal Nodal Network v2.5</p>
+                <p style="font-size: 9px; color: #64748b; margin-top: 10px;">Generated by MediMind AI • Causal Nodal Network v3.0</p>
             </div>
         ` : ''}
 
+        ${h.novelty_findings && h.novelty_findings.length > 0 ? `
+            <h2>NOVELTY & STRATEGIC DIFFERENTIATION</h2>
+            <div class="section-box" style="background: #faf5ff; border-color: #e9d5ff;">
+                ${h.novelty_findings.map((f: any) => `
+                    <div style="margin-bottom: 8px; border-bottom: 1px solid #f3e8ff; padding-bottom: 4px;">
+                        <span style="font-size: 10px; font-weight: bold; color: #7e22ce;">${f.aspect}</span>
+                        <p style="font-size: 11px; margin: 2px 0;">${f.finding}</p>
+                        <p style="font-size: 9px; color: #9333ea; font-style: italic;">Differentiation: ${f.differentiation_vs_existing}</p>
+                    </div>
+                `).join('')}
+            </div>
+        ` : ''}
 
         ${h.systemic_cascade ? `
             <h2>SYSTEMIC IMPACT CASCADE</h2>
@@ -520,75 +539,17 @@ function generatePrintableHTML(h: any) {
             </div>
         ` : ''}
 
-        ${h.etiology_depth ? `
-            <h2>ETIOLOGICAL DEPTH & ROOT ANALYSIS</h2>
-            <div class="section-box" style="background: #ecfdf5; border-color: #a7f3d0;">
-                <div class="grid">
-                    <div>
-                        <strong style="font-size: 10px; color: #047857; text-transform: uppercase;">Root Causes (Biological Origin)</strong>
-                        <ul style="list-style: disc; margin-left: 20px; font-size: 11px; color: #1a202c;">
-                            ${h.etiology_depth.root_causes?.map((cause: string) => `<li>${cause}</li>`).join('')}
-                        </ul>
-                    </div>
-                    <div>
-                        <strong style="font-size: 10px; color: #047857; text-transform: uppercase;">Environmental & Set-off Triggers</strong>
-                        <ul style="list-style: disc; margin-left: 20px; font-size: 11px; color: #1a202c;">
-                            ${h.etiology_depth.triggers?.map((trigger: string) => `<li>${trigger}</li>`).join('')}
-                        </ul>
-                    </div>
-                </div>
-                <div style="margin-top: 12px; padding: 8px; background: white; border: 1px solid #d1fae5; border-radius: 4px;">
-                    <strong style="font-size: 10px; color: #047857; text-transform: uppercase;">Primary Pathway Origin</strong>
-                    <p style="font-size: 12px; font-family: monospace; color: #065f46;">${h.etiology_depth.pathway_origin}</p>
-                </div>
-            </div>
-        ` : ''}
-
-        ${h.therapeutic_resolution_chains ? `
-            <h2>RECURSIVE THERAPEUTIC RESOLUTION</h2>
-            ${h.therapeutic_resolution_chains.map((chain: any) => `
-                <div class="section-box" style="border-left: 4px solid #4f46e5;">
-                    <div style="font-size: 10px; font-weight: bold; color: #4f46e5; text-transform: uppercase;">Step ${chain.step}: Intervention</div>
-                    <p style="font-size: 16px; font-weight: bold; margin: 4px 0;">${chain.intervention}</p>
-                    <p style="font-size: 11px; margin-bottom: 8px;"><em>Expected: ${chain.expected_outcome}</em></p>
-                    
-                    ${chain.side_effects?.map((se: any) => `
-                        <div style="margin-left: 16px; padding: 8px; background: #fff7ed; border: 1px solid #ffedd5; border-radius: 4px; margin-top: 8px;">
-                            <div style="font-size: 9px; font-weight: bold; color: #c2410c; text-transform: uppercase;">Side Effect: ${se.issue}</div>
-                            <div style="display: flex; gap: 8px; margin-top: 4px;">
-                                <div style="flex: 1; background: white; padding: 4px; border-radius: 2px;">
-                                    <span style="font-size: 8px; color: #64748b;">Correction:</span>
-                                    <div style="font-size: 11px; font-weight: bold;">${se.resolution_intervention}</div>
-                                </div>
-                                <div style="flex: 1; background: #ecfdf5; padding: 4px; border-radius: 2px;">
-                                    <span style="font-size: 8px; color: #059669;">Safety:</span>
-                                    <div style="font-size: 10px;">${se.interaction_safety}</div>
-                                </div>
-                            </div>
-                        </div>
-                    `).join('')}
-                </div>
-            `).join('')}
-            
-            ${h.mechanistic_model?.loop_closure_proof ? `
-                <div class="section-box" style="background: #022c22; color: #ecfdf5;">
-                    <strong style="font-size: 12px; color: #10b981; display: block; margin-bottom: 4px;">LOOP CLOSURE PROOF</strong>
-                    <p style="font-size: 12px; margin: 0;">${h.mechanistic_model.loop_closure_proof}</p>
-                </div>
-            ` : ''}
-        ` : ''}
-
         <div class="page-break"></div>
 
         <h2>EXECUTIVE SUMMARY</h2>
         <div class="grid">
             <div class="section-box">
                 <strong>Context</strong>
-                <p>${h.executive_summary?.context}</p>
+                <p>${h.executive_summary?.context || 'N/A'}</p>
             </div>
             <div class="section-box">
-                <strong>Operational Hypothesis</strong>
-                <p>${h.executive_summary?.central_hypothesis_operational}</p>
+                <strong>Operational Scope</strong>
+                <p>${h.executive_summary?.scope_decisions || 'N/A'}</p>
             </div>
         </div>
 
@@ -614,43 +575,42 @@ function generatePrintableHTML(h: any) {
             </tbody>
         </table>
 
-        <h2>RIVAL HYPOTHESES</h2>
-        <div class="grid">
-            <div class="section-box">
-                <strong>H1 (Main)</strong>
-                <p>${h.rival_hypotheses?.h1_main}</p>
-            </div>
-             <div class="section-box">
-                <strong>H0 (Null)</strong>
-                <p>${h.rival_hypotheses?.h0_null}</p>
-            </div>
-        </div>
-        <div class="section-box">
-            <strong>Causal DAG</strong>
-            <pre style="font-family: monospace; font-size: 10px;">${h.rival_hypotheses?.dag_textual}</pre>
-        </div>
-
-        <h2>EVIDENCE SNAPSHOT</h2>
+        <h2>EVIDENCE SNAPSHOT (V3 VALIDATED)</h2>
         <table>
             <thead>
                 <tr>
-                    <th>Claim</th>
-                    <th>Context</th>
+                    <th>Claim / Assertion</th>
+                    <th>Source / PubMed</th>
                     <th>Level</th>
-                    <th>Reference</th>
+                    <th>Snapshot Proof</th>
                 </tr>
             </thead>
             <tbody>
-                ${h.evidence_snapshot?.map((row: any) => `
+                ${(h.evidence_snapshot || h.evidence_index)?.map((row: any) => `
                     <tr>
-                        <td>${row.claim || ''}</td>
-                        <td>${row.context_population || ''}</td>
-                        <td><span class="badge badge-blue">Level ${row.oxford_level || 'N/A'}</span></td>
-                        <td>${row.key_references?.join(', ') || 'N/A'}</td>
+                        <td>${row.claim || row.title || ''}</td>
+                        <td>${row.context_population || row.pmid || 'Reference'}</td>
+                        <td><span class="badge badge-blue">Level ${row.oxford_level || row.level || '?'}</span></td>
+                        <td>${row.signal_effect || (row.passages && row.passages[0]?.quote) || 'Validated'}</td>
                     </tr>
                 `).join('') || '<tr><td colspan="4">No data</td></tr>'}
             </tbody>
         </table>
+
+        ${h.contradictions && h.contradictions.length > 0 ? `
+            <h2>CONTRADICTIONS & RISK MITIGATION</h2>
+            <div class="section-box" style="background: #fff1f2; border-color: #fecdd3;">
+                <ul style="list-style: none; padding: 0;">
+                    ${h.contradictions.map((c: any) => `
+                        <li style="margin-bottom: 12px; border-left: 2px solid #ef4444; padding-left: 12px;">
+                            <strong style="color: #be123c; font-size: 11px;">Conflict: ${c.conflict}</strong>
+                            <p style="font-size: 10px; margin: 4px 0;">${c.details}</p>
+                            <p style="font-size: 10px; color: #15803d; font-weight: bold;">Resolution: ${c.resolution}</p>
+                        </li>
+                    `).join('')}
+                </ul>
+            </div>
+        ` : ''}
         
         <div class="page-break"></div>
 

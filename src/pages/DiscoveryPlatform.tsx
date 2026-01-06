@@ -25,6 +25,13 @@ import { cn } from '@/lib/utils';
 import DNAVisualizer from '@/components/nexus/DNAVisualizer';
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import HypothesisReport from '@/components/nexus/HypothesisReport';
+import { DiscoveryTabContent } from '@/components/nexus/DiscoveryTabContent';
+import {
+    Tooltip,
+    TooltipContent,
+    TooltipProvider,
+    TooltipTrigger
+} from '@/components/ui/tooltip';
 
 
 // ============================================
@@ -2161,14 +2168,20 @@ function FinalSynthesis({
             // Use NEW committee-grade PDF export
             const { generateCommitteeGradePDF } = await import('../utils/discoveryExportCommittee');
 
-            generateCommitteeGradePDF({
+            await generateCommitteeGradePDF({
                 query: lastSearchQuery || 'Recherche Discovery',
                 date: new Date().toLocaleDateString('fr-FR', {
                     year: 'numeric',
                     month: 'long',
                     day: 'numeric'
                 }),
-                hypothesis: hypothesis,
+                hypothesis: {
+                    ...hypothesis,
+                    mermaid_graph: hypothesis.mermaid_graph,
+                    systemic_cascade: hypothesis.systemic_cascade,
+                    therapeutic_resolution_chains: hypothesis.therapeutic_resolution_chains,
+                    etiology_depth: hypothesis.etiology_depth
+                },
                 searchResults: (searchResults || []).map(r => ({
                     pmid: r.pmid,
                     title: r.title,
@@ -2561,13 +2574,14 @@ function SavedGraphsPanel({ onLoad, refreshTrigger }: { onLoad: (graph: SavedGra
 }
 
 const NexusHeader = ({ activeTab, setActiveTab }: {
-    activeTab: 'archive' | 'laboratories' | 'visualizer' | 'synthetics';
-    setActiveTab: (tab: 'archive' | 'laboratories' | 'visualizer' | 'synthetics') => void;
+    activeTab: 'archive' | 'laboratories' | 'visualizer' | 'synthetics' | 'discovery';
+    setActiveTab: (tab: 'archive' | 'laboratories' | 'visualizer' | 'synthetics' | 'discovery') => void;
 }) => {
     const { theme } = useTheme();
 
     const tabs = [
         { id: 'archive' as const, label: 'Archive' },
+        { id: 'discovery' as const, label: 'Discovery Mode' },
         { id: 'laboratories' as const, label: 'Laboratories' },
         { id: 'visualizer' as const, label: 'Switch Visualizer' },
         { id: 'synthetics' as const, label: 'Synthetics' }
@@ -2767,7 +2781,54 @@ const DiscoveryPlatform = () => {
     const [refreshSavedGraphs, setRefreshSavedGraphs] = useState(0);
 
     // Tab Navigation State
-    const [activeTab, setActiveTab] = useState<'archive' | 'laboratories' | 'visualizer' | 'synthetics'>('archive');
+    const [activeTab, setActiveTab] = useState<'archive' | 'laboratories' | 'visualizer' | 'synthetics' | 'discovery'>('archive');
+
+    // LBD Discovery State
+    const [frontierJobs, setFrontierJobs] = useState<any[]>([]);
+    const [lbdClaims, setLbdClaims] = useState<any[]>([]);
+    const [reasoningTraces, setReasoningTraces] = useState<any[]>([]);
+    const [lbdContradictions, setLbdContradictions] = useState<any[]>([]);
+    const [isDiscoveryLoading, setIsDiscoveryLoading] = useState(false);
+
+    // Fetch discovery data
+    const fetchDiscoveryData = useCallback(async () => {
+        setIsDiscoveryLoading(true);
+        try {
+            const [jobsRes, claimsRes, tracesRes, contrRes] = await Promise.all([
+                supabase.from('frontier_jobs').select('*').order('priority', { ascending: false }),
+                supabase.from('lbd_claims').select('*').order('aggregate_score', { ascending: false }),
+                supabase.from('lbd_reasoning_traces').select('*').order('created_at', { ascending: false }),
+                supabase.from('lbd_contradictions').select('*, claim_support:lbd_claims!claim_support_id(*), claim_refute:lbd_claims!claim_refute_id(*)').order('created_at', { ascending: false })
+            ]);
+
+            if (jobsRes.data) setFrontierJobs(jobsRes.data);
+            if (claimsRes.data) setLbdClaims(claimsRes.data);
+            if (tracesRes.data) setReasoningTraces(tracesRes.data);
+            if (contrRes.data) setLbdContradictions(contrRes.data);
+        } catch (err) {
+            console.error('Discovery fetch error:', err);
+        } finally {
+            setIsDiscoveryLoading(false);
+        }
+    }, []);
+
+    // Effect to refetch when entering discovery tab
+    useEffect(() => {
+        if (activeTab === 'discovery') {
+            fetchDiscoveryData();
+
+            // Set up real-time sub
+            const channel = supabase
+                .channel('lbd-discovery-changes')
+                .on('postgres_changes', { event: '*', schema: 'public', table: 'frontier_jobs' }, () => fetchDiscoveryData())
+                .on('postgres_changes', { event: '*', schema: 'public', table: 'lbd_claims' }, () => fetchDiscoveryData())
+                .subscribe();
+
+            return () => {
+                supabase.removeChannel(channel);
+            };
+        }
+    }, [activeTab, fetchDiscoveryData]);
 
     // Update query specifically for search bar
     const [searchInput, setSearchInput] = useState('');
@@ -2785,6 +2846,70 @@ const DiscoveryPlatform = () => {
             return [...prev, id];
         });
     }, []);
+
+    // Handle promoting a claim to the knowledge graph
+    const handlePromoteClaim = async (claim: any) => {
+        try {
+            const { data: { user } } = await supabase.auth.getUser();
+            if (!user) throw new Error('Not authenticated');
+
+            const subjectKey = claim.subject_text.toLowerCase().replace(/\s+/g, '-');
+            const objectKey = claim.object_text.toLowerCase().replace(/\s+/g, '-');
+
+            // 1. Ensure Subject Node exists
+            const { data: existingSubject } = await (supabase.from('graph_nodes') as any)
+                .select('id, node_key')
+                .eq('node_key', subjectKey)
+                .maybeSingle();
+
+            if (!existingSubject) {
+                const { error: sError } = await (supabase.from('graph_nodes') as any)
+                    .insert({
+                        node_key: subjectKey,
+                        label: claim.subject_text,
+                        node_type: claim.subject_type || 'unclassified',
+                        hypothesis_id: claim.hypothesis_id
+                    });
+                if (sError) throw sError;
+            }
+
+            // 2. Ensure Object Node exists
+            const { data: existingObject } = await (supabase.from('graph_nodes') as any)
+                .select('id, node_key')
+                .eq('node_key', objectKey)
+                .maybeSingle();
+
+            if (!existingObject) {
+                const { error: nodeError } = await (supabase.from('graph_nodes') as any)
+                    .insert({
+                        node_key: objectKey,
+                        label: claim.object_text,
+                        node_type: claim.object_type || 'unclassified',
+                        hypothesis_id: claim.hypothesis_id
+                    });
+                if (nodeError) throw nodeError;
+            }
+
+            // 3. Create Edge
+            const { error: edgeError } = await (supabase.from('graph_edges') as any)
+                .insert({
+                    hypothesis_id: claim.hypothesis_id,
+                    source_key: subjectKey,
+                    target_key: objectKey,
+                    edge_type: claim.predicate,
+                    label: claim.predicate,
+                    weight: claim.aggregate_score || 0.5,
+                    reason: 'Promoted from LBD Discovery Trace'
+                });
+
+            if (edgeError) throw edgeError;
+
+            toast.success(`Claim promoted: ${claim.subject_text} ${claim.predicate} ${claim.object_text}`);
+        } catch (err: any) {
+            console.error('Promotion error:', err);
+            toast.error('Failed to promote claim: ' + err.message);
+        }
+    };
 
     // Search handler - calls discovery-platform Edge Function
     const handleSearch = async (query: string, filters: any) => {
@@ -2810,7 +2935,7 @@ const DiscoveryPlatform = () => {
             const results: SearchResult[] = (data.papers || [])
                 .map((paper: any, idx: number) => {
                     // Generate a unique ID
-                    let baseId = paper.pmid || paper.doi || `paper-${idx}`;
+                    const baseId = paper.pmid || paper.doi || `paper-${idx}`;
                     let uniqueId = baseId;
                     let counter = 1;
                     while (seenIds.has(uniqueId)) {
@@ -3545,6 +3670,20 @@ const DiscoveryPlatform = () => {
                                     </div>
                                 </TabsContent>
                             </Tabs>
+                        )}
+
+                        {/* DISCOVERY TAB */}
+                        {activeTab === 'discovery' && (
+                            <div className="pb-12">
+                                <DiscoveryTabContent
+                                    frontierJobs={frontierJobs}
+                                    lbdClaims={lbdClaims}
+                                    reasoningTraces={reasoningTraces}
+                                    contradictions={lbdContradictions}
+                                    isLoading={isDiscoveryLoading}
+                                    onPromoteClaim={handlePromoteClaim}
+                                />
+                            </div>
                         )}
 
                         {/* LABORATORIES TAB */}
