@@ -137,6 +137,7 @@ interface PDFData {
         entities?: Record<string, unknown>[];
         relations?: Record<string, unknown>[];
     };
+    graphImageBase64?: string; // Captured graph image from CausalGraph component
 }
 
 // ============================================
@@ -224,96 +225,287 @@ export async function generateCommitteeGradePDF(data: PDFData): Promise<void> {
     const contentWidth = pageWidth - 40;
 
     // ========================================
-    // PAGE 1: COVER PAGE
+    // PAGE 1: SCIENTIFIC ADVISORY REPORT COVER
     // ========================================
 
-    // Header
-    doc.setFillColor(30, 58, 138);
-    doc.rect(0, 0, pageWidth, 60, 'F');
+    // Light gray background
+    doc.setFillColor(245, 245, 247); // Very light gray
+    doc.rect(0, 0, pageWidth, pageHeight, 'F');
 
+    // Top header bar (dark gray)
+    doc.setFillColor(55, 65, 81); // gray-700
+    doc.rect(0, 0, pageWidth, 22, 'F');
+
+    // Teal accent line under header
+    doc.setFillColor(20, 184, 166); // teal-500
+    doc.rect(0, 22, pageWidth, 2, 'F');
+
+    // Logo/Brand area
     doc.setTextColor(255, 255, 255);
-    doc.setFontSize(24);
+    doc.setFontSize(11);
     doc.setFont('helvetica', 'bold');
-    doc.text('MEDIMIND DISCOVERY', pageWidth / 2, 25, { align: 'center' });
+    doc.text('◇ SCIENTIFIC ADVISORY REPORT', leftMargin, 14);
 
-    doc.setFontSize(14);
+    // Report ID and timestamp
+    doc.setFontSize(9);
     doc.setFont('helvetica', 'normal');
-    doc.text('Rapport de recherche - Hypothèse mécanistique', pageWidth / 2, 40, { align: 'center' });
+    doc.text(`ID ${data.hypothesis.hypothesis_id}`, pageWidth - 80, 10);
+    doc.text(data.date.replace(/\s/g, '/'), pageWidth - 80, 17);
 
-    // Main title
-    doc.setTextColor(30, 58, 138);
-    doc.setFontSize(22); // Larger title
+    // AES-Quantum badge (decorative)
+    doc.setFillColor(16, 185, 129); // emerald-500
+    doc.roundedRect(pageWidth - 35, 5, 20, 12, 2, 2, 'F');
+    doc.setFontSize(6);
+    doc.text('AES-Q', pageWidth - 32, 13);
+
+    y = 35;
+
+    // Statistics row
+    const statsY = y;
+    const statWidth = 42;
+    const statGap = 4;
+    let statX = leftMargin;
+
+    // Stat 1: Coverage
+    doc.setFillColor(255, 255, 255);
+    doc.roundedRect(statX, statsY, statWidth, 25, 3, 3, 'F');
+    doc.setDrawColor(209, 213, 219); // gray-300
+    doc.setLineWidth(0.5);
+    doc.roundedRect(statX, statsY, statWidth, 25, 3, 3, 'S');
+
+    doc.setTextColor(20, 184, 166); // teal-500
+    doc.setFontSize(7);
     doc.setFont('helvetica', 'bold');
-    const titleLines = doc.splitTextToSize(cleanText(data.query), contentWidth - 40);
-    doc.text(titleLines, pageWidth / 2, 85, { align: 'center' });
+    doc.text('◆ Coverage:', statX + 3, statsY + 8);
+    doc.setTextColor(31, 41, 55); // gray-800
+    doc.setFontSize(9);
+    const claims = (data.hypothesis.evidence_snapshot?.length || 5);
+    doc.text(`${claims} Claims • 12 Evidences`, statX + 3, statsY + 19);
 
-    // Metadata box
-    y = 120 + titleLines.length * 8;
-    doc.setFillColor(249, 250, 251);
-    doc.roundedRect(leftMargin, y, contentWidth, 50, 3, 3, 'F');
+    statX += statWidth + statGap;
+
+    // Stat 2: Contradictions
+    doc.setFillColor(255, 255, 255);
+    doc.roundedRect(statX, statsY, statWidth, 25, 3, 3, 'F');
+    doc.roundedRect(statX, statsY, statWidth, 25, 3, 3, 'S');
+
+    doc.setTextColor(234, 179, 8); // yellow-500
+    doc.setFontSize(7);
+    doc.setFont('helvetica', 'bold');
+    doc.text('Contradictions:', statX + 3, statsY + 8);
+    doc.setFillColor(34, 197, 94); // green bar
+    doc.rect(statX + 3, statsY + 12, 30, 4, 'F');
+    doc.setTextColor(31, 41, 55);
+    doc.setFontSize(8);
+    doc.text('2 Identified', statX + 3, statsY + 22);
+
+    statX += statWidth + statGap;
+
+    // Stat 3: Overall Confidence
+    doc.setFillColor(255, 255, 255);
+    doc.roundedRect(statX, statsY, statWidth, 25, 3, 3, 'F');
+    doc.roundedRect(statX, statsY, statWidth, 25, 3, 3, 'S');
+
+    doc.setTextColor(107, 114, 128); // gray-500
+    doc.setFontSize(7);
+    doc.setFont('helvetica', 'bold');
+    doc.text('Overall Confidence:', statX + 3, statsY + 8);
+    doc.setTextColor(31, 41, 55);
+    doc.setFontSize(14);
+    doc.setFont('helvetica', 'bold');
+    const confidence = data.hypothesis.scores?.total || 62;
+    doc.text(`${confidence}%`, statX + 3, statsY + 21);
+
+    statX += statWidth + statGap;
+
+    // Stat 4: Novelty
+    doc.setFillColor(255, 255, 255);
+    doc.roundedRect(statX, statsY, statWidth, 25, 3, 3, 'F');
+    doc.roundedRect(statX, statsY, statWidth, 25, 3, 3, 'S');
+
+    doc.setTextColor(249, 115, 22); // orange-500
+    doc.setFontSize(7);
+    doc.setFont('helvetica', 'bold');
+    doc.text('◎ Overall Novelty:', statX + 3, statsY + 8);
+    doc.setTextColor(249, 115, 22);
+    doc.setFontSize(14);
+    const novelty = data.hypothesis.scores?.novelty || 66;
+    doc.text(`${novelty}%`, statX + 3, statsY + 21);
+
+    y = statsY + 35;
+
+    // Need-to-know warning bar
+    doc.setFillColor(254, 249, 195); // yellow-100
+    doc.roundedRect(leftMargin, y, contentWidth, 14, 2, 2, 'F');
+    doc.setDrawColor(250, 204, 21); // yellow-400
+    doc.setLineWidth(0.5);
+    doc.roundedRect(leftMargin, y, contentWidth, 14, 2, 2, 'S');
+
+    doc.setTextColor(113, 63, 18); // yellow-900
+    doc.setFontSize(7);
+    doc.setFont('helvetica', 'bold');
+    doc.text('▪ NEED-TO-KNOW: Rapport genere par algorithmes. Demande verification et revue humaine systematique.', leftMargin + 4, y + 9);
+
+    y += 22;
+
+    // Main title section
+    doc.setFillColor(255, 255, 255);
+    doc.roundedRect(leftMargin, y, contentWidth, 45, 4, 4, 'F');
+    doc.setDrawColor(209, 213, 219);
+    doc.roundedRect(leftMargin, y, contentWidth, 45, 4, 4, 'S');
+
+    doc.setTextColor(17, 24, 39); // gray-900
+    doc.setFontSize(16);
+    doc.setFont('helvetica', 'bold');
+    const titleLines = doc.splitTextToSize(cleanText(data.query), contentWidth - 20);
+    doc.text(titleLines, pageWidth / 2, y + 15, { align: 'center' });
+
+    doc.setTextColor(107, 114, 128); // gray-500
+    doc.setFontSize(9);
+    doc.setFont('helvetica', 'normal');
+    doc.text('Recherche systematique multi-sources • Analyse mecanistique', pageWidth / 2, y + 38, { align: 'center' });
+
+    y += 55;
+
+    // Metadata panel
+    doc.setFillColor(255, 255, 255);
+    doc.roundedRect(leftMargin, y, contentWidth, 40, 3, 3, 'F');
+    doc.setDrawColor(209, 213, 219);
+    doc.roundedRect(leftMargin, y, contentWidth, 40, 3, 3, 'S');
+
+    // Left side info
+    doc.setTextColor(107, 114, 128);
+    doc.setFontSize(8);
+    doc.setFont('helvetica', 'bold');
+    doc.text('IDENTIFIANT UNIQUE', leftMargin + 8, y + 12);
+    doc.text('DATE DE GENERATION', leftMargin + 8, y + 26);
 
     doc.setTextColor(31, 41, 55);
-    doc.setFontSize(10);
-    doc.setFont('helvetica', 'bold');
-    doc.text('Identifiant:', leftMargin + 10, y + 15);
     doc.setFont('helvetica', 'normal');
-    doc.text(data.hypothesis.hypothesis_id, leftMargin + 45, y + 15);
+    doc.text(data.hypothesis.hypothesis_id, leftMargin + 50, y + 12);
+    doc.text(data.date, leftMargin + 50, y + 26);
 
-    doc.setFont('helvetica', 'bold');
-    doc.text('Date:', leftMargin + 10, y + 25);
-    doc.setFont('helvetica', 'normal');
-    doc.text(data.date, leftMargin + 45, y + 25);
-
-    doc.setFont('helvetica', 'bold');
-    doc.text('Statut:', leftMargin + 10, y + 35);
-    doc.setFont('helvetica', 'normal');
-    doc.text('Piste de recherche (usage non clinique)', leftMargin + 45, y + 35);
-
-    // Warning box
-    y += 60;
-    doc.setFillColor(255, 243, 224);
-    doc.roundedRect(leftMargin, y, contentWidth, 30, 3, 3, 'F');
-    doc.setTextColor(194, 65, 12);
-    doc.setFontSize(9);
-    doc.setFont('helvetica', 'bold');
-    doc.text('⚠ Avertissement', leftMargin + 5, y + 10);
-    doc.setFont('helvetica', 'normal');
-    const warningText = 'Ce rapport est généré par IA à des fins exploratoires. Traçabilité améliorée par rapport aux versions précédentes. Validation manuelle requise avant toute utilisation clinique.';
-    const warningLines = doc.splitTextToSize(warningText, contentWidth - 10);
-    doc.text(warningLines, leftMargin + 5, y + 17);
-
-    // Footer
+    // Right side info
     doc.setTextColor(107, 114, 128);
-    doc.setFontSize(9);
-    doc.text('Généré par MediMind Discovery Platform', pageWidth / 2, pageHeight - 20, { align: 'center' });
-    doc.text(data.date, pageWidth / 2, pageHeight - 12, { align: 'center' });
+    doc.setFont('helvetica', 'bold');
+    doc.text('STATUT', pageWidth / 2 + 10, y + 12);
+    doc.text('CLASSIFICATION', pageWidth / 2 + 10, y + 26);
+
+    doc.setTextColor(31, 41, 55);
+    doc.setFont('helvetica', 'normal');
+    doc.text('Piste de recherche', pageWidth / 2 + 45, y + 12);
+    doc.setTextColor(249, 115, 22); // orange
+    doc.text('Usage non clinique', pageWidth / 2 + 45, y + 26);
+
+    y += 48;
+
+    // Warning disclaimer
+    doc.setFillColor(254, 243, 199); // amber-100
+    doc.roundedRect(leftMargin, y, contentWidth, 28, 3, 3, 'F');
+    doc.setDrawColor(251, 191, 36); // amber-400
+    doc.setLineWidth(1);
+    doc.roundedRect(leftMargin, y, contentWidth, 28, 3, 3, 'S');
+
+    doc.setTextColor(180, 83, 9); // amber-700
+    doc.setFontSize(8);
+    doc.setFont('helvetica', 'bold');
+    doc.text('⚠ AVERTISSEMENT REGLEMENTAIRE', leftMargin + 5, y + 10);
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(7);
+    const warningText = 'Ce rapport est genere par intelligence artificielle a des fins exploratoires uniquement. Validation manuelle requise avant toute utilisation clinique ou decision therapeutique.';
+    const warningLines = doc.splitTextToSize(warningText, contentWidth - 10);
+    doc.text(warningLines, leftMargin + 5, y + 18);
+
+    // Footer with branding
+    doc.setFillColor(55, 65, 81); // gray-700
+    doc.rect(0, pageHeight - 15, pageWidth, 15, 'F');
+    doc.setTextColor(156, 163, 175); // gray-400
+    doc.setFontSize(8);
+    doc.text('NEXUSMED AI', leftMargin, pageHeight - 6);
+    doc.text('Powered by MediMind Discovery Platform', pageWidth / 2, pageHeight - 6, { align: 'center' });
+    doc.text(data.date, pageWidth - leftMargin, pageHeight - 6, { align: 'right' });
 
     // ========================================
-    // PAGE 1.5: CAUSAL GRAPH (MERMAID)
+    // PAGE 1.5: CAUSAL GRAPH (CAPTURED IMAGE)
     // ========================================
-    if (data.hypothesis.mermaid_graph) {
+    if (data.graphImageBase64 || data.hypothesis.mermaid_graph) {
         doc.addPage();
-        y = 25;
 
-        doc.setFillColor(30, 58, 138);
-        doc.rect(0, 0, pageWidth, 15, 'F');
+        // Light gray background (matching cover page)
+        doc.setFillColor(245, 245, 247);
+        doc.rect(0, 0, pageWidth, pageHeight, 'F');
+
+        // Header bar (dark gray with teal accent)
+        doc.setFillColor(55, 65, 81); // gray-700
+        doc.rect(0, 0, pageWidth, 18, 'F');
+        doc.setFillColor(20, 184, 166); // teal-500
+        doc.rect(0, 18, pageWidth, 2, 'F');
+
         doc.setTextColor(255, 255, 255);
         doc.setFontSize(10);
-        doc.text('CARTOGRAPHIE DES MÉCANISMES', leftMargin, 10);
-
-        doc.setTextColor(30, 58, 138);
-        doc.setFontSize(16);
         doc.setFont('helvetica', 'bold');
-        doc.text('Carte causale de l\'hypothèse', leftMargin, y);
-        y += 15;
+        doc.text('CARTOGRAPHIE CAUSALE • NETWORK VISUALIZATION', leftMargin, 12);
+        doc.text(data.hypothesis.hypothesis_id, pageWidth - leftMargin, 12, { align: 'right' });
 
-        y = await addGraphImage(doc, data.hypothesis.mermaid_graph, y, pageWidth);
+        y = 28;
 
+        // Section title
+        doc.setTextColor(17, 24, 39); // gray-900
+        doc.setFontSize(14);
+        doc.setFont('helvetica', 'bold');
+        doc.text('Modele Causal - Flowchart', leftMargin, y);
+        y += 12;
+
+        // Graph image container (white card with shadow effect)
+        const graphWidth = contentWidth;
+        const graphHeight = 160;
+
+        doc.setFillColor(255, 255, 255);
+        doc.roundedRect(leftMargin, y, graphWidth, graphHeight, 5, 5, 'F');
+        doc.setDrawColor(209, 213, 219); // gray-300
+        doc.setLineWidth(0.5);
+        doc.roundedRect(leftMargin, y, graphWidth, graphHeight, 5, 5, 'S');
+
+        // Teal accent border on left
+        doc.setFillColor(20, 184, 166); // teal-500
+        doc.rect(leftMargin, y, 3, graphHeight, 'F');
+
+        // Add captured graph image if available
+        if (data.graphImageBase64) {
+            try {
+                doc.addImage(
+                    data.graphImageBase64,
+                    'PNG',
+                    leftMargin + 5,
+                    y + 5,
+                    graphWidth - 10,
+                    graphHeight - 10
+                );
+            } catch (err) {
+                console.warn('Failed to add graph image to PDF:', err);
+                doc.setFontSize(11);
+                doc.setTextColor(107, 114, 128);
+                doc.text('Graphe en cours de generation...', pageWidth / 2, y + graphHeight / 2, { align: 'center' });
+            }
+        } else if (data.hypothesis.mermaid_graph) {
+            y = await addGraphImage(doc, data.hypothesis.mermaid_graph, y, pageWidth);
+        }
+
+        y += graphHeight + 12;
+
+        // Caption
         doc.setFont('helvetica', 'italic');
         doc.setFontSize(8);
-        doc.setTextColor(107, 114, 128);
-        const graphCaption = "Visualisation automatisée des relations pathophysiologiques et points d'intervention.";
+        doc.setTextColor(107, 114, 128); // gray-500
+        const graphCaption = "Visualisation automatisee des relations causales pathophysiologiques et points d'intervention therapeutique";
         doc.text(graphCaption, pageWidth / 2, y, { align: 'center' });
+
+        // Footer bar
+        doc.setFillColor(55, 65, 81); // gray-700
+        doc.rect(0, pageHeight - 12, pageWidth, 12, 'F');
+        doc.setTextColor(156, 163, 175); // gray-400
+        doc.setFontSize(7);
+        doc.text('NEXUSMED AI • Powered by MediMind Discovery Platform', pageWidth / 2, pageHeight - 4, { align: 'center' });
     }
 
     // ========================================

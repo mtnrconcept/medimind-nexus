@@ -1,5 +1,6 @@
 
-import React, { useMemo, useEffect, useCallback } from 'react';
+import React, { useMemo, useEffect, useCallback, useRef, forwardRef, useImperativeHandle } from 'react';
+import html2canvas from 'html2canvas';
 import {
     ReactFlow,
     Background,
@@ -24,143 +25,178 @@ import {
     SheetTitle,
 } from "@/components/ui/sheet";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"; // Assuming Card exists, if not use divs
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
-// Node styling based on type - matching the radial graph structure
-const ClinicalNode = ({ data, selected }: { data: { label: string; type: string; mechanism?: string; subItems?: string[] }; selected: boolean }) => {
-    const getNodeStyle = (type: string) => {
+// =====================================================
+// FLOWCHART NODE COMPONENTS
+// =====================================================
+
+// START NODE - Oval shape (Green) - For central pathology/problem
+const StartNode = ({ data, selected }: { data: { label: string; type: string; mechanism?: string; subItems?: string[] }; selected: boolean }) => (
+    <div className={`
+        min-w-[180px] min-h-[80px] px-6 py-4
+        bg-gradient-to-br from-emerald-500 to-emerald-700
+        border-3 border-emerald-300
+        rounded-[50px] shadow-[0_0_30px_rgba(16,185,129,0.5)]
+        flex flex-col items-center justify-center text-center
+        transition-all duration-300 cursor-pointer
+        ${selected ? 'ring-4 ring-white/60 scale-105' : 'hover:scale-102 hover:shadow-[0_0_40px_rgba(16,185,129,0.6)]'}
+    `}>
+        <Handle type="source" position={Position.Bottom} className="!w-3 !h-3 !bg-emerald-300 !border-2 !border-white" />
+        <span className="text-white text-sm font-bold leading-tight uppercase tracking-wide max-w-[160px]">
+            {data.label}
+        </span>
+        {data.subItems && data.subItems.length > 0 && (
+            <div className="mt-1 text-[10px] text-emerald-100/80">
+                {data.subItems.slice(0, 2).join(' • ')}
+            </div>
+        )}
+    </div>
+);
+
+// DECISION NODE - Diamond shape (Orange) - For risk factors, branching conditions
+const DecisionNode = ({ data, selected }: { data: { label: string; type: string; mechanism?: string; subItems?: string[] }; selected: boolean }) => (
+    <div className={`
+        relative w-[140px] h-[140px]
+        flex items-center justify-center
+        transition-all duration-300 cursor-pointer
+        ${selected ? 'scale-105' : 'hover:scale-102'}
+    `}>
+        {/* Diamond shape using rotated square */}
+        <div className={`
+            absolute inset-0
+            bg-gradient-to-br from-amber-400 to-orange-600
+            border-3 border-amber-200
+            rounded-lg rotate-45 transform origin-center
+            shadow-[0_0_25px_rgba(245,158,11,0.4)]
+            ${selected ? 'ring-4 ring-white/50' : ''}
+        `} />
+
+        {/* Content - counter-rotated */}
+        <div className="relative z-10 text-center px-2">
+            <Handle type="target" position={Position.Top} className="!w-3 !h-3 !bg-amber-200 !border-2 !border-white !-top-[70px]" />
+            <span className="text-white text-[11px] font-bold leading-tight uppercase tracking-tight max-w-[90px] block">
+                {data.label}
+            </span>
+            <Handle type="source" position={Position.Bottom} className="!w-3 !h-3 !bg-amber-200 !border-2 !border-white !-bottom-[70px]" />
+            <Handle type="source" position={Position.Left} id="left" className="!w-3 !h-3 !bg-amber-200 !border-2 !border-white !-left-[70px]" />
+            <Handle type="source" position={Position.Right} id="right" className="!w-3 !h-3 !bg-amber-200 !border-2 !border-white !-right-[70px]" />
+        </div>
+    </div>
+);
+
+// PROCESS NODE - Rectangle shape (Blue/Cyan) - For symptoms, mechanisms, treatments
+const ProcessNode = ({ data, selected }: { data: { label: string; type: string; mechanism?: string; subItems?: string[] }; selected: boolean }) => {
+    // Different colors based on subtype
+    const getColors = (type: string) => {
         switch (type) {
-            case 'pathology':
-                // Central node - red, larger, glowing
-                return {
-                    bg: 'bg-gradient-to-br from-red-700 to-red-900',
-                    border: 'border-red-400',
-                    text: 'text-white',
-                    size: 'min-w-[140px] min-h-[140px] rounded-full',
-                    shadow: 'shadow-[0_0_40px_rgba(239,68,68,0.4)]'
-                };
-            case 'symptom':
-                // Gray/slate for symptoms
-                return {
-                    bg: 'bg-gradient-to-br from-slate-600 to-slate-800',
-                    border: 'border-slate-400',
-                    text: 'text-slate-100',
-                    size: 'min-w-[100px] rounded-full',
-                    shadow: 'shadow-lg'
-                };
-            case 'molecule':
-                // Purple for molecular targets
-                return {
-                    bg: 'bg-gradient-to-br from-purple-700 to-purple-900',
-                    border: 'border-purple-400',
-                    text: 'text-purple-100',
-                    size: 'min-w-[90px] rounded-full',
-                    shadow: 'shadow-[0_0_20px_rgba(147,51,234,0.3)]'
-                };
             case 'treatment':
             case 'medication':
-                // Blue for treatments/medications
                 return {
-                    bg: 'bg-gradient-to-br from-blue-600 to-blue-800',
-                    border: 'border-blue-400',
-                    text: 'text-blue-100',
-                    size: 'min-w-[100px] rounded-full',
-                    shadow: 'shadow-[0_0_20px_rgba(59,130,246,0.3)]'
+                    bg: 'from-cyan-500 to-cyan-700',
+                    border: 'border-cyan-300',
+                    shadow: 'shadow-[0_0_20px_rgba(6,182,212,0.4)]'
+                };
+            case 'symptom':
+            case 'mechanism':
+                return {
+                    bg: 'from-blue-500 to-blue-700',
+                    border: 'border-blue-300',
+                    shadow: 'shadow-[0_0_20px_rgba(59,130,246,0.4)]'
                 };
             case 'side_effect':
-                // Yellow/amber for side effects
-                return {
-                    bg: 'bg-gradient-to-br from-yellow-600 to-amber-800',
-                    border: 'border-yellow-400',
-                    text: 'text-yellow-100',
-                    size: 'min-w-[80px] rounded-full',
-                    shadow: 'shadow-lg'
-                };
             case 'complication':
-                // Orange for complications
                 return {
-                    bg: 'bg-gradient-to-br from-orange-600 to-orange-800',
-                    border: 'border-orange-400',
-                    text: 'text-orange-100',
-                    size: 'min-w-[90px] rounded-full',
-                    shadow: 'shadow-lg'
-                };
-            case 'research':
-                // Teal/cyan for research projects
-                return {
-                    bg: 'bg-gradient-to-br from-teal-600 to-teal-800',
-                    border: 'border-teal-300',
-                    text: 'text-teal-100',
-                    size: 'min-w-[100px] rounded-full',
-                    shadow: 'shadow-[0_0_25px_rgba(20,184,166,0.3)]'
-                };
-            case 'resolution':
-            case 'outcome':
-            case 'OUTCOME':
-                // Green for resolution/outcome
-                return {
-                    bg: 'bg-gradient-to-br from-emerald-600 to-emerald-800',
-                    border: 'border-emerald-300',
-                    text: 'text-white',
-                    size: 'min-w-[120px] min-h-[80px] rounded-full',
-                    shadow: 'shadow-[0_0_30px_rgba(16,185,129,0.4)]'
-                };
-            case 'mechanism':
-            case 'evaluation':
-            case 'monitoring':
-                // Cyan for mechanisms/monitoring (kept for backward compatibility)
-                return {
-                    bg: 'bg-gradient-to-br from-cyan-700 to-cyan-900',
-                    border: 'border-cyan-400',
-                    text: 'text-cyan-100',
-                    size: 'min-w-[80px] rounded-full',
-                    shadow: 'shadow-lg'
+                    bg: 'from-rose-500 to-rose-700',
+                    border: 'border-rose-300',
+                    shadow: 'shadow-[0_0_20px_rgba(244,63,94,0.4)]'
                 };
             default:
                 return {
-                    bg: 'bg-gradient-to-br from-slate-700 to-slate-900',
-                    border: 'border-slate-500',
-                    text: 'text-slate-100',
-                    size: 'min-w-[80px] rounded-full',
+                    bg: 'from-slate-500 to-slate-700',
+                    border: 'border-slate-300',
                     shadow: 'shadow-lg'
                 };
         }
     };
 
-
-    const style = getNodeStyle(data.type);
+    const colors = getColors(data.type);
 
     return (
         <div className={`
-            ${style.size} ${style.bg} ${style.text} ${style.shadow}
-            border-2 ${style.border}
-            flex flex-col items-center justify-center p-3 text-center
+            min-w-[160px] min-h-[60px] px-4 py-3
+            bg-gradient-to-br ${colors.bg}
+            border-2 ${colors.border}
+            rounded-lg ${colors.shadow}
+            flex flex-col items-center justify-center text-center
             transition-all duration-300 cursor-pointer
-            ${selected ? 'ring-4 ring-white/50 scale-110' : 'hover:scale-105'}
+            ${selected ? 'ring-4 ring-white/50 scale-105' : 'hover:scale-102'}
         `}>
-            <Handle type="target" position={Position.Top} className="!w-2 !h-2 !bg-white/30 !border-none" />
-            <Handle type="target" position={Position.Left} className="!w-2 !h-2 !bg-white/30 !border-none" />
-            <Handle type="target" position={Position.Right} className="!w-2 !h-2 !bg-white/30 !border-none" />
+            <Handle type="target" position={Position.Top} className="!w-3 !h-3 !bg-white/80 !border-2 !border-slate-400" />
+            <Handle type="target" position={Position.Left} className="!w-3 !h-3 !bg-white/80 !border-2 !border-slate-400" />
 
-            <span className="text-[10px] font-black leading-tight uppercase tracking-tight break-words max-w-[120px]">
+            <span className="text-white text-xs font-semibold leading-tight max-w-[140px]">
                 {data.label}
             </span>
-
-            {data.subItems && data.subItems.length > 0 && (
-                <div className="mt-1 text-[8px] opacity-70 leading-tight">
-                    {data.subItems.slice(0, 3).join(' • ')}
+            {data.mechanism && (
+                <div className="mt-1 text-[9px] text-white/70 italic max-w-[130px]">
+                    {data.mechanism.substring(0, 40)}...
                 </div>
             )}
 
-            <Handle type="source" position={Position.Bottom} className="!w-2 !h-2 !bg-white/30 !border-none" />
-            <Handle type="source" position={Position.Left} className="!w-2 !h-2 !bg-white/30 !border-none" />
-            <Handle type="source" position={Position.Right} className="!w-2 !h-2 !bg-white/30 !border-none" />
+            <Handle type="source" position={Position.Bottom} className="!w-3 !h-3 !bg-white/80 !border-2 !border-slate-400" />
+            <Handle type="source" position={Position.Right} className="!w-3 !h-3 !bg-white/80 !border-2 !border-slate-400" />
         </div>
     );
 };
 
+// END NODE - Rounded rectangle/Oval (Green) - For resolution/outcome
+const EndNode = ({ data, selected }: { data: { label: string; type: string; mechanism?: string; subItems?: string[] }; selected: boolean }) => (
+    <div className={`
+        min-w-[180px] min-h-[70px] px-6 py-4
+        bg-gradient-to-br from-green-500 to-teal-600
+        border-3 border-green-300
+        rounded-[40px] shadow-[0_0_30px_rgba(34,197,94,0.5)]
+        flex flex-col items-center justify-center text-center
+        transition-all duration-300 cursor-pointer
+        ${selected ? 'ring-4 ring-white/60 scale-105' : 'hover:scale-102 hover:shadow-[0_0_40px_rgba(34,197,94,0.6)]'}
+    `}>
+        <Handle type="target" position={Position.Top} className="!w-3 !h-3 !bg-green-300 !border-2 !border-white" />
+        <Handle type="target" position={Position.Left} className="!w-3 !h-3 !bg-green-300 !border-2 !border-white" />
+        <span className="text-white text-sm font-bold leading-tight uppercase tracking-wide max-w-[160px]">
+            {data.label}
+        </span>
+    </div>
+);
+
+// Legacy clinical node for backward compatibility
+const ClinicalNode = ({ data, selected }: { data: { label: string; type: string; mechanism?: string; subItems?: string[] }; selected: boolean }) => (
+    <div className={`
+        min-w-[120px] min-h-[50px] px-4 py-3
+        bg-gradient-to-br from-slate-600 to-slate-800
+        border-2 border-slate-400
+        rounded-lg shadow-lg
+        flex flex-col items-center justify-center text-center
+        transition-all duration-300 cursor-pointer
+        ${selected ? 'ring-4 ring-white/50 scale-105' : 'hover:scale-102'}
+    `}>
+        <Handle type="target" position={Position.Top} className="!w-2 !h-2 !bg-white/30 !border-none" />
+        <Handle type="target" position={Position.Left} className="!w-2 !h-2 !bg-white/30 !border-none" />
+        <span className="text-white text-xs font-semibold leading-tight max-w-[100px]">
+            {data.label}
+        </span>
+        <Handle type="source" position={Position.Bottom} className="!w-2 !h-2 !bg-white/30 !border-none" />
+        <Handle type="source" position={Position.Right} className="!w-2 !h-2 !bg-white/30 !border-none" />
+    </div>
+);
+
+// Node types mapping
 const nodeTypes = {
-    clinical: ClinicalNode,
+    start: StartNode,
+    decision: DecisionNode,
+    process: ProcessNode,
+    end: EndNode,
+    clinical: ClinicalNode, // Backward compatibility
 };
 
 interface CausalGraphProps {
@@ -181,6 +217,11 @@ interface CausalGraphProps {
     };
 }
 
+// Handle interface for external graph capture
+export interface CausalGraphHandle {
+    captureGraphImage: () => Promise<string | null>;
+}
+
 // Radial layout algorithm
 function calculateRadialPosition(centerX: number, centerY: number, radius: number, angleIndex: number, totalItems: number, startAngle: number = 0): { x: number; y: number } {
     const angleStep = (2 * Math.PI) / Math.max(totalItems, 1);
@@ -191,7 +232,29 @@ function calculateRadialPosition(centerX: number, centerY: number, radius: numbe
     };
 }
 
-const CausalGraph = ({ hypothesis }: CausalGraphProps) => {
+const CausalGraph = forwardRef<CausalGraphHandle, CausalGraphProps>(({ hypothesis }, ref) => {
+    // Ref to the container for capturing screenshot
+    const containerRef = useRef<HTMLDivElement>(null);
+
+    // Expose capture function via ref
+    useImperativeHandle(ref, () => ({
+        captureGraphImage: async (): Promise<string | null> => {
+            if (!containerRef.current) return null;
+            try {
+                const canvas = await html2canvas(containerRef.current, {
+                    backgroundColor: '#0f172a', // Dark slate background
+                    scale: 2, // Higher resolution
+                    useCORS: true,
+                    logging: false
+                });
+                return canvas.toDataURL('image/png');
+            } catch (err) {
+                console.error('Failed to capture graph:', err);
+                return null;
+            }
+        }
+    }), []);
+
     useEffect(() => {
         console.log('--- RADIAL CAUSAL GRAPH DEBUG ---');
         console.log('Hypothesis ID:', hypothesis.hypothesis_id);
@@ -230,85 +293,242 @@ const CausalGraph = ({ hypothesis }: CausalGraphProps) => {
     useEffect(() => {
         const centerX = 600;
         const centerY = 400;
+        const innerRadius = 200;
         const outerRadius = 380;
         const farRadius = 500;
 
-        let newNodes: Node[] = [];
-        let newEdges: Edge[] = [];
+        const newNodes: Node[] = [];
+        const newEdges: Edge[] = [];
+
+        // =====================================================
+        // HIERARCHICAL FLOWCHART LAYOUT
+        // =====================================================
+
+        // Layout constants
+        const LAYER_HEIGHT = 160; // Vertical spacing between layers
+        const NODE_WIDTH = 200;   // Horizontal spacing between nodes
+        const START_Y = 50;       // Starting Y position
+
+        // Helper: Determine flowchart node type based on data type
+        const getFlowchartNodeType = (dataType: string): string => {
+            switch (dataType?.toLowerCase()) {
+                case 'pathology':
+                case 'problem':
+                case 'start':
+                    return 'start';
+                case 'resolution':
+                case 'outcome':
+                case 'end':
+                    return 'end';
+                case 'risk_factor':
+                case 'decision':
+                case 'condition':
+                    return 'decision';
+                default:
+                    return 'process';
+            }
+        };
 
         // 1. Check for explicit causal_graph field
         if (hypothesis.causal_graph?.nodes && hypothesis.causal_graph.nodes.length > 0) {
-            // Compute radial positions for explicit nodes
-            const nodeCount = hypothesis.causal_graph.nodes.length;
-            const pathologyNodes = hypothesis.causal_graph.nodes.filter(n => n.type === 'pathology');
-            const otherNodes = hypothesis.causal_graph.nodes.filter(n => n.type !== 'pathology' && n.type !== 'resolution');
-            const resolutionNodes = hypothesis.causal_graph.nodes.filter(n => n.type === 'resolution');
+            console.log('📊 Building hierarchical flowchart from explicit causal_graph');
 
-            const explicitNodes: Node[] = [];
+            // Build adjacency list and identify root nodes
+            const adjacency = new Map<string, string[]>();
+            const inDegree = new Map<string, number>();
+            const nodeMap = new Map<string, typeof hypothesis.causal_graph.nodes[0]>();
 
-            // Place pathology at center
-            pathologyNodes.forEach((n, idx) => {
-                explicitNodes.push({
-                    id: n.id,
-                    type: 'clinical',
-                    data: { label: n.label, type: n.type, mechanism: n.mechanism, subItems: n.subItems },
-                    position: { x: centerX - 70, y: centerY - 70 }
-                });
+            // Initialize
+            hypothesis.causal_graph.nodes.forEach(n => {
+                nodeMap.set(n.id, n);
+                adjacency.set(n.id, []);
+                inDegree.set(n.id, 0);
             });
 
-            // Place other nodes radially
-            otherNodes.forEach((n, idx) => {
-                const pos = calculateRadialPosition(centerX, centerY, innerRadius + (idx % 2) * 120, idx, otherNodes.length, -Math.PI / 2);
-                explicitNodes.push({
-                    id: n.id,
-                    type: 'clinical',
-                    data: { label: n.label, type: n.type, mechanism: n.mechanism, subItems: n.subItems },
-                    position: { x: pos.x - 50, y: pos.y - 40 }
-                });
-            });
-
-            // Place resolution nodes on the far right
-            resolutionNodes.forEach((n, idx) => {
-                explicitNodes.push({
-                    id: n.id,
-                    type: 'clinical',
-                    data: { label: n.label, type: n.type, mechanism: n.mechanism, subItems: n.subItems },
-                    position: { x: centerX + farRadius, y: centerY - 50 + (idx * 120) }
-                });
-            });
-
-            // Create interaction map for label-to-id resolution
+            // Build graph from edges
+            const edgesToUse = hypothesis.causal_graph.edges || [];
             const labelToIdMap = new Map<string, string>();
-            explicitNodes.forEach(node => {
-                if (node.data.label) {
-                    labelToIdMap.set(node.data.label.toLowerCase(), node.id);
+            hypothesis.causal_graph.nodes.forEach(n => {
+                if (n.label) labelToIdMap.set(n.label.toLowerCase(), n.id);
+            });
+
+            // Fuzzy matching helper
+            const findNodeId = (label: string | undefined): string | undefined => {
+                if (!label) return undefined;
+                const lowerLabel = label.toLowerCase();
+                if (labelToIdMap.has(lowerLabel)) return labelToIdMap.get(lowerLabel);
+                for (const [nodeLabel, nodeId] of labelToIdMap.entries()) {
+                    if (nodeLabel.includes(lowerLabel) || lowerLabel.includes(nodeLabel)) {
+                        return nodeId;
+                    }
+                }
+                return undefined;
+            };
+
+            // Auto-generate missing nodes from edges
+            let autoNodeCounter = 0;
+            edgesToUse.forEach(e => {
+                const from = e.from || e.source;
+                const to = e.to || e.target;
+
+                [from, to].forEach(label => {
+                    if (label && !findNodeId(label)) {
+                        const nodeId = `auto-${autoNodeCounter++}`;
+                        nodeMap.set(nodeId, { id: nodeId, label, type: 'process' });
+                        adjacency.set(nodeId, []);
+                        inDegree.set(nodeId, 0);
+                        labelToIdMap.set(label.toLowerCase(), nodeId);
+                    }
+                });
+            });
+
+            // Process edges
+            edgesToUse.forEach(e => {
+                const fromId = findNodeId(e.from) || findNodeId(e.source);
+                const toId = findNodeId(e.to) || findNodeId(e.target);
+                if (fromId && toId && fromId !== toId) {
+                    adjacency.get(fromId)?.push(toId);
+                    inDegree.set(toId, (inDegree.get(toId) || 0) + 1);
                 }
             });
 
-            const explicitEdges: Edge[] = [];
-            (hypothesis.causal_graph.edges || []).forEach((e, idx) => {
-                // Try to find IDs by label matching
-                const sourceId = labelToIdMap.get(e.from?.toLowerCase()) || labelToIdMap.get(e.source?.toLowerCase());
-                const targetId = labelToIdMap.get(e.to?.toLowerCase()) || labelToIdMap.get(e.target?.toLowerCase());
+            // Topological sort to determine layers (BFS-based)
+            const layers: string[][] = [];
+            const nodeLayer = new Map<string, number>();
+            const visited = new Set<string>();
+
+            // Find root nodes (in-degree = 0) or pathology nodes
+            let queue: string[] = [];
+            for (const [nodeId, deg] of inDegree.entries()) {
+                const node = nodeMap.get(nodeId);
+                if (deg === 0 || node?.type === 'pathology') {
+                    queue.push(nodeId);
+                    nodeLayer.set(nodeId, 0);
+                    visited.add(nodeId);
+                }
+            }
+
+            // If no roots found, use first pathology or first node
+            if (queue.length === 0) {
+                const firstNode = Array.from(nodeMap.keys())[0];
+                if (firstNode) {
+                    queue.push(firstNode);
+                    nodeLayer.set(firstNode, 0);
+                    visited.add(firstNode);
+                }
+            }
+
+            // BFS to assign layers
+            while (queue.length > 0) {
+                const nextQueue: string[] = [];
+                queue.forEach(nodeId => {
+                    const currentLayer = nodeLayer.get(nodeId) || 0;
+                    adjacency.get(nodeId)?.forEach(childId => {
+                        if (!visited.has(childId)) {
+                            visited.add(childId);
+                            nodeLayer.set(childId, currentLayer + 1);
+                            nextQueue.push(childId);
+                        }
+                    });
+                });
+                queue = nextQueue;
+            }
+
+            // Add unvisited nodes (disconnected components)
+            for (const nodeId of nodeMap.keys()) {
+                if (!visited.has(nodeId)) {
+                    const maxLayer = Math.max(...Array.from(nodeLayer.values()), 0);
+                    nodeLayer.set(nodeId, maxLayer + 1);
+                }
+            }
+
+            // Group nodes by layer
+            const layerNodes = new Map<number, string[]>();
+            for (const [nodeId, layer] of nodeLayer.entries()) {
+                if (!layerNodes.has(layer)) layerNodes.set(layer, []);
+                layerNodes.get(layer)?.push(nodeId);
+            }
+
+            // Position nodes in hierarchical layout
+            const maxLayer = Math.max(...Array.from(layerNodes.keys()), 0);
+
+            layerNodes.forEach((nodeIds, layer) => {
+                const layerWidth = nodeIds.length * NODE_WIDTH;
+                const startX = centerX - layerWidth / 2 + NODE_WIDTH / 2;
+
+                nodeIds.forEach((nodeId, idx) => {
+                    const node = nodeMap.get(nodeId);
+                    if (!node) return;
+
+                    // Determine node type for flowchart
+                    let flowchartType = getFlowchartNodeType(node.type);
+
+                    // Force start type for first layer, end type for last layer
+                    if (layer === 0 && node.type === 'pathology') flowchartType = 'start';
+                    if (layer === maxLayer && (node.type === 'resolution' || node.type === 'outcome')) flowchartType = 'end';
+
+                    newNodes.push({
+                        id: nodeId,
+                        type: flowchartType,
+                        data: {
+                            label: node.label,
+                            type: node.type,
+                            mechanism: node.mechanism,
+                            subItems: node.subItems
+                        },
+                        position: {
+                            x: startX + idx * NODE_WIDTH - 90,
+                            y: START_Y + layer * LAYER_HEIGHT
+                        }
+                    });
+                });
+            });
+
+            // Create edges with flowchart styling
+            edgesToUse.forEach((e, idx) => {
+                const sourceId = findNodeId(e.from) || findNodeId(e.source);
+                const targetId = findNodeId(e.to) || findNodeId(e.target);
 
                 if (sourceId && targetId) {
-                    explicitEdges.push({
+                    // Determine edge style based on relationship
+                    const isPositive = e.label?.includes('TRAITE') || e.label?.includes('RÉSOUT') || e.label?.includes('améliore');
+                    const isNegative = e.label?.includes('CAUSE') || e.label?.includes('aggrave') || e.label?.includes('↓');
+
+                    newEdges.push({
                         id: `e-${idx}`,
                         source: sourceId,
                         target: targetId,
                         label: e.label,
                         type: 'smoothstep',
-                        animated: e.label === 'RÉSOUT' || e.label === 'TRAITE' || e.label === 'CAUSES', // Animate core flows
-                        markerEnd: { type: MarkerType.ArrowClosed, color: '#64748b', width: 15, height: 15 },
-                        style: { strokeWidth: 2, stroke: '#475569' },
-                        labelStyle: { fontSize: '9px', fontWeight: 'bold', fill: '#94a3b8' },
-                        labelBgStyle: { fill: '#1e293b', fillOpacity: 0.9 },
-                        labelBgPadding: [4, 2] as [number, number]
+                        animated: isPositive,
+                        markerEnd: {
+                            type: MarkerType.ArrowClosed,
+                            color: isPositive ? '#22c55e' : isNegative ? '#ef4444' : '#64748b',
+                            width: 20,
+                            height: 20
+                        },
+                        style: {
+                            strokeWidth: 3,
+                            stroke: isPositive ? '#22c55e' : isNegative ? '#ef4444' : '#64748b'
+                        },
+                        labelStyle: {
+                            fontSize: '10px',
+                            fontWeight: 600,
+                            fill: '#e2e8f0'
+                        },
+                        labelBgStyle: {
+                            fill: '#1e293b',
+                            fillOpacity: 0.95
+                        },
+                        labelBgPadding: [6, 4] as [number, number]
                     });
-                } else {
-                    console.warn(`[CausalGraph] Could not link edge: ${e.from || e.source} -> ${e.to || e.target}`);
                 }
             });
+
+            console.log(`[CausalGraph Flowchart] Rendered ${newNodes.length} nodes across ${maxLayer + 1} layers, ${newEdges.length} edges`);
+            setNodes(newNodes);
+            setEdges(newEdges);
+            return;
 
         } else {
             // 2. FALLBACK: Build DYNAMIC graph from hypothesis data
@@ -495,7 +715,7 @@ const CausalGraph = ({ hypothesis }: CausalGraphProps) => {
 
 
     return (
-        <div className="h-[800px] w-full bg-[#f5f0e8] rounded-2xl border border-stone-300 shadow-xl mt-8 overflow-hidden relative">
+        <div ref={containerRef} className="h-[800px] w-full bg-[#0f172a] rounded-2xl border border-slate-600 shadow-xl mt-8 overflow-hidden relative">
             {/* Paper texture overlay */}
             <div className="absolute inset-0 pointer-events-none opacity-30" style={{ backgroundImage: 'url("data:image/svg+xml,%3Csvg viewBox=\'0 0 100 100\' xmlns=\'http://www.w3.org/2000/svg\'%3E%3Cfilter id=\'noiseFilter\'%3E%3CfeTurbulence type=\'fractalNoise\' baseFrequency=\'0.9\' numOctaves=\'4\' stitchTiles=\'stitch\'/%3E%3C/filter%3E%3Crect width=\'100%25\' height=\'100%25\' filter=\'url(%23noiseFilter)\'/%3E%3C/svg%3E")' }} />
 
@@ -567,8 +787,8 @@ const CausalGraph = ({ hypothesis }: CausalGraphProps) => {
                 <Controls className="!bg-white/80 !border-stone-200 !rounded-xl !overflow-hidden shadow-lg" />
             </ReactFlow>
 
-            <Sheet open={isDrawerOpen} onOpenChange={setIsDrawerOpen}>
-                <SheetContent side="right" className="w-[400px] sm:w-[540px] bg-slate-900 border-l border-slate-800 text-slate-100 p-0">
+            <Sheet open={isDrawerOpen} onOpenChange={setIsDrawerOpen} modal={true}>
+                <SheetContent side="right" className="w-[400px] sm:w-[540px] bg-slate-900 border-l border-slate-800 text-slate-100 p-0 z-[100]">
                     <SheetHeader className="p-6 border-b border-slate-800">
                         <SheetTitle className="text-xl font-semibold text-emerald-400">
                             Evidence Drawer
@@ -653,6 +873,8 @@ const CausalGraph = ({ hypothesis }: CausalGraphProps) => {
 
         </div>
     );
-};
+});
+
+CausalGraph.displayName = 'CausalGraph';
 
 export default CausalGraph;
