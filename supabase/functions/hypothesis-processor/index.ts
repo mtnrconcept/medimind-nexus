@@ -663,9 +663,27 @@ Retourne JSON strict selon le format spécifié.`;
                             target: claim.triple.target.label,
                             label: claim.triple.rel,
                             data: {
+                                // Evidence references
                                 evidenceIds: claim.support_evidence_ids || [],
+                                // Scores
                                 score: claim.scores?.aggregate || 0.5,
-                                safety: claim.scores?.safety_risk || 0
+                                safety: claim.scores?.safety_risk || 0,
+                                novelty: claim.scores?.novelty || 0,
+                                plausibility: claim.scores?.plausibility || 0,
+                                // Mechanism explanation
+                                mechanism: claim.mechanism_of_action || claim.context || `${claim.triple.source.label} ${claim.triple.rel} ${claim.triple.target.label}`,
+                                context: claim.population_context || claim.clinical_context || '',
+                                // Confidence level (Oxford)
+                                confidenceLevel: claim.oxford_level || claim.evidence_level || 'Non défini',
+                                // Direction
+                                direction: claim.direction || (claim.triple.rel?.includes('INHIBITS') || claim.triple.rel?.includes('REDUCES') ? 'négatif' : 'positif'),
+                                // Raw claim ID for reference
+                                claimId: claim.claim_id || `claim-${Math.random().toString(36).substr(2, 9)}`,
+                                // Source type
+                                sourceType: claim.triple.source.type || 'unknown',
+                                targetType: claim.triple.target.type || 'unknown',
+                                // References (PMIDs, DOIs)
+                                references: claim.key_references || claim.references || []
                             }
                         }));
                         const outcomeEdges: any[] = [];

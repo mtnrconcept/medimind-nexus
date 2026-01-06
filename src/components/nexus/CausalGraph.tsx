@@ -715,80 +715,83 @@ const CausalGraph = forwardRef<CausalGraphHandle, CausalGraphProps>(({ hypothesi
 
 
     return (
-        <div ref={containerRef} className="h-[800px] w-full bg-[#0f172a] rounded-2xl border border-slate-600 shadow-xl mt-8 overflow-hidden relative">
-            {/* Paper texture overlay */}
-            <div className="absolute inset-0 pointer-events-none opacity-30" style={{ backgroundImage: 'url("data:image/svg+xml,%3Csvg viewBox=\'0 0 100 100\' xmlns=\'http://www.w3.org/2000/svg\'%3E%3Cfilter id=\'noiseFilter\'%3E%3CfeTurbulence type=\'fractalNoise\' baseFrequency=\'0.9\' numOctaves=\'4\' stitchTiles=\'stitch\'/%3E%3C/filter%3E%3Crect width=\'100%25\' height=\'100%25\' filter=\'url(%23noiseFilter)\'/%3E%3C/svg%3E")' }} />
+        <>
+            <div ref={containerRef} className="h-[800px] w-full bg-[#0f172a] rounded-2xl border border-slate-600 shadow-xl mt-8 overflow-hidden relative">
+                {/* Paper texture overlay */}
+                <div className="absolute inset-0 pointer-events-none opacity-30" style={{ backgroundImage: 'url("data:image/svg+xml,%3Csvg viewBox=\'0 0 100 100\' xmlns=\'http://www.w3.org/2000/svg\'%3E%3Cfilter id=\'noiseFilter\'%3E%3CfeTurbulence type=\'fractalNoise\' baseFrequency=\'0.9\' numOctaves=\'4\' stitchTiles=\'stitch\'/%3E%3C/filter%3E%3Crect width=\'100%25\' height=\'100%25\' filter=\'url(%23noiseFilter)\'/%3E%3C/svg%3E")' }} />
 
-            {/* Legend */}
-            <div className="absolute top-4 left-4 z-10 p-4 bg-white/90 backdrop-blur border border-stone-200 rounded-xl shadow-lg">
-                <h3 className="text-sm font-bold text-stone-800 mb-3 uppercase tracking-wide">
-                    Légende du Graphe
-                </h3>
-                <div className="grid grid-cols-2 gap-x-6 gap-y-2 text-[10px]">
-                    <div className="flex items-center gap-2">
-                        <div className="w-4 h-4 rounded-full bg-gradient-to-br from-red-700 to-red-900 border border-red-400 shadow-sm" />
-                        <span className="text-stone-700 font-medium">Pathologie ciblée</span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                        <div className="w-4 h-4 rounded-full bg-gradient-to-br from-blue-600 to-blue-800 border border-blue-400 shadow-sm" />
-                        <span className="text-stone-700 font-medium">Traitement</span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                        <div className="w-4 h-4 rounded-full bg-gradient-to-br from-slate-600 to-slate-800 border border-slate-400 shadow-sm" />
-                        <span className="text-stone-700 font-medium">Symptôme</span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                        <div className="w-4 h-4 rounded-full bg-gradient-to-br from-yellow-600 to-amber-800 border border-yellow-400 shadow-sm" />
-                        <span className="text-stone-700 font-medium">Effet secondaire</span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                        <div className="w-4 h-4 rounded-full bg-gradient-to-br from-purple-700 to-purple-900 border border-purple-400 shadow-sm" />
-                        <span className="text-stone-700 font-medium">Molécule</span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                        <div className="w-4 h-4 rounded-full bg-gradient-to-br from-teal-600 to-teal-800 border border-teal-300 shadow-sm" />
-                        <span className="text-stone-700 font-medium">Recherche</span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                        <div className="w-4 h-4 rounded-full bg-gradient-to-br from-orange-600 to-orange-800 border border-orange-400 shadow-sm" />
-                        <span className="text-stone-700 font-medium">Complication</span>
-                    </div>
-                    <div className="flex items-center gap-2 col-span-2">
-                        <div className="w-5 h-5 rounded-full bg-gradient-to-br from-emerald-500 to-emerald-700 border-2 border-emerald-300 shadow-[0_0_10px_rgba(16,185,129,0.4)]" />
-                        <span className="text-emerald-700 font-bold">GUÉRISON</span>
+                {/* Legend */}
+                <div className="absolute top-4 left-4 z-10 p-4 bg-white/90 backdrop-blur border border-stone-200 rounded-xl shadow-lg">
+                    <h3 className="text-sm font-bold text-stone-800 mb-3 uppercase tracking-wide">
+                        Légende du Graphe
+                    </h3>
+                    <div className="grid grid-cols-2 gap-x-6 gap-y-2 text-[10px]">
+                        <div className="flex items-center gap-2">
+                            <div className="w-4 h-4 rounded-full bg-gradient-to-br from-red-700 to-red-900 border border-red-400 shadow-sm" />
+                            <span className="text-stone-700 font-medium">Pathologie ciblée</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                            <div className="w-4 h-4 rounded-full bg-gradient-to-br from-blue-600 to-blue-800 border border-blue-400 shadow-sm" />
+                            <span className="text-stone-700 font-medium">Traitement</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                            <div className="w-4 h-4 rounded-full bg-gradient-to-br from-slate-600 to-slate-800 border border-slate-400 shadow-sm" />
+                            <span className="text-stone-700 font-medium">Symptôme</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                            <div className="w-4 h-4 rounded-full bg-gradient-to-br from-yellow-600 to-amber-800 border border-yellow-400 shadow-sm" />
+                            <span className="text-stone-700 font-medium">Effet secondaire</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                            <div className="w-4 h-4 rounded-full bg-gradient-to-br from-purple-700 to-purple-900 border border-purple-400 shadow-sm" />
+                            <span className="text-stone-700 font-medium">Molécule</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                            <div className="w-4 h-4 rounded-full bg-gradient-to-br from-teal-600 to-teal-800 border border-teal-300 shadow-sm" />
+                            <span className="text-stone-700 font-medium">Recherche</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                            <div className="w-4 h-4 rounded-full bg-gradient-to-br from-orange-600 to-orange-800 border border-orange-400 shadow-sm" />
+                            <span className="text-stone-700 font-medium">Complication</span>
+                        </div>
+                        <div className="flex items-center gap-2 col-span-2">
+                            <div className="w-5 h-5 rounded-full bg-gradient-to-br from-emerald-500 to-emerald-700 border-2 border-emerald-300 shadow-[0_0_10px_rgba(16,185,129,0.4)]" />
+                            <span className="text-emerald-700 font-bold">GUÉRISON</span>
+                        </div>
                     </div>
                 </div>
+
+
+
+                <div className="absolute top-4 right-4 z-10">
+                    <Badge className="bg-stone-800 text-stone-100 border-none px-3 py-1 text-[10px] font-mono">
+                        {nodes.length} nœuds • {edges.length} liens
+                    </Badge>
+                </div>
+
+                <ReactFlow
+                    nodes={nodes}
+                    edges={edges}
+                    onNodesChange={onNodesChange}
+                    onEdgesChange={onEdgesChange}
+                    onEdgeClick={onEdgeClick}
+                    nodeTypes={nodeTypes}
+                    fitView
+                    minZoom={0.3}
+                    maxZoom={2}
+                    defaultEdgeOptions={{
+                        type: 'smoothstep',
+                    }}
+                    className="bg-slate-950"
+                >
+                    <Background color="#334155" gap={20} variant={BackgroundVariant.Dots} />
+                    <Controls className="!bg-white/80 !border-stone-200 !rounded-xl !overflow-hidden shadow-lg" />
+                </ReactFlow>
             </div>
 
-
-
-            <div className="absolute top-4 right-4 z-10">
-                <Badge className="bg-stone-800 text-stone-100 border-none px-3 py-1 text-[10px] font-mono">
-                    {nodes.length} nœuds • {edges.length} liens
-                </Badge>
-            </div>
-
-            <ReactFlow
-                nodes={nodes}
-                edges={edges}
-                onNodesChange={onNodesChange}
-                onEdgesChange={onEdgesChange}
-                onEdgeClick={onEdgeClick}
-                nodeTypes={nodeTypes}
-                fitView
-                minZoom={0.3}
-                maxZoom={2}
-                defaultEdgeOptions={{
-                    type: 'smoothstep',
-                }}
-                className="bg-slate-950"
-            >
-                <Background color="#334155" gap={20} variant={BackgroundVariant.Dots} />
-                <Controls className="!bg-white/80 !border-stone-200 !rounded-xl !overflow-hidden shadow-lg" />
-            </ReactFlow>
-
+            {/* Sheet moved outside overflow-hidden container for proper z-index */}
             <Sheet open={isDrawerOpen} onOpenChange={setIsDrawerOpen} modal={true}>
-                <SheetContent side="right" className="w-[400px] sm:w-[540px] bg-slate-900 border-l border-slate-800 text-slate-100 p-0 z-[100]">
+                <SheetContent side="right" className="w-[400px] sm:w-[540px] bg-slate-900 border-l border-slate-800 text-slate-100 p-0 z-[61999] fixed">
                     <SheetHeader className="p-6 border-b border-slate-800">
                         <SheetTitle className="text-xl font-semibold text-emerald-400">
                             Evidence Drawer
@@ -802,66 +805,127 @@ const CausalGraph = forwardRef<CausalGraphHandle, CausalGraphProps>(({ hypothesi
                             </Badge>
                         )}
                     </SheetHeader>
+                    <ScrollArea className="h-[calc(100vh-200px)]">
+                        <div className="p-6 space-y-6">
 
-                    <ScrollArea className="h-[calc(100vh-140px)] p-6">
-                        <div className="space-y-6">
-                            {/* Evidence List */}
-                            <div>
-                                <h4 className="text-sm font-medium text-slate-400 mb-3 uppercase tracking-wider">Supporting Evidence</h4>
-                                {selectedEdge?.data?.evidenceIds && selectedEdge.data.evidenceIds.length > 0 ? (
-                                    <div className="space-y-3">
-                                        {selectedEdge.data.evidenceIds.map((eid: string) => {
-                                            const evidence = getEvidenceDetails(eid);
-                                            return (
-                                                <div key={eid} className="bg-slate-950/50 border border-slate-800 rounded-lg p-4">
-                                                    <div className="flex items-start justify-between mb-2">
-                                                        <Badge variant="secondary" className="text-xs bg-slate-800 text-slate-300">{eid}</Badge>
-                                                        {evidence?.level && <span className="text-xs text-slate-500">{evidence.level}</span>}
-                                                    </div>
-                                                    <p className="font-medium text-slate-200 mb-2">{evidence?.title || "Evidence details not found"}</p>
-                                                    {evidence?.passages?.map((p: any, idx: number) => (
-                                                        <div key={idx} className="text-sm text-slate-400 italic border-l-2 border-slate-700 pl-3 my-2">
-                                                            "{p.quote}"
-                                                        </div>
-                                                    ))}
-                                                    {evidence?.url_or_id && (
-                                                        <div className="mt-2 pt-2 border-t border-slate-800/50">
-                                                            <a href="#" className="text-xs text-blue-400 hover:text-blue-300 flex items-center gap-1">
-                                                                Source ID: {evidence.url_or_id}
-                                                            </a>
-                                                        </div>
-                                                    )}
-                                                </div>
-                                            );
-                                        })}
-                                    </div>
-                                ) : (
-                                    <div className="text-slate-500 italic p-4 border border-dashed border-slate-800 rounded">
-                                        No specific evidence linked to this edge.
-                                        {selectedEdge?.data?.isOutcomeLink && (
-                                            <span className="block mt-1 text-emerald-500/70 text-xs">This is a structural link to an Outcome node.</span>
-                                        )}
-                                    </div>
+                            {/* Direction & Confidence Badge Row */}
+                            <div className="flex items-center gap-3 flex-wrap">
+                                {selectedEdge?.data?.direction && (
+                                    <Badge className={`${selectedEdge.data.direction === 'positif' ? 'bg-emerald-600' : 'bg-red-600'} text-white`}>
+                                        {selectedEdge.data.direction === 'positif' ? '↑ Effet Positif' : '↓ Effet Négatif'}
+                                    </Badge>
+                                )}
+                                {selectedEdge?.data?.confidenceLevel && (
+                                    <Badge variant="outline" className="text-amber-300 border-amber-700">
+                                        Oxford: {selectedEdge.data.confidenceLevel}
+                                    </Badge>
+                                )}
+                                {selectedEdge?.data?.claimId && (
+                                    <Badge variant="secondary" className="bg-slate-800 text-slate-400 text-xs">
+                                        {selectedEdge.data.claimId}
+                                    </Badge>
                                 )}
                             </div>
 
-                            {/* Scores if available */}
-                            {selectedEdge?.data?.score !== undefined && (
+                            {/* Mechanism / Explanation */}
+                            <div>
+                                <h4 className="text-sm font-medium text-slate-400 mb-2 uppercase tracking-wider flex items-center gap-2">
+                                    <span>⚙️</span> Mécanisme d'Action
+                                </h4>
+                                <p className="text-slate-200 bg-slate-950/50 p-4 rounded-lg border border-slate-800 leading-relaxed">
+                                    {selectedEdge?.data?.mechanism || `${selectedEdge?.source} ${selectedEdge?.label} ${selectedEdge?.target}`}
+                                </p>
+                            </div>
+
+                            {/* Clinical Context */}
+                            {selectedEdge?.data?.context && (
                                 <div>
-                                    <h4 className="text-sm font-medium text-slate-400 mb-3 uppercase tracking-wider">Confidence Metrics</h4>
-                                    <div className="grid grid-cols-2 gap-3">
+                                    <h4 className="text-sm font-medium text-slate-400 mb-2 uppercase tracking-wider flex items-center gap-2">
+                                        <span>🏥</span> Contexte Clinique
+                                    </h4>
+                                    <p className="text-slate-300 bg-slate-950/30 p-4 rounded-lg border border-slate-700 italic">
+                                        {selectedEdge.data.context}
+                                    </p>
+                                </div>
+                            )}
+
+                            {/* Entity Types */}
+                            <div className="grid grid-cols-2 gap-4">
+                                <div className="bg-slate-950/50 p-3 rounded border border-slate-800">
+                                    <div className="text-xs text-slate-500 mb-1">Source</div>
+                                    <div className="text-sm font-medium text-cyan-400">{selectedEdge?.source}</div>
+                                    <div className="text-xs text-slate-500">{selectedEdge?.data?.sourceType || 'unknown'}</div>
+                                </div>
+                                <div className="bg-slate-950/50 p-3 rounded border border-slate-800">
+                                    <div className="text-xs text-slate-500 mb-1">Target</div>
+                                    <div className="text-sm font-medium text-rose-400">{selectedEdge?.target}</div>
+                                    <div className="text-xs text-slate-500">{selectedEdge?.data?.targetType || 'unknown'}</div>
+                                </div>
+                            </div>
+
+                            {/* Confidence Metrics */}
+                            <div>
+                                <h4 className="text-sm font-medium text-slate-400 mb-3 uppercase tracking-wider flex items-center gap-2">
+                                    <span>📊</span> Métriques de Confiance
+                                </h4>
+                                <div className="grid grid-cols-2 gap-3">
+                                    {selectedEdge?.data?.score !== undefined && (
                                         <div className="bg-slate-950/50 p-3 rounded border border-slate-800">
-                                            <div className="text-xs text-slate-500">Aggregate Score</div>
+                                            <div className="text-xs text-slate-500">Score Agrégé</div>
                                             <div className="text-lg font-bold text-white">{(selectedEdge.data.score * 100).toFixed(0)}%</div>
                                         </div>
-                                        {selectedEdge?.data?.safety !== undefined && (
-                                            <div className="bg-slate-950/50 p-3 rounded border border-slate-800">
-                                                <div className="text-xs text-slate-500">Safety Risk</div>
-                                                <div className={`text-lg font-bold ${selectedEdge.data.safety > 0.5 ? 'text-red-400' : 'text-emerald-400'}`}>
-                                                    {(selectedEdge.data.safety * 100).toFixed(0)}%
-                                                </div>
+                                    )}
+                                    {selectedEdge?.data?.plausibility !== undefined && selectedEdge.data.plausibility > 0 && (
+                                        <div className="bg-slate-950/50 p-3 rounded border border-slate-800">
+                                            <div className="text-xs text-slate-500">Plausibilité</div>
+                                            <div className="text-lg font-bold text-blue-400">{(selectedEdge.data.plausibility * 100).toFixed(0)}%</div>
+                                        </div>
+                                    )}
+                                    {selectedEdge?.data?.novelty !== undefined && selectedEdge.data.novelty > 0 && (
+                                        <div className="bg-slate-950/50 p-3 rounded border border-slate-800">
+                                            <div className="text-xs text-slate-500">Nouveauté</div>
+                                            <div className="text-lg font-bold text-amber-400">{(selectedEdge.data.novelty * 100).toFixed(0)}%</div>
+                                        </div>
+                                    )}
+                                    {selectedEdge?.data?.safety !== undefined && selectedEdge.data.safety > 0 && (
+                                        <div className="bg-slate-950/50 p-3 rounded border border-slate-800">
+                                            <div className="text-xs text-slate-500">Risque Sécurité</div>
+                                            <div className={`text-lg font-bold ${selectedEdge.data.safety > 0.5 ? 'text-red-400' : 'text-emerald-400'}`}>
+                                                {(selectedEdge.data.safety * 100).toFixed(0)}%
                                             </div>
-                                        )}
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+
+                            {/* References */}
+                            {selectedEdge?.data?.references && selectedEdge.data.references.length > 0 && (
+                                <div>
+                                    <h4 className="text-sm font-medium text-slate-400 mb-3 uppercase tracking-wider flex items-center gap-2">
+                                        <span>📚</span> Références
+                                    </h4>
+                                    <div className="space-y-2">
+                                        {selectedEdge.data.references.map((ref: string, idx: number) => (
+                                            <div key={idx} className="text-sm text-blue-400 bg-slate-950/30 p-2 rounded border border-slate-700">
+                                                {ref}
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* Evidence IDs */}
+                            {selectedEdge?.data?.evidenceIds && selectedEdge.data.evidenceIds.length > 0 && (
+                                <div>
+                                    <h4 className="text-sm font-medium text-slate-400 mb-3 uppercase tracking-wider flex items-center gap-2">
+                                        <span>🔗</span> Evidence IDs
+                                    </h4>
+                                    <div className="flex flex-wrap gap-2">
+                                        {selectedEdge.data.evidenceIds.map((eid: string) => (
+                                            <Badge key={eid} variant="secondary" className="text-xs bg-slate-800 text-slate-300">
+                                                {eid}
+                                            </Badge>
+                                        ))}
                                     </div>
                                 </div>
                             )}
@@ -870,8 +934,7 @@ const CausalGraph = forwardRef<CausalGraphHandle, CausalGraphProps>(({ hypothesi
                     </ScrollArea>
                 </SheetContent>
             </Sheet>
-
-        </div>
+        </>
     );
 });
 
