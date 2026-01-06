@@ -239,19 +239,38 @@ export default function CausalGraph({ hypothesis }: CausalGraphProps) {
                 });
             });
 
-            const explicitEdges: Edge[] = (hypothesis.causal_graph.edges || []).map((e, idx) => ({
-                id: `e-${idx}`,
-                source: e.from,
-                target: e.to,
-                label: e.label,
-                type: 'smoothstep',
-                animated: e.label === 'RÉSOUT' || e.label === 'TRAITE',
-                markerEnd: { type: MarkerType.ArrowClosed, color: '#64748b', width: 15, height: 15 },
-                style: { strokeWidth: 2, stroke: '#475569' },
-                labelStyle: { fontSize: '9px', fontWeight: 'bold', fill: '#94a3b8' },
-                labelBgStyle: { fill: '#1e293b', fillOpacity: 0.9 },
-                labelBgPadding: [4, 2] as [number, number]
-            }));
+            // Create interaction map for label-to-id resolution
+            const labelToIdMap = new Map<string, string>();
+            explicitNodes.forEach(node => {
+                if (node.data.label) {
+                    labelToIdMap.set(node.data.label.toLowerCase(), node.id);
+                }
+            });
+
+            const explicitEdges: Edge[] = [];
+            (hypothesis.causal_graph.edges || []).forEach((e, idx) => {
+                // Try to find IDs by label matching
+                const sourceId = labelToIdMap.get(e.from?.toLowerCase()) || labelToIdMap.get(e.source?.toLowerCase());
+                const targetId = labelToIdMap.get(e.to?.toLowerCase()) || labelToIdMap.get(e.target?.toLowerCase());
+
+                if (sourceId && targetId) {
+                    explicitEdges.push({
+                        id: `e-${idx}`,
+                        source: sourceId,
+                        target: targetId,
+                        label: e.label,
+                        type: 'smoothstep',
+                        animated: e.label === 'RÉSOUT' || e.label === 'TRAITE' || e.label === 'CAUSES', // Animate core flows
+                        markerEnd: { type: MarkerType.ArrowClosed, color: '#64748b', width: 15, height: 15 },
+                        style: { strokeWidth: 2, stroke: '#475569' },
+                        labelStyle: { fontSize: '9px', fontWeight: 'bold', fill: '#94a3b8' },
+                        labelBgStyle: { fill: '#1e293b', fillOpacity: 0.9 },
+                        labelBgPadding: [4, 2] as [number, number]
+                    });
+                } else {
+                    console.warn(`[CausalGraph] Could not link edge: ${e.from || e.source} -> ${e.to || e.target}`);
+                }
+            });
 
             return { nodes: explicitNodes, edges: explicitEdges };
         }

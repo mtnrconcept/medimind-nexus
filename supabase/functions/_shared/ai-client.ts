@@ -3,6 +3,8 @@
  * Handles Anthropic (Claude) requests with automatic fallback to Google Gemini.
  */
 
+declare const Deno: any;
+
 export interface AIResponse {
     text: string;
     provider: 'anthropic' | 'google' | 'none';

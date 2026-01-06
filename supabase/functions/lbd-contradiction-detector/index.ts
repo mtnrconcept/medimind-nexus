@@ -2,6 +2,8 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { callAI } from "../_shared/ai-client.ts";
 
+declare const Deno: any;
+
 const corsHeaders = {
     "Access-Control-Allow-Origin": "*",
     "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
@@ -19,7 +21,7 @@ interface ContradictionRequest {
     pathology_label?: string;
 }
 
-serve(async (req) => {
+serve(async (req: Request) => {
     if (req.method === "OPTIONS") {
         return new Response(null, { headers: corsHeaders });
     }
@@ -51,7 +53,7 @@ serve(async (req) => {
         }
 
         // 2. Prepare analysis prompt
-        const claimsList = claims.map(c => `ID: ${c.id} | ${c.subject_text} ${c.predicate} ${c.object_text} (Score: ${c.aggregate_score})`).join('\n');
+        const claimsList = claims.map((c: any) => `ID: ${c.id} | ${c.subject_text} ${c.predicate} ${c.object_text} (Score: ${c.aggregate_score})`).join('\n');
 
         const systemPrompt = `You are a scientific expert specialized in identifying contradictions in medical literature.
 Identify clinical or mechanistic contradictions from the following list of claims.
