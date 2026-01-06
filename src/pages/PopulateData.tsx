@@ -41,10 +41,14 @@ const PopulateData = () => {
             // 1. Fetch medications for FKs
             const { data: medications } = await supabase.from('medications').select('id').limit(10);
             const medicationIds = medications?.map(m => m.id) || [];
-            if (medicationIds.length === 0) addLog("⚠️ Aucune médication trouvée. Les données de médication seront ignorées ou nécessiteront des médicaments.");
+            if (medicationIds.length === 0) addLog("⚠️ Aucune médication trouvée. Les données de médication seront ignorées.");
 
-            // 2. Fetch all patients
-            const { data: patients, error: patientError } = await supabase.from('patients').select('id, first_name, last_name, gender');
+            // 2. Fetch pathologies for FKs
+            const { data: pathologies } = await supabase.from('pathologies').select('id').limit(10);
+            const pathologyIds = pathologies?.map(pa => pa.id) || [];
+
+            // 3. Fetch all patients
+            const { data: patients, error: patientError } = await supabase.from('patients').select('id, first_name, last_name, gender, email');
             if (patientError) throw patientError;
             if (!patients || patients.length === 0) {
                 addLog("❌ Aucun patient trouvé.");
@@ -120,12 +124,13 @@ const PopulateData = () => {
                 // --- 4. Allergies ---
                 const { count: alCount } = await supabase.from('patient_allergies').select('*', { count: 'exact', head: true }).eq('patient_id', pid);
                 if (alCount === 0) {
+                    const allergen = randomPick(['Pénicilline', 'Arachides', 'Pollen', 'Latex', 'Venin d\'abeille', 'Produits laitiers', 'Crustacés', 'Oeufs']);
                     const items = [{
                         patient_id: pid,
-                        allergen: randomPick(['Pénicilline', 'Arachides', 'Pollen', 'Latex']),
-                        allergy_type: 'medication',
-                        severity: 'moderate',
-                        reaction: 'Rash cutané',
+                        allergen: allergen,
+                        allergy_type: randomPick(['medication', 'food', 'environment', 'other']),
+                        severity: randomPick(['mild', 'moderate', 'severe', 'critical']),
+                        reaction: randomPick(['Rash cutané', 'Urticaire', 'Oedème de Quincke', 'Choc anaphylactique', 'Rhinite', 'Troubles digestifs']),
                         onset_date: randomDatePast(5),
                         confirmed: true
                     }];
@@ -136,15 +141,38 @@ const PopulateData = () => {
                 // --- 5. Vaccinations ---
                 const { count: vacCount } = await supabase.from('patient_vaccinations').select('*', { count: 'exact', head: true }).eq('patient_id', pid);
                 if (vacCount === 0) {
-                    const items = Array.from({ length: 3 }).map(() => ({
+                    const items = [
+                        { name: 'Grippe', type: 'Saisonnier' },
+                        { name: 'DTP', type: 'Rappel' },
+                        { name: 'Covid-19', type: 'mRNA' },
+                        { name: 'Hépatite B', type: 'Recombinant' },
+                        { name: 'Rougeole-Oreillons-Rubéole', type: 'Vivant atténué' }
+                    ].slice(0, randomInt(2, 4)).map(v => ({
                         patient_id: pid,
-                        vaccine_name: randomPick(['Grippe', 'Tétanos', 'Covid-19', 'Hépatite B']),
+                        vaccine_name: v.name,
+                        vaccine_type: v.type,
                         vaccination_date: randomDatePast(2),
                         dose_number: 1,
-                        administered_by: 'Centre de vaccination',
+                        administered_by: `Dr. ${faker.person.lastName()}`,
+                        site: randomPick(['Bras gauche', 'Bras droit', 'Cuisse'])
                     }));
                     await supabase.from('patient_vaccinations').insert(items);
                     addLog(`  + Ajouté ${items.length} vaccinations`);
+                }
+
+                // --- 5b. Symptoms ---
+                const { count: sympCount } = await supabase.from('patient_symptoms').select('*', { count: 'exact', head: true }).eq('patient_id', pid);
+                if (sympCount === 0) {
+                    const symptoms = Array.from({ length: randomInt(1, 3) }).map(() => ({
+                        patient_id: pid,
+                        symptom_name: randomPick(['Fatigue', 'Toux', 'Douleur dorsale', 'Céphalée', 'Nausée', 'Essoufflement', 'Vertiges']),
+                        severity: randomPick(['low', 'medium', 'high']),
+                        onset_date: randomDatePast(0.5),
+                        frequency: randomPick(['constant', 'intermittent', 'occasional']),
+                        is_active: true
+                    }));
+                    await supabase.from('patient_symptoms').insert(symptoms);
+                    addLog(`  + Ajouté ${symptoms.length} symptômes`);
                 }
 
                 // --- 6. Lifestyle ---
@@ -222,13 +250,31 @@ const PopulateData = () => {
                 if (prevCount === 0) {
                     await supabase.from('patient_prevention').insert({
                         patient_id: pid,
-                        screening_type: 'Coloscopie',
+                        screening_type: randomPick(['Coloscopie', 'Mammographie', 'Frottis', 'Test de vision', 'Bilan auditif']),
                         last_screening_date: randomDatePast(5),
-                        next_screening_date: randomDateFuture(300),
+                        next_due_date: randomDateFuture(300),
                         result: 'Normal',
-                        is_normal: true
+                        result_status: 'normal',
+                        follow_up_needed: false
                     });
                     addLog(`  + Ajouté Prévention`);
+                }
+
+                // --- 10b. Pathologies (Links) ---
+                if (pathologyIds.length > 0) {
+                    const { count: patholCount } = await supabase.from('patient_pathologies').select('*', { count: 'exact', head: true }).eq('patient_id', pid);
+                    if (patholCount === 0) {
+                        const pathologyLink = {
+                            patient_id: pid,
+                            pathology_id: randomPick(pathologyIds),
+                            diagnosis_date: randomDatePast(2),
+                            status: randomPick(['active', 'stable', 'remission']),
+                            diagnosed_by: `Dr. ${faker.person.lastName()}`,
+                            notes: 'Diagnostic confirmé par examens cliniques.'
+                        };
+                        await supabase.from('patient_pathologies').insert(pathologyLink);
+                        addLog(`  + Lié à une pathologie`);
+                    }
                 }
 
                 // --- 11. Mental Health ---
@@ -354,14 +400,31 @@ const PopulateData = () => {
                 if (monCount === 0) {
                     await supabase.from('patient_monitoring').insert({
                         patient_id: pid,
-                        monitoring_type: 'blood_pressure',
-                        value: 125,
-                        value_unit: 'mmHg',
-                        secondary_value: 82,
-                        secondary_unit: 'mmHg',
+                        monitoring_type: randomPick(['blood_pressure', 'glucose', 'weight', 'heart_rate']),
+                        value: randomInt(70, 140),
+                        value_unit: 'variable',
                         is_within_target: true
                     });
                     addLog(`  + Ajouté Monitoring`);
+                }
+
+                // --- 20. Administrative ---
+                const { count: adminCount } = await supabase.from('patient_administrative').select('*', { count: 'exact', head: true }).eq('patient_id', pid);
+                if (adminCount === 0) {
+                    await supabase.from('patient_administrative').insert({
+                        patient_id: pid,
+                        biological_sex: p.gender === 'female' ? 'female' : 'male',
+                        birth_place: faker.location.city(),
+                        marital_status: randomPick(['single', 'married', 'divorced', 'widowed']),
+                        profession: faker.person.jobTitle(),
+                        insurance_provider: randomPick(['CPAM', 'MGEN', 'Harmonie Mutuelle', 'Alan']),
+                        emergency_contact_name: faker.person.fullName(),
+                        emergency_contact_phone: faker.phone.number(),
+                        emergency_contact_relationship: randomPick(['épouse', 'mari', 'enfant', 'ami']),
+                        number_of_children: randomInt(0, 3),
+                        advance_directives: Math.random() > 0.8
+                    });
+                    addLog(`  + Ajouté Données Administratives`);
                 }
 
                 completed++;

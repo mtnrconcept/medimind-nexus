@@ -3396,6 +3396,7 @@ Fournis:
 
             const response = await supabase.functions.invoke('causal-reasoning', {
                 body: {
+                    stream: false, // Request JSON instead of SSE stream
                     query: queryPrompt,
                     context: {
                         sourceNode: sourceNode.name,

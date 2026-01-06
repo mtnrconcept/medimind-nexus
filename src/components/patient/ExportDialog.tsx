@@ -138,8 +138,20 @@ const SECTION_OPTIONS: SectionOption[] = [
     },
     {
         key: 'treatment',
-        label: 'Traitement en cours',
-        description: 'Médicaments et posologies',
+        label: 'Résumé du traitement',
+        description: 'Description textuelle du traitement global',
+        defaultChecked: true,
+    },
+    {
+        key: 'medications',
+        label: 'Médications',
+        description: 'Liste détaillée des médicaments et posologies',
+        defaultChecked: true,
+    },
+    {
+        key: 'allergies',
+        label: 'Allergies',
+        description: 'Liste des allergies et réactions connues',
         defaultChecked: true,
     },
     {
@@ -164,6 +176,42 @@ const SECTION_OPTIONS: SectionOption[] = [
         key: 'reproductiveHealth',
         label: 'Santé reproductive',
         description: 'Suivi gynécologique ou urologique',
+        defaultChecked: true,
+    },
+    {
+        key: 'functionalExams',
+        label: 'Examens fonctionnels',
+        description: 'Tests physiologiques et fonctionnels',
+        defaultChecked: true,
+    },
+    {
+        key: 'dental',
+        label: 'Suivi dentaire',
+        description: 'Historique des soins dentaires',
+        defaultChecked: true,
+    },
+    {
+        key: 'monitoring',
+        label: 'Monitorage',
+        description: 'Données de surveillance continue',
+        defaultChecked: true,
+    },
+    {
+        key: 'communications',
+        label: 'Communications',
+        description: 'Historique des échanges et courriers',
+        defaultChecked: true,
+    },
+    {
+        key: 'ageSpecific',
+        label: 'Données spécifiques (Âge)',
+        description: 'Indicateurs pédiatriques ou gériatriques',
+        defaultChecked: true,
+    },
+    {
+        key: 'socialFactors',
+        label: 'Facteurs sociaux',
+        description: 'Contexte social et environnemental',
         defaultChecked: true,
     },
     {

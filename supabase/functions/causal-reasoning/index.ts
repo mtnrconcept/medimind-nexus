@@ -182,6 +182,26 @@ serve(async (req) => {
             // If stream: false is requested, return JSON directly
             if ((query as any).stream === false) {
                 try {
+                    // Check if this is a link explanation request (has source/target/pathology)
+                    const isLinkExplanation = explanationContext.sourceNode && explanationContext.targetNode && explanationContext.pathology;
+
+                    if (isLinkExplanation) {
+                        console.log(`[CAUSAL-REASONING] Generating JSON explanation for ${explanationContext.sourceNode} -> ${explanationContext.targetNode}`);
+                        const explanation = await generateLinkExplanationWithClaude(
+                            explanationQuery,
+                            explanationContext,
+                            claudeApiKey!
+                        );
+
+                        return new Response(JSON.stringify({
+                            analysis: explanation,
+                            explanation: explanation // Support both field names for compatibility
+                        }), {
+                            headers: { ...corsHeaders, "Content-Type": "application/json" }
+                        });
+                    }
+
+                    // Otherwise, handle as optimal treatment analysis (default)
                     const systemPrompt = `Tu es un expert médical clinicien senior spécialisé en optimisation thérapeutique.
 Ta mission est d'analyser un graphe de connaissances médicales et d'identifier le schéma thérapeutique optimal.
 

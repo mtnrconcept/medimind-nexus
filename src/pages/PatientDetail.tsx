@@ -53,6 +53,13 @@ interface Patient {
   symptoms?: any[];
   prevention?: any[];
   imaging?: any[];
+  monitoring?: any[];
+  communications?: any[];
+  dental?: any[];
+  functional_exams?: any[];
+  age_specific?: any[];
+  social_factors?: any[];
+  patient_pathologies?: any[];
 }
 
 const PatientDetail = () => {
@@ -90,7 +97,14 @@ const PatientDetail = () => {
           patient_family_history(*),
           patient_symptoms(*),
           patient_prevention(*),
-          patient_imaging(*)
+          patient_imaging(*),
+          patient_monitoring(*),
+          patient_communications(*),
+          patient_dental(*),
+          patient_functional_exams(*),
+          patient_age_specific(*),
+          patient_social_factors(*),
+          patient_pathologies(*, pathologies(*))
         `)
         .eq('id', id)
         .maybeSingle();
@@ -133,12 +147,27 @@ const PatientDetail = () => {
           symptoms: patientData.patient_symptoms,
           prevention: patientData.patient_prevention,
           imaging: patientData.patient_imaging,
+          monitoring: patientData.patient_monitoring,
+          communications: patientData.patient_communications,
+          dental: patientData.patient_dental,
+          functional_exams: patientData.patient_functional_exams,
+          age_specific: patientData.patient_age_specific,
+          social_factors: patientData.patient_social_factors,
+          patient_pathologies: patientData.patient_pathologies,
         });
       }
       setLoading(false);
     };
     fetchPatient();
   }, [id]);
+
+  const alerts = usePatientAlerts(
+    patient?.lab_results_json || { glucose_mg_dl: 0, blood_pressure_sys: 0, blood_pressure_dia: 0, temperature_c: 0 },
+    patient?.treatment || '',
+    patient?.medical_notes_nlp || '',
+    patient?.pathologies?.name,
+    patient?.medical_history || []
+  );
 
   const fetchAiSynthesis = async () => {
     if (!id || aiSynthesis) return;
@@ -207,49 +236,208 @@ const PatientDetail = () => {
             </div>
           </div>
           <div className="flex items-center gap-1 sm:gap-2 w-full sm:w-auto justify-end">
-                reproductiveHealth: patient.reproductive_health?.map(r => ({
-              date: r.recorded_at,
-            category: r.category,
-            notes: r.notes,
+            <ExportDialog
+              patientData={{
+                patient: {
+                  id: patient.id,
+                  patientId: patient.patient_id,
+                  firstName: patient.first_name,
+                  lastName: patient.last_name,
+                  age: patient.age,
+                  gender: patient.gender,
+                  nationality: patient.nationality,
+                  heightCm: patient.height_cm,
+                  weightKg: patient.weight_kg,
+                  dateOfBirth: patient.date_of_birth,
+                  email: patient.email,
+                  phone: patient.phone,
+                  address: patient.address,
+                  city: patient.city,
+                  postalCode: patient.postal_code,
+                },
+                alerts: alerts.map(a => ({
+                  level: a.level,
+                  title: a.title,
+                  description: `${a.organ ? `Organe: ${a.organ}\n` : ''}${a.description}. Analyse détaillée disponible dans le rapport IA.`,
+                  action: a.action || 'Suivi clinique recommandé',
                 })),
-            aiSynthesis: aiSynthesis ? {
-              globalSynthesis: aiSynthesis.global_synthesis,
-            healthScore: aiSynthesis.health_score,
-            riskLevel: aiSynthesis.risk_level,
+                pathologies: [
+                  ...(patient.pathologies ? [{
+                    name: patient.pathologies.name,
+                    icdCode: patient.pathologies.icd_code,
+                    category: patient.pathologies.category,
+                    severity: 'Moyenne'
+                  }] : []),
+                  ...(patient.patient_pathologies?.map((pp: any) => ({
+                    name: pp.pathologies?.name,
+                    icdCode: pp.pathologies?.icd_code,
+                    category: pp.pathologies?.category,
+                    severity: pp.status
+                  })) || [])
+                ].filter(p => p.name),
+                treatment: patient.treatment,
+                medicalNotes: patient.medical_notes_nlp,
+                medicalHistory: patient.medical_history?.map(h => ({
+                  name: h.condition_name,
+                  date: h.diagnosis_date,
+                  status: h.is_chronic ? 'chronic' : 'active',
+                  icdCode: h.icd_code,
+                })),
+                vaccines: patient.vaccinations?.map(v => ({
+                  name: v.vaccine_name,
+                  date: v.vaccination_date,
+                  lot: v.lot_number,
+                  booster: v.booster_info,
+                })),
+                lifestyle: patient.lifestyle ? {
+                  smokingStatus: patient.lifestyle.smoking_status,
+                  alcoholStatus: patient.lifestyle.alcohol_status,
+                  physicalActivity: patient.lifestyle.physical_activity_level,
+                  diet: patient.lifestyle.diet_type,
+                  sleep: patient.lifestyle.sleep_quality,
+                } : undefined,
+                familyHistory: patient.family_history?.map(f => ({
+                  relationship: f.relationship,
+                  condition: f.condition,
+                  ageAtDiagnosis: f.age_at_diagnosis,
+                  isHereditary: f.is_hereditary,
+                })),
+                symptoms: patient.symptoms?.map(s => ({
+                  name: s.symptom_name,
+                  severity: s.severity,
+                  onsetDate: s.onset_date,
+                  isActive: s.is_active,
+                })),
+                prevention: patient.prevention?.map(p => ({
+                  type: p.screening_type || p.screening_name,
+                  date: p.last_screening_date || p.last_exam_date,
+                  result: p.result,
+                  nextDue: p.next_due_date,
+                })),
+                consultations: patient.consultations?.map(c => ({
+                  date: c.consultation_date,
+                  physician: c.physician_name,
+                  reason: c.reason,
+                  notes: c.notes,
+                })),
+                clinicalData: patient.clinical_data?.map(c => ({
+                  date: c.recorded_at,
+                  systolic: c.systolic_bp,
+                  diastolic: c.diastolic_bp,
+                  heartRate: c.heart_rate,
+                  temp: c.temperature,
+                  spo2: c.oxygen_saturation,
+                  weight: c.weight_kg,
+                })),
+                imaging: patient.imaging?.map(i => ({
+                  date: i.exam_date,
+                  type: i.imaging_type,
+                  bodyRegion: i.body_region || i.body_part,
+                  findings: i.findings,
+                  conclusion: i.conclusion,
+                })),
+                mentalHealth: patient.mental_health?.map(m => ({
+                  date: m.entry_date,
+                  condition: m.diagnosis,
+                  status: m.severity,
+                  notes: m.notes,
+                })),
+                reproductiveHealth: patient.reproductive_health?.map(r => ({
+                  date: r.entry_date || r.recorded_at,
+                  category: r.entry_type,
+                  notes: r.notes,
+                })),
+                medications: patient.medications?.map(m => ({
+                  name: m.drug_name,
+                  dosage: m.dosage,
+                  frequency: m.frequency,
+                  startDate: m.start_date,
+                  prescribedBy: m.prescribed_by,
+                  notes: m.notes,
+                })),
+                allergies: patient.allergies?.map(a => ({
+                  allergen: a.allergen,
+                  type: a.allergy_type,
+                  severity: a.severity,
+                  reaction: a.reaction,
+                })),
+                functionalExams: (patient as any).functional_exams?.map((e: any) => ({
+                  type: e.exam_type,
+                  date: e.exam_date,
+                  findings: e.findings,
+                  physician: e.physician,
+                })),
+                dental: (patient as any).dental?.map((d: any) => ({
+                  date: d.entry_date,
+                  procedure: d.procedure,
+                  dentist: d.dentist_name,
+                  notes: d.notes,
+                })),
+                monitoring: (patient as any).monitoring?.map((m: any) => ({
+                  type: m.monitoring_type,
+                  value: `${m.value || ''} ${m.value_unit || ''}`.trim(),
+                  date: m.monitoring_date,
+                  status: m.is_within_target ? 'Normal' : 'À surveiller',
+                })),
+                communications: (patient as any).communications?.map((c: any) => ({
+                  date: c.communication_date,
+                  type: c.communication_type,
+                  subject: c.subject,
+                  content: c.content,
+                })),
+                ageSpecific: (patient as any).age_specific?.map((a: any) => ({
+                  type: a.entry_type,
+                  date: a.entry_date,
+                  notes: a.notes,
+                })),
+                socialFactors: (patient as any).social_factors?.flatMap((s: any) => [
+                  { category: 'Logement', description: `${s.housing_status || ''} ${s.housing_type ? `(${s.housing_type})` : ''} ${s.living_alone ? ' - Vit seul' : ''}`.trim() },
+                  { category: 'Emploi', description: `${s.employment_status || ''} ${s.occupation ? `- ${s.occupation}` : ''}`.trim() },
+                  { category: 'Éducation', description: s.education_level || '-' },
+                  { category: 'Soutien', description: `${s.has_family_support ? 'Soutien familial' : 'Pas de soutien familial'} ${s.has_caregiver ? `(Aidant: ${s.caregiver_name || 'Présent'})` : ''}`.trim() },
+                  { category: 'Mobilité', description: `${s.has_transportation ? 'Véhiculé' : 'Non véhiculé'} ${s.mobility_issues ? '- Troubles mobilité' : ''}`.trim() },
+                  { category: 'Situation financière', description: s.financial_difficulties ? 'Difficultés signalées' : 'Stable' },
+                  { category: 'Assurance', description: s.has_health_insurance ? 'Couverture santé active' : 'Pas de couverture santé' },
+                  { category: 'Notes sociales', description: s.notes || '-' }
+                ]).filter((item: any) => item.description && item.description !== '-'),
+                aiSynthesis: aiSynthesis ? {
+                  globalSynthesis: aiSynthesis.global_synthesis,
+                  healthScore: aiSynthesis.health_score,
+                  riskLevel: aiSynthesis.risk_level,
                   vigilancePoints: aiSynthesis.vigilance_points.map((p: any) => ({
-              category: p.category,
-            level: p.level,
-            title: p.title,
-            description: p.description,
-            actionNeeded: p.action_needed,
+                    category: p.category,
+                    level: p.level,
+                    title: p.title,
+                    description: p.description,
+                    actionNeeded: p.action_needed,
                   })),
                   weakSignals: aiSynthesis.weak_signals.map((s: any) => ({
-              indicator: s.indicator,
-            trend: s.trend,
-            observation: s.observation,
-            recommendation: s.recommendation,
+                    indicator: s.indicator,
+                    trend: s.trend,
+                    observation: s.observation,
+                    recommendation: s.recommendation,
                   })),
                   treatmentRecommendations: aiSynthesis.treatment_recommendations.map((r: any) => ({
-              category: r.category,
-            suggestedAction: r.suggested_action,
-            rationale: r.rationale,
-            priority: r.priority,
+                    category: r.category,
+                    suggestedAction: r.suggested_action,
+                    rationale: r.rationale,
+                    priority: r.priority,
                   })),
                   lifestyleAdvice: aiSynthesis.lifestyle_advice.map((l: any) => ({
-              category: l.category,
-            advice: l.advice,
-            impact: l.impact,
+                    category: l.category,
+                    advice: l.advice,
+                    impact: l.impact,
                   })),
                   drugInteractions: aiSynthesis.drug_interactions.map((i: any) => ({
-              medications: i.medications,
-            interactionType: i.interaction_type,
-            severity: i.severity,
-            recommendation: i.recommendation,
+                    medications: i.medications,
+                    interactionType: i.interaction_type,
+                    severity: i.severity,
+                    recommendation: i.recommendation,
                   })),
                 } : undefined,
               }}
-            onOpen={fetchAiSynthesis}
-            isPreFetching={fetchingSynthesis}
+              onOpen={fetchAiSynthesis}
+              isPreFetching={fetchingSynthesis}
             />
 
             <Badge variant="secondary" className="flex items-center gap-1 text-xs">

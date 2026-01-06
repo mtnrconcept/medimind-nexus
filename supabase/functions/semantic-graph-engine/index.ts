@@ -228,7 +228,7 @@ serve(async (req) => {
                 .from('semantic_nodes')
                 .select('*')
                 .eq('id', params.central_node_id)
-                .single();
+                .maybeSingle();
             centralNode = data;
         } else if (params.central_label) {
             const query = supabase
@@ -240,7 +240,7 @@ serve(async (req) => {
                 query.eq('node_type', params.central_type);
             }
 
-            const { data } = await query.limit(1).single();
+            const { data } = await query.limit(1).maybeSingle();
             centralNode = data;
         }
 

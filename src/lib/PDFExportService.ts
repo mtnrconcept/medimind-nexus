@@ -169,6 +169,49 @@ export interface PatientExportData {
             recommendation: string;
         }>;
     };
+    medications?: Array<{
+        name: string;
+        dosage: string;
+        frequency: string;
+        startDate: string;
+        prescribedBy?: string;
+        notes?: string;
+    }>;
+    allergies?: Array<{
+        allergen: string;
+        type: string;
+        severity: string;
+        reaction?: string;
+    }>;
+    functionalExams?: Array<{
+        type: string;
+        date: string;
+        findings: string;
+        physician?: string;
+    }>;
+    dental?: Array<{
+        date: string;
+        procedure: string;
+        dentist: string;
+        notes?: string;
+    }>;
+    monitoring?: Array<{
+        type: string;
+        value: string;
+        date: string;
+        status?: string;
+    }>;
+    communications?: Array<{
+        date: string;
+        type: string;
+        subject: string;
+        content: string;
+    }>;
+    ageSpecific?: Array<{
+        type: string;
+        date: string;
+        notes: string;
+    }>;
 }
 
 export interface ExportOptions {
@@ -197,6 +240,13 @@ export interface ExportOptions {
         reproductiveHealth: boolean;
         socialFactors: boolean;
         aiSynthesis: boolean;
+        medications: boolean;
+        allergies: boolean;
+        functionalExams: boolean;
+        dental: boolean;
+        monitoring: boolean;
+        communications: boolean;
+        ageSpecific: boolean;
     };
 }
 
@@ -290,6 +340,49 @@ const LABELS = {
         onsetDate: 'Date d\'apparition',
         result: 'Résultat',
         nextDue: 'Prochaine échéance',
+        medications: 'Médications',
+        allergies: 'Allergies',
+        functionalExams: 'Examens Fonctionnels',
+        dental: 'Suivi Dentaire',
+        monitoring: 'Monitorage',
+        communications: 'Communications',
+        ageSpecific: 'Données Spécifiques (Âge)',
+        dosage: 'Posologie',
+        frequency: 'Fréquence',
+        startDate: 'Début',
+        reaction: 'Réaction',
+        subject: 'Objet',
+        date: 'Date',
+        physician: 'Médecin',
+        findings: 'Observations',
+        procedure: 'Procédure',
+        dentist: 'Dentiste',
+        value: 'Valeur',
+        unit: 'Unité',
+        category: 'Catégorie',
+        observation: 'Observation',
+        action: 'Action',
+        priority: 'Priorité',
+        justification: 'Justification',
+        impact: 'Impact',
+        medicationsList: 'Médicaments',
+        evaluation: 'Évaluation',
+        description: 'Description',
+        content: 'Contenu',
+        parameter: 'Paramètre',
+        prescribedBy: 'Prescrit par',
+        allergen: 'Allergène',
+        hereditary: 'Héréditaire',
+        active: 'Actif',
+        yes: 'Oui',
+        no: 'Non',
+        bp: 'TA',
+        pulse: 'Pouls',
+        temp: 'Temp.',
+        spo2: 'SpO2',
+        weightLabel: 'Poids',
+        region: 'Région',
+        conclusion: 'Conclusion',
     },
     en: {
         title: 'MediMind Nexus Patient Report',
@@ -366,6 +459,49 @@ const LABELS = {
         onsetDate: 'Onset Date',
         result: 'Result',
         nextDue: 'Next Due',
+        medications: 'Medications',
+        allergies: 'Allergies',
+        functionalExams: 'Functional Exams',
+        dental: 'Dental Records',
+        monitoring: 'Monitoring',
+        communications: 'Communications',
+        ageSpecific: 'Age Specific Data',
+        dosage: 'Dosage',
+        frequency: 'Frequency',
+        startDate: 'Start Date',
+        reaction: 'Reaction',
+        subject: 'Subject',
+        date: 'Date',
+        physician: 'Physician',
+        findings: 'Findings',
+        procedure: 'Procedure',
+        dentist: 'Dentist',
+        value: 'Value',
+        unit: 'Unit',
+        category: 'Category',
+        observation: 'Observation',
+        action: 'Action',
+        priority: 'Priority',
+        justification: 'Justification',
+        impact: 'Impact',
+        medicationsList: 'Medications',
+        evaluation: 'Evaluation',
+        description: 'Description',
+        content: 'Content',
+        parameter: 'Parameter',
+        prescribedBy: 'Prescribed By',
+        allergen: 'Allergen',
+        hereditary: 'Hereditary',
+        active: 'Active',
+        yes: 'Yes',
+        no: 'No',
+        bp: 'BP',
+        pulse: 'Pulse',
+        temp: 'Temp.',
+        spo2: 'SpO2',
+        weightLabel: 'Weight',
+        region: 'Region',
+        conclusion: 'Conclusion',
     },
 };
 
@@ -634,7 +770,7 @@ export class PDFExportService {
 
             autoTable(this.doc, {
                 startY: this.currentY,
-                head: [['Pathologie', 'Statut', 'Sévérité']],
+                head: [[this.labels.condition, this.labels.status, this.labels.severity]],
                 body: pathologyData,
                 theme: 'striped',
                 headStyles: { fillColor: COLORS.primary },
@@ -700,7 +836,7 @@ export class PDFExportService {
             if (labData.length > 0) {
                 autoTable(this.doc, {
                     startY: this.currentY,
-                    head: [['Paramètre', 'Valeur', 'Unité']],
+                    head: [[this.labels.parameter, this.labels.value, this.labels.unit]],
                     body: labData,
                     theme: 'striped',
                     headStyles: { fillColor: COLORS.primary },
@@ -761,6 +897,45 @@ export class PDFExportService {
             });
         }
 
+        // Medications
+        if (options.sections.medications && data.medications && data.medications.length > 0) {
+            this.addSectionTitle(this.labels.medications);
+            autoTable(this.doc, {
+                startY: this.currentY,
+                head: [[this.labels.medications, this.labels.dosage, this.labels.frequency, this.labels.startDate, this.labels.prescribedBy]],
+                body: data.medications.map(m => [
+                    m.name,
+                    m.dosage,
+                    m.frequency,
+                    m.startDate,
+                    m.prescribedBy || '-',
+                ]),
+                styles: { fontSize: 8 },
+                headStyles: { fillColor: COLORS.primary },
+                margin: { left: this.margins.left, right: this.margins.right },
+            });
+            this.currentY = (this.doc as any).lastAutoTable.finalY + 10;
+        }
+
+        // Allergies
+        if (options.sections.allergies && data.allergies && data.allergies.length > 0) {
+            this.addSectionTitle(this.labels.allergies);
+            autoTable(this.doc, {
+                startY: this.currentY,
+                head: [[this.labels.allergen, this.labels.type, this.labels.severity, this.labels.reaction]],
+                body: data.allergies.map(a => [
+                    a.allergen,
+                    a.type,
+                    a.severity,
+                    a.reaction || '-',
+                ]),
+                styles: { fontSize: 8 },
+                headStyles: { fillColor: COLORS.critical },
+                margin: { left: this.margins.left, right: this.margins.right },
+            });
+            this.currentY = (this.doc as any).lastAutoTable.finalY + 10;
+        }
+
         // Treatment
         if (options.sections.treatment && data.treatment) {
             this.addSectionTitle(this.labels.treatment);
@@ -790,7 +965,7 @@ export class PDFExportService {
 
             autoTable(this.doc, {
                 startY: this.currentY,
-                head: [['Pathologie', this.labels.icdCode, 'Date', 'Âge', this.labels.status]],
+                head: [[this.labels.condition, this.labels.icdCode, this.labels.date, this.labels.age, this.labels.status]],
                 body: data.medicalHistory.map(h => [
                     h.name,
                     h.icdCode || '-',
@@ -813,7 +988,7 @@ export class PDFExportService {
 
             autoTable(this.doc, {
                 startY: this.currentY,
-                head: [['Vaccin', 'Date', this.labels.lot, this.labels.booster]],
+                head: [[this.labels.vaccines, this.labels.date, this.labels.lot, this.labels.booster]],
                 body: data.vaccines.map(v => [
                     v.name,
                     v.date,
@@ -844,12 +1019,12 @@ export class PDFExportService {
             this.addSectionTitle(this.labels.familyHistory);
             autoTable(this.doc, {
                 startY: this.currentY,
-                head: [[this.labels.relationship, this.labels.condition, this.labels.age, 'Héréditaire']],
+                head: [[this.labels.relationship, this.labels.condition, this.labels.age, this.labels.hereditary]],
                 body: data.familyHistory.map(f => [
                     f.relationship,
                     f.condition,
                     f.ageAtDiagnosis || '-',
-                    f.isHereditary ? 'Oui' : 'Non',
+                    f.isHereditary ? this.labels.yes : this.labels.no,
                 ]),
                 styles: { fontSize: 8 },
                 headStyles: { fillColor: COLORS.primary },
@@ -863,12 +1038,12 @@ export class PDFExportService {
             this.addSectionTitle(this.labels.symptoms);
             autoTable(this.doc, {
                 startY: this.currentY,
-                head: [['Symptôme', this.labels.severity, this.labels.onsetDate, 'Actif']],
+                head: [[this.labels.symptoms, this.labels.severity, this.labels.onsetDate, this.labels.active]],
                 body: data.symptoms.map(s => [
                     s.name,
                     s.severity || '-',
                     s.onsetDate || '-',
-                    s.isActive ? 'Oui' : 'Non',
+                    s.isActive ? this.labels.yes : this.labels.no,
                 ]),
                 styles: { fontSize: 8 },
                 headStyles: { fillColor: COLORS.primary },
@@ -882,7 +1057,7 @@ export class PDFExportService {
             this.addSectionTitle(this.labels.clinicalData);
             autoTable(this.doc, {
                 startY: this.currentY,
-                head: [['Date', 'TA', 'Pouls', 'Temp.', 'SpO2', 'Poids']],
+                head: [[this.labels.date, this.labels.bp, this.labels.pulse, this.labels.temp, this.labels.spo2, this.labels.weightLabel]],
                 body: data.clinicalData.map(c => [
                     c.date,
                     c.systolic && c.diastolic ? `${c.systolic}/${c.diastolic}` : '-',
@@ -903,12 +1078,12 @@ export class PDFExportService {
             this.addSectionTitle(this.labels.imaging);
             autoTable(this.doc, {
                 startY: this.currentY,
-                head: [['Date', 'Type', 'Région', 'Résultats / Conclusion']],
+                head: [[this.labels.date, this.labels.type, this.labels.region, `${this.labels.findings} / ${this.labels.conclusion}`]],
                 body: data.imaging.map(i => [
                     i.date,
                     i.type,
                     i.bodyRegion,
-                    `${i.findings || ''}\nConclusion: ${i.conclusion || '-'}`.trim(),
+                    `${i.findings || ''}\n${this.labels.conclusion}: ${i.conclusion || '-'}`.trim(),
                 ]),
                 styles: { fontSize: 8 },
                 headStyles: { fillColor: COLORS.primary },
@@ -922,7 +1097,7 @@ export class PDFExportService {
             this.addSectionTitle(this.labels.mentalHealth);
             autoTable(this.doc, {
                 startY: this.currentY,
-                head: [['Date', 'Condition', 'Statut', 'Notes']],
+                head: [[this.labels.date, this.labels.condition, this.labels.statusLabel, this.labels.notes]],
                 body: data.mentalHealth.map(m => [
                     m.date,
                     m.condition,
@@ -941,7 +1116,7 @@ export class PDFExportService {
             this.addSectionTitle(this.labels.reproductiveHealth);
             autoTable(this.doc, {
                 startY: this.currentY,
-                head: [['Date', 'Catégorie', 'Notes']],
+                head: [[this.labels.date, this.labels.category, this.labels.notes]],
                 body: data.reproductiveHealth.map(r => [
                     r.date,
                     r.category,
@@ -959,7 +1134,7 @@ export class PDFExportService {
             this.addSectionTitle(this.labels.consultations);
             autoTable(this.doc, {
                 startY: this.currentY,
-                head: [['Date', 'Médecin', 'Motif', 'Notes']],
+                head: [[this.labels.date, this.labels.physician, this.labels.summary, this.labels.notes]],
                 body: data.consultations.map(c => [
                     c.date,
                     c.physician,
@@ -995,7 +1170,7 @@ export class PDFExportService {
                 this.addSectionTitle(this.labels.vigilance);
                 autoTable(this.doc, {
                     startY: this.currentY,
-                    head: [['Catégorie', 'Alerte', 'Description', 'Action']],
+                    head: [[this.labels.category, this.labels.alerts, this.labels.description, this.labels.action]],
                     body: data.aiSynthesis.vigilancePoints.map(v => [
                         v.category,
                         v.title,
@@ -1018,7 +1193,7 @@ export class PDFExportService {
                 ];
                 autoTable(this.doc, {
                     startY: this.currentY,
-                    head: [['Catégorie', 'Action', 'Justification / Impact', 'Priorité']],
+                    head: [[this.labels.category, this.labels.action, this.labels.justification, this.labels.priority]],
                     body: adviceBody,
                     styles: { fontSize: 8 },
                     headStyles: { fillColor: COLORS.primary },
@@ -1032,7 +1207,7 @@ export class PDFExportService {
                 this.addSectionTitle(this.labels.interactions);
                 autoTable(this.doc, {
                     startY: this.currentY,
-                    head: [['Médicaments', 'Type d\'interaction', 'Gravité', 'Recommandation']],
+                    head: [[this.labels.medicationsList, this.labels.type, this.labels.severity, this.labels.recommendations]],
                     body: data.aiSynthesis.drugInteractions.map(i => [
                         i.medications.join(' + '),
                         i.interactionType,
@@ -1052,12 +1227,123 @@ export class PDFExportService {
             this.addSectionTitle(this.labels.prevention);
             autoTable(this.doc, {
                 startY: this.currentY,
-                head: [['Type', 'Date', this.labels.result, this.labels.nextDue]],
+                head: [[this.labels.type, this.labels.date, this.labels.result, this.labels.nextDue]],
                 body: data.prevention.map(p => [
                     p.type,
                     p.date || '-',
                     p.result || '-',
                     p.nextDue || '-',
+                ]),
+                styles: { fontSize: 8 },
+                headStyles: { fillColor: COLORS.primary },
+                margin: { left: this.margins.left, right: this.margins.right },
+            });
+            this.currentY = (this.doc as any).lastAutoTable.finalY + 10;
+        }
+
+        // Functional Exams
+        if (options.sections.functionalExams && data.functionalExams && data.functionalExams.length > 0) {
+            this.addSectionTitle(this.labels.functionalExams);
+            autoTable(this.doc, {
+                startY: this.currentY,
+                head: [[this.labels.evaluation, this.labels.date, this.labels.findings, this.labels.physician]],
+                body: data.functionalExams.map(e => [
+                    e.type,
+                    e.date,
+                    e.findings,
+                    e.physician || '-',
+                ]),
+                styles: { fontSize: 8 },
+                headStyles: { fillColor: COLORS.primary },
+                margin: { left: this.margins.left, right: this.margins.right },
+            });
+            this.currentY = (this.doc as any).lastAutoTable.finalY + 10;
+        }
+
+        // Dental
+        if (options.sections.dental && data.dental && data.dental.length > 0) {
+            this.addSectionTitle(this.labels.dental);
+            autoTable(this.doc, {
+                startY: this.currentY,
+                head: [[this.labels.date, this.labels.procedure, this.labels.dentist, this.labels.notes]],
+                body: data.dental.map(d => [
+                    d.date,
+                    d.procedure,
+                    d.dentist,
+                    d.notes || '-',
+                ]),
+                styles: { fontSize: 8 },
+                headStyles: { fillColor: COLORS.primary },
+                margin: { left: this.margins.left, right: this.margins.right },
+            });
+            this.currentY = (this.doc as any).lastAutoTable.finalY + 10;
+        }
+
+        // Monitoring
+        if (options.sections.monitoring && data.monitoring && data.monitoring.length > 0) {
+            this.addSectionTitle(this.labels.monitoring);
+            autoTable(this.doc, {
+                startY: this.currentY,
+                head: [[this.labels.type, this.labels.value, this.labels.date, this.labels.statusLabel]],
+                body: data.monitoring.map(m => [
+                    m.type,
+                    m.value,
+                    m.date,
+                    m.status || '-',
+                ]),
+                styles: { fontSize: 8 },
+                headStyles: { fillColor: COLORS.primary },
+                margin: { left: this.margins.left, right: this.margins.right },
+            });
+            this.currentY = (this.doc as any).lastAutoTable.finalY + 10;
+        }
+
+        // Communications
+        if (options.sections.communications && data.communications && data.communications.length > 0) {
+            this.addSectionTitle(this.labels.communications);
+            autoTable(this.doc, {
+                startY: this.currentY,
+                head: [[this.labels.date, this.labels.type, this.labels.subject, this.labels.content]],
+                body: data.communications.map(c => [
+                    c.date,
+                    c.type,
+                    c.subject,
+                    c.content,
+                ]),
+                styles: { fontSize: 8 },
+                headStyles: { fillColor: COLORS.primary },
+                margin: { left: this.margins.left, right: this.margins.right },
+            });
+            this.currentY = (this.doc as any).lastAutoTable.finalY + 10;
+        }
+
+        // Age Specific
+        if (options.sections.ageSpecific && data.ageSpecific && data.ageSpecific.length > 0) {
+            this.addSectionTitle(this.labels.ageSpecific);
+            autoTable(this.doc, {
+                startY: this.currentY,
+                head: [[this.labels.evaluation, this.labels.date, this.labels.notes]],
+                body: data.ageSpecific.map(a => [
+                    a.type,
+                    a.date,
+                    a.notes,
+                ]),
+                styles: { fontSize: 8 },
+                headStyles: { fillColor: COLORS.primary },
+                margin: { left: this.margins.left, right: this.margins.right },
+            });
+            this.currentY = (this.doc as any).lastAutoTable.finalY + 10;
+        }
+
+        // Social Factors
+        if (options.sections.socialFactors && data.socialFactors && data.socialFactors.length > 0) {
+            this.addSectionTitle(this.labels.socialFactors);
+            autoTable(this.doc, {
+                startY: this.currentY,
+                head: [[this.labels.category, this.labels.description]],
+                body: data.socialFactors.map(s => [
+                    s.category,
+                    s.description,
                 ]),
                 styles: { fontSize: 8 },
                 headStyles: { fillColor: COLORS.primary },

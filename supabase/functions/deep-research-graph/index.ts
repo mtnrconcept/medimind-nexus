@@ -359,7 +359,7 @@ serve(async (req) => {
                 .from('semantic_graph_cache')
                 .select('*')
                 .eq('topic_normalized', normalizedTopic)
-                .single();
+                .maybeSingle();
 
             if (cached && !cacheError) {
                 console.log(`[DEEP-RESEARCH] Cache HIT - loading ${cached.nodes?.length || 0} cached nodes as base`);
