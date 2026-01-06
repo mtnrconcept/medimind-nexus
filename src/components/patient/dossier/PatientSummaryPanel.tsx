@@ -62,16 +62,118 @@ interface AdminData {
 const PatientSummaryPanel = ({ patientId, patient }: PatientSummaryPanelProps) => {
     const [vitals, setVitals] = useState<VitalSigns | null>(null);
     const [adminData, setAdminData] = useState<AdminData | null>(null);
-    const [riskScore, setRiskScore] = useState<number>(72); // TODO: Calculate from actual data
+    const [riskScore, setRiskScore] = useState<number>(0);
     const [loading, setLoading] = useState(true);
 
     useEffect(() => {
         fetchData();
     }, [patientId]);
 
+    // Calculate risk score based on patient data
+    const calculateRiskScore = async () => {
+        let score = 100; // Start with perfect score and deduct for risk factors
+
+        try {
+            // Fetch allergies - severe allergies reduce score
+            const { data: allergies } = await supabase
+                .from('patient_allergies')
+                .select('id, severity')
+                .eq('patient_id', patientId);
+
+            if (allergies) {
+                allergies.forEach(a => {
+                    if (a.severity === 'critical') score -= 15;
+                    else if (a.severity === 'severe') score -= 10;
+                    else if (a.severity === 'moderate') score -= 5;
+                    else score -= 2;
+                });
+            }
+
+            // Fetch medical history - chronic conditions reduce score
+            const { data: history } = await supabase
+                .from('patient_medical_history')
+                .select('id, severity, is_chronic')
+                .eq('patient_id', patientId);
+
+            if (history) {
+                history.forEach(h => {
+                    if (h.is_chronic) score -= 5;
+                    if (h.severity === 'critical') score -= 12;
+                    else if (h.severity === 'severe') score -= 8;
+                    else if (h.severity === 'moderate') score -= 4;
+                });
+            }
+
+            // Fetch abnormal lab results
+            const { data: labs } = await supabase
+                .from('patient_lab_results')
+                .select('id, is_abnormal')
+                .eq('patient_id', patientId)
+                .eq('is_abnormal', true);
+
+            if (labs && labs.length > 0) {
+                score -= Math.min(labs.length * 3, 15); // Max -15 for abnormal labs
+            }
+
+            // Fetch active medications - polypharmacy risk
+            const { data: meds } = await supabase
+                .from('patient_medications')
+                .select('id')
+                .eq('patient_id', patientId)
+                .eq('is_active', true);
+
+            if (meds && meds.length > 5) {
+                score -= (meds.length - 5) * 2; // Penalize for >5 active medications
+            }
+
+            // Check vital signs for abnormalities
+            const { data: latestVitals } = await supabase
+                .from('patient_clinical_data')
+                .select('*')
+                .eq('patient_id', patientId)
+                .order('recorded_at', { ascending: false })
+                .limit(1)
+                .maybeSingle();
+
+            if (latestVitals) {
+                // Blood pressure
+                if (latestVitals.systolic_bp >= 180 || latestVitals.diastolic_bp >= 120) score -= 15;
+                else if (latestVitals.systolic_bp >= 140 || latestVitals.diastolic_bp >= 90) score -= 8;
+
+                // Oxygen saturation
+                if (latestVitals.oxygen_saturation && latestVitals.oxygen_saturation < 90) score -= 15;
+                else if (latestVitals.oxygen_saturation && latestVitals.oxygen_saturation < 95) score -= 5;
+
+                // Heart rate extremes
+                if (latestVitals.heart_rate && (latestVitals.heart_rate > 100 || latestVitals.heart_rate < 60)) score -= 3;
+            }
+
+            // Fetch vaccination status - boost score for up-to-date
+            const { data: vaccinations } = await supabase
+                .from('patient_vaccinations')
+                .select('id')
+                .eq('patient_id', patientId);
+
+            if (vaccinations && vaccinations.length >= 5) {
+                score += 5; // Bonus for good vaccination coverage (capped)
+            }
+
+        } catch (error) {
+            console.error('Error calculating risk score:', error);
+            return 72; // Default fallback
+        }
+
+        // Clamp score between 0 and 100
+        return Math.max(0, Math.min(100, score));
+    };
+
     const fetchData = async () => {
         setLoading(true);
         try {
+            // Calculate risk score
+            const calculatedScore = await calculateRiskScore();
+            setRiskScore(calculatedScore);
+
             // Fetch latest vitals
             const { data: clinicalData } = await supabase
                 .from('patient_clinical_data')
@@ -141,28 +243,29 @@ const PatientSummaryPanel = ({ patientId, patient }: PatientSummaryPanelProps) =
                         Score de Risque Global
                     </CardTitle>
                 </CardHeader>
-                <CardContent>
-                    <div className="flex items-center gap-4">
-                        <div className="relative w-20 h-20">
-                            <svg className="w-20 h-20 transform -rotate-90">
-                                <circle cx="40" cy="40" r="35" stroke="currentColor" strokeWidth="6" fill="none" className="text-muted" />
+                <CardContent className="p-3">
+                    <div className="flex items-center gap-3">
+                        <div className="relative w-16 h-16 shrink-0">
+                            <svg className="w-16 h-16 transform -rotate-90">
+                                <circle cx="32" cy="32" r="28" stroke="currentColor" strokeWidth="5" fill="none" className="text-muted" />
                                 <circle
-                                    cx="40" cy="40" r="35"
+                                    cx="32" cy="32" r="28"
                                     stroke="currentColor"
-                                    strokeWidth="6"
+                                    strokeWidth="5"
                                     fill="none"
                                     strokeLinecap="round"
-                                    strokeDasharray={`${(riskScore / 100) * 220} 220`}
+                                    strokeDasharray={`${(riskScore / 100) * 175} 175`}
                                     className={getRiskColor(riskScore)}
                                 />
                             </svg>
                             <div className="absolute inset-0 flex items-center justify-center">
-                                <span className={cn("text-2xl font-bold", getRiskColor(riskScore))}>{riskScore}</span>
+                                <span className={cn("text-lg font-bold", getRiskColor(riskScore))}>{riskScore}</span>
                             </div>
                         </div>
-                        <div className="flex-1">
-                            <div className="text-sm text-muted-foreground mb-1">État de santé</div>
-                            <Badge className={cn("text-xs", riskScore >= 70 ? "bg-green-500" : riskScore >= 50 ? "bg-yellow-500" : "bg-red-500")}>
+                        <div className="flex-1 min-w-0">
+                            <div className="text-[11px] text-muted-foreground mb-0.5 truncate">État de santé</div>
+                            <Badge className={cn("text-[10px] px-1.5 py-0 h-5 whitespace-nowrap",
+                                riskScore >= 70 ? "bg-green-500" : riskScore >= 50 ? "bg-yellow-500" : "bg-red-500")}>
                                 {riskScore >= 70 ? 'Bon' : riskScore >= 50 ? 'À surveiller' : 'Préoccupant'}
                             </Badge>
                         </div>
@@ -183,7 +286,7 @@ const PatientSummaryPanel = ({ patientId, patient }: PatientSummaryPanelProps) =
                         )}
                     </CardTitle>
                 </CardHeader>
-                <CardContent className="space-y-2">
+                <CardContent className="p-3 space-y-2">
                     {vitals ? (
                         <>
                             <div className="grid grid-cols-2 gap-3">
@@ -246,7 +349,7 @@ const PatientSummaryPanel = ({ patientId, patient }: PatientSummaryPanelProps) =
                         Informations Administratives
                     </CardTitle>
                 </CardHeader>
-                <CardContent className="space-y-3">
+                <CardContent className="p-3 space-y-3">
                     <div>
                         <div className="text-lg font-semibold">{patient.first_name} {patient.last_name}</div>
                         <div className="text-sm text-muted-foreground flex items-center gap-2">

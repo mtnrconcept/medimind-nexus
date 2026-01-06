@@ -12,8 +12,6 @@ import { useContainerWidth } from '@/hooks/useContainerWidth';
 import { useWindowManager, WindowData } from '@/contexts/WindowManagerContext';
 import AppWindow from './AppWindow';
 
-import CursorDNA from '../../nexus/CursorDNA';
-
 // Styles requis pour le grid layout
 import 'react-grid-layout/css/styles.css';
 import 'react-resizable/css/styles.css';
@@ -149,7 +147,6 @@ const PatientDossierLayout = ({ patientId, patient }: PatientDossierLayoutProps)
 
     return (
         <div className="relative min-h-[1200px] pb-20 overflow-x-hidden">
-            <CursorDNA />
             <CriticalAlertsModal patientId={patientId} />
             {/* Dashboard Area */}
             <div ref={containerRef} className="w-full flex-1 pt-4 px-2">
@@ -160,10 +157,10 @@ const PatientDossierLayout = ({ patientId, patient }: PatientDossierLayoutProps)
                         breakpoints={{ lg: 1200, md: 996, sm: 768, xs: 480, xxs: 0 }}
                         cols={{ lg: 12, md: 10, sm: 6, xs: 4, xxs: 2 }}
                         rowHeight={50}
-                        // @ts-expect-error draggableHandle is not in the types but works at runtime
                         draggableHandle=".drag-handle"
+                        handle=".drag-handle"
                         margin={[12, 12]}
-                        containerPadding={[10, 10]}
+                        containerPadding={[0, 0]}
                         width={width}
                     >
                         {/* Navigation Module */}
@@ -171,7 +168,11 @@ const PatientDossierLayout = ({ patientId, patient }: PatientDossierLayoutProps)
                             <div className="drag-handle h-6 bg-muted/10 cursor-move flex items-center justify-center shrink-0 mb-1 opacity-20 group-hover:opacity-100 transition-opacity">
                                 <div className="w-10 h-1 bg-primary/30 rounded-full"></div>
                             </div>
-                            <div className="flex-1 overflow-y-auto custom-scrollbar pr-1">
+                            <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar pr-1"
+                                onPointerDown={(e) => e.stopPropagation()}
+                                onMouseDown={(e) => e.stopPropagation()}
+                                onTouchStart={(e) => e.stopPropagation()}
+                                onWheel={(e) => e.stopPropagation()}>
                                 <CategoryMenu
                                     activeCategory={activeCategory}
                                     onSelectCategory={handleSelectCategory}
@@ -184,21 +185,31 @@ const PatientDossierLayout = ({ patientId, patient }: PatientDossierLayoutProps)
                             <div className="drag-handle h-8 bg-muted/20 cursor-move flex items-center justify-center shrink-0">
                                 <div className="w-12 h-1 bg-primary/30 rounded-full"></div>
                             </div>
-                            <div className="p-2 flex-1 overflow-y-auto custom-scrollbar">
-                                <div className="text-[10px] font-bold uppercase tracking-widest opacity-40 mb-3 px-2">Aperçu Médical</div>
-                                <PatientSummaryPanel patientId={patientId} patient={patient} />
+                            <div className="p-2 flex-1 min-h-0 overflow-y-auto custom-scrollbar"
+                                onPointerDown={(e) => e.stopPropagation()}
+                                onMouseDown={(e) => e.stopPropagation()}
+                                onTouchStart={(e) => e.stopPropagation()}
+                                onWheel={(e) => e.stopPropagation()}>
+                                <div className="text-[10px] font-bold uppercase tracking-wide opacity-40 mb-3 px-2 truncate">Aperçu Médical</div>
+                                <PatientSummaryPanel key={refreshKey} patientId={patientId} patient={patient} />
                             </div>
                         </div>
 
                         {/* Digital Twin */}
                         <div key="digital-twin" className="bg-background/20 rounded-2xl border border-border/50 overflow-hidden relative shadow-lg group">
-                            <div className="drag-handle absolute top-0 left-0 right-0 h-10 z-10 bg-gradient-to-b from-background/90 to-transparent cursor-move opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                            <div className="drag-handle absolute top-0 left-0 right-0 h-6 z-10 bg-gradient-to-b from-background/90 to-transparent cursor-move opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
                                 <div className="w-16 h-1 bg-primary/40 rounded-full"></div>
                             </div>
-                            <DigitalTwin3DViewer
-                                alerts={patientAlerts}
-                                pathologyName={patient.pathologies?.name}
-                            />
+                            <div onPointerDown={(e) => e.stopPropagation()}
+                                onMouseDown={(e) => e.stopPropagation()}
+                                onTouchStart={(e) => e.stopPropagation()}
+                                onWheel={(e) => e.stopPropagation()}
+                                className="h-full w-full">
+                                <DigitalTwin3DViewer
+                                    alerts={patientAlerts}
+                                    pathologyName={patient.pathologies?.name}
+                                />
+                            </div>
                         </div>
 
                         {/* AI Synthesis */}
@@ -206,7 +217,11 @@ const PatientDossierLayout = ({ patientId, patient }: PatientDossierLayoutProps)
                             <div className="drag-handle h-8 bg-muted/20 cursor-move flex items-center justify-center shrink-0">
                                 <div className="w-12 h-1 bg-primary/30 rounded-full"></div>
                             </div>
-                            <div className="flex-1 overflow-y-auto custom-scrollbar">
+                            <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar"
+                                onPointerDown={(e) => e.stopPropagation()}
+                                onMouseDown={(e) => e.stopPropagation()}
+                                onTouchStart={(e) => e.stopPropagation()}
+                                onWheel={(e) => e.stopPropagation()}>
                                 <PatientHealthSynthesis
                                     key={refreshKey}
                                     patientId={patientId}
@@ -223,7 +238,11 @@ const PatientDossierLayout = ({ patientId, patient }: PatientDossierLayoutProps)
                                 </h3>
                                 <div className="w-8 h-1 bg-primary/20 rounded-full"></div>
                             </div>
-                            <div className="p-4 overflow-y-auto custom-scrollbar flex-1">
+                            <div className="p-4 min-h-0 overflow-y-auto custom-scrollbar flex-1"
+                                onPointerDown={(e) => e.stopPropagation()}
+                                onMouseDown={(e) => e.stopPropagation()}
+                                onTouchStart={(e) => e.stopPropagation()}
+                                onWheel={(e) => e.stopPropagation()}>
                                 <DocumentGallery
                                     patientId={patientId}
                                     onDocumentIntegrated={handleDocumentIntegrated}
@@ -236,7 +255,11 @@ const PatientDossierLayout = ({ patientId, patient }: PatientDossierLayoutProps)
                             <div className="drag-handle h-8 bg-muted/20 cursor-move flex items-center justify-center shrink-0">
                                 <div className="w-12 h-1 bg-primary/30 rounded-full"></div>
                             </div>
-                            <div className="flex-1 min-h-0">
+                            <div className="flex-1 min-h-0"
+                                onPointerDown={(e) => e.stopPropagation()}
+                                onMouseDown={(e) => e.stopPropagation()}
+                                onTouchStart={(e) => e.stopPropagation()}
+                                onWheel={(e) => e.stopPropagation()}>
                                 <AIAssistant
                                     patient={{
                                         ...patient,

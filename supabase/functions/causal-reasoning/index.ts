@@ -173,11 +173,79 @@ serve(async (req) => {
         const supabase = createClient(supabaseUrl, supabaseKey);
 
         // ============================================
-        // MODE 1: AI-powered link explanation
+        // MODE 1: AI-powered link explanation / graph analysis
         // ============================================
         if (query.query && query.context) {
             const explanationQuery = query.query;
             const explanationContext = query.context;
+
+            // If stream: false is requested, return JSON directly
+            if ((query as any).stream === false) {
+                try {
+                    const systemPrompt = `Tu es un expert médical clinicien senior spécialisé en optimisation thérapeutique.
+Ta mission est d'analyser un graphe de connaissances médicales et d'identifier le schéma thérapeutique optimal.
+
+Règles STRICTES:
+- Réponds UNIQUEMENT en JSON valide
+- N'inclus AUCUN texte avant ou après le JSON
+- Sélectionne les nœuds formant le meilleur schéma de traitement
+- Maximum 10 nœuds dans le schéma optimal`;
+
+                    const userPrompt = explanationQuery;
+
+                    const aiResponse = await callAI(
+                        systemPrompt,
+                        userPrompt,
+                        {
+                            model: "claude-3-5-sonnet-20240620",
+                            maxTokens: 2000,
+                            temperature: 0.1
+                        }
+                    );
+
+                    // Try to parse JSON from response
+                    const responseText = aiResponse.text || '';
+                    const jsonMatch = responseText.match(/\{[\s\S]*\}/);
+
+                    if (jsonMatch) {
+                        try {
+                            const parsed = JSON.parse(jsonMatch[0]);
+                            return new Response(JSON.stringify({
+                                optimal_node_ids: parsed.optimal_node_ids || [],
+                                treatment_summary: parsed.treatment_summary || 'Analyse complétée',
+                                rationale: parsed.rationale || ''
+                            }), {
+                                headers: { ...corsHeaders, "Content-Type": "application/json" }
+                            });
+                        } catch (parseErr) {
+                            console.error('[CAUSAL-REASONING] JSON parse error:', parseErr);
+                        }
+                    }
+
+                    // Fallback: return the raw text as treatment_summary
+                    return new Response(JSON.stringify({
+                        optimal_node_ids: [],
+                        treatment_summary: responseText.substring(0, 500),
+                        rationale: 'Réponse IA non structurée',
+                        raw_response: responseText
+                    }), {
+                        headers: { ...corsHeaders, "Content-Type": "application/json" }
+                    });
+
+                } catch (e) {
+                    console.error('[CAUSAL-REASONING] Non-streaming AI error:', e);
+                    return new Response(JSON.stringify({
+                        error: String(e),
+                        optimal_node_ids: [],
+                        treatment_summary: 'Erreur lors de l\'analyse'
+                    }), {
+                        status: 500,
+                        headers: { ...corsHeaders, "Content-Type": "application/json" }
+                    });
+                }
+            }
+
+            // Streaming mode (original behavior)
             const encoder = new TextEncoder();
             const stream = new ReadableStream({
                 async start(controller) {

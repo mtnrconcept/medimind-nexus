@@ -42,7 +42,6 @@ export interface PatientExportData {
         status: string;
         severity?: string;
     }>;
-    // Complete medical history
     medicalHistory?: Array<{
         name: string;
         date: string;
@@ -55,13 +54,6 @@ export interface PatientExportData {
         date: string;
         lot?: string;
         booster?: string;
-    }>;
-    accidents?: Array<{
-        type: string;
-        date: string;
-        description: string;
-        severity: 'minor' | 'moderate' | 'severe' | string;
-        sequelae?: string;
     }>;
     labResults?: Record<string, number | undefined>;
     alerts?: Array<{
@@ -80,9 +72,109 @@ export interface PatientExportData {
     }>;
     treatment?: string;
     medicalNotes?: string;
+    lifestyle?: {
+        smokingStatus?: string;
+        alcoholStatus?: string;
+        physicalActivity?: string;
+        diet?: string;
+        sleep?: string;
+    };
+    familyHistory?: Array<{
+        relationship: string;
+        condition: string;
+        ageAtDiagnosis?: number;
+        isHereditary?: boolean;
+    }>;
+    symptoms?: Array<{
+        name: string;
+        severity?: string;
+        onsetDate?: string;
+        isActive?: boolean;
+    }>;
+    prevention?: Array<{
+        type: string;
+        date?: string;
+        result?: string;
+        nextDue?: string;
+    }>;
+    consultations?: Array<{
+        date: string;
+        physician: string;
+        reason: string;
+        notes?: string;
+    }>;
+    clinicalData?: Array<{
+        date: string;
+        systolic?: number;
+        diastolic?: number;
+        heartRate?: number;
+        temp?: number;
+        spo2?: number;
+        weight?: number;
+    }>;
+    imaging?: Array<{
+        date: string;
+        type: string;
+        bodyRegion: string;
+        findings?: string;
+        conclusion?: string;
+    }>;
+    mentalHealth?: Array<{
+        date: string;
+        condition: string;
+        status: string;
+        notes?: string;
+    }>;
+    reproductiveHealth?: Array<{
+        date: string;
+        category: string;
+        notes?: string;
+    }>;
+    socialFactors?: Array<{
+        category: string;
+        description: string;
+    }>;
+    aiSynthesis?: {
+        globalSynthesis: string;
+        healthScore: number;
+        riskLevel: string;
+        vigilancePoints: Array<{
+            category: string;
+            level: string;
+            title: string;
+            description: string;
+            actionNeeded?: string;
+        }>;
+        weakSignals: Array<{
+            indicator: string;
+            trend: string;
+            observation: string;
+            recommendation: string;
+        }>;
+        treatmentRecommendations: Array<{
+            category: string;
+            suggestedAction: string;
+            rationale: string;
+            priority: string;
+        }>;
+        lifestyleAdvice: Array<{
+            category: string;
+            advice: string;
+            impact: string;
+        }>;
+        drugInteractions: Array<{
+            medications: string[];
+            interactionType: string;
+            severity: string;
+            recommendation: string;
+        }>;
+    };
 }
 
 export interface ExportOptions {
+    includeConfidential: boolean;
+    language: 'fr' | 'en';
+    format: 'A4' | 'Letter';
     sections: {
         summary: boolean;
         demographics: boolean;
@@ -94,15 +186,18 @@ export interface ExportOptions {
         notes: boolean;
         medicalHistory: boolean;
         vaccines: boolean;
-        accidents: boolean;
+        lifestyle: boolean;
+        familyHistory: boolean;
+        symptoms: boolean;
+        prevention: boolean;
+        clinicalData: boolean;
+        imaging: boolean;
+        consultations: boolean;
+        mentalHealth: boolean;
+        reproductiveHealth: boolean;
+        socialFactors: boolean;
+        aiSynthesis: boolean;
     };
-    dateRange?: {
-        start: Date;
-        end: Date;
-    };
-    includeConfidential: boolean;
-    language: 'fr' | 'en';
-    format: 'A4' | 'Letter';
 }
 
 // ============================================
@@ -167,6 +262,34 @@ const LABELS = {
         reviewerNotes: 'Notes du validateur',
         confidential: 'CONFIDENTIEL - DONNÉES MÉDICALES',
         noData: 'Aucune donnée disponible',
+        lifestyle: 'Mode de Vie',
+        familyHistory: 'Antécédents Familiaux',
+        symptoms: 'Symptômes',
+        prevention: 'Prévention et Dépistage',
+        clinicalData: 'Historique des Constantes',
+        imaging: 'Imagerie Médicale',
+        consultations: 'Consultations',
+        mentalHealth: 'Santé Mentale',
+        reproductiveHealth: 'Santé Reproductive',
+        socialFactors: 'Facteurs Sociaux',
+        aiSynthesis: 'Synthèse de Santé IA',
+        healthScore: 'Score de Santé',
+        riskLevel: 'Niveau de Risque',
+        vigilance: 'Points de Vigilance',
+        weakSignals: 'Signaux Faibles',
+        advice: 'Conseils & Recommandations',
+        interactions: 'Interactions Médicamenteuses',
+        smoking: 'Tabagisme',
+        alcohol: 'Alcool',
+        activity: 'Activité Physique',
+        diet: 'Alimentation',
+        sleep: 'Sommeil',
+        relationship: 'Relation',
+        condition: 'Pathologie',
+        severity: 'Sévérité',
+        onsetDate: 'Date d\'apparition',
+        result: 'Résultat',
+        nextDue: 'Prochaine échéance',
     },
     en: {
         title: 'MediMind Nexus Patient Report',
@@ -215,6 +338,34 @@ const LABELS = {
         reviewerNotes: 'Reviewer notes',
         confidential: 'CONFIDENTIAL - MEDICAL DATA',
         noData: 'No data available',
+        lifestyle: 'Lifestyle',
+        familyHistory: 'Family History',
+        symptoms: 'Symptoms',
+        prevention: 'Prevention and Screening',
+        clinicalData: 'Clinical Data History',
+        imaging: 'Medical Imaging',
+        consultations: 'Consultations',
+        mentalHealth: 'Mental Health',
+        reproductiveHealth: 'Reproductive Health',
+        socialFactors: 'Social Factors',
+        aiSynthesis: 'AI Health Synthesis',
+        healthScore: 'Health Score',
+        riskLevel: 'Risk Level',
+        vigilance: 'Vigilance Points',
+        weakSignals: 'Weak Signals',
+        advice: 'Advice & Recommendations',
+        interactions: 'Drug Interactions',
+        smoking: 'Smoking',
+        alcohol: 'Alcohol',
+        activity: 'Physical Activity',
+        diet: 'Diet',
+        sleep: 'Sleep',
+        relationship: 'Relationship',
+        condition: 'Condition',
+        severity: 'Severity',
+        onsetDate: 'Onset Date',
+        result: 'Result',
+        nextDue: 'Next Due',
     },
 };
 
@@ -511,7 +662,7 @@ export class PDFExportService {
                 this.doc.setFont('helvetica', 'bold');
                 this.doc.setFontSize(10);
                 this.doc.setTextColor(0, 0, 0);
-                this.doc.text(alert.title, this.margins.left + 8, this.currentY);
+                this.doc.text(alert.title || 'Alerte', this.margins.left + 8, this.currentY);
                 this.currentY += 5;
 
                 if (alert.description) {
@@ -576,7 +727,7 @@ export class PDFExportService {
                 this.doc.setFont('helvetica', 'bold');
                 this.doc.setFontSize(10);
                 this.doc.setTextColor(0, 0, 0);
-                this.doc.text(`${index + 1}. ${rec.title}`, this.margins.left, this.currentY);
+                this.doc.text(`${index + 1}. ${rec.title || 'Recommandation'}`, this.margins.left, this.currentY);
 
                 // Status text
                 this.doc.setFont('helvetica', 'normal');
@@ -677,35 +828,240 @@ export class PDFExportService {
             this.currentY = (this.doc as any).lastAutoTable.finalY + 10;
         }
 
-        // Accidents
-        if (options.sections.accidents && data.accidents && data.accidents.length > 0) {
-            this.checkPageBreak(50);
-            this.addSectionTitle(this.labels.accidents);
+        // Lifestyle
+        if (options.sections.lifestyle && data.lifestyle) {
+            this.addSectionTitle(this.labels.lifestyle);
+            if (data.lifestyle.smokingStatus) this.addKeyValue(this.labels.smoking, data.lifestyle.smokingStatus);
+            if (data.lifestyle.alcoholStatus) this.addKeyValue(this.labels.alcohol, data.lifestyle.alcoholStatus);
+            if (data.lifestyle.physicalActivity) this.addKeyValue(this.labels.activity, data.lifestyle.physicalActivity);
+            if (data.lifestyle.diet) this.addKeyValue(this.labels.diet, data.lifestyle.diet);
+            if (data.lifestyle.sleep) this.addKeyValue(this.labels.sleep, data.lifestyle.sleep);
+            this.currentY += 5;
+        }
 
-            const severityLabel = (severity: string) => {
-                switch (severity) {
-                    case 'minor': return this.labels.minor;
-                    case 'moderate': return this.labels.moderate;
-                    case 'severe': return this.labels.severe;
-                    default: return severity;
-                }
-            };
-
+        // Family History
+        if (options.sections.familyHistory && data.familyHistory && data.familyHistory.length > 0) {
+            this.addSectionTitle(this.labels.familyHistory);
             autoTable(this.doc, {
                 startY: this.currentY,
-                head: [['Type', 'Date', 'Description', 'Sévérité', this.labels.sequelae]],
-                body: data.accidents.map(a => [
-                    a.type,
-                    a.date,
-                    a.description,
-                    severityLabel(a.severity),
-                    a.sequelae || '-',
+                head: [[this.labels.relationship, this.labels.condition, this.labels.age, 'Héréditaire']],
+                body: data.familyHistory.map(f => [
+                    f.relationship,
+                    f.condition,
+                    f.ageAtDiagnosis || '-',
+                    f.isHereditary ? 'Oui' : 'Non',
                 ]),
                 styles: { fontSize: 8 },
-                headStyles: { fillColor: COLORS.warning, textColor: [0, 0, 0] },
-                alternateRowStyles: { fillColor: COLORS.lightBg },
+                headStyles: { fillColor: COLORS.primary },
                 margin: { left: this.margins.left, right: this.margins.right },
-                columnStyles: { 2: { cellWidth: 60 } },
+            });
+            this.currentY = (this.doc as any).lastAutoTable.finalY + 10;
+        }
+
+        // Symptoms
+        if (options.sections.symptoms && data.symptoms && data.symptoms.length > 0) {
+            this.addSectionTitle(this.labels.symptoms);
+            autoTable(this.doc, {
+                startY: this.currentY,
+                head: [['Symptôme', this.labels.severity, this.labels.onsetDate, 'Actif']],
+                body: data.symptoms.map(s => [
+                    s.name,
+                    s.severity || '-',
+                    s.onsetDate || '-',
+                    s.isActive ? 'Oui' : 'Non',
+                ]),
+                styles: { fontSize: 8 },
+                headStyles: { fillColor: COLORS.primary },
+                margin: { left: this.margins.left, right: this.margins.right },
+            });
+            this.currentY = (this.doc as any).lastAutoTable.finalY + 10;
+        }
+
+        // Clinical Data
+        if (options.sections.clinicalData && data.clinicalData && data.clinicalData.length > 0) {
+            this.addSectionTitle(this.labels.clinicalData);
+            autoTable(this.doc, {
+                startY: this.currentY,
+                head: [['Date', 'TA', 'Pouls', 'Temp.', 'SpO2', 'Poids']],
+                body: data.clinicalData.map(c => [
+                    c.date,
+                    c.systolic && c.diastolic ? `${c.systolic}/${c.diastolic}` : '-',
+                    c.heartRate || '-',
+                    c.temp ? `${c.temp}°C` : '-',
+                    c.spo2 ? `${c.spo2}%` : '-',
+                    c.weight ? `${c.weight}kg` : '-',
+                ]),
+                styles: { fontSize: 8 },
+                headStyles: { fillColor: COLORS.primary },
+                margin: { left: this.margins.left, right: this.margins.right },
+            });
+            this.currentY = (this.doc as any).lastAutoTable.finalY + 10;
+        }
+
+        // Imaging
+        if (options.sections.imaging && data.imaging && data.imaging.length > 0) {
+            this.addSectionTitle(this.labels.imaging);
+            autoTable(this.doc, {
+                startY: this.currentY,
+                head: [['Date', 'Type', 'Région', 'Résultats / Conclusion']],
+                body: data.imaging.map(i => [
+                    i.date,
+                    i.type,
+                    i.bodyRegion,
+                    `${i.findings || ''}\nConclusion: ${i.conclusion || '-'}`.trim(),
+                ]),
+                styles: { fontSize: 8 },
+                headStyles: { fillColor: COLORS.primary },
+                margin: { left: this.margins.left, right: this.margins.right },
+            });
+            this.currentY = (this.doc as any).lastAutoTable.finalY + 10;
+        }
+
+        // Mental Health
+        if (options.sections.mentalHealth && data.mentalHealth && data.mentalHealth.length > 0) {
+            this.addSectionTitle(this.labels.mentalHealth);
+            autoTable(this.doc, {
+                startY: this.currentY,
+                head: [['Date', 'Condition', 'Statut', 'Notes']],
+                body: data.mentalHealth.map(m => [
+                    m.date,
+                    m.condition,
+                    m.status,
+                    m.notes || '-',
+                ]),
+                styles: { fontSize: 8 },
+                headStyles: { fillColor: COLORS.primary },
+                margin: { left: this.margins.left, right: this.margins.right },
+            });
+            this.currentY = (this.doc as any).lastAutoTable.finalY + 10;
+        }
+
+        // Reproductive Health
+        if (options.sections.reproductiveHealth && data.reproductiveHealth && data.reproductiveHealth.length > 0) {
+            this.addSectionTitle(this.labels.reproductiveHealth);
+            autoTable(this.doc, {
+                startY: this.currentY,
+                head: [['Date', 'Catégorie', 'Notes']],
+                body: data.reproductiveHealth.map(r => [
+                    r.date,
+                    r.category,
+                    r.notes || '-',
+                ]),
+                styles: { fontSize: 8 },
+                headStyles: { fillColor: COLORS.primary },
+                margin: { left: this.margins.left, right: this.margins.right },
+            });
+            this.currentY = (this.doc as any).lastAutoTable.finalY + 10;
+        }
+
+        // Consultations
+        if (options.sections.consultations && data.consultations && data.consultations.length > 0) {
+            this.addSectionTitle(this.labels.consultations);
+            autoTable(this.doc, {
+                startY: this.currentY,
+                head: [['Date', 'Médecin', 'Motif', 'Notes']],
+                body: data.consultations.map(c => [
+                    c.date,
+                    c.physician,
+                    c.reason,
+                    c.notes || '-',
+                ]),
+                styles: { fontSize: 8 },
+                headStyles: { fillColor: COLORS.primary },
+                margin: { left: this.margins.left, right: this.margins.right },
+            });
+            this.currentY = (this.doc as any).lastAutoTable.finalY + 10;
+        }
+
+        // AI Synthesis - The Health Report
+        if (options.sections.aiSynthesis && data.aiSynthesis) {
+            this.doc.addPage();
+            this.currentY = this.margins.top;
+            this.addSectionTitle(this.labels.aiSynthesis);
+
+            // Score and Global Synthesis
+            this.addKeyValue(this.labels.healthScore, `${data.aiSynthesis.healthScore}/100`);
+            this.addKeyValue(this.labels.riskLevel, data.aiSynthesis.riskLevel);
+            this.currentY += 5;
+
+            const splitSynthesis = this.doc.splitTextToSize(data.aiSynthesis.globalSynthesis, 170);
+            this.doc.setFontSize(10);
+            this.doc.setFont('helvetica', 'normal');
+            this.doc.text(splitSynthesis, this.margins.left, this.currentY);
+            this.currentY += (splitSynthesis.length * 5) + 10;
+
+            // Vigilance Points
+            if (data.aiSynthesis.vigilancePoints.length > 0) {
+                this.addSectionTitle(this.labels.vigilance);
+                autoTable(this.doc, {
+                    startY: this.currentY,
+                    head: [['Catégorie', 'Alerte', 'Description', 'Action']],
+                    body: data.aiSynthesis.vigilancePoints.map(v => [
+                        v.category,
+                        v.title,
+                        v.description,
+                        v.actionNeeded || '-',
+                    ]),
+                    styles: { fontSize: 8 },
+                    headStyles: { fillColor: COLORS.secondary },
+                    margin: { left: this.margins.left, right: this.margins.right },
+                });
+                this.currentY = (this.doc as any).lastAutoTable.finalY + 10;
+            }
+
+            // Recommendations & Advice
+            if (data.aiSynthesis.treatmentRecommendations.length > 0 || data.aiSynthesis.lifestyleAdvice.length > 0) {
+                this.addSectionTitle(this.labels.advice);
+                const adviceBody = [
+                    ...data.aiSynthesis.treatmentRecommendations.map(r => [r.category, r.suggestedAction, r.rationale, r.priority]),
+                    ...data.aiSynthesis.lifestyleAdvice.map(l => [l.category, l.advice, `Impact: ${l.impact}`, '-'])
+                ];
+                autoTable(this.doc, {
+                    startY: this.currentY,
+                    head: [['Catégorie', 'Action', 'Justification / Impact', 'Priorité']],
+                    body: adviceBody,
+                    styles: { fontSize: 8 },
+                    headStyles: { fillColor: COLORS.primary },
+                    margin: { left: this.margins.left, right: this.margins.right },
+                });
+                this.currentY = (this.doc as any).lastAutoTable.finalY + 10;
+            }
+
+            // Drug Interactions
+            if (data.aiSynthesis.drugInteractions.length > 0) {
+                this.addSectionTitle(this.labels.interactions);
+                autoTable(this.doc, {
+                    startY: this.currentY,
+                    head: [['Médicaments', 'Type d\'interaction', 'Gravité', 'Recommandation']],
+                    body: data.aiSynthesis.drugInteractions.map(i => [
+                        i.medications.join(' + '),
+                        i.interactionType,
+                        i.severity,
+                        i.recommendation,
+                    ]),
+                    styles: { fontSize: 8 },
+                    headStyles: { fillColor: COLORS.accent },
+                    margin: { left: this.margins.left, right: this.margins.right },
+                });
+                this.currentY = (this.doc as any).lastAutoTable.finalY + 10;
+            }
+        }
+
+        // Prevention
+        if (options.sections.prevention && data.prevention && data.prevention.length > 0) {
+            this.addSectionTitle(this.labels.prevention);
+            autoTable(this.doc, {
+                startY: this.currentY,
+                head: [['Type', 'Date', this.labels.result, this.labels.nextDue]],
+                body: data.prevention.map(p => [
+                    p.type,
+                    p.date || '-',
+                    p.result || '-',
+                    p.nextDue || '-',
+                ]),
+                styles: { fontSize: 8 },
+                headStyles: { fillColor: COLORS.primary },
+                margin: { left: this.margins.left, right: this.margins.right },
             });
             this.currentY = (this.doc as any).lastAutoTable.finalY + 10;
         }

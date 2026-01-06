@@ -48,6 +48,11 @@ interface Patient {
   reproductive_health?: any[];
   clinical_data?: any[];
   lab_results_data?: any[];
+  lifestyle?: any;
+  family_history?: any[];
+  symptoms?: any[];
+  prevention?: any[];
+  imaging?: any[];
 }
 
 const PatientDetail = () => {
@@ -55,6 +60,8 @@ const PatientDetail = () => {
   const [patient, setPatient] = useState<Patient | null>(null);
   const [loading, setLoading] = useState(true);
   const [decrypting, setDecrypting] = useState(true);
+  const [aiSynthesis, setAiSynthesis] = useState<any>(null);
+  const [fetchingSynthesis, setFetchingSynthesis] = useState(false);
 
   useEffect(() => {
     const timer = setTimeout(() => setDecrypting(false), 1500);
@@ -78,7 +85,12 @@ const PatientDetail = () => {
           patient_mental_health(*),
           patient_reproductive_health(*),
           patient_clinical_data(*),
-          patient_lab_results(*)
+          patient_lab_results(*),
+          patient_lifestyle(*),
+          patient_family_history(*),
+          patient_symptoms(*),
+          patient_prevention(*),
+          patient_imaging(*)
         `)
         .eq('id', id)
         .maybeSingle();
@@ -116,6 +128,11 @@ const PatientDetail = () => {
           reproductive_health: patientData.patient_reproductive_health,
           clinical_data: patientData.patient_clinical_data,
           lab_results_data: patientData.patient_lab_results,
+          lifestyle: patientData.patient_lifestyle?.[0],
+          family_history: patientData.patient_family_history,
+          symptoms: patientData.patient_symptoms,
+          prevention: patientData.patient_prevention,
+          imaging: patientData.patient_imaging,
         });
       }
       setLoading(false);
@@ -123,13 +140,22 @@ const PatientDetail = () => {
     fetchPatient();
   }, [id]);
 
-  const alerts = usePatientAlerts(
-    patient?.lab_results_json || { glucose_mg_dl: 0, blood_pressure_sys: 0, blood_pressure_dia: 0, temperature_c: 0 },
-    patient?.treatment || '',
-    patient?.medical_notes_nlp || '',
-    patient?.pathologies?.name,
-    patient?.medical_history || []
-  );
+  const fetchAiSynthesis = async () => {
+    if (!id || aiSynthesis) return;
+    setFetchingSynthesis(true);
+    try {
+      const { data, error } = await supabase.functions.invoke('patient-health-synthesis', {
+        body: { patient_id: id },
+      });
+      if (!error) {
+        setAiSynthesis(data);
+      }
+    } catch (err) {
+      console.error('Error fetching AI synthesis:', err);
+    } finally {
+      setFetchingSynthesis(false);
+    }
+  };
 
   if (loading || !patient) {
     return (
@@ -181,18 +207,51 @@ const PatientDetail = () => {
             </div>
           </div>
           <div className="flex items-center gap-1 sm:gap-2 w-full sm:w-auto justify-end">
-            <ExportDialog
-              patientData={{
-                patient,
-                alerts: alerts.map(a => ({
-                  type: a.level,
-                  message: a.message,
-                  zone: a.zone || 'other',
+                reproductiveHealth: patient.reproductive_health?.map(r => ({
+              date: r.recorded_at,
+            category: r.category,
+            notes: r.notes,
                 })),
-                treatment: patient.treatment,
-                medicalNotes: patient.medical_notes_nlp,
+            aiSynthesis: aiSynthesis ? {
+              globalSynthesis: aiSynthesis.global_synthesis,
+            healthScore: aiSynthesis.health_score,
+            riskLevel: aiSynthesis.risk_level,
+                  vigilancePoints: aiSynthesis.vigilance_points.map((p: any) => ({
+              category: p.category,
+            level: p.level,
+            title: p.title,
+            description: p.description,
+            actionNeeded: p.action_needed,
+                  })),
+                  weakSignals: aiSynthesis.weak_signals.map((s: any) => ({
+              indicator: s.indicator,
+            trend: s.trend,
+            observation: s.observation,
+            recommendation: s.recommendation,
+                  })),
+                  treatmentRecommendations: aiSynthesis.treatment_recommendations.map((r: any) => ({
+              category: r.category,
+            suggestedAction: r.suggested_action,
+            rationale: r.rationale,
+            priority: r.priority,
+                  })),
+                  lifestyleAdvice: aiSynthesis.lifestyle_advice.map((l: any) => ({
+              category: l.category,
+            advice: l.advice,
+            impact: l.impact,
+                  })),
+                  drugInteractions: aiSynthesis.drug_interactions.map((i: any) => ({
+              medications: i.medications,
+            interactionType: i.interaction_type,
+            severity: i.severity,
+            recommendation: i.recommendation,
+                  })),
+                } : undefined,
               }}
+            onOpen={fetchAiSynthesis}
+            isPreFetching={fetchingSynthesis}
             />
+
             <Badge variant="secondary" className="flex items-center gap-1 text-xs">
               <Shield className="h-3 w-3" />
               <span className="hidden sm:inline">Données chiffrées</span>

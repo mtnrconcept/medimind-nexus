@@ -53,6 +53,8 @@ interface ExportDialogProps {
     patientData: PatientExportData;
     trigger?: React.ReactNode;
     onExportComplete?: () => void;
+    onOpen?: () => void;
+    isPreFetching?: boolean;
 }
 
 interface SectionOption {
@@ -83,7 +85,13 @@ const SECTION_OPTIONS: SectionOption[] = [
     {
         key: 'vitals',
         label: 'Signes vitaux',
-        description: 'Tension, température, SpO2',
+        description: 'Dernières constantes mesurées',
+        defaultChecked: true,
+    },
+    {
+        key: 'clinicalData',
+        label: 'Historique des constantes',
+        description: 'Évolution de la tension, pouls, etc.',
         defaultChecked: true,
     },
     {
@@ -93,21 +101,87 @@ const SECTION_OPTIONS: SectionOption[] = [
         defaultChecked: true,
     },
     {
-        key: 'alerts',
-        label: 'Alertes actives',
-        description: 'Alertes critiques et avertissements',
+        key: 'imaging',
+        label: 'Imagerie médicale',
+        description: 'Comptes-rendus radio, IRM, scanner',
         defaultChecked: true,
     },
     {
-        key: 'recommendations',
-        label: 'Recommandations IA',
-        description: 'Suggestions validées par les cliniciens',
+        key: 'medicalHistory',
+        label: 'Antécédents médicaux',
+        description: 'Historique des pathologies et hospitalisations',
+        defaultChecked: true,
+    },
+    {
+        key: 'familyHistory',
+        label: 'Antécédents familiaux',
+        description: 'Pathologies héréditaires et familiales',
+        defaultChecked: true,
+    },
+    {
+        key: 'lifestyle',
+        label: 'Mode de vie',
+        description: 'Tabac, alcool, activité physique, sommeil',
+        defaultChecked: true,
+    },
+    {
+        key: 'symptoms',
+        label: 'Symptômes actuels',
+        description: 'Description et sévérité des symptômes',
+        defaultChecked: true,
+    },
+    {
+        key: 'vaccines',
+        label: 'Vaccinations',
+        description: 'Carnet de vaccination et rappels',
         defaultChecked: true,
     },
     {
         key: 'treatment',
         label: 'Traitement en cours',
         description: 'Médicaments et posologies',
+        defaultChecked: true,
+    },
+    {
+        key: 'consultations',
+        label: 'Consultations',
+        description: 'Historique des visites médicales',
+        defaultChecked: true,
+    },
+    {
+        key: 'prevention',
+        label: 'Prévention',
+        description: 'Dépistages et examens préventifs',
+        defaultChecked: true,
+    },
+    {
+        key: 'mentalHealth',
+        label: 'Santé mentale',
+        description: 'Historique des consultations et suivis psychologiques',
+        defaultChecked: true,
+    },
+    {
+        key: 'reproductiveHealth',
+        label: 'Santé reproductive',
+        description: 'Suivi gynécologique ou urologique',
+        defaultChecked: true,
+    },
+    {
+        key: 'aiSynthesis',
+        label: 'Rapport de Santé IA',
+        description: 'Analyse cognitive complète de l\'état de santé par l\'IA',
+        defaultChecked: true,
+    },
+    {
+        key: 'alerts',
+        label: 'Alertes actives',
+        description: 'Alertes critiques et avertissements détaillés',
+        defaultChecked: true,
+    },
+    {
+        key: 'recommendations',
+        label: 'Recommandations IA',
+        description: 'Suggestions validées par les cliniciens',
         defaultChecked: true,
     },
     {
@@ -123,86 +197,91 @@ const SECTION_OPTIONS: SectionOption[] = [
 // MAIN COMPONENT
 // ============================================
 
-const ExportDialog = ({
-    patientData,
-    trigger,
-    onExportComplete
-}: ExportDialogProps) => {
+const ExportDialog = ({ patientData, trigger, onExportComplete, onOpen, isPreFetching }: ExportDialogProps) => {
     const [open, setOpen] = useState(false);
-    const [isExporting, setIsExporting] = useState(false);
-
-    // Export options state
-    const [sections, setSections] = useState<ExportOptions['sections']>(
-        SECTION_OPTIONS.reduce((acc, opt) => ({
+    const [exporting, setExporting] = useState(false);
+    const [options, setOptions] = useState<ExportOptions>({
+        includeConfidential: false,
+        language: 'fr',
+        format: 'A4',
+        sections: SECTION_OPTIONS.reduce((acc, opt) => ({
             ...acc,
             [opt.key]: opt.defaultChecked
         }), {} as ExportOptions['sections'])
-    );
-    const [includeConfidential, setIncludeConfidential] = useState(false);
-    const [language, setLanguage] = useState<'fr' | 'en'>('fr');
-    const [format, setFormat] = useState<'A4' | 'Letter'>('A4');
+    });
+
+    const handleOpenChange = (newOpen: boolean) => {
+        setOpen(newOpen);
+        if (newOpen && onOpen) {
+            onOpen();
+        }
+    };
 
     // Toggle section
     const toggleSection = (key: keyof ExportOptions['sections']) => {
-        setSections(prev => ({
+        setOptions(prev => ({
             ...prev,
-            [key]: !prev[key]
+            sections: {
+                ...prev.sections,
+                [key]: !prev.sections[key]
+            }
         }));
     };
 
     // Select all / none
     const selectAll = () => {
-        const newSections = { ...sections };
-        SECTION_OPTIONS.forEach(opt => {
-            if (!opt.requiresConfidential || includeConfidential) {
-                newSections[opt.key] = true;
-            }
+        setOptions(prev => {
+            const newSections = { ...prev.sections };
+            SECTION_OPTIONS.forEach(opt => {
+                if (!opt.requiresConfidential || prev.includeConfidential) {
+                    newSections[opt.key] = true;
+                }
+            });
+            return { ...prev, sections: newSections };
         });
-        setSections(newSections);
     };
 
     const selectNone = () => {
-        const newSections = { ...sections };
-        Object.keys(newSections).forEach(key => {
-            newSections[key as keyof typeof newSections] = false;
+        setOptions(prev => {
+            const newSections = { ...prev.sections };
+            Object.keys(newSections).forEach(key => {
+                newSections[key as keyof typeof newSections] = false;
+            });
+            return { ...prev, sections: newSections };
         });
-        setSections(newSections);
     };
 
     // Count selected sections
-    const selectedCount = Object.values(sections).filter(Boolean).length;
+    const selectedCount = Object.values(options.sections).filter(Boolean).length;
 
     // Handle export
     const handleExport = async () => {
-        setIsExporting(true);
+        // Wait for pre-fetching if it's still running and AI synthesis is selected
+        if (isPreFetching && options.sections.aiSynthesis) {
+            toast.info("Génération du rapport IA en cours...");
+            // Polling is not ideal but simple here. In a real app we'd use a more robust way.
+            // But let's just show the message and wait for the prop to change.
+            return;
+        }
 
+        setExporting(true);
         try {
-            const options: ExportOptions = {
-                sections,
-                includeConfidential,
-                language,
-                format,
-            };
-
-            await PDFExportService.downloadReport(
-                patientData,
-                options,
-                `rapport-${patientData.patient.patientId}-${new Date().toISOString().split('T')[0]}.pdf`
-            );
-
-            toast.success('Rapport PDF généré avec succès');
-            onExportComplete?.();
-            setOpen(false);
+            const success = await PDFExportService.downloadReport(patientData, options);
+            if (success) {
+                toast.success('Rapport PDF généré avec succès');
+                if (onExportComplete) onExportComplete();
+                setOpen(false);
+            }
         } catch (error) {
             console.error('Export error:', error);
             toast.error('Erreur lors de la génération du PDF');
         } finally {
-            setIsExporting(false);
+            setExporting(false);
         }
     };
 
     return (
-        <Dialog open={open} onOpenChange={setOpen}>
+        <Dialog open={open} onOpenChange={handleOpenChange}>
             <DialogTrigger asChild>
                 {trigger || (
                     <Button variant="outline" size="sm">
@@ -250,8 +329,8 @@ const ExportDialog = ({
 
                         <div className="grid gap-2 max-h-[240px] overflow-y-auto pr-2">
                             {SECTION_OPTIONS.map(option => {
-                                const isDisabled = option.requiresConfidential && !includeConfidential;
-                                const isChecked = sections[option.key];
+                                const isDisabled = option.requiresConfidential && !options.includeConfidential;
+                                const isChecked = options.sections[option.key];
 
                                 return (
                                     <div
@@ -303,8 +382,8 @@ const ExportDialog = ({
                             </p>
                         </div>
                         <Switch
-                            checked={includeConfidential}
-                            onCheckedChange={setIncludeConfidential}
+                            checked={options.includeConfidential}
+                            onCheckedChange={(checked) => setOptions(prev => ({ ...prev, includeConfidential: checked }))}
                         />
                     </div>
 
@@ -317,7 +396,7 @@ const ExportDialog = ({
                                 <Globe className="h-4 w-4" />
                                 Langue
                             </Label>
-                            <Select value={language} onValueChange={(v) => setLanguage(v as 'fr' | 'en')}>
+                            <Select value={options.language} onValueChange={(v) => setOptions(prev => ({ ...prev, language: v as 'fr' | 'en' }))}>
                                 <SelectTrigger>
                                     <SelectValue />
                                 </SelectTrigger>
@@ -333,7 +412,7 @@ const ExportDialog = ({
                                 <Settings className="h-4 w-4" />
                                 Format
                             </Label>
-                            <Select value={format} onValueChange={(v) => setFormat(v as 'A4' | 'Letter')}>
+                            <Select value={options.format} onValueChange={(v) => setOptions(prev => ({ ...prev, format: v as 'A4' | 'Letter' }))}>
                                 <SelectTrigger>
                                     <SelectValue />
                                 </SelectTrigger>
@@ -346,27 +425,24 @@ const ExportDialog = ({
                     </div>
                 </div>
 
-                <DialogFooter>
-                    <Button
-                        variant="outline"
-                        onClick={() => setOpen(false)}
-                        disabled={isExporting}
-                    >
+                <DialogFooter className="mt-6">
+                    <Button variant="outline" onClick={() => setOpen(false)} disabled={exporting}>
                         Annuler
                     </Button>
                     <Button
+                        className="bg-primary hover:bg-primary/90 text-white"
                         onClick={handleExport}
-                        disabled={isExporting || selectedCount === 0}
+                        disabled={exporting || (isPreFetching && options.sections.aiSynthesis)}
                     >
-                        {isExporting ? (
+                        {exporting || (isPreFetching && options.sections.aiSynthesis) ? (
                             <>
-                                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                                Génération...
+                                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                {exporting ? 'Génération...' : 'Analyse IA...'}
                             </>
                         ) : (
                             <>
-                                <Download className="h-4 w-4 mr-2" />
-                                Télécharger PDF
+                                <Download className="mr-2 h-4 w-4" />
+                                Générer le rapport
                             </>
                         )}
                     </Button>

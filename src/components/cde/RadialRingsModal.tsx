@@ -2144,7 +2144,6 @@ function SVGFallback({
                                             onChange={(e) => {
                                                 const val = parseFloat(e.target.value);
                                                 setLayoutParams(p => ({ ...p, nodeSize: val }));
-                                                setNodeSizeScale(val);
                                             }}
                                             className="w-full accent-cyan-500 bg-gray-700 h-1 rounded appearance-none"
                                         />
@@ -4350,9 +4349,10 @@ export default function RadialRingsModal({
                 evidence: e.evidence_grade
             }));
 
-            // Call AI to analyze optimal treatment
+            // Call AI to analyze optimal treatment (non-streaming JSON mode)
             const { data: aiResponse, error } = await supabase.functions.invoke('causal-reasoning', {
                 body: {
+                    stream: false, // Request JSON response instead of SSE stream
                     query: `Analyse ce graphe de connaissances médicales pour la pathologie "${primaryPathology}".
 
 NŒUDS DISPONIBLES:
@@ -4383,20 +4383,46 @@ IMPORTANT: Retourne UNIQUEMENT les IDs des nœuds qui forment le schéma thérap
 
             if (error) throw error;
 
-            // Parse AI response
-            const analysisText = aiResponse?.analysis || aiResponse?.explanation || '';
-            const jsonMatch = analysisText.match(/\{[\s\S]*\}/);
+            console.log('[Deep Analysis] Raw AI response:', aiResponse);
 
-            if (jsonMatch) {
-                const parsed = JSON.parse(jsonMatch[0]);
-                const optimalIds = new Set<string>(parsed.optimal_node_ids || []);
+            // Parse AI response - try multiple possible structures
+            let parsed: { optimal_node_ids?: string[]; treatment_summary?: string; rationale?: string } | null = null;
+
+            // Case 1: Response is already a parsed object with optimal_node_ids
+            if (aiResponse?.optimal_node_ids) {
+                parsed = aiResponse;
+            }
+            // Case 2: Response has the data nested in 'data' field
+            else if (aiResponse?.data?.optimal_node_ids) {
+                parsed = aiResponse.data;
+            }
+            // Case 3: Response is in 'analysis' or 'explanation' text field - extract JSON
+            else {
+                const analysisText = aiResponse?.analysis || aiResponse?.explanation || aiResponse?.response || aiResponse?.content || '';
+                if (typeof analysisText === 'string') {
+                    const jsonMatch = analysisText.match(/\{[\s\S]*\}/);
+                    if (jsonMatch) {
+                        try {
+                            parsed = JSON.parse(jsonMatch[0]);
+                        } catch (parseErr) {
+                            console.error('[Deep Analysis] JSON parse error:', parseErr);
+                        }
+                    }
+                } else if (typeof analysisText === 'object' && analysisText?.optimal_node_ids) {
+                    parsed = analysisText;
+                }
+            }
+
+            if (parsed && parsed.optimal_node_ids && Array.isArray(parsed.optimal_node_ids)) {
+                const optimalIds = new Set<string>(parsed.optimal_node_ids);
                 setGoldenNodeIds(optimalIds);
                 setDeepAnalysisResult(parsed.treatment_summary || 'Schéma thérapeutique optimal identifié');
                 setDeepAnalysisMode(true);
 
                 console.log(`[Deep Analysis] Identified ${optimalIds.size} optimal nodes:`, parsed.optimal_node_ids);
             } else {
-                throw new Error('Invalid AI response format');
+                console.error('[Deep Analysis] Could not parse response. Structure received:', Object.keys(aiResponse || {}));
+                throw new Error(`Invalid AI response format. Keys: ${Object.keys(aiResponse || {}).join(', ')}`);
             }
 
         } catch (err) {

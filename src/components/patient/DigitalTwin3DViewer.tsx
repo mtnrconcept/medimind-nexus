@@ -814,15 +814,19 @@ const DigitalTwin3DViewer: React.FC<DigitalTwin3DViewerProps> = ({
                 camera={{ position: [0, 0, 2.5], fov: 50 }}
                 gl={{ antialias: true, powerPreference: 'high-performance' }}
                 onCreated={({ gl }) => {
-                  gl.domElement.addEventListener('webglcontextlost', (e) => {
+                  const handleContextLost = (e: Event) => {
                     e.preventDefault();
                     setContextLost(true);
                     console.warn('WebGL Context Lost');
-                  });
-                  gl.domElement.addEventListener('webglcontextrestored', () => {
+                  };
+                  const handleContextRestored = () => {
                     setContextLost(false);
                     console.log('WebGL Context Restored');
-                  });
+                  };
+                  gl.domElement.addEventListener('webglcontextlost', handleContextLost);
+                  gl.domElement.addEventListener('webglcontextrestored', handleContextRestored);
+
+                  // Store cleanup on domElement if needed or handle via useEffect
                 }}
               >
                 <Suspense fallback={<LoadingIndicator />}>

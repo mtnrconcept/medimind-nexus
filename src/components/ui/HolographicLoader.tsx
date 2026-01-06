@@ -47,13 +47,14 @@ const HolographicLoader = ({ className, text = "Analyse cognitive en cours..." }
                 <div className="absolute -bottom-1 left-0 w-full h-[1px] bg-gradient-to-r from-transparent via-cyan-500/50 to-transparent"></div>
             </div>
 
-            {/* CSS for custom scan animation if needed (usually better in global css but inline here for portability) */}
-            <style jsx>{`
-        @keyframes scan {
-          0%, 100% { transform: translateY(-100%); opacity: 0; }
-          50% { transform: translateY(100%); opacity: 1; }
-        }
-      `}</style>
+            {/* CSS for custom scan animation */}
+            <style dangerouslySetInnerHTML={{
+                __html: `
+                @keyframes scan {
+                  0%, 100% { transform: translateY(-100%); opacity: 0; }
+                  50% { transform: translateY(100%); opacity: 1; }
+                }
+            ` }} />
         </div>
     );
 };
