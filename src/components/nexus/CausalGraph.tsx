@@ -466,6 +466,14 @@ export default function CausalGraph({ hypothesis }: CausalGraphProps) {
                         <span className="text-stone-700 font-medium">Effet secondaire</span>
                     </div>
                     <div className="flex items-center gap-2">
+                        <div className="w-4 h-4 rounded-full bg-gradient-to-br from-purple-700 to-purple-900 border border-purple-400 shadow-sm" />
+                        <span className="text-stone-700 font-medium">Molécule</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                        <div className="w-4 h-4 rounded-full bg-gradient-to-br from-teal-600 to-teal-800 border border-teal-300 shadow-sm" />
+                        <span className="text-stone-700 font-medium">Recherche</span>
+                    </div>
+                    <div className="flex items-center gap-2">
                         <div className="w-4 h-4 rounded-full bg-gradient-to-br from-orange-600 to-orange-800 border border-orange-400 shadow-sm" />
                         <span className="text-stone-700 font-medium">Complication</span>
                     </div>

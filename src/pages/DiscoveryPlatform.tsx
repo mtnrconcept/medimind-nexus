@@ -2560,8 +2560,19 @@ function SavedGraphsPanel({ onLoad, refreshTrigger }: { onLoad: (graph: SavedGra
     );
 }
 
-const NexusHeader = () => {
+const NexusHeader = ({ activeTab, setActiveTab }: {
+    activeTab: 'archive' | 'laboratories' | 'visualizer' | 'synthetics';
+    setActiveTab: (tab: 'archive' | 'laboratories' | 'visualizer' | 'synthetics') => void;
+}) => {
     const { theme } = useTheme();
+
+    const tabs = [
+        { id: 'archive' as const, label: 'Archive' },
+        { id: 'laboratories' as const, label: 'Laboratories' },
+        { id: 'visualizer' as const, label: 'Switch Visualizer' },
+        { id: 'synthetics' as const, label: 'Synthetics' }
+    ];
+
     return (
         <div className={cn(
             "flex items-center justify-between px-6 py-4 backdrop-blur-md border-b sticky top-0 z-50",
@@ -2591,17 +2602,18 @@ const NexusHeader = () => {
                     </div>
                 </div>
                 <nav className="hidden md:flex items-center gap-1">
-                    {['Archive', 'Laboratories', 'Switch Visualizer', 'Synthetics'].map((item, i) => (
+                    {tabs.map((tab) => (
                         <button
-                            key={item}
+                            key={tab.id}
+                            onClick={() => setActiveTab(tab.id)}
                             className={cn(
                                 "px-4 py-2 text-xs uppercase tracking-widest rounded-md transition-all",
-                                i === 0
-                                    ? (theme === 'dark' ? "text-cyan-400 underline underline-offset-4" : "text-cyan-600 underline underline-offset-4")
+                                activeTab === tab.id
+                                    ? (theme === 'dark' ? "text-cyan-400 underline underline-offset-4 bg-cyan-500/10" : "text-cyan-600 underline underline-offset-4 bg-cyan-50")
                                     : (theme === 'dark' ? "text-slate-400 hover:text-cyan-400 hover:bg-white/5" : "text-slate-500 hover:text-cyan-600 hover:bg-slate-100")
                             )}
                         >
-                            {item}
+                            {tab.label}
                         </button>
                     ))}
                 </nav>
@@ -2626,6 +2638,7 @@ const NexusHeader = () => {
         </div>
     );
 };
+
 
 const NexusHero = () => {
     const { theme } = useTheme();
@@ -2752,6 +2765,9 @@ const DiscoveryPlatform = () => {
     const [isRadialModalOpen, setIsRadialModalOpen] = useState(false);
     const [isReportModalOpen, setIsReportModalOpen] = useState(false);
     const [refreshSavedGraphs, setRefreshSavedGraphs] = useState(0);
+
+    // Tab Navigation State
+    const [activeTab, setActiveTab] = useState<'archive' | 'laboratories' | 'visualizer' | 'synthetics'>('archive');
 
     // Update query specifically for search bar
     const [searchInput, setSearchInput] = useState('');
@@ -3249,7 +3265,7 @@ const DiscoveryPlatform = () => {
     return (
         <AppLayout>
             <div className="min-h-screen text-foreground pb-20 overflow-x-hidden selection:bg-cyan-500/30 transition-colors duration-500">
-                <NexusHeader />
+                <NexusHeader activeTab={activeTab} setActiveTab={setActiveTab} />
 
                 <div className="max-w-[1600px] mx-auto px-6">
                     <NexusHero />
@@ -3266,267 +3282,425 @@ const DiscoveryPlatform = () => {
 
                     <div className="space-y-8 pb-24">
 
-                        <Tabs defaultValue="exploration" className="space-y-8">
-                            <div className="flex items-center justify-between">
-                                <div className="flex items-center gap-2">
-                                    {['TRENDING', 'LATEST', 'HIGH-IMPACT'].map((tab, i) => (
-                                        <button
-                                            key={tab}
-                                            className={cn(
-                                                "px-4 py-2 text-xs uppercase tracking-wide font-medium rounded transition-all",
-                                                i === 0
-                                                    ? (theme === 'dark'
-                                                        ? "text-cyan-400 border-b-2 border-cyan-400"
-                                                        : "text-cyan-600 border-b-2 border-cyan-600")
-                                                    : (theme === 'dark'
-                                                        ? "text-slate-500 hover:text-slate-300"
-                                                        : "text-slate-400 hover:text-slate-600")
-                                            )}
-                                        >
-                                            {tab}
-                                        </button>
-                                    ))}
-                                </div>
-                                <div className="flex items-center gap-2">
-                                    <button className={cn(
-                                        "w-9 h-9 rounded-lg flex items-center justify-center transition-all",
-                                        theme === 'dark'
-                                            ? "bg-white/5 border border-white/10 text-slate-400 hover:text-cyan-400"
-                                            : "bg-slate-100 border border-slate-200 text-slate-500 hover:text-cyan-600"
-                                    )}>
-                                        <BarChart3 className="h-4 w-4" />
-                                    </button>
-                                    <button className={cn(
-                                        "w-9 h-9 rounded-lg flex items-center justify-center transition-all",
-                                        theme === 'dark'
-                                            ? "bg-white/5 border border-white/10 text-slate-400 hover:text-cyan-400"
-                                            : "bg-slate-100 border border-slate-200 text-slate-500 hover:text-cyan-600"
-                                    )}>
-                                        <Zap className="h-4 w-4" />
-                                    </button>
-                                </div>
-                            </div>
-
-                            <TabsContent value="exploration" className="space-y-6">
-                                <div className="grid grid-cols-12 gap-6">
-                                    {/* Real Search Results instead of placeholders */}
-                                    <div className="col-span-12 lg:col-span-8">
-                                        <div className="nexus-card border-white/5 overflow-hidden">
-                                            <div className="p-4 border-b border-white/5 bg-white/5 flex items-center justify-between">
-                                                <h3 className="text-xs uppercase tracking-[0.2em] font-black text-cyan-400">Analysis Feed</h3>
-                                                <Badge variant="outline" className="text-[10px] border-cyan-500/30 text-cyan-400">
-                                                    {isSearching ? 'Scanning...' : `${searchResults.length} Results`}
-                                                </Badge>
-                                            </div>
-                                            <SearchResults results={searchResults.slice(0, 6)} isLoading={isSearching} />
-                                            {searchResults.length > 6 && (
-                                                <div className="p-4 text-center border-t border-white/5">
-                                                    <Button variant="ghost" size="sm" className="text-xs text-slate-500 hover:text-cyan-400" onClick={() => { }}>
-                                                        View all {searchResults.length} papers in Latest tab
-                                                    </Button>
-                                                </div>
-                                            )}
-                                        </div>
+                        {/* ARCHIVE TAB - Default, shows the existing exploration content */}
+                        {activeTab === 'archive' && (
+                            <Tabs defaultValue="exploration" className="space-y-8">
+                                <div className="flex items-center justify-between">
+                                    <div className="flex items-center gap-2">
+                                        {['TRENDING', 'LATEST', 'HIGH-IMPACT'].map((tab, i) => (
+                                            <button
+                                                key={tab}
+                                                className={cn(
+                                                    "px-4 py-2 text-xs uppercase tracking-wide font-medium rounded transition-all",
+                                                    i === 0
+                                                        ? (theme === 'dark'
+                                                            ? "text-cyan-400 border-b-2 border-cyan-400"
+                                                            : "text-cyan-600 border-b-2 border-cyan-600")
+                                                        : (theme === 'dark'
+                                                            ? "text-slate-500 hover:text-slate-300"
+                                                            : "text-slate-400 hover:text-slate-600")
+                                                )}
+                                            >
+                                                {tab}
+                                            </button>
+                                        ))}
                                     </div>
-
-                                    {/* Live AI Synthesis Panel */}
-                                    <div className="col-span-12 lg:col-span-4">
-                                        <div className={cn(
-                                            "nexus-card h-full flex flex-col p-6 border-cyan-500/10",
-                                            isGeneratingHypotheses && "border-purple-500/30 shadow-lg shadow-purple-500/10"
+                                    <div className="flex items-center gap-2">
+                                        <button className={cn(
+                                            "w-9 h-9 rounded-lg flex items-center justify-center transition-all",
+                                            theme === 'dark'
+                                                ? "bg-white/5 border border-white/10 text-slate-400 hover:text-cyan-400"
+                                                : "bg-slate-100 border border-slate-200 text-slate-500 hover:text-cyan-600"
                                         )}>
-                                            <div className="flex items-center justify-between mb-6">
-                                                <h4 className={cn(
-                                                    "text-xs font-semibold uppercase tracking-wide",
-                                                    theme === 'dark' ? "text-slate-300" : "text-slate-600"
-                                                )}>AI SYNTHESIS ENGINE</h4>
-                                                {isGeneratingHypotheses && (
-                                                    <div className="flex items-center gap-1">
-                                                        <div className="w-1.5 h-1.5 bg-purple-500 rounded-full animate-ping" />
-                                                        <span className="text-[10px] text-purple-400 font-bold">LIVE</span>
+                                            <BarChart3 className="h-4 w-4" />
+                                        </button>
+                                        <button className={cn(
+                                            "w-9 h-9 rounded-lg flex items-center justify-center transition-all",
+                                            theme === 'dark'
+                                                ? "bg-white/5 border border-white/10 text-slate-400 hover:text-cyan-400"
+                                                : "bg-slate-100 border border-slate-200 text-slate-500 hover:text-cyan-600"
+                                        )}>
+                                            <Zap className="h-4 w-4" />
+                                        </button>
+                                    </div>
+                                </div>
+
+                                <TabsContent value="exploration" className="space-y-6">
+                                    <div className="grid grid-cols-12 gap-6">
+                                        {/* Real Search Results instead of placeholders */}
+                                        <div className="col-span-12 lg:col-span-8">
+                                            <div className="nexus-card border-white/5 overflow-hidden">
+                                                <div className="p-4 border-b border-white/5 bg-white/5 flex items-center justify-between">
+                                                    <h3 className="text-xs uppercase tracking-[0.2em] font-black text-cyan-400">Analysis Feed</h3>
+                                                    <Badge variant="outline" className="text-[10px] border-cyan-500/30 text-cyan-400">
+                                                        {isSearching ? 'Scanning...' : `${searchResults.length} Results`}
+                                                    </Badge>
+                                                </div>
+                                                <SearchResults results={searchResults.slice(0, 6)} isLoading={isSearching} />
+                                                {searchResults.length > 6 && (
+                                                    <div className="p-4 text-center border-t border-white/5">
+                                                        <Button variant="ghost" size="sm" className="text-xs text-slate-500 hover:text-cyan-400" onClick={() => { }}>
+                                                            View all {searchResults.length} papers in Latest tab
+                                                        </Button>
                                                     </div>
                                                 )}
                                             </div>
+                                        </div>
 
-                                            {isGeneratingHypotheses ? (
-                                                <div className="flex-1 flex flex-col justify-center">
-                                                    <div className="w-16 h-16 rounded-full flex items-center justify-center mb-6 bg-gradient-to-br from-cyan-500/20 to-purple-500/20 border border-purple-500/30 mx-auto">
-                                                        <Brain className="h-8 w-8 text-purple-400 animate-pulse" />
-                                                    </div>
-                                                    <p className="text-xs text-slate-400 mb-4 text-center">
-                                                        Hypothesis generation in progress...
-                                                    </p>
-                                                    <div className="bg-black/40 p-3 rounded-lg border border-white/5 font-mono text-[10px] text-purple-300/80 mb-4 h-32 overflow-hidden relative">
-                                                        <div className="absolute inset-0 bg-gradient-to-t from-black/80 to-transparent pointer-events-none" />
-                                                        {streamingContent || 'Awaiting initial stream chunk...'}
-                                                    </div>
-                                                    <Button
-                                                        variant="outline"
-                                                        size="sm"
-                                                        className="w-full text-[10px] uppercase border-purple-500/30 text-purple-400"
-                                                        onClick={() => { }}
-                                                    >
-                                                        Details in Modal
-                                                    </Button>
-                                                </div>
-                                            ) : hypotheses.length > 0 ? (
-                                                <div className="flex-1">
-                                                    <div className="mb-4">
-                                                        <h5 className="text-[10px] text-slate-500 uppercase mb-2">Latest Candidate</h5>
-                                                        <div className="p-3 bg-blue-500/5 border border-blue-500/20 rounded-lg">
-                                                            <p className="text-xs text-white line-clamp-3">
-                                                                {hypotheses[0].statement}
-                                                            </p>
+                                        {/* Live AI Synthesis Panel */}
+                                        <div className="col-span-12 lg:col-span-4">
+                                            <div className={cn(
+                                                "nexus-card h-full flex flex-col p-6 border-cyan-500/10",
+                                                isGeneratingHypotheses && "border-purple-500/30 shadow-lg shadow-purple-500/10"
+                                            )}>
+                                                <div className="flex items-center justify-between mb-6">
+                                                    <h4 className={cn(
+                                                        "text-xs font-semibold uppercase tracking-wide",
+                                                        theme === 'dark' ? "text-slate-300" : "text-slate-600"
+                                                    )}>AI SYNTHESIS ENGINE</h4>
+                                                    {isGeneratingHypotheses && (
+                                                        <div className="flex items-center gap-1">
+                                                            <div className="w-1.5 h-1.5 bg-purple-500 rounded-full animate-ping" />
+                                                            <span className="text-[10px] text-purple-400 font-bold">LIVE</span>
                                                         </div>
-                                                    </div>
-                                                    <div className="space-y-2">
-                                                        <div className="flex justify-between text-[10px]">
-                                                            <span className="text-slate-500 uppercase">Plausibility</span>
-                                                            <span className="text-cyan-400 font-bold">{(hypotheses[0].scores?.plausibility || 0).toFixed(1)}/10</span>
+                                                    )}
+                                                </div>
+
+                                                {isGeneratingHypotheses ? (
+                                                    <div className="flex-1 flex flex-col justify-center">
+                                                        <div className="w-16 h-16 rounded-full flex items-center justify-center mb-6 bg-gradient-to-br from-cyan-500/20 to-purple-500/20 border border-purple-500/30 mx-auto">
+                                                            <Brain className="h-8 w-8 text-purple-400 animate-pulse" />
                                                         </div>
-                                                        <Progress value={(hypotheses[0].scores?.plausibility || 0) * 10} className="h-1 bg-white/5" />
+                                                        <p className="text-xs text-slate-400 mb-4 text-center">
+                                                            Hypothesis generation in progress...
+                                                        </p>
+                                                        <div className="bg-black/40 p-3 rounded-lg border border-white/5 font-mono text-[10px] text-purple-300/80 mb-4 h-32 overflow-hidden relative">
+                                                            <div className="absolute inset-0 bg-gradient-to-t from-black/80 to-transparent pointer-events-none" />
+                                                            {streamingContent || 'Awaiting initial stream chunk...'}
+                                                        </div>
+                                                        <Button
+                                                            variant="outline"
+                                                            size="sm"
+                                                            className="w-full text-[10px] uppercase border-purple-500/30 text-purple-400"
+                                                            onClick={() => { }}
+                                                        >
+                                                            Details in Modal
+                                                        </Button>
                                                     </div>
-                                                    <Button
-                                                        className="w-full mt-6 bg-gradient-to-r from-blue-600 to-purple-600 border-none text-[10px] uppercase font-bold"
-                                                        onClick={() => {
-                                                            setSelectedHypothesis(hypotheses[0]);
-                                                            setIsReportModalOpen(true);
-                                                        }}
-                                                    >
-                                                        Deep Analysis
-                                                    </Button>
-                                                </div>
-                                            ) : (
-                                                <div className="flex-1 flex flex-col items-center justify-center text-center">
-                                                    <div className="w-16 h-16 rounded-full flex items-center justify-center mb-6 bg-slate-800/50 border border-white/5">
-                                                        <Lightbulb className="h-8 w-8 text-slate-600" />
+                                                ) : hypotheses.length > 0 ? (
+                                                    <div className="flex-1">
+                                                        <div className="mb-4">
+                                                            <h5 className="text-[10px] text-slate-500 uppercase mb-2">Latest Candidate</h5>
+                                                            <div className="p-3 bg-blue-500/5 border border-blue-500/20 rounded-lg">
+                                                                <p className="text-xs text-white line-clamp-3">
+                                                                    {hypotheses[0].statement}
+                                                                </p>
+                                                            </div>
+                                                        </div>
+                                                        <div className="space-y-2">
+                                                            <div className="flex justify-between text-[10px]">
+                                                                <span className="text-slate-500 uppercase">Plausibility</span>
+                                                                <span className="text-cyan-400 font-bold">{(hypotheses[0].scores?.plausibility || 0).toFixed(1)}/10</span>
+                                                            </div>
+                                                            <Progress value={(hypotheses[0].scores?.plausibility || 0) * 10} className="h-1 bg-white/5" />
+                                                        </div>
+                                                        <Button
+                                                            className="w-full mt-6 bg-gradient-to-r from-blue-600 to-purple-600 border-none text-[10px] uppercase font-bold"
+                                                            onClick={() => {
+                                                                setSelectedHypothesis(hypotheses[0]);
+                                                                setIsReportModalOpen(true);
+                                                            }}
+                                                        >
+                                                            Deep Analysis
+                                                        </Button>
                                                     </div>
-                                                    <p className="text-xs text-slate-500 max-w-[200px]">
-                                                        Awaiting query input to generate clinical summaries and future research projections.
-                                                    </p>
-                                                </div>
-                                            )}
+                                                ) : (
+                                                    <div className="flex-1 flex flex-col items-center justify-center text-center">
+                                                        <div className="w-16 h-16 rounded-full flex items-center justify-center mb-6 bg-slate-800/50 border border-white/5">
+                                                            <Lightbulb className="h-8 w-8 text-slate-600" />
+                                                        </div>
+                                                        <p className="text-xs text-slate-500 max-w-[200px]">
+                                                            Awaiting query input to generate clinical summaries and future research projections.
+                                                        </p>
+                                                    </div>
+                                                )}
+                                            </div>
                                         </div>
                                     </div>
-                                </div>
-                            </TabsContent>
+                                </TabsContent>
 
-                            <TabsContent value="latest" className="space-y-6">
-                                <div className="grid grid-cols-12 gap-6">
-                                    <div className="col-span-12 lg:col-span-4 space-y-6">
-                                        <div className="nexus-card p-6 border-cyan-500/10 hover:border-cyan-500/30 group transition-all">
-                                            <div className="flex items-center justify-between mb-6">
-                                                <h3 className="text-xs uppercase tracking-[0.2em] font-black text-cyan-400 flex items-center gap-2">
-                                                    <Activity className="h-4 w-4" /> Global Flux
-                                                </h3>
-                                                <div className="h-1.5 w-1.5 bg-cyan-500 rounded-full animate-ping" />
+                                <TabsContent value="latest" className="space-y-6">
+                                    <div className="grid grid-cols-12 gap-6">
+                                        <div className="col-span-12 lg:col-span-4 space-y-6">
+                                            <div className="nexus-card p-6 border-cyan-500/10 hover:border-cyan-500/30 group transition-all">
+                                                <div className="flex items-center justify-between mb-6">
+                                                    <h3 className="text-xs uppercase tracking-[0.2em] font-black text-cyan-400 flex items-center gap-2">
+                                                        <Activity className="h-4 w-4" /> Global Flux
+                                                    </h3>
+                                                    <div className="h-1.5 w-1.5 bg-cyan-500 rounded-full animate-ping" />
+                                                </div>
+                                                <NewsFeed items={newsItems} />
                                             </div>
-                                            <NewsFeed items={newsItems} />
+                                            <div className="nexus-card p-6 border-purple-500/10">
+                                                <StatisticsPanel />
+                                            </div>
+                                            <div className="nexus-card p-6 border-red-500/10">
+                                                <AlertsPanel />
+                                            </div>
                                         </div>
-                                        <div className="nexus-card p-6 border-purple-500/10">
-                                            <StatisticsPanel />
-                                        </div>
-                                        <div className="nexus-card p-6 border-red-500/10">
-                                            <AlertsPanel />
-                                        </div>
-                                    </div>
-                                    <div className="col-span-12 lg:col-span-8 space-y-6">
-                                        <div className="nexus-card border-white/5">
-                                            <div className="p-4 border-b border-white/5 bg-white/5 flex items-center justify-between">
-                                                <h3 className="text-xs uppercase tracking-[0.2em] font-black text-slate-400">Search Results</h3>
-                                                <div className="flex gap-2">
-                                                    <button className="p-1 px-3 bg-cyan-500/10 border border-cyan-500/20 rounded text-[9px] uppercase font-bold text-cyan-400">Filter</button>
-                                                    <button className="p-1 px-3 bg-slate-800 border border-white/5 rounded text-[9px] uppercase font-bold text-slate-500">Reset</button>
+                                        <div className="col-span-12 lg:col-span-8 space-y-6">
+                                            <div className="nexus-card border-white/5">
+                                                <div className="p-4 border-b border-white/5 bg-white/5 flex items-center justify-between">
+                                                    <h3 className="text-xs uppercase tracking-[0.2em] font-black text-slate-400">Search Results</h3>
+                                                    <div className="flex gap-2">
+                                                        <button className="p-1 px-3 bg-cyan-500/10 border border-cyan-500/20 rounded text-[9px] uppercase font-bold text-cyan-400">Filter</button>
+                                                        <button className="p-1 px-3 bg-slate-800 border border-white/5 rounded text-[9px] uppercase font-bold text-slate-500">Reset</button>
+                                                    </div>
+                                                </div>
+                                                <SearchResults results={searchResults} isLoading={isSearching} />
+                                            </div>
+                                            <div className="grid grid-cols-2 gap-6">
+                                                <div className="nexus-card p-6 border-white/5">
+                                                    <KnowledgeExtractionPanel
+                                                        extraction={extractionResult}
+                                                        isLoading={isExtracting}
+                                                        onExtract={handleExtractKnowledge}
+                                                    />
+                                                </div>
+                                                <div className="nexus-card p-6 border-white/5">
+                                                    <PatternMiningPanel extraction={extractionResult} />
                                                 </div>
                                             </div>
-                                            <SearchResults results={searchResults} isLoading={isSearching} />
                                         </div>
-                                        <div className="grid grid-cols-2 gap-6">
+                                    </div>
+                                </TabsContent>
+
+                                <TabsContent value="radial">
+                                    <div className="grid grid-cols-12 gap-8 h-[700px]">
+                                        <div className="col-span-12 lg:col-span-8 nexus-card relative bg-black/60 p-1">
+                                            <KnowledgeGraphViz
+                                                nodes={knowledgeGraph.nodes}
+                                                edges={knowledgeGraph.edges}
+                                                onNodeClick={handleNodeClick}
+                                                isExpanding={isExpandingGraph}
+                                                selectedNodeId={selectedGraphNode || undefined}
+                                            />
+                                            <div className="absolute top-6 left-6 flex items-center gap-2 px-3 py-1.5 bg-black/80 backdrop-blur-md rounded border border-cyan-500/30">
+                                                <div className="w-1.5 h-1.5 bg-cyan-400 rounded-full animate-pulse" />
+                                                <span className="text-[9px] font-black text-cyan-400 uppercase tracking-widest">Live Semantic Grid</span>
+                                            </div>
+                                        </div>
+                                        <div className="col-span-12 lg:col-span-4 space-y-6">
                                             <div className="nexus-card p-6 border-white/5">
-                                                <KnowledgeExtractionPanel
-                                                    extraction={extractionResult}
-                                                    isLoading={isExtracting}
-                                                    onExtract={handleExtractKnowledge}
+                                                <SavedGraphsPanel
+                                                    onLoad={(graph) => {
+                                                        setSavedGraphToLoad(graph);
+                                                        setIsRadialModalOpen(true);
+                                                    }}
+                                                    refreshTrigger={refreshSavedGraphs}
+                                                />
+                                            </div>
+                                            <div className="flex justify-center">
+                                                <button
+                                                    className="w-full nexus-initiate-button flex items-center justify-center gap-3 py-5"
+                                                    onClick={() => setIsRadialModalOpen(true)}
+                                                >
+                                                    <Network className="h-5 w-5" />
+                                                    Open Explorer
+                                                </button>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </TabsContent>
+
+                                <TabsContent value="synthesis" className="space-y-8">
+                                    <div className="grid grid-cols-12 gap-8">
+                                        <div className="col-span-12 lg:col-span-5 space-y-6">
+                                            <div className="nexus-card border-indigo-500/10">
+                                                <HypothesisPanel
+                                                    hypotheses={hypotheses}
+                                                    onSelectHypothesis={(h) => {
+                                                        setSelectedHypothesis(h);
+                                                        setIsReportModalOpen(true);
+                                                    }}
+                                                    selectedId={selectedHypothesis?.id}
+                                                    comparedIds={comparedHypothesisIds}
+                                                    onToggleCompare={handleToggleCompare}
+                                                    onGenerate={handleGenerateHypotheses}
+                                                    isGenerating={isGeneratingHypotheses}
+                                                    lastSearchQuery={lastSearchQuery}
                                                 />
                                             </div>
                                             <div className="nexus-card p-6 border-white/5">
-                                                <PatternMiningPanel extraction={extractionResult} />
+                                                <HypothesisPrioritization hypotheses={hypotheses} />
                                             </div>
                                         </div>
+                                        <div className="col-span-12 lg:col-span-7 space-y-6 text-center py-20 bg-slate-900/10 rounded-3xl border-2 border-dashed border-white/5">
+                                            <div className="w-20 h-20 bg-white/5 rounded-full flex items-center justify-center mx-auto mb-6 bg-gradient-to-br from-cyan-500/10 to-purple-500/10 border border-white/10">
+                                                <Lightbulb className="h-10 w-10 text-slate-500" />
+                                            </div>
+                                            <h4 className="text-xl font-bold nexus-header text-slate-400 mb-2">AI Synthesis Engine</h4>
+                                            <p className="text-sm text-slate-500 max-w-sm mx-auto">Awaiting query Input to generate clinical summaries and future research projections.</p>
+                                        </div>
                                     </div>
-                                </div>
-                            </TabsContent>
+                                </TabsContent>
+                            </Tabs>
+                        )}
 
-                            <TabsContent value="radial">
-                                <div className="grid grid-cols-12 gap-8 h-[700px]">
-                                    <div className="col-span-12 lg:col-span-8 nexus-card relative bg-black/60 p-1">
-                                        <KnowledgeGraphViz
-                                            nodes={knowledgeGraph.nodes}
-                                            edges={knowledgeGraph.edges}
-                                            onNodeClick={handleNodeClick}
-                                            isExpanding={isExpandingGraph}
-                                            selectedNodeId={selectedGraphNode || undefined}
-                                        />
-                                        <div className="absolute top-6 left-6 flex items-center gap-2 px-3 py-1.5 bg-black/80 backdrop-blur-md rounded border border-cyan-500/30">
-                                            <div className="w-1.5 h-1.5 bg-cyan-400 rounded-full animate-pulse" />
-                                            <span className="text-[9px] font-black text-cyan-400 uppercase tracking-widest">Live Semantic Grid</span>
+                        {/* LABORATORIES TAB */}
+                        {activeTab === 'laboratories' && (
+                            <div className="space-y-6">
+                                <div className={cn(
+                                    "p-8 rounded-2xl border",
+                                    theme === 'dark'
+                                        ? "bg-slate-900/50 border-cyan-500/20"
+                                        : "bg-white border-cyan-200"
+                                )}>
+                                    <div className="text-center mb-8">
+                                        <div className="w-16 h-16 mx-auto mb-4 rounded-2xl bg-gradient-to-br from-cyan-500/20 to-purple-500/20 flex items-center justify-center">
+                                            <FlaskConical className="h-8 w-8 text-cyan-400" />
                                         </div>
+                                        <h2 className={cn(
+                                            "text-2xl font-bold mb-2",
+                                            theme === 'dark' ? "text-white" : "text-slate-800"
+                                        )}>Laboratoires de Recherche</h2>
+                                        <p className={cn(
+                                            "text-sm max-w-lg mx-auto",
+                                            theme === 'dark' ? "text-slate-400" : "text-slate-600"
+                                        )}>
+                                            Outils avancés pour l'analyse moléculaire, la comparaison de composés et les prédictions pharmacocinétiques.
+                                        </p>
                                     </div>
-                                    <div className="col-span-12 lg:col-span-4 space-y-6">
-                                        <div className="nexus-card p-6 border-white/5">
-                                            <SavedGraphsPanel
-                                                onLoad={(graph) => {
-                                                    setSavedGraphToLoad(graph);
-                                                    setIsRadialModalOpen(true);
-                                                }}
-                                                refreshTrigger={refreshSavedGraphs}
-                                            />
-                                        </div>
-                                        <div className="flex justify-center">
-                                            <button
-                                                className="w-full nexus-initiate-button flex items-center justify-center gap-3 py-5"
-                                                onClick={() => setIsRadialModalOpen(true)}
-                                            >
-                                                <Network className="h-5 w-5" />
-                                                Open Explorer
-                                            </button>
-                                        </div>
+                                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                                        {[
+                                            { icon: <Beaker className="h-5 w-5" />, title: "Comparateur Moléculaire", desc: "Comparer 2+ molécules" },
+                                            { icon: <Activity className="h-5 w-5" />, title: "Calculator PK/PD", desc: "Demi-vie, clairance, Vd" },
+                                            { icon: <Network className="h-5 w-5" />, title: "Interactions DDI", desc: "Prédictions CYP450" },
+                                            { icon: <Target className="h-5 w-5" />, title: "Analyse Cohortes", desc: "Simulation populations" }
+                                        ].map((tool, i) => (
+                                            <div key={i} className={cn(
+                                                "p-4 rounded-xl border cursor-pointer transition-all hover:scale-105",
+                                                theme === 'dark'
+                                                    ? "bg-white/5 border-white/10 hover:border-cyan-500/30"
+                                                    : "bg-slate-50 border-slate-200 hover:border-cyan-500/50"
+                                            )}>
+                                                <div className="text-cyan-400 mb-3">{tool.icon}</div>
+                                                <h3 className={cn(
+                                                    "font-semibold text-sm mb-1",
+                                                    theme === 'dark' ? "text-white" : "text-slate-800"
+                                                )}>{tool.title}</h3>
+                                                <p className="text-xs text-slate-500">{tool.desc}</p>
+                                            </div>
+                                        ))}
                                     </div>
                                 </div>
-                            </TabsContent>
+                            </div>
+                        )}
 
-                            <TabsContent value="synthesis" className="space-y-8">
-                                <div className="grid grid-cols-12 gap-8">
-                                    <div className="col-span-12 lg:col-span-5 space-y-6">
-                                        <div className="nexus-card border-indigo-500/10">
-                                            <HypothesisPanel
-                                                hypotheses={hypotheses}
-                                                onSelectHypothesis={(h) => {
-                                                    setSelectedHypothesis(h);
-                                                    setIsReportModalOpen(true);
-                                                }}
-                                                selectedId={selectedHypothesis?.id}
-                                                comparedIds={comparedHypothesisIds}
-                                                onToggleCompare={handleToggleCompare}
-                                                onGenerate={handleGenerateHypotheses}
-                                                isGenerating={isGeneratingHypotheses}
-                                                lastSearchQuery={lastSearchQuery}
-                                            />
+                        {/* SWITCH VISUALIZER TAB */}
+                        {activeTab === 'visualizer' && (
+                            <div className="space-y-6">
+                                <div className={cn(
+                                    "p-8 rounded-2xl border",
+                                    theme === 'dark'
+                                        ? "bg-slate-900/50 border-emerald-500/20"
+                                        : "bg-white border-emerald-200"
+                                )}>
+                                    <div className="text-center mb-8">
+                                        <div className="w-16 h-16 mx-auto mb-4 rounded-2xl bg-gradient-to-br from-emerald-500/20 to-teal-500/20 flex items-center justify-center">
+                                            <BarChart3 className="h-8 w-8 text-emerald-400" />
                                         </div>
-                                        <div className="nexus-card p-6 border-white/5">
-                                            <HypothesisPrioritization hypotheses={hypotheses} />
-                                        </div>
+                                        <h2 className={cn(
+                                            "text-2xl font-bold mb-2",
+                                            theme === 'dark' ? "text-white" : "text-slate-800"
+                                        )}>Modes de Visualisation</h2>
+                                        <p className={cn(
+                                            "text-sm max-w-lg mx-auto",
+                                            theme === 'dark' ? "text-slate-400" : "text-slate-600"
+                                        )}>
+                                            Différentes façons de visualiser vos données et graphes thérapeutiques.
+                                        </p>
                                     </div>
-                                    <div className="col-span-12 lg:col-span-7 space-y-6 text-center py-20 bg-slate-900/10 rounded-3xl border-2 border-dashed border-white/5">
-                                        <div className="w-20 h-20 bg-white/5 rounded-full flex items-center justify-center mx-auto mb-6 bg-gradient-to-br from-cyan-500/10 to-purple-500/10 border border-white/10">
-                                            <Lightbulb className="h-10 w-10 text-slate-500" />
-                                        </div>
-                                        <h4 className="text-xl font-bold nexus-header text-slate-400 mb-2">AI Synthesis Engine</h4>
-                                        <p className="text-sm text-slate-500 max-w-sm mx-auto">Awaiting query Input to generate clinical summaries and future research projections.</p>
+                                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                                        {[
+                                            { icon: <Network className="h-5 w-5" />, title: "Graphe Radial", desc: "Vue actuelle" },
+                                            { icon: <Clock className="h-5 w-5" />, title: "Timeline", desc: "Chronologie étapes" },
+                                            { icon: <FileText className="h-5 w-5" />, title: "Tableau", desc: "Vue tabulaire" },
+                                            { icon: <FileDown className="h-5 w-5" />, title: "Export Mermaid", desc: "Diagramme flowchart" }
+                                        ].map((mode, i) => (
+                                            <div key={i} className={cn(
+                                                "p-4 rounded-xl border cursor-pointer transition-all hover:scale-105",
+                                                i === 0
+                                                    ? (theme === 'dark' ? "bg-emerald-500/10 border-emerald-500/30" : "bg-emerald-50 border-emerald-300")
+                                                    : (theme === 'dark' ? "bg-white/5 border-white/10 hover:border-emerald-500/30" : "bg-slate-50 border-slate-200 hover:border-emerald-500/50")
+                                            )}>
+                                                <div className="text-emerald-400 mb-3">{mode.icon}</div>
+                                                <h3 className={cn(
+                                                    "font-semibold text-sm mb-1",
+                                                    theme === 'dark' ? "text-white" : "text-slate-800"
+                                                )}>{mode.title}</h3>
+                                                <p className="text-xs text-slate-500">{mode.desc}</p>
+                                                {i === 0 && <Badge className="mt-2 text-[9px] bg-emerald-500">ACTIF</Badge>}
+                                            </div>
+                                        ))}
                                     </div>
                                 </div>
-                            </TabsContent>
-                        </Tabs>
+                            </div>
+                        )}
+
+                        {/* SYNTHETICS TAB */}
+                        {activeTab === 'synthetics' && (
+                            <div className="space-y-6">
+                                <div className={cn(
+                                    "p-8 rounded-2xl border",
+                                    theme === 'dark'
+                                        ? "bg-slate-900/50 border-purple-500/20"
+                                        : "bg-white border-purple-200"
+                                )}>
+                                    <div className="text-center mb-8">
+                                        <div className="w-16 h-16 mx-auto mb-4 rounded-2xl bg-gradient-to-br from-purple-500/20 to-pink-500/20 flex items-center justify-center">
+                                            <Sparkles className="h-8 w-8 text-purple-400" />
+                                        </div>
+                                        <h2 className={cn(
+                                            "text-2xl font-bold mb-2",
+                                            theme === 'dark' ? "text-white" : "text-slate-800"
+                                        )}>Synthèse de Molécules IA</h2>
+                                        <p className={cn(
+                                            "text-sm max-w-lg mx-auto",
+                                            theme === 'dark' ? "text-slate-400" : "text-slate-600"
+                                        )}>
+                                            Génération et prédiction de nouvelles molécules candidates par intelligence artificielle.
+                                        </p>
+                                    </div>
+                                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                                        {[
+                                            { icon: <Brain className="h-5 w-5" />, title: "AI Generator", desc: "Nouvelles molécules" },
+                                            { icon: <Activity className="h-5 w-5" />, title: "ADMET Prediction", desc: "Absorption, toxicité" },
+                                            { icon: <Target className="h-5 w-5" />, title: "Docking Preview", desc: "Ancrage moléculaire" },
+                                            { icon: <TrendingUp className="h-5 w-5" />, title: "Optimization", desc: "Améliorer composés" }
+                                        ].map((tool, i) => (
+                                            <div key={i} className={cn(
+                                                "p-4 rounded-xl border cursor-pointer transition-all hover:scale-105",
+                                                theme === 'dark'
+                                                    ? "bg-white/5 border-white/10 hover:border-purple-500/30"
+                                                    : "bg-slate-50 border-slate-200 hover:border-purple-500/50"
+                                            )}>
+                                                <div className="text-purple-400 mb-3">{tool.icon}</div>
+                                                <h3 className={cn(
+                                                    "font-semibold text-sm mb-1",
+                                                    theme === 'dark' ? "text-white" : "text-slate-800"
+                                                )}>{tool.title}</h3>
+                                                <p className="text-xs text-slate-500">{tool.desc}</p>
+                                            </div>
+                                        ))}
+                                    </div>
+                                    <div className="mt-8 p-4 rounded-xl bg-purple-500/10 border border-purple-500/20 text-center">
+                                        <p className="text-xs text-purple-300">🧬 Module en développement - Prochainement disponible</p>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+
                     </div>
                 </div>
 

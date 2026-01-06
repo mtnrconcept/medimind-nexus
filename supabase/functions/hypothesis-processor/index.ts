@@ -130,16 +130,33 @@ Pour chaque médicament administré :
 STRUCTURE ATTENDUE :
 [Pathologie] ← TRAITE ← [Médicament 1] → PROVOQUE → [Effet Sec. 1] ← TRAITE ← [Médicament 2] → RÉSOUT → [GUÉRISON]
 
-TYPES DE NŒUDS (6 TYPES) :
+TYPES DE NŒUDS (8 TYPES) :
 - "pathology" : Nœud CENTRAL unique - La maladie ciblée
 - "treatment" : Médicaments avec NOM DCI RÉEL + DOSAGE
 - "symptom" : Symptômes cliniques de la pathologie
 - "side_effect" : Effets secondaires des traitements (à traiter)
 - "complication" : Complications évitées par le traitement
+- "molecule" : Cibles moléculaires, biomarqueurs, récepteurs (ex: EGFR, TNF-α, IL-6)
+- "research" : Essais cliniques ou projets de recherche pertinents (ex: NCT12345678)
 - "resolution" : GUÉRISON - Terminus obligatoire (UN SEUL nœud)
 
-LABELS DE LIENS :
-TRAITE, PROVOQUE, RÉSOUT, MANIFESTE, PRÉVIENT, AGGRAVE, CORRIGE
+ATTRIBUTS OBLIGATOIRES POUR TYPE "treatment" :
+Chaque nœud treatment DOIT inclure dans son champ "attributes" :
+{
+  "contraindications": {
+    "pregnancy": true/false,
+    "age_lt": number ou null,
+    "egfr_lt": number ou null,
+    "hepatic_impairment": true/false,
+    "allergy_terms": ["terme1", "terme2"]
+  },
+  "interactions": [
+    { "with": "nom_médicament", "severity": "major|moderate|minor", "note": "description" }
+  ]
+}
+
+LABELS DE LIENS (9 TYPES) :
+TRAITE, PROVOQUE, RÉSOUT, MANIFESTE, PRÉVIENT, AGGRAVE, CORRIGE, CONTRE_INDIQUÉ_SI, INTERAGIT_AVEC
 
 FORMAT DE SORTIE JSON (OBLIGATOIRE) :
 {
@@ -152,22 +169,26 @@ FORMAT DE SORTIE JSON (OBLIGATOIRE) :
         "nodes": [
           { "id": "p1", "label": "Syndrome Néphrotique Cortico-Résistant", "type": "pathology", "mechanism": "Glomérulopathie avec protéinurie massive réfractaire" },
           
-          { "id": "t1", "label": "Prednisone 1mg/kg/j (max 80mg)", "type": "treatment", "mechanism": "Glucocorticoïde - Immunosuppression anti-inflammatoire" },
+          { "id": "m1", "label": "Podocine (NPHS2)", "type": "molecule", "mechanism": "Protéine du diaphragme de fente glomérulaire - Mutation causale fréquente" },
+          
+          { "id": "t1", "label": "Prednisone 1mg/kg/j (max 80mg)", "type": "treatment", "mechanism": "Glucocorticoïde - Immunosuppression anti-inflammatoire", "attributes": { "contraindications": { "pregnancy": false, "age_lt": null, "egfr_lt": null, "hepatic_impairment": false, "allergy_terms": ["corticoïdes"] }, "interactions": [{ "with": "AINS", "severity": "moderate", "note": "Risque ulcère gastrique" }, { "with": "diurétiques", "severity": "minor", "note": "Hypokaliémie" }] } },
           { "id": "e1", "label": "Hyperglycémie cortico-induite", "type": "side_effect", "mechanism": "Néoglucogenèse hépatique accrue, résistance insuline" },
-          { "id": "t2", "label": "Metformine 500mg x2/j", "type": "treatment", "mechanism": "Biguanide - Sensibilisateur insuline, inhibe néoglucogenèse" },
+          { "id": "t2", "label": "Metformine 500mg x2/j", "type": "treatment", "mechanism": "Biguanide - Sensibilisateur insuline", "attributes": { "contraindications": { "pregnancy": false, "age_lt": null, "egfr_lt": 30, "hepatic_impairment": true, "allergy_terms": [] }, "interactions": [{ "with": "produits de contraste iodés", "severity": "major", "note": "Acidose lactique" }] } },
           
-          { "id": "t3", "label": "Rituximab 375mg/m² IV (J1, J8, J15, J22)", "type": "treatment", "mechanism": "Anti-CD20 - Déplétion lymphocytes B autoréactifs" },
+          { "id": "t3", "label": "Rituximab 375mg/m² IV", "type": "treatment", "mechanism": "Anti-CD20 - Déplétion lymphocytes B", "attributes": { "contraindications": { "pregnancy": true, "age_lt": null, "egfr_lt": null, "hepatic_impairment": false, "allergy_terms": ["protéines murines"] }, "interactions": [] } },
           { "id": "e2", "label": "Lymphopénie B prolongée", "type": "side_effect", "mechanism": "Déplétion CD19+ durable, risque infectieux" },
-          { "id": "t4", "label": "Cotrimoxazole 400/80mg 3x/sem", "type": "treatment", "mechanism": "Prophylaxie Pneumocystis jirovecii" },
+          { "id": "t4", "label": "Cotrimoxazole 400/80mg 3x/sem", "type": "treatment", "mechanism": "Prophylaxie Pneumocystis", "attributes": { "contraindications": { "pregnancy": true, "age_lt": 2, "egfr_lt": 15, "hepatic_impairment": true, "allergy_terms": ["sulfamides"] }, "interactions": [{ "with": "warfarine", "severity": "major", "note": "Augmentation INR" }] } },
           
-          { "id": "t5", "label": "IEC/ARA2 (Ramipril 5mg/j)", "type": "treatment", "mechanism": "Néphroprotection, réduction protéinurie" },
-          { "id": "e3", "label": "Hyperkaliémie", "type": "side_effect", "mechanism": "Inhibition aldostérone, rétention K+" },
-          { "id": "t6", "label": "Kayexalate 15g/j PRN", "type": "treatment", "mechanism": "Résine échangeuse cations, élimination K+" },
+          { "id": "r1", "label": "NCT04195815 - RITUXNS Trial", "type": "research", "mechanism": "Phase III comparant Rituximab vs placebo dans SNI pédiatrique" },
           
-          { "id": "s1", "label": "Œdèmes généralisés", "type": "symptom", "mechanism": "Hypoalbuminémie, fuite capillaire" },
-          { "id": "t7", "label": "Furosémide 40-80mg/j", "type": "treatment", "mechanism": "Diurétique de l'anse, natriurèse" },
+          { "id": "t5", "label": "Ramipril 5mg/j", "type": "treatment", "mechanism": "IEC - Néphroprotection", "attributes": { "contraindications": { "pregnancy": true, "age_lt": null, "egfr_lt": null, "hepatic_impairment": false, "allergy_terms": ["IEC", "angio-œdème"] }, "interactions": [{ "with": "spironolactone", "severity": "major", "note": "Hyperkaliémie" }, { "with": "AINS", "severity": "moderate", "note": "IRA" }] } },
+          { "id": "e3", "label": "Hyperkaliémie", "type": "side_effect", "mechanism": "Inhibition aldostérone" },
+          { "id": "t6", "label": "Kayexalate 15g/j PRN", "type": "treatment", "mechanism": "Résine échangeuse cations", "attributes": { "contraindications": { "pregnancy": false, "age_lt": null, "egfr_lt": null, "hepatic_impairment": false, "allergy_terms": [] }, "interactions": [] } },
           
-          { "id": "g1", "label": "GUÉRISON - Rémission Complète", "type": "resolution", "mechanism": "Protéinurie <0.3g/24h, albumine >35g/L, fonction rénale préservée" }
+          { "id": "s1", "label": "Œdèmes généralisés", "type": "symptom", "mechanism": "Hypoalbuminémie" },
+          { "id": "t7", "label": "Furosémide 40-80mg/j", "type": "treatment", "mechanism": "Diurétique de l'anse", "attributes": { "contraindications": { "pregnancy": false, "age_lt": null, "egfr_lt": null, "hepatic_impairment": false, "allergy_terms": ["sulfamides"] }, "interactions": [{ "with": "aminosides", "severity": "major", "note": "Ototoxicité" }] } },
+          
+          { "id": "g1", "label": "GUÉRISON - Rémission Complète", "type": "resolution", "mechanism": "Protéinurie <0.3g/24h, albumine >35g/L" }
         ],
         "edges": [
           { "from": "p1", "to": "s1", "label": "MANIFESTE", "reason": "Symptôme cardinal" },
@@ -470,6 +491,69 @@ Retourne JSON strict selon le format spécifié.`;
 
             if (saveError) {
                 throw new Error(`Failed to save hypothesis: ${saveError.message}`);
+            }
+
+            // ===== PHASE 2: Persist structured graph nodes/edges =====
+            const causalGraph = h.causal_graph;
+            if (causalGraph?.nodes && causalGraph?.edges && savedHyp?.id) {
+                console.log(`📊 Persisting ${causalGraph.nodes.length} nodes and ${causalGraph.edges.length} edges...`);
+
+                // Insert nodes into graph_nodes table
+                const nodeInserts = causalGraph.nodes.map((node: any) => ({
+                    hypothesis_id: savedHyp.id,
+                    node_key: node.id,
+                    node_type: node.type,
+                    label: node.label,
+                    mechanism: node.mechanism || null,
+                    attributes: node.attributes || {}
+                }));
+
+                const { error: nodesError } = await supabase
+                    .from('graph_nodes')
+                    .insert(nodeInserts);
+
+                if (nodesError) {
+                    console.warn('⚠️ Failed to insert graph nodes:', nodesError.message);
+                } else {
+                    console.log(`✅ Inserted ${nodeInserts.length} graph nodes`);
+                }
+
+                // Insert edges into graph_edges table
+                const edgeInserts = causalGraph.edges.map((edge: any) => ({
+                    hypothesis_id: savedHyp.id,
+                    source_key: edge.from,
+                    target_key: edge.to,
+                    edge_type: edge.label || 'ASSOCIATED_WITH',
+                    label: edge.label,
+                    reason: edge.reason || null,
+                    weight: 0.5  // Default weight, can be enhanced later
+                }));
+
+                const { error: edgesError } = await supabase
+                    .from('graph_edges')
+                    .insert(edgeInserts);
+
+                if (edgesError) {
+                    console.warn('⚠️ Failed to insert graph edges:', edgesError.message);
+                } else {
+                    console.log(`✅ Inserted ${edgeInserts.length} graph edges`);
+                }
+
+                // Audit log for creation
+                const auditInserts = [
+                    ...nodeInserts.map((n: any) => ({
+                        actor: 'hypothesis-processor',
+                        action: 'create',
+                        entity_type: 'node',
+                        entity_id: savedHyp.id,
+                        hypothesis_id: savedHyp.id,
+                        after_state: n
+                    })),
+                ];
+
+                await supabase.from('graph_audit_log').insert(auditInserts).catch(() => {
+                    console.warn('⚠️ Audit log insert failed (non-blocking)');
+                });
             }
 
             // Mark job as completed
