@@ -1,12 +1,14 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.3";
+import { corsHeaders } from "../_shared/cors.ts";
 import { callAI } from "../_shared/ai-client.ts";
 
-declare const Deno: any;
+console.log("LBD Contradiction Detector Started");
 
-const corsHeaders = {
-    "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+declare const Deno: {
+    env: {
+        get(key: string): string | undefined;
+    };
 };
 
 /**
@@ -119,6 +121,32 @@ Return a JSON array of objects:
             })),
             execution_time_ms: 0 // Placeholder
         });
+
+        // 5. Update parent hypothesis with enriched contradictions snapshot (for UI)
+        if (savedContradictions.length > 0) {
+            const enrichedContradictions = savedContradictions.map(c => {
+                const claimA = claims.find((cl: any) => cl.id === c.claim_support_id);
+                const claimB = claims.find((cl: any) => cl.id === c.claim_refute_id);
+                return {
+                    id: c.id,
+                    explanation: c.explanation,
+                    resolution: c.resolution,
+                    claim_a_text: claimA ? `${claimA.subject_text} ${claimA.predicate} ${claimA.object_text}` : 'Claim A',
+                    claim_b_text: claimB ? `${claimB.subject_text} ${claimB.predicate} ${claimB.object_text}` : 'Claim B',
+                    support_weight: c.support_weight,
+                    refute_weight: c.refute_weight
+                };
+            });
+
+            await supabase
+                .from('discovery_hypotheses')
+                .update({
+                    contradictions: enrichedContradictions
+                })
+                .eq('id', hypothesis_id);
+
+            console.log(`✅ Synced ${enrichedContradictions.length} contradictions to hypothesis record`);
+        }
 
         console.log(`✅ Identified ${savedContradictions.length} contradictions`);
 

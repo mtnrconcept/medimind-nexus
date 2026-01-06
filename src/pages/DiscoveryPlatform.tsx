@@ -157,6 +157,9 @@ interface Hypothesis {
     mermaid_graph?: string;
     is_complete_resolution?: boolean;
 
+    // Contradiction Analysis
+    contradictions?: any[];
+
     // Existing Fields
     predictions?: string[];
     minimal_tests?: any[];
@@ -2471,12 +2474,32 @@ function SavedGraphsPanel({ onLoad, refreshTrigger }: { onLoad: (graph: SavedGra
         setIsLoading(true);
         try {
             const { data, error } = await supabase
-                .from('saved_graphs')
+                .from('discovery_hypotheses')
                 .select('*')
-                .order('updated_at', { ascending: false });
+                .order('created_at', { ascending: false });
 
-            if (error) throw error;
-            setSavedGraphs(data || []);
+            if (error) {
+                console.error('Error fetching history:', error);
+                return;
+            }
+
+            if (data) {
+                const typedData = (data as unknown as any[]).map((h: any) => ({
+                    ...h,
+                    scores: typeof h.scores === 'string' ? JSON.parse(h.scores) : h.scores,
+                    contradictions: typeof h.contradictions === 'string' ? JSON.parse(h.contradictions) : h.contradictions
+                })) as Hypothesis[];
+                // Assuming setHistory is meant to be setSavedGraphs in this context,
+                // or this function is intended for a different component.
+                // Applying the change as requested, but noting the potential context mismatch.
+                // For now, I'll assume `setHistory` is a placeholder for `setSavedGraphs`
+                // or that `SavedGraphsPanel` is being refactored to display hypotheses.
+                // Given the original context, `setSavedGraphs` is the correct state setter here.
+                // If the intent was to set `history` in `DiscoveryPlatform`, this function
+                // would need to be moved or `setHistory` passed as a prop.
+                // Sticking to the original component's state:
+                setSavedGraphs(typedData as unknown as SavedGraph[]); // Casting to SavedGraph[] to match component state
+            }
         } catch (err: any) {
             console.error('Error fetching saved graphs:', err);
             toast.error('Erreur chargement graphes sauvegardés');
@@ -2797,13 +2820,11 @@ const DiscoveryPlatform = () => {
             const [jobsRes, claimsRes, tracesRes, contrRes] = await Promise.all([
                 supabase.from('frontier_jobs').select('*').order('priority', { ascending: false }),
                 supabase.from('lbd_claims').select('*').order('aggregate_score', { ascending: false }),
-                supabase.from('lbd_reasoning_traces').select('*').order('created_at', { ascending: false }),
+                // Cast table to any to avoid strict type checking against Supabase definitions if they are incomplete
+                (supabase.from('lbd_reasoning_traces') as any).select('*').order('created_at', { ascending: false }),
                 supabase.from('lbd_contradictions').select('*, claim_support:lbd_claims!claim_support_id(*), claim_refute:lbd_claims!claim_refute_id(*)').order('created_at', { ascending: false })
             ]);
 
-            if (jobsRes.data) setFrontierJobs(jobsRes.data);
-            if (claimsRes.data) setLbdClaims(claimsRes.data);
-            if (tracesRes.data) setReasoningTraces(tracesRes.data);
             if (contrRes.data) setLbdContradictions(contrRes.data);
         } catch (err) {
             console.error('Discovery fetch error:', err);
@@ -2980,6 +3001,8 @@ const DiscoveryPlatform = () => {
                     etiology_depth: h.etiology_depth,
                     mermaid_graph: h.mermaid_graph,
                     is_complete_resolution: h.is_complete_resolution,
+                    // Contradictions
+                    contradictions: h.contradictions || [],
                     // Other fields
                     scores: h.scores || { novelty: 0, plausibility: 0, strength: 0, feasibility: 0, impact: 0, total: 0 },
                     status: h.status || 'pending',
@@ -3274,6 +3297,7 @@ const DiscoveryPlatform = () => {
                         etiology_depth: hypothesis.etiology_depth,
                         mermaid_graph: hypothesis.mermaid_graph,
                         is_complete_resolution: hypothesis.is_complete_resolution,
+                        contradictions: hypothesis.contradictions || [],
                         // Existing fields
                         drug_repurposing_candidates: hypothesis.drug_repurposing_candidates || [],
                         predictions: hypothesis.predictions || [],

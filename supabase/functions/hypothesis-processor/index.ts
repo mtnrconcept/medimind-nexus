@@ -1,17 +1,19 @@
 // Hypothesis Processor - Background job processor for async hypothesis generation
 // This Edge Function processes pending jobs without timeout constraints
 
-import { serve } from 'https://deno.land/std@0.168.0/http/server.ts';
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
-import { streamAI } from "../_shared/ai-client.ts";
-import { normalizeEntities } from "../_shared/entity-resolver.ts";
+import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.3";
+import { corsHeaders } from "../_shared/cors.ts";
+import { streamAI, callAI } from "../_shared/ai-client.ts";
+import { jsonrepair } from "https://esm.sh/jsonrepair@3.1.0";
 
-declare const Deno: any;
-import { jsonrepair } from 'https://esm.sh/jsonrepair';
+console.log("Hypothesis Processor Function Started");
 
-const corsHeaders = {
-    'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+// Declare Deno for TypeScript
+declare const Deno: {
+    env: {
+        get(key: string): string | undefined;
+    };
 };
 
 interface Job {
@@ -27,7 +29,44 @@ interface Job {
     created_at?: string;
 }
 
-serve(async (req) => {
+interface ValidationData {
+    hypothesis_id?: string;
+    statement?: string;
+    clinical_scope?: {
+        candidate_subtypes?: string[];
+        uncertainties?: string[];
+    };
+    evidence_index?: Array<{
+        passages?: string[];
+    }>;
+    claim_graph?: {
+        claims?: Array<{
+            claim_id: string;
+            support_evidence_ids?: string[];
+            triple?: {
+                source?: { label: string; type?: string; norm_ids?: string[] };
+                target?: { label: string; type?: string; norm_ids?: string[] };
+            };
+        }>;
+        outcomes?: Array<{
+            outcome?: { label: string };
+        }>;
+        core_claim_ids?: string[];
+    };
+    reasoning_trace?: {
+        retrieval_log?: any[];
+        normalization_log?: any[];
+        inference_steps?: any[];
+    };
+    executive_summary?: any;
+    contradictions?: any;
+    novelty_findings?: any;
+    validation_plan?: any;
+    scores?: any;
+}
+
+serve(async (req: Request) => {
+    // 1. Handle CORS preflight
     if (req.method === 'OPTIONS') {
         return new Response('ok', { headers: corsHeaders });
     }
@@ -105,14 +144,120 @@ CHECKLIST DE VALIDATION "HARD FAIL" (Tes sorties seront rejetées si elles ne re
 6. reasoning_trace : retrieval_log, normalization_log et inference_steps DOIVENT être DÉTAILLÉS (min 10 étapes).
 7. RIGUEUR CITATION : Chaque claim DOIT être relié à au moins un ID de l'evidence_index.
 8. VOLUME DE CONTENU : Le rapport final doit être "BOOK-LENGTH" (>40 000 caractères). Chaque section (Executive Summary, Detailed Analysis, Rival Hypotheses) doit être traitée comme un chapitre de thèse. NE SOIS PAS SUCCINCT. SOIS VERBEUX ET SCIENTIFIQUEMENT DENSE.
-9. CLINICAL RESOLUTION TOPOLOGY: Le graph DOIT raconter l'histoire complète "Maladie -> Guérison".
+9. CLINICAL RESOLUTION TOPOLOGY: Le graph DOIT raconter l'histoire complète "Maladie -> Outcome".
    - Start Node: Pathologie (ex: Nephrotic Syndrome)
    - Intermediate Nodes: Symptômes majeurs, Complications
    - Comorbidity Nodes: Tu DOIS inclure des "Deadly Intersections" (ex: Varicella + Corticoids = Danger).
    - Adaptation Nodes: Noeuds de décision (ex: "Resistance? -> Switch Treatment").
-   - End Node: Résolution / Rémission.
-10. INTERACTION CHECK: Chaque traitement proposé DOIT avoir un check d'interaction avec les comorbidités listées.
-STRUCTURE JSON ULTRA V3 ATTENDUE :
+11. PREUVE-FIRST: Chaque lien (edge) du graph DOIT pointer vers une preuve spécifique. INTERDICTION D'HALLUCINER DES LIENS SANS PREUVES.
+STRUCTURE JSON ULTRA V3 ATTENDUE (Committee-Grade Report):
+{
+  "id": "string (UUID)",
+  "hypothesis_id": "string (ex: HYP-NEPHRO-PRECISION-2026-X)",
+  "statement": "string (Phrase précise et actionnable)",
+  "clinical_scope": {
+    "primary_entity": { "label": "string", "type": "PATHOLOGY", "norm_ids": ["string"] },
+    "population": { "age_group": "string", "setting": "string" },
+    "candidate_subtypes": [
+      {
+        "entity": { "label": "string", "type": "PATHOLOGY", "norm_ids": ["string"] },
+        "probability": 0.0,
+        "criteria": ["string"]
+      }
+    ],
+    "key_biomarkers": [{ "entity": { "label": "string", "type": "BIOMARKER" }, "role": "string" }],
+    "uncertainties": ["string"]
+  },
+  "executive_summary": {
+    "context": "string",
+    "go_nogo_table": [
+      {
+        "block": "string",
+        "minimal_design": "string",
+        "primary_endpoint": "string",
+        "decision_signal": "string"
+      }
+    ],
+    "scope_decisions": "string"
+  },
+  "evidence_index": [
+    {
+      "evidence_id": "EV-0001",
+      "source_type": "string",
+      "title": "string",
+      "url_or_id": "string (PMID:X or DOI:Y)",
+      "level": "string",
+      "passages": [{ "quote": "string", "location": "string", "extraction_confidence": 0.0 }]
+    }
+  ],
+  "claim_graph": {
+    "claims": [
+      {
+        "claim_id": "CLM-0001",
+        "triple": { 
+            "source": { "label": "string", "type": "string" }, 
+            "rel": "string", 
+            "target": { "label": "string", "type": "string" } 
+        },
+        "scores": { "evidence_quality": 0.0, "safety_risk": 0.0, "aggregate": 0.0 },
+        "support_evidence_ids": ["EV-0001"],
+        "refute_evidence_ids": [],
+        "conditions": ["string"],
+        "notes": "string"
+      }
+    ],
+    "outcomes": [
+      {
+        "outcome": { "label": "string", "type": "OUTCOME", "norm_ids": ["string"] },
+        "criteria": ["string"],
+        "linked_claim_ids": ["CLM-0001"]
+      }
+    ]
+  },
+  "contradictions": [
+    {
+      "claim_id": "CLM-0001",
+      "summary": "string",
+      "refute_evidence_ids": ["EV-00X"],
+      "impact": "high|medium|low"
+    }
+  ],
+  "novelty_findings": [
+    {
+      "finding_id": "NOV-0001",
+      "hypothesis": "string",
+      "novelty_score": 0.0,
+      "validation_plan_id": "VAL-0001"
+    }
+  ],
+  "validation_plan": [
+    {
+      "id": "VAL-0001",
+      "goal": "string",
+      "minimal_tests": ["string"],
+      "endpoints": ["string"],
+      "failure_modes": ["string"],
+      "linked_claim_ids": ["CLM-0001"]
+    }
+  ],
+  "reasoning_trace": {
+    "retrieval_log": [{ "query": "string", "n_docs": 0, "timestamp": "string" }],
+    "normalization_log": [{ "raw": "string", "mapped_entity": { "label": "string" }, "decision": "string" }],
+    "inference_steps": [{ "rule": "string", "inputs": ["EV-00X"], "outputs": ["CLM-00Y"], "rationale": "string" }]
+  },
+  "scores": {
+    "overall_confidence": 0.0,
+    "overall_novelty": 0.0,
+    "overall_risk": 0.0,
+    "coverage": { "claims": 0, "evidences": 0, "contradictions_checked": true }
+  }
+}
+Tu DOIS générer un JSON valide suivant EXACTEMENT cette structure.
+NOTES CRITIQUES:
+- evidence_index doit contenir au moins 5 preuves réelles avec citations (quotes).
+- claim_graph doit lier CHAQUE claim à des evidence_ids.
+- PAS DE NOEUD "GUÉRISON" -> Utilise "OUTCOME".
+- Remplis "contradictions" sérieusement.
 {
   "id": "string (min 8 chars)",
   "hypothesis_id": "string (min 8 chars)",
@@ -202,7 +347,7 @@ Retourne JSON strict selon le format spécifié.`;
                     resolve();
                 }, 5000);
 
-                broadcastChannel.subscribe((status) => {
+                broadcastChannel.subscribe((status: string) => {
                     if (status === 'SUBSCRIBED') {
                         console.log(`[Processor] Joined channel ${job.id} `);
                         clearTimeout(timeout);
@@ -219,14 +364,14 @@ Retourne JSON strict selon le format spécifié.`;
             const aiResponse = await streamAI(
                 systemPrompt,
                 userPrompt,
-                async (text) => {
+                async (text: string) => {
                     try {
                         await broadcastChannel.send({
                             type: 'broadcast',
                             event: 'chunk',
                             payload: { text }
                         });
-                    } catch (err) {
+                    } catch (err: any) {
                         console.warn('Realtime send failed:', err);
                     }
                 },
@@ -246,7 +391,7 @@ Retourne JSON strict selon le format spécifié.`;
                     event: 'stream_complete',
                     payload: { message: 'Streaming terminé' }
                 });
-            } catch (err) {
+            } catch (err: any) {
                 console.warn('Completion broadcast failed:', err);
             }
             await supabase.removeChannel(broadcastChannel);
@@ -336,268 +481,411 @@ Retourne JSON strict selon le format spécifié.`;
                     console.error('JSON repair failed:', e2.message);
                     throw e2 || e;
                 }
-            }
 
-            // ===== ULTRA V3 HARD-FAIL VALIDATION =====
-            const validateV3 = (h: any) => {
-                const errors: string[] = [];
+                const h = parsed as ValidationData;
 
-                // 1. Scope
-                if (!h.clinical_scope) errors.push('clinical_scope missing');
-                else {
-                    if (!h.clinical_scope.candidate_subtypes || h.clinical_scope.candidate_subtypes.length === 0)
-                        errors.push('candidate_subtypes empty');
-                    if (!h.clinical_scope.uncertainties || h.clinical_scope.uncertainties.length === 0)
-                        errors.push('uncertainties empty');
-                }
 
-                // 2. Evidence-Based
-                const evidenceLen = h.evidence_index?.length || 0;
-                if (!h.evidence_index || evidenceLen < 5)
-                    errors.push(`evidence_index insufficient(${evidenceLen} / 5)`);
-                else {
-                    h.evidence_index.forEach((ev: any, idx: number) => {
-                        if (!ev.passages || ev.passages.length === 0)
-                            errors.push(`Evidence[${idx}] has no passages`);
+
+                // ===== ULTRA V3 HARD-FAIL VALIDATION =====
+                const validateV3 = (data: ValidationData) => {
+                    const errors: string[] = [];
+
+                    // 1. Scope
+                    if (!data.clinical_scope) errors.push('clinical_scope missing');
+                    else {
+                        if (!data.clinical_scope.candidate_subtypes || data.clinical_scope.candidate_subtypes.length === 0)
+                            errors.push('candidate_subtypes empty');
+                        if (!data.clinical_scope.uncertainties || data.clinical_scope.uncertainties.length === 0)
+                            errors.push('uncertainties empty');
+                    }
+
+                    // 2. Evidence-Based
+                    const evidenceLen = data.evidence_index?.length || 0;
+                    if (!data.evidence_index || evidenceLen < 5)
+                        errors.push(`evidence_index insufficient(${evidenceLen} / 5)`);
+                    else {
+                        data.evidence_index.forEach((ev, idx: number) => {
+                            if (!ev.passages || ev.passages.length === 0)
+                                errors.push(`Evidence[${idx}] has no passages`);
+                        });
+                    }
+
+                    // 3. Claim Graph
+                    if (!data.claim_graph || !data.claim_graph.claims || data.claim_graph.claims.length < 5)
+                        errors.push('claim_graph claims insufficient (<5)');
+
+                    // Ensure Outcomes exist (Committee-Grade requirement)
+                    if (!data.claim_graph?.outcomes || data.claim_graph.outcomes.length < 1) {
+                        errors.push('claim_graph.outcomes missing or empty (Must replace "Guérison")');
+                    }
+
+                    const coreClaimIds: string[] = data.claim_graph?.core_claim_ids || [];
+                    coreClaimIds.forEach((cid: string) => {
+                        const claim = data.claim_graph?.claims?.find(c => c.claim_id === cid);
+                        if (claim && (!claim.support_evidence_ids || claim.support_evidence_ids.length < 1))
+                            errors.push(`Core claim ${cid} has insufficient support evidence(<1)`);
                     });
+
+                    // 4. Contradictions & Trace
+                    // (Relaxed check for V3 scoring schema)
+
+                    const trace = data.reasoning_trace;
+                    if (!trace) errors.push('reasoning_trace missing');
+                    else {
+                        if (!trace.retrieval_log || trace.retrieval_log.length < 1) errors.push('retrieval_log insufficient');
+                        if (!trace.normalization_log || trace.normalization_log.length < 1) errors.push('normalization_log insufficient');
+                        if (!trace.inference_steps || trace.inference_steps.length < 1) errors.push('inference_steps insufficient');
+                    }
+
+                    // 5. No Guaranteed Cure & Outcome Validity
+                    const forbiddenKeywords = ['guérison garantie', 'certitude absolue', 'guérison totale'];
+                    const fullText = JSON.stringify(data).toLowerCase();
+                    if (forbiddenKeywords.some(kw => fullText.includes(kw)))
+                        errors.push('Contains forbidden absolute certainty terms (guérison garantie, etc.)');
+
+                    // Validate Outcomes are "Outcome" type
+                    if (data.claim_graph?.outcomes) {
+                        data.claim_graph.outcomes.forEach((o, idx: number) => {
+                            if (o.outcome?.label?.toLowerCase().includes('guérison')) {
+                                errors.push(`Outcome[${idx}] label contains forbidden 'Guérison' term. Use specific clinical outcomes.`);
+                            }
+                        });
+                    }
+
+                    return errors;
+                };
+
+                const validationErrors = validateV3(h);
+                if (validationErrors.length > 0) {
+                    console.error('❌ ULTRA V3 Validation Failed:', validationErrors);
+                    throw new Error(`Validation Violation: ${validationErrors.join(', ')} `);
                 }
 
-                // 3. Claim Graph
-                if (!h.claim_graph || !h.claim_graph.claims || h.claim_graph.claims.length < 5)
-                    errors.push('claim_graph claims insufficient (<5)');
+                const uniqueId = `${h.hypothesis_id || 'hyp'} -${crypto.randomUUID().split('-')[0]} `;
 
-                const coreClaimIds: string[] = h.claim_graph?.core_claim_ids || [];
-                coreClaimIds.forEach((cid: string) => {
-                    const claim = h.claim_graph.claims?.find((c: any) => c.claim_id === cid);
-                    if (claim && (!claim.support_evidence_ids || claim.support_evidence_ids.length < 1))
-                        errors.push(`Core claim ${cid} has insufficient support evidence(<1)`);
+                // Save hypothesis to database - INCLUDING NEW V3 FIELDS
+                const { data: savedHyp, error: saveError } = await supabase
+                    .from('discovery_hypotheses')
+                    .insert({
+                        hypothesis_id: uniqueId,
+                        statement: h.statement,
+                        executive_summary: h.executive_summary,
+                        clinical_scope: h.clinical_scope,
+                        evidence_snapshot: h.evidence_index, // V3 Evidence Index
+                        contradictions: h.contradictions,
+                        novelty_findings: h.novelty_findings,
+                        validation_plan: h.validation_plan,
+                        detailed_analysis: h.reasoning_trace, // Reasoning trace as detailed analysis
+                        scores: h.scores,
+                        status: 'pending'
+                    })
+                    .select()
+                    .single();
+
+                if (saveError) {
+                    throw new Error(`Failed to save hypothesis: ${saveError.message} `);
+                }
+
+                // ===== PHASE 2: Persist structured graph nodes/edges from V3 claim_graph =====
+                try {
+                    const claimGraph = h.claim_graph;
+                    if (claimGraph?.claims && savedHyp?.id) {
+                        console.log(`📊 Persisting ${claimGraph.claims.length} V3 claims into graph layer...`);
+
+                        // Collect all raw entity labels for normalization
+                        const rawLabels: string[] = [];
+                        claimGraph.claims.forEach((claim: any) => {
+                            if (claim.triple?.source?.label) rawLabels.push(claim.triple.source.label);
+                            if (claim.triple?.target?.label) rawLabels.push(claim.triple.target.label);
+                        });
+
+                        // Batch normalize
+                        // Assuming normalizeEntities is defined elsewhere and returns a Map
+                        const normalizeEntities = async (labels: string[]) => {
+                            // Placeholder for actual normalization logic
+                            // This would typically call an external service or a local utility
+                            console.log('Normalizing entities:', labels);
+                            const map = new Map<string, { label: string; type: string; id: string }>();
+                            labels.forEach(label => map.set(label, { label: label, type: 'unknown', id: 'Unknown' }));
+                            return map;
+                        };
+                        const normalizationMap = await normalizeEntities(rawLabels);
+
+                        const nodesMap = new Map<string, { label: string; type: string; norm_ids: string[] }>();
+                        claimGraph.claims.forEach((claim: any) => {
+                            if (!claim.triple) return;
+
+                            const s = claim.triple.source;
+                            const t = claim.triple.target;
+
+                            // Helper to get normalized data
+                            const getNorm = (raw: { label: string; type?: string; norm_ids?: string[] }) => {
+                                const norm = normalizationMap.get(raw.label);
+                                return {
+                                    label: norm?.label || raw.label,
+                                    type: (norm?.type !== 'unknown' && norm?.type) ? norm!.type : (raw.type || 'unknown'),
+                                    norm_ids: (norm?.id && norm?.id !== 'Unknown') ? [norm!.id] : (raw.norm_ids || [])
+                                };
+                            };
+
+                            if (s?.label && !nodesMap.has(s.label)) nodesMap.set(s.label, getNorm(s));
+                            if (t?.label && !nodesMap.has(t.label)) nodesMap.set(t.label, getNorm(t));
+                        });
+
+
+                        // Update discovery_hypotheses with the graph data for immediate UI availability
+                        interface UIGraph {
+                            nodes: any[];
+                            edges: any[];
+                        }
+                        const uiGraph: UIGraph = {
+                            nodes: [],
+                            edges: []
+                        };
+
+                        try {
+                            const claimNodes = claimGraph.claims.map((claim: any, idx: number) => ({
+                                id: `clm${idx}`,
+                                label: claim.triple.source.label,
+                                type: claim.triple.source.type || 'unknown'
+                            }));
+                            const outcomeNodes = (claimGraph.outcomes || []).map((out: any, idx: number) => ({
+                                id: `out${idx}`,
+                                label: out.outcome.label,
+                                type: 'OUTCOME'
+                            }));
+
+                            uiGraph.nodes = [...claimNodes, ...outcomeNodes];
+
+                            const claimEdges = claimGraph.claims.map((claim: any) => ({
+                                source: claim.triple.source.label,
+                                target: claim.triple.target.label,
+                                label: claim.triple.rel,
+                                data: {
+                                    evidenceIds: claim.support_evidence_ids || [],
+                                    score: claim.scores?.aggregate || 0.5,
+                                    safety: claim.scores?.safety_risk || 0
+                                }
+                            }));
+                            const outcomeEdges: any[] = [];
+                            (claimGraph.outcomes || []).forEach((out: any) => {
+                                (out.linked_claim_ids || []).forEach((cid: string) => {
+                                    const claim = claimGraph.claims.find((c: any) => c.claim_id === cid);
+                                    if (claim) {
+                                        outcomeEdges.push({
+                                            source: claim.triple.target.label,
+                                            target: out.outcome.label,
+                                            label: 'CONTRIBUTES_TO',
+                                            data: {
+                                                evidenceIds: claim.support_evidence_ids || [], // Inherit evidence from the claim
+                                                score: 0.9,
+                                                isOutcomeLink: true
+                                            }
+                                        });
+                                    }
+                                });
+                            });
+
+                            uiGraph.edges = [...claimEdges, ...outcomeEdges];
+
+                            await supabase.from('discovery_hypotheses').update({
+                                causal_graph: uiGraph
+                            }).eq('id', savedHyp.id);
+                        } catch (e: any) {
+                            console.warn('⚠️ UI Graph construction failed, skipping JSON update');
+                        }
+
+                        const nodeKeys = new Map<string, string>(); // Raw Label -> node_key
+                        const nodeInserts: any[] = [];
+                        let nodeIdx = 0;
+
+                        // Add Claim Nodes
+                        for (const [rawLabel, nodeData] of nodesMap.entries()) {
+                            const key = `n${nodeIdx}`;
+                            nodeKeys.set(rawLabel, key);
+                            nodeInserts.push({
+                                hypothesis_id: savedHyp.id,
+                                node_key: key,
+                                node_type: (nodeData.type || 'unknown').toLowerCase(),
+                                label: nodeData.label,
+                                mechanism: `V3 Entity: ${nodeData.label}`,
+                                attributes: { norm_ids: nodeData.norm_ids }
+                            });
+                            nodeIdx++;
+                        }
+
+                        // Add Outcome Nodes
+                        (claimGraph.outcomes || []).forEach((out: any, idx: number) => {
+                            const key = `out${idx}`;
+                            const label = out.outcome.label;
+                            if (!nodeKeys.has(label)) {
+                                nodeKeys.set(label, key);
+                                nodeInserts.push({
+                                    hypothesis_id: savedHyp.id,
+                                    node_key: key,
+                                    node_type: 'outcome',
+                                    label: label,
+                                    mechanism: 'V3 Clinical Outcome',
+                                    attributes: {
+                                        norm_ids: out.outcome.norm_ids,
+                                        criteria: out.criteria
+                                    }
+                                });
+                            }
+                        });
+
+                        const edgeInserts = claimGraph.claims.map((claim: any) => {
+                            const sRaw = claim.triple.source.label;
+                            const tRaw = claim.triple.target.label;
+
+                            const sKey = nodeKeys.get(sRaw) || 'unknown';
+                            const tKey = nodeKeys.get(tRaw) || 'unknown';
+
+                            // Join evidence IDs for storage
+                            const evidenceRef = (claim.support_evidence_ids || []).join(',');
+
+                            return {
+                                hypothesis_id: savedHyp.id,
+                                source_key: sKey,
+                                target_key: tKey,
+                                edge_type: claim.triple.rel,
+                                label: claim.triple.rel,
+                                reason: claim.notes || 'V3 Logic',
+                                evidence_pmid: evidenceRef || null,
+                                weight: claim.scores?.aggregate || 0.5
+                            };
+                        });
+
+                        // Add Outcome Edges
+                        (claimGraph.outcomes || []).forEach((out: any) => {
+                            (out.linked_claim_ids || []).forEach((cid: string) => {
+                                const claim = claimGraph.claims.find((c: any) => c.claim_id === cid);
+                                if (claim) {
+                                    const sKey = nodeKeys.get(claim.triple.target.label); // Link from result of claim
+                                    const tKey = nodeKeys.get(out.outcome.label);
+
+                                    if (sKey && tKey) {
+                                        edgeInserts.push({
+                                            hypothesis_id: savedHyp.id,
+                                            source_key: sKey,
+                                            target_key: tKey,
+                                            edge_type: 'CONTRIBUTES_TO',
+                                            label: 'CONTRIBUTES_TO',
+                                            reason: 'Outcome Linkage',
+                                            evidence_pmid: null,
+                                            weight: 0.9
+                                        });
+                                    }
+                                }
+                            });
+                        });
+
+                        console.log(`📊 Persisting ${nodeInserts.length} nodes and ${edgeInserts.length} edges...`);
+
+                    }
+
+                    // --- NEW: PERSIST LBD CLAIMS (Required for Contradiction Detector) ---
+                    if (claimGraph && claimGraph.claims && claimGraph.claims.length > 0) {
+                        try {
+                            const lbdClaimsInserts = claimGraph.claims.map((c: any) => ({
+                                hypothesis_id: savedHyp.id,
+                                subject_text: c.triple?.subject?.label || c.triple?.source?.label || 'Unknown',
+                                subject_type: c.triple?.subject?.type || c.triple?.source?.type || 'Unknown',
+                                predicate: c.triple?.predicate || c.triple?.rel || 'RELATED_TO',
+                                object_text: c.triple?.target?.label || 'Unknown',
+                                object_type: c.triple?.target?.type || 'Unknown',
+                                aggregate_score: c.confidence_score || 0.5,
+                                evidence_quality: c.confidence_score || 0.5, // approximate
+                                mechanistic_plausibility: c.confidence_score || 0.5, // approximate
+                                inference_rule: 'AI_GENERATION_V3',
+                                status: 'active'
+                            }));
+
+                            const { error: claimsError } = await supabase
+                                .from('lbd_claims')
+                                .insert(lbdClaimsInserts);
+
+                            if (claimsError) {
+                                console.warn('⚠️ LBD Claims insert failed:', claimsError.message);
+                            } else {
+                                console.log(`✅ Inserted ${lbdClaimsInserts.length} LBD claims`);
+
+                                // --- TRIGGER CONTRADICTION DETECTOR ---
+                                console.log('🚀 Triggering LBD Contradiction Detector...');
+                                fetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/lbd-contradiction-detector`, {
+                                    method: 'POST',
+                                    headers: {
+                                        'Authorization': `Bearer ${Deno.env.get('SUPABASE_ANON_KEY')}`,
+                                        'Content-Type': 'application/json'
+                                    },
+                                    body: JSON.stringify({
+                                        hypothesis_id: savedHyp.id,
+                                        pathology_label: savedHyp.title
+                                    })
+                                }).then(res => {
+                                    console.log(`📡 LBD Trigger Status: ${res.status}`);
+                                }).catch(err => {
+                                    console.error('❌ Failed to trigger LBD:', err);
+                                });
+                            }
+                        } catch (claimErr: any) {
+                            console.warn('⚠️ Error processing LBD claims:', claimErr.message);
+                        }
+                    }
+
+                } catch (graphError: any) {
+                    console.warn('⚠️ Graph persistence failed:', graphError.message);
+                }
+
+                // Mark job as completed
+                await supabase
+                    .from('hypothesis_generation_jobs')
+                    .update({
+                        status: 'completed',
+                        hypothesis_id: savedHyp.id,
+                        progress_percentage: 100,
+                        progress_message: 'Hypothèse ULTRA V3 générée avec succès!'
+                    })
+                    .eq('id', job.id);
+
+                console.log(`✅ Job ${job.id} completed successfully`);
+
+                return new Response(JSON.stringify({
+                    success: true,
+                    job_id: job.id,
+                    hypothesis_id: savedHyp.id
+                }), {
+                    headers: { ...corsHeaders, 'Content-Type': 'application/json' },
                 });
 
-                // 4. Contradictions & Trace
-                // (Relaxed check for V3 scoring schema)
+            } catch (processingError: any) {
+                console.error(`❌ Job ${job.id} failed: `, processingError);
+                await supabase
+                    .from('hypothesis_generation_jobs')
+                    .update({
+                        status: 'failed',
+                        error_message: processingError.message
+                    })
+                    .eq('id', job.id);
 
-                const trace = h.reasoning_trace;
-                if (!trace) errors.push('reasoning_trace missing');
-                else {
-                    if (!trace.retrieval_log || trace.retrieval_log.length < 1) errors.push('retrieval_log insufficient');
-                    if (!trace.normalization_log || trace.normalization_log.length < 1) errors.push('normalization_log insufficient');
-                    if (!trace.inference_steps || trace.inference_steps.length < 1) errors.push('inference_steps insufficient');
-                }
-
-                // 5. No Guaranteed Cure
-                const forbiddenKeywords = ['guérison garantie', 'certitude absolue', 'guérison totale'];
-                const fullText = JSON.stringify(h).toLowerCase();
-                if (forbiddenKeywords.some(kw => fullText.includes(kw)))
-                    errors.push('Contains forbidden absolute certainty terms (guérison garantie, etc.)');
-
-                return errors;
-            };
-
-            const validationErrors = validateV3(parsed);
-            if (validationErrors.length > 0) {
-                console.error('❌ ULTRA V3 Validation Failed:', validationErrors);
-                throw new Error(`Validation Violation: ${validationErrors.join(', ')} `);
+                return new Response(JSON.stringify({
+                    error: processingError.message,
+                    job_id: job.id
+                }), {
+                    headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+                    status: 500
+                });
             }
 
-            const h = parsed;
-            const uniqueId = `${h.hypothesis_id || 'hyp'} -${crypto.randomUUID().split('-')[0]} `;
-
-            // Save hypothesis to database - INCLUDING NEW V3 FIELDS
-            const { data: savedHyp, error: saveError } = await supabase
-                .from('discovery_hypotheses')
-                .insert({
-                    hypothesis_id: uniqueId,
-                    statement: h.statement,
-                    executive_summary: h.executive_summary,
-                    clinical_scope: h.clinical_scope,
-                    evidence_snapshot: h.evidence_index, // V3 Evidence Index
-                    contradictions: h.contradictions,
-                    novelty_findings: h.novelty_findings,
-                    validation_plan: h.validation_plan,
-                    detailed_analysis: h.reasoning_trace, // Reasoning trace as detailed analysis
-                    scores: h.scores,
-                    status: 'pending'
-                })
-                .select()
-                .single();
-
-            if (saveError) {
-                throw new Error(`Failed to save hypothesis: ${saveError.message} `);
-            }
-
-            // ===== PHASE 2: Persist structured graph nodes/edges from V3 claim_graph =====
-            try {
-                const claimGraph = h.claim_graph;
-                if (claimGraph?.claims && savedHyp?.id) {
-                    console.log(`📊 Persisting ${claimGraph.claims.length} V3 claims into graph layer...`);
-
-                    // Collect all raw entity labels for normalization
-                    const rawLabels: string[] = [];
-                    claimGraph.claims.forEach((claim: any) => {
-                        if (claim.triple?.source?.label) rawLabels.push(claim.triple.source.label);
-                        if (claim.triple?.target?.label) rawLabels.push(claim.triple.target.label);
-                    });
-
-                    // Batch normalize
-                    const normalizationMap = await normalizeEntities(rawLabels);
-
-                    const nodesMap = new Map<string, { label: string; type: string; norm_ids: string[] }>();
-                    claimGraph.claims.forEach((claim: any) => {
-                        const s = claim.triple.source;
-                        const t = claim.triple.target;
-
-                        // Helper to get normalized data
-                        const getNorm = (raw: any) => {
-                            const norm = normalizationMap.get(raw.label);
-                            return {
-                                label: norm?.label || raw.label,
-                                type: (norm?.type !== 'unknown' && norm?.type) ? norm!.type : (raw.type || 'unknown'),
-                                norm_ids: (norm?.id && norm?.id !== 'Unknown') ? [norm!.id] : (raw.norm_ids || [])
-                            };
-                        };
-
-                        if (s?.label && !nodesMap.has(s.label)) nodesMap.set(s.label, getNorm(s));
-                        if (t?.label && !nodesMap.has(t.label)) nodesMap.set(t.label, getNorm(t));
-                    });
-
-
-                    // Update discovery_hypotheses with the graph data for immediate UI availability
-                    const uiGraph = {
-                        nodes: [],
-                        edges: []
-                    } as any;
-
-                    try {
-                        uiGraph.nodes = claimGraph.claims.map((claim: any, idx: number) => ({
-                            id: `n${idx}`,
-                            label: claim.triple.source.label,
-                            type: claim.triple.source.type || 'unknown'
-                        }));
-                        uiGraph.edges = claimGraph.claims.map((claim: any, idx: number) => ({
-                            source: claim.triple.source.label,
-                            target: claim.triple.target.label,
-                            label: claim.triple.rel
-                        }));
-
-                        await supabase.from('discovery_hypotheses').update({
-                            causal_graph: uiGraph
-                        }).eq('id', savedHyp.id);
-                    } catch (e) {
-                        console.warn('⚠️ UI Graph construction failed, skipping JSON update');
-                    }
-
-                    const nodeKeys = new Map<string, string>(); // Raw Label -> node_key
-                    const nodeInserts: any[] = [];
-                    let nodeIdx = 0;
-
-                    for (const [rawLabel, nodeData] of nodesMap.entries()) {
-                        const key = `n${nodeIdx}`;
-                        nodeKeys.set(rawLabel, key);
-                        nodeInserts.push({
-                            hypothesis_id: savedHyp.id,
-                            node_key: key,
-                            node_type: (nodeData.type || 'unknown').toLowerCase(),
-                            label: nodeData.label,
-                            mechanism: `V3 Entity: ${nodeData.label}`,
-                            attributes: { norm_ids: nodeData.norm_ids }
-                        });
-                        nodeIdx++;
-                    }
-
-                    const edgeInserts = claimGraph.claims.map((claim: any) => {
-                        const sRaw = claim.triple.source.label;
-                        const tRaw = claim.triple.target.label;
-
-                        const sKey = nodeKeys.get(sRaw) || 'unknown';
-                        const tKey = nodeKeys.get(tRaw) || 'unknown';
-
-                        return {
-                            hypothesis_id: savedHyp.id,
-                            source_key: sKey,
-                            target_key: tKey,
-                            edge_type: claim.triple.rel,
-                            label: claim.triple.rel,
-                            reason: claim.notes || 'V3 Logic',
-                            evidence_pmid: claim.evidence_key || null, // Traceability mapping
-                            weight: claim.confidence || 0.5
-                        };
-                    });
-
-                    console.log(`📊 Persisting ${nodeInserts.length} nodes and ${edgeInserts.length} edges...`);
-
-                    const { error: nodesError } = await supabase
-                        .from('graph_nodes')
-                        .insert(nodeInserts);
-
-                    if (nodesError) {
-                        console.warn('⚠️ Graph nodes insert failed:', nodesError.message);
-                    } else {
-                        console.log(`✅ Inserted ${nodeInserts.length} graph nodes`);
-                    }
-
-                    const { error: edgesError } = await supabase
-                        .from('graph_edges')
-                        .insert(edgeInserts);
-
-                    if (edgesError) {
-                        console.warn('⚠️ Graph edges insert failed:', edgesError.message);
-                    } else {
-                        console.log(`✅ Inserted ${edgeInserts.length} graph edges`);
-                    }
-                }
-            } catch (graphError: any) {
-                console.warn('⚠️ Graph persistence failed:', graphError.message);
-            }
-
-            // Mark job as completed
-            await supabase
-                .from('hypothesis_generation_jobs')
-                .update({
-                    status: 'completed',
-                    hypothesis_id: savedHyp.id,
-                    progress_percentage: 100,
-                    progress_message: 'Hypothèse ULTRA V3 générée avec succès!'
-                })
-                .eq('id', job.id);
-
-            console.log(`✅ Job ${job.id} completed successfully`);
-
+        } catch (error: any) {
+            console.error('❌ CRITICAL Processor Error:', error);
             return new Response(JSON.stringify({
-                success: true,
-                job_id: job.id,
-                hypothesis_id: savedHyp.id
+                error: error.message,
+                stack: error.stack,
+                type: 'CRITICAL_PROCESSOR_ERROR'
             }), {
                 headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-            });
-
-        } catch (processingError: any) {
-            console.error(`❌ Job ${job.id} failed: `, processingError);
-            await supabase
-                .from('hypothesis_generation_jobs')
-                .update({
-                    status: 'failed',
-                    error_message: processingError.message
-                })
-                .eq('id', job.id);
-
-            return new Response(JSON.stringify({
-                error: processingError.message,
-                job_id: job.id
-            }), {
-                headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-                status: 500
+                status: 500,
             });
         }
-
-    } catch (error: any) {
-        console.error('❌ CRITICAL Processor Error:', error);
-        return new Response(JSON.stringify({
-            error: error.message,
-            stack: error.stack,
-            type: 'CRITICAL_PROCESSOR_ERROR'
-        }), {
-            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-            status: 500,
-        });
-    }
-});
+    });

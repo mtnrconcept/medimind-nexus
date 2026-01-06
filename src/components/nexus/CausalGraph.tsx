@@ -16,6 +16,15 @@ import {
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import { Badge } from '@/components/ui/badge';
+import {
+    Sheet,
+    SheetContent,
+    SheetDescription,
+    SheetHeader,
+    SheetTitle,
+} from "@/components/ui/sheet";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"; // Assuming Card exists, if not use divs
 
 // Node styling based on type - matching the radial graph structure
 const ClinicalNode = ({ data, selected }: { data: { label: string; type: string; mechanism?: string; subItems?: string[] }; selected: boolean }) => {
@@ -86,7 +95,9 @@ const ClinicalNode = ({ data, selected }: { data: { label: string; type: string;
                     shadow: 'shadow-[0_0_25px_rgba(20,184,166,0.3)]'
                 };
             case 'resolution':
-                // Green for resolution (kept for backward compatibility)
+            case 'outcome':
+            case 'OUTCOME':
+                // Green for resolution/outcome
                 return {
                     bg: 'bg-gradient-to-br from-emerald-600 to-emerald-800',
                     border: 'border-emerald-300',
@@ -180,7 +191,7 @@ function calculateRadialPosition(centerX: number, centerY: number, radius: numbe
     };
 }
 
-export default function CausalGraph({ hypothesis }: CausalGraphProps) {
+const CausalGraph = ({ hypothesis }: CausalGraphProps) => {
     useEffect(() => {
         console.log('--- RADIAL CAUSAL GRAPH DEBUG ---');
         console.log('Hypothesis ID:', hypothesis.hypothesis_id);
@@ -191,12 +202,39 @@ export default function CausalGraph({ hypothesis }: CausalGraphProps) {
         }
     }, [hypothesis]);
 
-    const { nodes, edges } = useMemo(() => {
+    const [nodes, setNodes, onNodesChange] = useNodesState([]);
+    const [edges, setEdges, onEdgesChange] = useEdgesState([]);
+    const [selectedEdge, setSelectedEdge] = React.useState<any>(null);
+    const [isDrawerOpen, setIsDrawerOpen] = React.useState(false);
+
+    const onEdgeClick = useCallback((event: React.MouseEvent, edge: Edge) => {
+        event.preventDefault();
+        // Look up full edge details including evidence
+        const fullEdge = hypothesis.causal_graph?.edges?.find(e => e.from === edge.source && e.to === edge.target);
+
+        setSelectedEdge({
+            ...edge,
+            data: {
+                ...edge.data, // Default data
+                ...fullEdge, // Enhanced data from hypothesis
+                // Ensure legacy support or direct mapping
+                evidenceIds: fullEdge?.evidenceIds || fullEdge?.evidence_ids || [],
+                score: fullEdge?.score,
+                safety: fullEdge?.safety,
+                isOutcomeLink: fullEdge?.isOutcomeLink
+            }
+        });
+        setIsDrawerOpen(true);
+    }, [hypothesis]);
+
+    useEffect(() => {
         const centerX = 600;
         const centerY = 400;
-        const innerRadius = 200;
         const outerRadius = 380;
         const farRadius = 500;
+
+        let newNodes: Node[] = [];
+        let newEdges: Edge[] = [];
 
         // 1. Check for explicit causal_graph field
         if (hypothesis.causal_graph?.nodes && hypothesis.causal_graph.nodes.length > 0) {
@@ -272,190 +310,189 @@ export default function CausalGraph({ hypothesis }: CausalGraphProps) {
                 }
             });
 
-            return { nodes: explicitNodes, edges: explicitEdges };
-        }
+        } else {
+            // 2. FALLBACK: Build DYNAMIC graph from hypothesis data
+            console.warn('Building dynamic fallback graph from hypothesis data...');
 
-        // 2. FALLBACK: Build DYNAMIC graph from hypothesis data
-        console.warn('Building dynamic fallback graph from hypothesis data...');
-        const nodes: Node[] = [];
-        const edges: Edge[] = [];
-
-        // Central pathology - USE THE ACTUAL HYPOTHESIS STATEMENT
-        const rootLabel = hypothesis.statement || hypothesis.title || 'Pathologie Centrale';
-        nodes.push({
-            id: 'root',
-            type: 'clinical',
-            data: { label: rootLabel.substring(0, 60) + (rootLabel.length > 60 ? '...' : ''), type: 'pathology' },
-            position: { x: centerX - 70, y: centerY - 70 }
-        });
-
-        let nodeIndex = 0;
-
-        // Build from systemic_cascade (symptoms/impacts of the disease)
-        if (hypothesis.systemic_cascade && hypothesis.systemic_cascade.length > 0) {
-            const cascadeCount = hypothesis.systemic_cascade.length;
-            hypothesis.systemic_cascade.forEach((item: { organ: string; impact: string; mechanism?: string }, idx: number) => {
-                const nodeId = `cascade-${idx}`;
-                const angle = (-Math.PI / 2) + ((idx / cascadeCount) * Math.PI); // Spread on left side
-                const radius = innerRadius + (idx % 2) * 80;
-
-                nodes.push({
-                    id: nodeId,
-                    type: 'clinical',
-                    data: {
-                        label: item.organ,
-                        type: 'symptom',
-                        subItems: [item.impact.substring(0, 50)]
-                    },
-                    position: {
-                        x: centerX + radius * Math.cos(angle) - 50,
-                        y: centerY + radius * Math.sin(angle) - 40
-                    }
-                });
-                edges.push({
-                    id: `e-root-${nodeId}`,
-                    source: 'root',
-                    target: nodeId,
-                    type: 'smoothstep',
-                    label: 'IMPACTE',
-                    markerEnd: { type: MarkerType.ArrowClosed, color: '#ef4444' },
-                    style: { stroke: '#ef4444', strokeWidth: 2 },
-                    labelStyle: { fontSize: '8px', fill: '#ef4444' }
-                });
-                nodeIndex++;
+            // Central pathology - USE THE ACTUAL HYPOTHESIS STATEMENT
+            const rootLabel = hypothesis.statement || hypothesis.title || 'Pathologie Centrale';
+            newNodes.push({
+                id: 'root',
+                type: 'clinical',
+                data: { label: rootLabel.substring(0, 60) + (rootLabel.length > 60 ? '...' : ''), type: 'pathology' },
+                position: { x: centerX - 70, y: centerY - 70 }
             });
-        }
 
-        // Build from therapeutic_resolution_chains
-        if (hypothesis.therapeutic_resolution_chains && hypothesis.therapeutic_resolution_chains.length > 0) {
-            const treatmentY = centerY - 200;
-            let lastTreatmentId = 'root';
+            let nodeIndex = 0;
 
-            hypothesis.therapeutic_resolution_chains.forEach((chain: {
-                intervention: string;
-                pharmacodynamics?: string;
-                side_effects?: Array<{ issue: string; resolution_intervention?: string }>;
-            }, cIdx: number) => {
-                const treatmentId = `treatment-${cIdx}`;
+            // Build from systemic_cascade (symptoms/impacts of the disease)
+            if (hypothesis.systemic_cascade && hypothesis.systemic_cascade.length > 0) {
+                const cascadeCount = hypothesis.systemic_cascade.length;
+                hypothesis.systemic_cascade.forEach((item: { organ: string; impact: string; mechanism?: string }, idx: number) => {
+                    const nodeId = `cascade-${idx}`;
+                    const angle = (-Math.PI / 2) + ((idx / cascadeCount) * Math.PI); // Spread on left side
+                    const radius = innerRadius + (idx % 2) * 80;
 
-                nodes.push({
-                    id: treatmentId,
-                    type: 'clinical',
-                    data: {
-                        label: chain.intervention?.substring(0, 40) || `Traitement ${cIdx + 1}`,
-                        type: 'treatment'
-                    },
-                    position: { x: centerX + 150 + (cIdx * 180), y: treatmentY }
-                });
-
-                edges.push({
-                    id: `e-${lastTreatmentId}-${treatmentId}`,
-                    source: lastTreatmentId,
-                    target: treatmentId,
-                    type: 'smoothstep',
-                    label: cIdx === 0 ? 'TRAITE' : 'PUIS',
-                    animated: true,
-                    markerEnd: { type: MarkerType.ArrowClosed, color: '#3b82f6' },
-                    style: { stroke: '#3b82f6', strokeWidth: 2 },
-                    labelStyle: { fontSize: '9px', fontWeight: 'bold', fill: '#3b82f6' }
-                });
-
-                lastTreatmentId = treatmentId;
-
-                // Add side effects if present
-                if (chain.side_effects && chain.side_effects.length > 0) {
-                    chain.side_effects.forEach((se: { issue: string; resolution_intervention?: string }, sIdx: number) => {
-                        const seId = `se-${cIdx}-${sIdx}`;
-                        nodes.push({
-                            id: seId,
-                            type: 'clinical',
-                            data: { label: se.issue?.substring(0, 35) || 'Effet Secondaire', type: 'side-effect' },
-                            position: { x: centerX + 150 + (cIdx * 180), y: treatmentY + 120 + (sIdx * 80) }
-                        });
-                        edges.push({
-                            id: `e-${treatmentId}-${seId}`,
-                            source: treatmentId,
-                            target: seId,
-                            type: 'smoothstep',
-                            label: 'PROVOQUE',
-                            markerEnd: { type: MarkerType.ArrowClosed, color: '#f59e0b' },
-                            style: { stroke: '#f59e0b', strokeWidth: 2 },
-                            labelStyle: { fontSize: '8px', fill: '#f59e0b' }
-                        });
-
-                        // Add resolution if present
-                        if (se.resolution_intervention) {
-                            const resId = `res-${cIdx}-${sIdx}`;
-                            nodes.push({
-                                id: resId,
-                                type: 'clinical',
-                                data: { label: se.resolution_intervention?.substring(0, 35) || 'Résolution', type: 'resolution' },
-                                position: { x: centerX + 300 + (cIdx * 180), y: treatmentY + 120 + (sIdx * 80) }
-                            });
-                            edges.push({
-                                id: `e-${seId}-${resId}`,
-                                source: seId,
-                                target: resId,
-                                type: 'smoothstep',
-                                label: 'RÉSOUT',
-                                animated: true,
-                                markerEnd: { type: MarkerType.ArrowClosed, color: '#10b981' },
-                                style: { stroke: '#10b981', strokeWidth: 2 },
-                                labelStyle: { fontSize: '8px', fill: '#10b981' }
-                            });
+                    newNodes.push({
+                        id: nodeId,
+                        type: 'clinical',
+                        data: {
+                            label: item.organ,
+                            type: 'symptom',
+                            subItems: [item.impact.substring(0, 50)]
+                        },
+                        position: {
+                            x: centerX + radius * Math.cos(angle) - 50,
+                            y: centerY + radius * Math.sin(angle) - 40
                         }
                     });
-                }
-            });
+                    newEdges.push({
+                        id: `e-root-${nodeId}`,
+                        source: 'root',
+                        target: nodeId,
+                        type: 'smoothstep',
+                        label: 'IMPACTE',
+                        markerEnd: { type: MarkerType.ArrowClosed, color: '#ef4444' },
+                        style: { stroke: '#ef4444', strokeWidth: 2 },
+                        labelStyle: { fontSize: '8px', fill: '#ef4444' }
+                    });
+                    nodeIndex++;
+                });
+            }
 
-            // Add final resolution node
-            nodes.push({
-                id: 'final-resolution',
-                type: 'clinical',
-                data: { label: 'GUÉRISON / RÉMISSION', type: 'resolution' },
-                position: { x: centerX + 600, y: centerY }
-            });
-            edges.push({
-                id: 'e-last-final',
-                source: lastTreatmentId,
-                target: 'final-resolution',
-                type: 'smoothstep',
-                label: 'ABOUTIT_À',
-                animated: true,
-                markerEnd: { type: MarkerType.ArrowClosed, color: '#10b981' },
-                style: { stroke: '#10b981', strokeWidth: 3 },
-                labelStyle: { fontSize: '9px', fontWeight: 'bold', fill: '#10b981' }
-            });
+            // Build from therapeutic_resolution_chains
+            if (hypothesis.therapeutic_resolution_chains && hypothesis.therapeutic_resolution_chains.length > 0) {
+                const treatmentY = centerY - 200;
+                let lastTreatmentId = 'root';
+
+                hypothesis.therapeutic_resolution_chains.forEach((chain: {
+                    intervention: string;
+                    pharmacodynamics?: string;
+                    side_effects?: Array<{ issue: string; resolution_intervention?: string }>;
+                }, cIdx: number) => {
+                    const treatmentId = `treatment-${cIdx}`;
+
+                    newNodes.push({
+                        id: treatmentId,
+                        type: 'clinical',
+                        data: {
+                            label: chain.intervention?.substring(0, 40) || `Traitement ${cIdx + 1}`,
+                            type: 'treatment'
+                        },
+                        position: { x: centerX + 150 + (cIdx * 180), y: treatmentY }
+                    });
+
+                    newEdges.push({
+                        id: `e-${lastTreatmentId}-${treatmentId}`,
+                        source: lastTreatmentId,
+                        target: treatmentId,
+                        type: 'smoothstep',
+                        label: cIdx === 0 ? 'TRAITE' : 'PUIS',
+                        animated: true,
+                        markerEnd: { type: MarkerType.ArrowClosed, color: '#3b82f6' },
+                        style: { stroke: '#3b82f6', strokeWidth: 2 },
+                        labelStyle: { fontSize: '9px', fontWeight: 'bold', fill: '#3b82f6' }
+                    });
+
+                    lastTreatmentId = treatmentId;
+
+                    // Add side effects if present
+                    if (chain.side_effects && chain.side_effects.length > 0) {
+                        chain.side_effects.forEach((se: { issue: string; resolution_intervention?: string }, sIdx: number) => {
+                            const seId = `se-${cIdx}-${sIdx}`;
+                            newNodes.push({
+                                id: seId,
+                                type: 'clinical',
+                                data: { label: se.issue?.substring(0, 35) || 'Effet Secondaire', type: 'side-effect' },
+                                position: { x: centerX + 150 + (cIdx * 180), y: treatmentY + 120 + (sIdx * 80) }
+                            });
+                            newEdges.push({
+                                id: `e-${treatmentId}-${seId}`,
+                                source: treatmentId,
+                                target: seId,
+                                type: 'smoothstep',
+                                label: 'PROVOQUE',
+                                markerEnd: { type: MarkerType.ArrowClosed, color: '#f59e0b' },
+                                style: { stroke: '#f59e0b', strokeWidth: 2 },
+                                labelStyle: { fontSize: '8px', fill: '#f59e0b' }
+                            });
+
+                            // Add resolution if present
+                            if (se.resolution_intervention) {
+                                const resId = `res-${cIdx}-${sIdx}`;
+                                newNodes.push({
+                                    id: resId,
+                                    type: 'clinical',
+                                    data: { label: se.resolution_intervention?.substring(0, 35) || 'Résolution', type: 'resolution' },
+                                    position: { x: centerX + 300 + (cIdx * 180), y: treatmentY + 120 + (sIdx * 80) }
+                                });
+                                newEdges.push({
+                                    id: `e-${seId}-${resId}`,
+                                    source: seId,
+                                    target: resId,
+                                    type: 'smoothstep',
+                                    label: 'RÉSOUT',
+                                    animated: true,
+                                    markerEnd: { type: MarkerType.ArrowClosed, color: '#10b981' },
+                                    style: { stroke: '#10b981', strokeWidth: 2 },
+                                    labelStyle: { fontSize: '8px', fill: '#10b981' }
+                                });
+                            }
+                        });
+                    }
+                });
+
+                // Add final resolution node
+                newNodes.push({
+                    id: 'final-resolution',
+                    type: 'clinical',
+                    data: { label: 'GUÉRISON / RÉMISSION', type: 'resolution' },
+                    position: { x: centerX + 600, y: centerY }
+                });
+                newEdges.push({
+                    id: 'e-last-final',
+                    source: lastTreatmentId,
+                    target: 'final-resolution',
+                    type: 'smoothstep',
+                    label: 'ABOUTIT_À',
+                    animated: true,
+                    markerEnd: { type: MarkerType.ArrowClosed, color: '#10b981' },
+                    style: { stroke: '#10b981', strokeWidth: 3 },
+                    labelStyle: { fontSize: '9px', fontWeight: 'bold', fill: '#10b981' }
+                });
+            }
+
+            // MINIMAL FALLBACK: If still no nodes beyond root, show a placeholder
+            if (newNodes.length <= 1) {
+                console.warn('No data available for graph reconstruction. Showing placeholder.');
+                newNodes.push({
+                    id: 'placeholder',
+                    type: 'clinical',
+                    data: {
+                        label: '⏳ En attente des données IA...',
+                        type: 'mechanism',
+                        subItems: ['Lancez une nouvelle analyse', 'ou vérifiez la migration SQL']
+                    },
+                    position: { x: centerX + 200, y: centerY }
+                });
+                newEdges.push({
+                    id: 'e-root-placeholder',
+                    source: 'root',
+                    target: 'placeholder',
+                    type: 'smoothstep',
+                    animated: true,
+                    markerEnd: { type: MarkerType.ArrowClosed },
+                    style: { stroke: '#94a3b8', strokeWidth: 2, strokeDasharray: '5,5' }
+                });
+            }
         }
 
-        // MINIMAL FALLBACK: If still no nodes beyond root, show a placeholder
-        if (nodes.length <= 1) {
-            console.warn('No data available for graph reconstruction. Showing placeholder.');
-            nodes.push({
-                id: 'placeholder',
-                type: 'clinical',
-                data: {
-                    label: '⏳ En attente des données IA...',
-                    type: 'mechanism',
-                    subItems: ['Lancez une nouvelle analyse', 'ou vérifiez la migration SQL']
-                },
-                position: { x: centerX + 200, y: centerY }
-            });
-            edges.push({
-                id: 'e-root-placeholder',
-                source: 'root',
-                target: 'placeholder',
-                type: 'smoothstep',
-                animated: true,
-                markerEnd: { type: MarkerType.ArrowClosed },
-                style: { stroke: '#94a3b8', strokeWidth: 2, strokeDasharray: '5,5' }
-            });
-        }
+        console.log('Dynamic graph complete:', { nodeCount: newNodes.length, edgeCount: newEdges.length });
+        setNodes(newNodes);
+        setEdges(newEdges);
 
-        console.log('Dynamic graph complete:', { nodeCount: nodes.length, edgeCount: edges.length });
+    }, [hypothesis, setNodes, setEdges]);
 
-        return { nodes, edges };
-    }, [hypothesis]);
 
     return (
         <div className="h-[800px] w-full bg-[#f5f0e8] rounded-2xl border border-stone-300 shadow-xl mt-8 overflow-hidden relative">
@@ -514,6 +551,9 @@ export default function CausalGraph({ hypothesis }: CausalGraphProps) {
             <ReactFlow
                 nodes={nodes}
                 edges={edges}
+                onNodesChange={onNodesChange}
+                onEdgesChange={onEdgesChange}
+                onEdgeClick={onEdgeClick}
                 nodeTypes={nodeTypes}
                 fitView
                 minZoom={0.3}
@@ -521,10 +561,98 @@ export default function CausalGraph({ hypothesis }: CausalGraphProps) {
                 defaultEdgeOptions={{
                     type: 'smoothstep',
                 }}
+                className="bg-slate-950"
             >
-                <Background gap={30} color="#d4c8b8" size={1} variant={BackgroundVariant.Lines} />
+                <Background color="#334155" gap={20} variant={BackgroundVariant.Dots} />
                 <Controls className="!bg-white/80 !border-stone-200 !rounded-xl !overflow-hidden shadow-lg" />
             </ReactFlow>
+
+            <Sheet open={isDrawerOpen} onOpenChange={setIsDrawerOpen}>
+                <SheetContent side="right" className="w-[400px] sm:w-[540px] bg-slate-900 border-l border-slate-800 text-slate-100 p-0">
+                    <SheetHeader className="p-6 border-b border-slate-800">
+                        <SheetTitle className="text-xl font-semibold text-emerald-400">
+                            Evidence Drawer
+                        </SheetTitle>
+                        <SheetDescription className="text-slate-400">
+                            Relation: <span className="text-white font-medium">{selectedEdge?.source}</span> → <span className="text-white font-medium">{selectedEdge?.target}</span>
+                        </SheetDescription>
+                        {selectedEdge?.label && (
+                            <Badge variant="outline" className="mt-2 text-emerald-300 border-emerald-800 bg-emerald-950/30 w-fit">
+                                {selectedEdge.label}
+                            </Badge>
+                        )}
+                    </SheetHeader>
+
+                    <ScrollArea className="h-[calc(100vh-140px)] p-6">
+                        <div className="space-y-6">
+                            {/* Evidence List */}
+                            <div>
+                                <h4 className="text-sm font-medium text-slate-400 mb-3 uppercase tracking-wider">Supporting Evidence</h4>
+                                {selectedEdge?.data?.evidenceIds && selectedEdge.data.evidenceIds.length > 0 ? (
+                                    <div className="space-y-3">
+                                        {selectedEdge.data.evidenceIds.map((eid: string) => {
+                                            const evidence = getEvidenceDetails(eid);
+                                            return (
+                                                <div key={eid} className="bg-slate-950/50 border border-slate-800 rounded-lg p-4">
+                                                    <div className="flex items-start justify-between mb-2">
+                                                        <Badge variant="secondary" className="text-xs bg-slate-800 text-slate-300">{eid}</Badge>
+                                                        {evidence?.level && <span className="text-xs text-slate-500">{evidence.level}</span>}
+                                                    </div>
+                                                    <p className="font-medium text-slate-200 mb-2">{evidence?.title || "Evidence details not found"}</p>
+                                                    {evidence?.passages?.map((p: any, idx: number) => (
+                                                        <div key={idx} className="text-sm text-slate-400 italic border-l-2 border-slate-700 pl-3 my-2">
+                                                            "{p.quote}"
+                                                        </div>
+                                                    ))}
+                                                    {evidence?.url_or_id && (
+                                                        <div className="mt-2 pt-2 border-t border-slate-800/50">
+                                                            <a href="#" className="text-xs text-blue-400 hover:text-blue-300 flex items-center gap-1">
+                                                                Source ID: {evidence.url_or_id}
+                                                            </a>
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            );
+                                        })}
+                                    </div>
+                                ) : (
+                                    <div className="text-slate-500 italic p-4 border border-dashed border-slate-800 rounded">
+                                        No specific evidence linked to this edge.
+                                        {selectedEdge?.data?.isOutcomeLink && (
+                                            <span className="block mt-1 text-emerald-500/70 text-xs">This is a structural link to an Outcome node.</span>
+                                        )}
+                                    </div>
+                                )}
+                            </div>
+
+                            {/* Scores if available */}
+                            {selectedEdge?.data?.score !== undefined && (
+                                <div>
+                                    <h4 className="text-sm font-medium text-slate-400 mb-3 uppercase tracking-wider">Confidence Metrics</h4>
+                                    <div className="grid grid-cols-2 gap-3">
+                                        <div className="bg-slate-950/50 p-3 rounded border border-slate-800">
+                                            <div className="text-xs text-slate-500">Aggregate Score</div>
+                                            <div className="text-lg font-bold text-white">{(selectedEdge.data.score * 100).toFixed(0)}%</div>
+                                        </div>
+                                        {selectedEdge?.data?.safety !== undefined && (
+                                            <div className="bg-slate-950/50 p-3 rounded border border-slate-800">
+                                                <div className="text-xs text-slate-500">Safety Risk</div>
+                                                <div className={`text-lg font-bold ${selectedEdge.data.safety > 0.5 ? 'text-red-400' : 'text-emerald-400'}`}>
+                                                    {(selectedEdge.data.safety * 100).toFixed(0)}%
+                                                </div>
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
+                            )}
+
+                        </div>
+                    </ScrollArea>
+                </SheetContent>
+            </Sheet>
+
         </div>
     );
-}
+};
+
+export default CausalGraph;
