@@ -275,9 +275,11 @@ serve(async (req) => {
                 query = query.eq('hypothesis_id', hypothesisId);
             }
 
-            const { data: statusCounts } = await supabase.rpc('get_frontier_status', {
+            const { data: statusCounts, error: rpcError } = await supabase.rpc('get_frontier_status', {
                 p_hypothesis_id: hypothesisId
-            }).catch(() => ({ data: null }));
+            });
+
+            if (rpcError) console.warn('⚠️ RPC Error:', rpcError.message);
 
             // Fallback if RPC doesn't exist
             const { data: jobs } = await supabase

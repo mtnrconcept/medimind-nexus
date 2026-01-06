@@ -424,12 +424,6 @@ Retourne JSON strict selon le format spécifié.`;
                         attributes: { norm_ids: node.norm_ids }
                     }));
 
-                    const { error: nodesError } = await supabase
-                        .from('graph_nodes')
-                        .insert(nodeInserts);
-
-                    if (nodesError) console.warn('⚠️ Graph nodes insert failed:', nodesError.message);
-
                     const edgeInserts = claimGraph.claims.map((claim: any) => {
                         const sNode = nodeInserts.find(n => n.label === claim.triple.source.label);
                         const tNode = nodeInserts.find(n => n.label === claim.triple.target.label);
@@ -444,11 +438,27 @@ Retourne JSON strict selon le format spécifié.`;
                         };
                     });
 
+                    console.log(`📊 Persisting ${nodeInserts.length} nodes and ${edgeInserts.length} edges...`);
+
+                    const { error: nodesError } = await supabase
+                        .from('graph_nodes')
+                        .insert(nodeInserts);
+
+                    if (nodesError) {
+                        console.warn('⚠️ Graph nodes insert failed:', nodesError.message);
+                    } else {
+                        console.log(`✅ Inserted ${nodeInserts.length} graph nodes`);
+                    }
+
                     const { error: edgesError } = await supabase
                         .from('graph_edges')
                         .insert(edgeInserts);
 
-                    if (edgesError) console.warn('⚠️ Graph edges insert failed:', edgesError.message);
+                    if (edgesError) {
+                        console.warn('⚠️ Graph edges insert failed:', edgesError.message);
+                    } else {
+                        console.log(`✅ Inserted ${edgeInserts.length} graph edges`);
+                    }
                 }
             } catch (graphError: any) {
                 console.warn('⚠️ Graph persistence failed:', graphError.message);

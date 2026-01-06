@@ -295,7 +295,8 @@ async function runPipeline(
 
         // Save alerts
         for (const alert of alerts) {
-            await supabase.from('discovery_alerts').insert(alert).catch(() => { });
+            const { error: alertError } = await supabase.from('discovery_alerts').insert(alert);
+            if (alertError) console.error('Alert insert error:', alertError.message);
         }
 
         results.push({
