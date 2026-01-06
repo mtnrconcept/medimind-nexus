@@ -3396,7 +3396,7 @@ Fournis:
 
             const response = await supabase.functions.invoke('causal-reasoning', {
                 body: {
-                    stream: false, // Request JSON instead of SSE stream
+                    stream: false, // Try JSON first, but handle fallback
                     query: queryPrompt,
                     context: {
                         sourceNode: sourceNode.name,
@@ -3410,7 +3410,72 @@ Fournis:
             });
 
             if (response.error) throw response.error;
-            const aiExplanation = response.data?.analysis || response.data?.explanation || 'Analyse non disponible.';
+
+            let aiExplanation = response.data?.analysis ||
+                response.data?.explanation ||
+                response.data?.treatment_summary; // <--- ADDED fallback source
+
+            // Nested data recovery fallback (for common proxied endpoint issues)
+            if (!aiExplanation && response.data?.data) {
+                // Sometimes wrapped in { data: { analysis: ... } }
+                aiExplanation = response.data.data.analysis ||
+                    response.data.data.explanation ||
+                    response.data.data.treatment_summary;
+            }
+
+            // Helper to recursively parse stringified JSON
+            const tryParse = (str: string): any => {
+                try {
+                    const parsed = JSON.parse(str);
+                    if (typeof parsed === 'string') return tryParse(parsed); // Recursive unescape
+                    return parsed;
+                } catch { return str; }
+            };
+
+            // Fallback: Check if response is raw text (or the found explanation is actually a JSON string)
+            if (typeof aiExplanation === 'string') {
+                const rawText = aiExplanation;
+
+                // If it looks like JSON, try to parse it to get a cleaner object
+                if (rawText.trim().startsWith('{') || rawText.trim().startsWith('[')) {
+                    const parsed = tryParse(rawText);
+                    if (typeof parsed === 'object') {
+                        // Extract useful text fields from the parsed object
+                        // Priority: text > summary > analysis > treatment_summary > analyse_expert (stringified)
+                        if (parsed.text) aiExplanation = parsed.text;
+                        else if (parsed.summary) aiExplanation = parsed.summary;
+                        else if (parsed.treatment_summary) aiExplanation = parsed.treatment_summary;
+                        else if (parsed.rational) aiExplanation = parsed.rational;
+                        else if (parsed.analyse_expert) {
+                            // If it's the specific "analyse_expert" object
+                            aiExplanation = JSON.stringify(parsed.analyse_expert, null, 2);
+                        } else {
+                            // Valid JSON but unknown structure, prettify it
+                            aiExplanation = JSON.stringify(parsed, null, 2);
+                        }
+                    }
+                }
+                // Also check for SSE format in the raw text
+                else if (rawText.includes('data: ')) {
+                    // Try to extract text from SSE lines
+                    aiExplanation = rawText.split('\n')
+                        .filter((l: string) => l.startsWith('data: '))
+                        .map((l: string) => {
+                            try {
+                                const json = JSON.parse(l.slice(6));
+                                return json.text || json.analysis || json.explanation || '';
+                            } catch {
+                                return l.slice(6).trim();
+                            }
+                        })
+                        .join('');
+                }
+            }
+
+            if (!aiExplanation) {
+                console.error('[LINK-ANALYSIS] Unexpected format:', response);
+                aiExplanation = `Analyse non disponible. (Format reçu: ${typeof response.data === 'object' ? JSON.stringify(response.data).slice(0, 100) + '...' : typeof response.data})`;
+            }
             setExplanation(aiExplanation);
 
             // Step 3: Save to cache for future use (fire and forget)
@@ -4647,16 +4712,17 @@ IMPORTANT: Retourne UNIQUEMENT les IDs des nœuds qui forment le schéma thérap
         setVisibleNodeCount(0);
         const totalNodes = data.knowledge_graph.nodes.length;
 
-        // Reveal nodes progressively
+        // Reveal nodes progressively (BATCHED for performance)
         revealIntervalRef.current = setInterval(() => {
             setVisibleNodeCount(prev => {
                 if (prev >= totalNodes) {
                     if (revealIntervalRef.current) clearInterval(revealIntervalRef.current);
                     return prev;
                 }
-                return prev + 1;
+                // Reveal 5 nodes at a time instead of 1
+                return Math.min(prev + 5, totalNodes);
             });
-        }, 40); // 40ms between each node = ~25 nodes/second
+        }, 40); // 40ms interval maintained, but 5x throughput
 
         return () => {
             if (revealIntervalRef.current) clearInterval(revealIntervalRef.current);
@@ -4665,16 +4731,24 @@ IMPORTANT: Retourne UNIQUEMENT les IDs des nœuds qui forment le schéma thérap
 
     // transformNode and transformEdge are now imported from @/utils/graphUtils
 
-    // Process node queue for smooth rendering
+    // Process node queue for smooth rendering (BATCHED)
     useEffect(() => {
         queueIntervalRef.current = setInterval(() => {
             if (nodeQueueRef.current.length > 0) {
-                const nextNode = nodeQueueRef.current.shift();
-                if (nextNode) {
+                // Batch processing: take up to 10 nodes at once
+                const batchSize = 10;
+                const newNodes: RingNode[] = [];
+
+                for (let i = 0; i < batchSize && nodeQueueRef.current.length > 0; i++) {
+                    const node = nodeQueueRef.current.shift();
+                    if (node) newNodes.push(node);
+                }
+
+                if (newNodes.length > 0) {
                     setData(prev => {
                         // If no data yet (should rarely happen with instant load), create structure
                         if (!prev) return {
-                            knowledge_graph: { nodes: [nextNode], edges: [] },
+                            knowledge_graph: { nodes: newNodes, edges: [] },
                             micro_signals: [],
                             hypotheses: []
                         };
@@ -4683,33 +4757,45 @@ IMPORTANT: Retourne UNIQUEMENT les IDs des nœuds qui forment le schéma thérap
                         let nodes = prev.knowledge_graph.nodes;
 
                         // If successful fetch brings the real central node (Ring 0), remove the placeholder
-                        if (nextNode.ring === 0 && nextNode.id !== 'central-init') {
+                        // Check if ANY of the new nodes is ring 0
+                        const centralNode = newNodes.find(n => n.ring === 0);
+                        if (centralNode && centralNode.id !== 'central-init') {
                             nodes = nodes.filter(n => n.id !== 'central-init');
                         }
 
-                        if (nodes.some(n => n.id === nextNode.id)) return prev;
+                        // Filter out already existing nodes from the batch
+                        const existingIds = new Set(nodes.map(n => n.id));
+                        const uniqueNewNodes = newNodes.filter(n => !existingIds.has(n.id));
+
+                        if (uniqueNewNodes.length === 0) return prev;
 
                         return {
                             ...prev,
                             knowledge_graph: {
                                 ...prev.knowledge_graph,
-                                nodes: [...nodes, nextNode]
+                                nodes: [...nodes, ...uniqueNewNodes]
                             }
                         };
                     });
 
-                    // Trigger holographic animation
-                    setNewlySpawnedNodes(prev => new Set([...prev, nextNode.id]));
+                    // Trigger holographic animation for all new nodes
+                    const newIds = newNodes.map(n => n.id);
+                    setNewlySpawnedNodes(prev => {
+                        const next = new Set(prev);
+                        newIds.forEach(id => next.add(id));
+                        return next;
+                    });
+
                     setTimeout(() => {
                         setNewlySpawnedNodes(prev => {
                             const next = new Set(prev);
-                            next.delete(nextNode.id);
+                            newIds.forEach(id => next.delete(id));
                             return next;
                         });
                     }, 2000);
                 }
             }
-        }, 200);
+        }, 100); // Faster tick (100ms) but processes batches
 
         return () => {
             if (queueIntervalRef.current) clearInterval(queueIntervalRef.current);
@@ -4790,6 +4876,15 @@ IMPORTANT: Retourne UNIQUEMENT les IDs des nœuds qui forment le schéma thérap
                 const decoder = new TextDecoder();
                 let buffer = '';
 
+                // Deduplication State for this streaming session
+                const localKnownNames = new Map<string, string>(); // NormName -> ID
+                const localRedirects = new Map<string, string>(); // DuplicateID -> KeeperID
+
+                // Initialize with any existing initial nodes
+                initialNodes.forEach(n => {
+                    if (n.name) localKnownNames.set(n.name.trim().toLowerCase(), n.id);
+                });
+
                 while (true) {
                     const { done, value } = await reader.read();
                     if (done) break;
@@ -4806,8 +4901,28 @@ IMPORTANT: Retourne UNIQUEMENT les IDs des nœuds qui forment le schéma thérap
 
                             // Handle Node Events
                             if (eventData.type === 'cached' || eventData.type === 'node') {
-                                const nodes = eventData.type === 'cached' ? eventData.nodes : [eventData.node];
-                                nodes.forEach((n: any) => {
+                                const rawNodes = eventData.type === 'cached' ? eventData.nodes : [eventData.node];
+                                const uniqueNewNodes: any[] = [];
+
+                                rawNodes.forEach((n: any) => {
+                                    const normName = n.name?.trim().toLowerCase();
+                                    if (!normName) return;
+
+                                    if (localKnownNames.has(normName)) {
+                                        // Duplicate found!
+                                        const keeperId = localKnownNames.get(normName)!;
+                                        if (n.id !== keeperId) {
+                                            localRedirects.set(n.id, keeperId);
+                                            // Don't add to uniqueNewNodes
+                                        }
+                                    } else {
+                                        // New unique node
+                                        localKnownNames.set(normName, n.id);
+                                        uniqueNewNodes.push(n);
+                                    }
+                                });
+
+                                uniqueNewNodes.forEach((n: any) => {
                                     // CRITICAL: Tag node with current pathology for Twin Layout distribution
                                     n.parent_pathology = pathology;
                                     const trNode = transformNode(n, allPathologies, primaryPathology);
@@ -4816,7 +4931,14 @@ IMPORTANT: Retourne UNIQUEMENT les IDs des nœuds qui forment le schéma thérap
 
                                 if (eventData.type === 'cached') {
                                     setFromCache(true);
-                                    const edges = eventData.edges.map(transformEdge);
+                                    // Transform edges with redirection
+                                    const edges = eventData.edges.map((e: any) => {
+                                        // Apply redirects
+                                        const source = localRedirects.get(e.source) || e.source;
+                                        const target = localRedirects.get(e.target) || e.target;
+                                        return transformEdge({ ...e, source, target });
+                                    });
+
                                     setData(prev => prev ? ({
                                         ...prev,
                                         knowledge_graph: {
@@ -4828,7 +4950,13 @@ IMPORTANT: Retourne UNIQUEMENT les IDs des nœuds qui forment le schéma thérap
                             }
                             // Handle Edge Events
                             else if (eventData.type === 'edges') {
-                                const newEdges = eventData.edges.map(transformEdge);
+                                const newEdges = eventData.edges.map((e: any) => {
+                                    // Apply redirects
+                                    const source = localRedirects.get(e.source) || e.source;
+                                    const target = localRedirects.get(e.target) || e.target;
+                                    return transformEdge({ ...e, source, target });
+                                });
+
                                 setData(prev => prev ? ({
                                     ...prev,
                                     knowledge_graph: {
@@ -5036,8 +5164,31 @@ IMPORTANT: Retourne UNIQUEMENT les IDs des nœuds qui forment le schéma thérap
         setSelectedEdge(edge);
         setSelectedEdgeSource(source);
         setSelectedEdgeTarget(target);
-        setMultiNodesForAnalysis(multiNodes || (source && target ? [source, target] : []));
-        setShowLinkModal(!!edge || (!!multiNodes && multiNodes.length > 1));
+
+        // Gather all nodes involved: explicitly passed multiNodes OR current multi-selection + source/target
+        let nodesForAnalysis: RingNode[] = [];
+
+        if (multiNodes && multiNodes.length > 0) {
+            nodesForAnalysis = multiNodes;
+        } else {
+            // Start with source and target of the edge
+            const gathered = new Map<string, RingNode>();
+            if (source) gathered.set(source.id, source);
+            if (target) gathered.set(target.id, target);
+
+            // Add any currently selected multi-nodes
+            if (multiSelectedNodeIds.size > 0 && data) {
+                multiSelectedNodeIds.forEach(id => {
+                    const node = data.knowledge_graph.nodes.find(n => n.id === id);
+                    if (node) gathered.set(node.id, node);
+                });
+            }
+            nodesForAnalysis = Array.from(gathered.values());
+        }
+
+        setMultiNodesForAnalysis(nodesForAnalysis);
+        // Show modal if we have an edge OR generic multi-node selection (>1)
+        setShowLinkModal(!!edge || nodesForAnalysis.length > 1);
     };
 
     const handleReplay = () => {
@@ -5096,7 +5247,7 @@ IMPORTANT: Retourne UNIQUEMENT les IDs des nœuds qui forment le schéma thérap
                 <div className="absolute inset-0 bg-black" onClick={handleClose} />
 
                 <div
-                    className="relative w-full h-full"
+                    className="relative w-full h-full select-none"
                 >
                     {/* Minimal Control Bar - Top right */}
                     <DraggablePanel className="absolute top-20 sm:top-24 right-4 sm:right-6 z-30 flex gap-2">
@@ -5109,8 +5260,8 @@ IMPORTANT: Retourne UNIQUEMENT les IDs des nœuds qui forment le schéma thérap
                                 <Save className="w-4 h-4 sm:w-5 sm:h-5" />
                             </button>
                         )}
-                        <button onClick={handleClose} className="bg-red-600/90 hover:bg-red-500 text-white p-2 sm:p-2.5 rounded-lg touch-manipulation" title="Fermer">
-                            <X className="w-4 h-4 sm:w-5 sm:h-5" />
+                        <button onClick={handleClose} className="bg-red-600/80 hover:bg-red-500 text-white p-1 sm:p-1.5 rounded-md touch-manipulation transition-transform hover:scale-105" title="Fermer">
+                            <X className="w-4 h-4" />
                         </button>
                     </DraggablePanel>
 
@@ -5317,7 +5468,7 @@ IMPORTANT: Retourne UNIQUEMENT les IDs des nœuds qui forment le schéma thérap
                                                     key={type}
                                                     className={`flex items-center gap-2 px-2 py-1 rounded text-[9px] cursor-pointer transition-all ${!hiddenNodeTypes.has(type)
                                                         ? 'bg-gray-800/50 text-gray-300'
-                                                        : 'bg-gray-900/30 text-gray-600 opacity-50'
+                                                        : 'bg-gray-900/30 text-gray-500'
                                                         }`}
                                                 >
                                                     <input
@@ -5330,7 +5481,7 @@ IMPORTANT: Retourne UNIQUEMENT les IDs des nœuds qui forment le schéma thérap
                                                         className="w-2 h-2 rounded-full"
                                                         style={{ backgroundColor: !hiddenNodeTypes.has(type) ? (NODE_TYPE_COLORS[getNodeTypes(type)[0]] || '#94a3b8') : '#6b7280' }}
                                                     />
-                                                    <span className={hiddenNodeTypes.has(type) ? 'line-through' : ''}>{type}</span>
+                                                    <span className={hiddenNodeTypes.has(type) ? 'text-gray-500' : ''}>{type}</span>
                                                 </label>
                                             ))}
                                         </div>
@@ -5375,7 +5526,7 @@ IMPORTANT: Retourne UNIQUEMENT les IDs des nœuds qui forment le schéma thérap
                                                         key={type}
                                                         className={`flex items-center gap-2 px-2 py-1 rounded text-[9px] cursor-pointer transition-all ${!hiddenRelationTypes.has(type)
                                                             ? 'bg-gray-800/50 text-gray-300'
-                                                            : 'bg-gray-900/30 text-gray-600 opacity-50'
+                                                            : 'bg-gray-900/30 text-gray-500'
                                                             }`}
                                                     >
                                                         <input
@@ -5388,7 +5539,7 @@ IMPORTANT: Retourne UNIQUEMENT les IDs des nœuds qui forment le schéma thérap
                                                             className="w-3 h-0.5"
                                                             style={{ backgroundColor: !hiddenRelationTypes.has(type) ? color : '#6b7280' }}
                                                         />
-                                                        <span className={`truncate ${hiddenRelationTypes.has(type) ? 'line-through' : ''}`} title={type}>{type}</span>
+                                                        <span className={`truncate ${hiddenRelationTypes.has(type) ? 'text-gray-500' : ''}`} title={type}>{type}</span>
                                                     </label>
                                                 );
                                             })}
@@ -5475,9 +5626,11 @@ IMPORTANT: Retourne UNIQUEMENT les IDs des nœuds qui forment le schéma thérap
                     {/* Futuristic Loading Animation - Electric Circuit Theme */}
                     {/* Show when loading AND graph has minimal content (placeholder only) */}
                     {isLoading && (!data || data.knowledge_graph.nodes.length <= 1) && (
-                        <div className="absolute inset-0 flex items-center justify-center bg-gray-900 z-30 overflow-hidden">
-                            {/* Background fill */}
-                            <div className="absolute inset-0 bg-[#0a0a14]" />
+                        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/90 backdrop-blur-xl overflow-hidden animate-in fade-in duration-500">
+                            {/* Background fill with pulsing gradient */}
+                            <div className="absolute inset-0 bg-gradient-to-br from-gray-950 via-[#050510] to-black opacity-90" />
+                            <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(56,189,248,0.15),transparent_70%)] animate-pulse" style={{ animationDuration: '4s' }} />
+
 
                             {/* Radar Sweep Effect - Submarine Style */}
                             <div className="absolute inset-0 flex items-center justify-center pointer-events-none">

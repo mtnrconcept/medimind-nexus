@@ -1,6 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { callAI, streamAI } from "../_shared/ai-client.ts";
+import { callAI, streamAI, cleanJsonString } from "../_shared/ai-client.ts";
 
 const corsHeaders = {
     "Access-Control-Allow-Origin": "*",
@@ -224,22 +224,25 @@ Règles STRICTES:
                     );
 
                     // Try to parse JSON from response
+                    // Try to parse JSON from response with cleaning
                     const responseText = aiResponse.text || '';
+                    // First try to find JSON block
+                    let formattedJson = responseText;
                     const jsonMatch = responseText.match(/\{[\s\S]*\}/);
+                    if (jsonMatch) formattedJson = jsonMatch[0];
 
-                    if (jsonMatch) {
-                        try {
-                            const parsed = JSON.parse(jsonMatch[0]);
-                            return new Response(JSON.stringify({
-                                optimal_node_ids: parsed.optimal_node_ids || [],
-                                treatment_summary: parsed.treatment_summary || 'Analyse complétée',
-                                rationale: parsed.rationale || ''
-                            }), {
-                                headers: { ...corsHeaders, "Content-Type": "application/json" }
-                            });
-                        } catch (parseErr) {
-                            console.error('[CAUSAL-REASONING] JSON parse error:', parseErr);
-                        }
+                    try {
+                        const parsed = JSON.parse(cleanJsonString(formattedJson));
+                        return new Response(JSON.stringify({
+                            optimal_node_ids: parsed.optimal_node_ids || [],
+                            treatment_summary: parsed.treatment_summary || parsed.summary || 'Analyse complétée',
+                            rationale: parsed.rationale || ''
+                        }), {
+                            headers: { ...corsHeaders, "Content-Type": "application/json" }
+                        });
+                    } catch (parseErr) {
+                        console.error('[CAUSAL-REASONING] JSON parse error:', parseErr);
+                        // Fallback below
                     }
 
                     // Fallback: return the raw text as treatment_summary

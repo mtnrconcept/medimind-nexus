@@ -23,3 +23,9 @@ dist-ssr
 *.sln
 *.sw?
 public/video/
+
+# Environment variables
+.env
+.env.test
+.env.production
+.env.local

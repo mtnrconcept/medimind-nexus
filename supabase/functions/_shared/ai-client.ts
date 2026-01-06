@@ -211,6 +211,29 @@ export async function callAI(
 }
 
 /**
+ * Robust JSON cleaner for AI responses.
+ * Removes Markdown code blocks and fixes common syntax errors.
+ */
+export function cleanJsonString(input: string): string {
+    let cleaned = input.trim();
+
+    // 1. Remove Markdown code blocks ```json ... ```
+    cleaned = cleaned.replace(/^```(?:json)?|```$/g, '').trim();
+
+    // 2. Remove any text before the first { and after the last }
+    const firstBrace = cleaned.indexOf('{');
+    const lastBrace = cleaned.lastIndexOf('}');
+    if (firstBrace !== -1 && lastBrace !== -1) {
+        cleaned = cleaned.slice(firstBrace, lastBrace + 1);
+    }
+
+    // 3. Fix common trailing commas (e.g. "item", } -> "item" })
+    cleaned = cleaned.replace(/,\s*}/g, '}').replace(/,\s*]/g, ']');
+
+    return cleaned;
+}
+
+/**
  * Streaming AI call with fallback
  */
 export async function streamAI(
