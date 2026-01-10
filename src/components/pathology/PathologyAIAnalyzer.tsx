@@ -4,11 +4,11 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { supabase } from '@/integrations/supabase/client';
-import { 
-  Brain, 
-  AlertTriangle, 
-  Zap, 
-  Users, 
+import {
+  Brain,
+  AlertTriangle,
+  Zap,
+  Users,
   Lightbulb,
   RefreshCw,
   ArrowRight,
@@ -164,27 +164,27 @@ const PathologyAIAnalyzer = ({ pathologyId, pathologyName }: PathologyAIAnalyzer
             {/* Context Summary */}
             <div className="flex flex-wrap gap-2">
               <Badge variant="outline">
-                {result.dataContext.symptomsCount} symptômes
+                {result.dataContext?.symptomsCount || 0} symptômes
               </Badge>
               <Badge variant="outline">
-                {result.dataContext.treatmentsCount} traitements
+                {result.dataContext?.treatmentsCount || 0} traitements
               </Badge>
               <Badge variant="outline">
-                {result.dataContext.patientsCount} patients analysés
+                {result.dataContext?.patientsCount || 0} patients analysés
               </Badge>
               <Badge variant="outline">
-                {result.dataContext.sourcesCount} sources
+                {result.dataContext?.sourcesCount || 0} sources
               </Badge>
             </div>
 
             {/* Interactions */}
-            {result.analysis.interactions.length > 0 && (
+            {result.analysis?.interactions?.length > 0 && (
               <div className="space-y-3">
                 <h4 className="font-semibold flex items-center gap-2">
                   <Zap className="h-4 w-4 text-warning" />
                   Interactions Symptômes ↔ Traitements
                 </h4>
-                {result.analysis.interactions.map((interaction, idx) => (
+                {result.analysis?.interactions?.map((interaction, idx) => (
                   <div key={idx} className="p-3 rounded-lg border bg-muted/30">
                     <div className="flex items-center gap-2 mb-2">
                       <Badge variant="secondary">{interaction.symptom}</Badge>
@@ -199,13 +199,13 @@ const PathologyAIAnalyzer = ({ pathologyId, pathologyName }: PathologyAIAnalyzer
             )}
 
             {/* Correlations */}
-            {result.analysis.correlations.length > 0 && (
+            {result.analysis?.correlations?.length > 0 && (
               <div className="space-y-3">
                 <h4 className="font-semibold flex items-center gap-2">
                   <AlertTriangle className="h-4 w-4 text-destructive" />
                   Corrélations Pathologiques
                 </h4>
-                {result.analysis.correlations.map((correlation, idx) => (
+                {result.analysis?.correlations?.map((correlation, idx) => (
                   <div key={idx} className="p-3 rounded-lg border">
                     <div className="flex items-center gap-2 mb-2">
                       <Badge>{correlation.symptom}</Badge>
@@ -219,13 +219,13 @@ const PathologyAIAnalyzer = ({ pathologyId, pathologyName }: PathologyAIAnalyzer
             )}
 
             {/* Patient Insights */}
-            {result.analysis.patient_insights.length > 0 && (
+            {result.analysis?.patient_insights?.length > 0 && (
               <div className="space-y-3">
                 <h4 className="font-semibold flex items-center gap-2">
                   <Users className="h-4 w-4 text-primary" />
                   Insights Patients
                 </h4>
-                {result.analysis.patient_insights.map((insight, idx) => (
+                {result.analysis?.patient_insights?.map((insight, idx) => (
                   <div key={idx} className="p-3 rounded-lg border bg-primary/5">
                     <div className="flex items-center justify-between mb-1">
                       <span className="font-medium text-sm">{insight.finding}</span>
@@ -242,13 +242,13 @@ const PathologyAIAnalyzer = ({ pathologyId, pathologyName }: PathologyAIAnalyzer
             )}
 
             {/* Recommendations */}
-            {result.analysis.recommendations.length > 0 && (
+            {result.analysis?.recommendations?.length > 0 && (
               <div className="space-y-3">
                 <h4 className="font-semibold flex items-center gap-2">
                   <Lightbulb className="h-4 w-4 text-warning" />
                   Recommandations
                 </h4>
-                {result.analysis.recommendations.map((rec, idx) => (
+                {result.analysis?.recommendations?.map((rec, idx) => (
                   <div key={idx} className="p-3 rounded-lg border border-warning/30 bg-warning/5">
                     <div className="flex items-start justify-between gap-2">
                       <div>

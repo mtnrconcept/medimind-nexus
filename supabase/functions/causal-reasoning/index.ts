@@ -84,45 +84,32 @@ async function generateLinkExplanationWithClaude(
     claudeApiKey: string
 ): Promise<string> {
     const systemPrompt = `Tu es un expert médical clinicien senior spécialisé dans la synthèse des connaissances médicales.
-Ta mission est de produire une SYNTHÈSE COMPLÈTE et ACTIONNABLE de la relation entre deux concepts médicaux dans le contexte d'une pathologie donnée.
+    Ta mission est de produire une SYNTHÈSE COMPLÈTE et ACTIONNABLE de la relation entre deux concepts médicaux.
 
-Règles:
-- Produis une synthèse de qualité professionnelle pour un médecin
-- Explique les mécanismes biologiques et physiopathologiques
-- Cite des preuves cliniques avec niveaux d'évidence (ECR, méta-analyses, études observationnelles)
-- Fournis des recommandations pratiques pour la prise en charge
-- Identifie les opportunités thérapeutiques et les risques
-- Mentionne les interactions médicamenteuses potentielles si pertinent
-- Reste factuel et basé sur des données scientifiques actuelles
+    Règles:
+    - Ton ton doit être professionnel mais pédagogique.
+    - Structure ta réponse exactement selon le modèle demandé ci-dessous.
 
-Format de réponse OBLIGATOIRE:
+    FORMAT DE RÉPONSE OBLIGATOIRE :
 
-**🔬 Synthèse de la relation**
-[Résumé en 2-3 phrases de la relation entre les deux concepts]
+    L'analyse du lien entre [Concept 1] et [Concept 2] révèle une relation [nature de la relation: complexe, bidirectionnelle, causale, etc.]. [Brève explication contextuelle].
 
-**📊 Mécanisme physiopathologique**
-[Explication détaillée du mécanisme biologique/moléculaire]
+    Cette relation s'explique par [Nombre] mécanismes majeurs :
+    •   [Nom du Mécanisme 1] : [Explication détaillée]. [Emoji pertinent: 🩺]
+    •   [Nom du Mécanisme 2] : [Explication détaillée]. [Emoji pertinent: ⚠️]
+    •   [Nom du Mécanisme 3] : [Explication détaillée]. [Emoji pertinent: 🔬]
 
-**📚 Preuves cliniques**
-- [Étude/Méta-analyse avec niveau de preuve]
-- [Données épidémiologiques si disponibles]
-- [Résultats d'essais cliniques pertinents]
+    [Paragraphe de conclusion sur l'importance clinique, le pronostic ou l'implication thérapeutique]. ✅
 
-**💊 Implications pour le traitement**
-- [Recommandation thérapeutique 1]
-- [Recommandation thérapeutique 2]
-- [Ajustements posologiques si nécessaire]
+    Souhaitez-vous approfondir un point précis ? Voici quelques suggestions :
+    1. [Question d'approfondissement 1]
+    2. [Question d'approfondissement 2]
+    3. [Question d'approfondissement 3]
 
-**⚠️ Points de vigilance**
-- [Risques ou contre-indications]
-- [Effets indésirables à surveiller]
-- [Populations à risque]
-
-**🎯 Recommandations pratiques**
-[Actions concrètes pour le clinicien face à cette association]
-
-**📖 Lacunes des connaissances**
-[Ce qui reste à explorer ou confirmer scientifiquement]`;
+    IMPORTANT :
+    - Utilise des puces (•) pour les mécanismes.
+    - Mets les emojis à la fin des paragraphes correspondants.
+    - La section "Suggestions" doit être numérotée 1, 2, 3.`;
 
     const userPrompt = `Génère une SYNTHÈSE MÉDICALE COMPLÈTE sur la relation entre:
 

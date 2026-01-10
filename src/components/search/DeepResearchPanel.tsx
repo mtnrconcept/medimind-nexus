@@ -97,7 +97,8 @@ const DeepResearchPanel = ({ selectedSymptomIds, selectedSymptomNames }: DeepRes
       const { data, error: fnError } = await supabase.functions.invoke('deep-research', {
         body: {
           symptomIds: selectedSymptomIds,
-          symptomNames: selectedSymptomNames
+          symptomNames: selectedSymptomNames,
+          stream: false
         }
       });
 

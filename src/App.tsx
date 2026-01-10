@@ -21,6 +21,7 @@ import CrossDataAnalysis from "./pages/CrossDataAnalysis";
 import ContinuousDiscovery from "./pages/ContinuousDiscovery";
 import DiscoveryPlatform from "./pages/DiscoveryPlatform";
 import SwitchCalculator from "./pages/SwitchCalculator";
+import MoleculeWorkbenchPage from "./pages/MoleculeWorkbenchPage";
 import NotFound from "./pages/NotFound";
 import SMARTLaunch from "./pages/smart/Launch";
 import SMARTCallback from "./pages/smart/Callback";
@@ -46,6 +47,7 @@ const AnimatedRoutes = () => {
         <Route path="/continuous-discovery" element={<ProtectedRoute><ContinuousDiscovery /></ProtectedRoute>} />
         <Route path="/discovery-platform" element={<ProtectedRoute><DiscoveryPlatform /></ProtectedRoute>} />
         <Route path="/tools/switch-calculator" element={<ProtectedRoute><SwitchCalculator /></ProtectedRoute>} />
+        <Route path="/tools/molecule-workbench" element={<ProtectedRoute><MoleculeWorkbenchPage /></ProtectedRoute>} />
         <Route path="/admin" element={<Admin />} /> {/* TEMPORAIRE: Sans protection pour config initiale */}
         <Route path="/populate-data" element={<ProtectedRoute><PopulateData /></ProtectedRoute>} />
 

@@ -109,7 +109,7 @@ serve(async (req) => {
   }
 
   try {
-    const { symptomNames, symptomIds } = await req.json();
+    const { symptomNames, symptomIds, stream: wantStream = true } = await req.json();
 
     if (!symptomNames || symptomNames.length === 0) {
       return new Response(
@@ -122,83 +122,62 @@ serve(async (req) => {
     const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
     const supabase = createClient(supabaseUrl, supabaseKey);
 
-    const encoder = new TextEncoder();
-    const stream = new ReadableStream({
-      async start(controller) {
-        const sendEvent = (event: StreamEvent) => {
-          controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
-        };
+    // Core logic runner
+    const runAnalysis = async (eventCallback?: (e: StreamEvent) => void): Promise<any> => {
+      const emit = (e: StreamEvent) => {
+        if (eventCallback) eventCallback(e);
+      };
 
-        try {
-          // 1. Rechercher dans la base de données locale
-          sendEvent({ type: 'step_update', step: { id: 1, status: 'running', details: '📁 Base locale...', source: 'Supabase' } });
-          let dbPathologies: any[] = [];
-          if (symptomIds && symptomIds.length > 0) {
-            const { data: links } = await supabase
-              .from('pathology_symptoms')
-              .select(`
-                pathology_id,
-                frequency_percent,
-                symptom_id,
-                is_primary,
-                symptoms(name),
-                pathologies(id, name, icd_code, description, severity, category)
-              `)
-              .in('symptom_id', symptomIds);
+      // 1. Base locale
+      emit({ type: 'step_update', step: { id: 1, status: 'running', details: '📁 Base locale...', source: 'Supabase' } });
+      let dbPathologies: any[] = [];
+      if (symptomIds && symptomIds.length > 0) {
+        const { data: links } = await supabase.from('pathology_symptoms')
+          .select(`pathology_id, frequency_percent, symptom_id, is_primary, symptoms(name), pathologies(id, name, icd_code, description, severity, category)`)
+          .in('symptom_id', symptomIds);
 
-            if (links) {
-              const pathologyMap = new Map();
-              for (const link of links) {
-                const pathology = link.pathologies as any;
-                if (!pathology) continue;
-
-                if (!pathologyMap.has(pathology.id)) {
-                  pathologyMap.set(pathology.id, {
-                    ...pathology,
-                    matchedSymptoms: [],
-                    totalScore: 0
-                  });
-                }
-
-                const existing = pathologyMap.get(pathology.id);
-                existing.matchedSymptoms.push((link.symptoms as any)?.name);
-                existing.totalScore += link.frequency_percent || 50;
-              }
-
-              dbPathologies = Array.from(pathologyMap.values())
-                .sort((a, b) => b.totalScore - a.totalScore);
+        if (links) {
+          const pathologyMap = new Map();
+          for (const link of links) {
+            const pathology = link.pathologies as any;
+            if (!pathology) continue;
+            if (!pathologyMap.has(pathology.id)) {
+              pathologyMap.set(pathology.id, { ...pathology, matchedSymptoms: [], totalScore: 0 });
             }
+            const existing = pathologyMap.get(pathology.id);
+            existing.matchedSymptoms.push((link.symptoms as any)?.name);
+            existing.totalScore += link.frequency_percent || 50;
           }
-          sendEvent({ type: 'step_update', step: { id: 1, status: 'completed', details: `✅ ${dbPathologies.length} pathologies locales trouvées`, source: 'Local DB' } });
+          dbPathologies = Array.from(pathologyMap.values()).sort((a, b) => b.totalScore - a.totalScore);
+        }
+      }
+      emit({ type: 'step_update', step: { id: 1, status: 'completed', details: `✅ ${dbPathologies.length} pathologies locales trouvées`, source: 'Local DB' } });
 
-          // 2. Rechercher sur PubMed
-          sendEvent({ type: 'step_update', step: { id: 2, status: 'running', details: '📋 Recherche PubMed...', source: 'NCBI' } });
-          const symptomQuery = symptomNames.join(' AND ');
-          const pubmedQuery = `${symptomQuery} diagnosis differential`;
-          const ncbiApiKey = Deno.env.get('NCBI_API_KEY');
-          const pubmedSources = await searchPubMed(pubmedQuery, 10, ncbiApiKey);
+      // 2. PubMed
+      emit({ type: 'step_update', step: { id: 2, status: 'running', details: '📋 Recherche PubMed...', source: 'NCBI' } });
+      const symptomQuery = symptomNames.join(' AND ');
+      const pubmedQuery = `${symptomQuery} diagnosis differential`;
+      const ncbiApiKey = Deno.env.get('NCBI_API_KEY');
+      const pubmedSources = await searchPubMed(pubmedQuery, 10, ncbiApiKey);
 
-          const additionalSearches: WebSource[] = [];
-          if (symptomNames.length >= 2) {
-            const combinedQuery = `${symptomNames.slice(0, 3).join(' ')} syndrome disease`;
-            const combinedSources = await searchPubMed(combinedQuery, 5, ncbiApiKey);
-            additionalSearches.push(...combinedSources);
-          }
-          sendEvent({ type: 'step_update', step: { id: 2, status: 'completed', details: `✅ ${pubmedSources.length + additionalSearches.length} sources PubMed identifiées`, source: 'PubMed' } });
+      const additionalSearches: WebSource[] = [];
+      if (symptomNames.length >= 2) {
+        const combinedQuery = `${symptomNames.slice(0, 3).join(' ')} syndrome disease`;
+        const combinedSources = await searchPubMed(combinedQuery, 5, ncbiApiKey);
+        additionalSearches.push(...combinedSources);
+      }
+      emit({ type: 'step_update', step: { id: 2, status: 'completed', details: `✅ ${pubmedSources.length + additionalSearches.length} sources PubMed identifiées`, source: 'PubMed' } });
 
-          // 3. Construire le contexte
-          const dbContext = dbPathologies.length > 0
-            ? dbPathologies.map(p =>
-              `- ${p.name} (CIM: ${p.icd_code || 'N/A'}, sévérité: ${p.severity || 'N/A'}): ${p.description || 'Pas de description'}\n  Symptômes correspondants: ${p.matchedSymptoms.join(', ')}`
-            ).join('\n')
-            : 'Aucune pathologie trouvée dans la base de données locale';
+      // 3. Claude Analysis
+      const dbContext = dbPathologies.length > 0
+        ? dbPathologies.map(p => `- ${p.name} (CIM: ${p.icd_code || 'N/A'}, sévérité: ${p.severity || 'N/A'}): ${p.description || 'Pas de description'}\n  Symptômes correspondants: ${p.matchedSymptoms.join(', ')}`).join('\n')
+        : 'Aucune pathologie trouvée dans la base de données locale';
 
-          const webContext = [...pubmedSources, ...additionalSearches].map(s =>
-            `- "${s.title}" (${s.url})\n  Extrait: ${s.snippet?.substring(0, 200)}...`
-          ).join('\n');
+      const webContext = [...pubmedSources, ...additionalSearches].map(s =>
+        `- "${s.title}" (${s.url})\n  Extrait: ${s.snippet?.substring(0, 200)}...`
+      ).join('\n');
 
-          const systemPrompt = `Tu es un expert médical francophone spécialisé dans le diagnostic différentiel. Tu effectues une "Deep Research" exhaustive.
-          
+      const systemPrompt = `Tu es un expert médical francophone spécialisé dans le diagnostic différentiel. Tu effectues une "Deep Research" exhaustive.
 # RÈGLES
 1. Analyse rigoureusement les symptômes signalés.
 2. Identifie les pathologies potentielles (base locale + connaissances globales).
@@ -226,8 +205,7 @@ serve(async (req) => {
   "recommendedTests": []
 }
 `;
-
-          const userPrompt = `Deep Research pour: ${symptomNames.join(', ')}
+      const userPrompt = `Deep Research pour: ${symptomNames.join(', ')}
 
 ## CONTEXTE LOCAL (Base de données)
 ${dbContext}
@@ -237,69 +215,85 @@ ${webContext}
 
 Analyse complète demandée.`;
 
-          sendEvent({ type: 'step_update', step: { id: 3, status: 'running', details: '🧠 Analyse Claude 3.5 Sonnet...', source: 'Anthropic' } });
+      emit({ type: 'step_update', step: { id: 3, status: 'running', details: '🧠 Analyse Claude 3.5 Sonnet...', source: 'Anthropic' } });
 
-          const aiResult = await streamAI(
-            systemPrompt,
-            userPrompt,
-            (chunk) => {
-              sendEvent({ type: 'text', content: chunk });
-            },
-            {
-              model: 'claude-3-5-sonnet-20240620',
-              maxTokens: 8000,
-              temperature: 0.3,
-            }
-          );
+      // Use streamAI even for non-streaming to get the chunks/text processing for free, 
+      // but only emit text events if we are streaming
+      const aiResult = await streamAI(
+        systemPrompt,
+        userPrompt,
+        (chunk) => {
+          if (wantStream) emit({ type: 'text', content: chunk });
+        },
+        {
+          model: 'claude-3-5-sonnet-20240620',
+          maxTokens: 8000,
+          temperature: 0.3,
+        }
+      );
 
-          const content = aiResult.text;
-          sendEvent({ type: 'step_update', step: { id: 3, status: 'completed', details: '✅ Analyse terminée', source: 'Claude' } });
+      const content = aiResult.text;
+      emit({ type: 'step_update', step: { id: 3, status: 'completed', details: '✅ Analyse terminée', source: 'Claude' } });
 
-          // Extraire le JSON final
-          try {
-            const jsonMatch = content.match(/\{[\s\S]*\}/);
-            if (jsonMatch) {
-              const result = JSON.parse(jsonMatch[0]);
+      // Extract and Process JSON
+      let finalResult = null;
+      try {
+        const jsonMatch = content.match(/\{[\s\S]*\}/);
+        if (jsonMatch) {
+          finalResult = JSON.parse(jsonMatch[0]);
 
-              // Enrichir avec les IDs de la base de données
-              if (result.pathologies) {
-                for (const pathology of result.pathologies) {
-                  const dbMatch = dbPathologies.find(
-                    p => p.name.toLowerCase() === pathology.name.toLowerCase()
-                  );
-                  if (dbMatch) {
-                    pathology.isInDatabase = true;
-                    pathology.databaseId = dbMatch.id;
-                    if (!pathology.icdCode && dbMatch.icd_code) {
-                      pathology.icdCode = dbMatch.icd_code;
-                    }
-                  } else {
-                    pathology.isInDatabase = false;
-                  }
-                  sendEvent({ type: 'pathology', pathology });
-                }
+          // Enrich with DB info
+          if (finalResult.pathologies) {
+            for (const pathology of finalResult.pathologies) {
+              const dbMatch = dbPathologies.find(p => p.name.toLowerCase() === pathology.name.toLowerCase());
+              if (dbMatch) {
+                pathology.isInDatabase = true;
+                pathology.databaseId = dbMatch.id;
+                if (!pathology.icdCode && dbMatch.icd_code) pathology.icdCode = dbMatch.icd_code;
+              } else {
+                pathology.isInDatabase = false;
               }
-
-              sendEvent({ type: 'summary', summary: result.summary });
+              // Emit pathology event if streaming
+              if (wantStream) emit({ type: 'pathology', pathology });
             }
-          } catch (e) {
-            console.error("JSON parse error in deep-research:", e);
           }
+          if (wantStream) emit({ type: 'summary', summary: finalResult.summary });
+        }
+      } catch (e) {
+        console.error("JSON parse error:", e);
+      }
 
-          sendEvent({ type: 'done' });
-        } catch (err) {
-          console.error('Deep Research error:', err);
-          sendEvent({ type: 'step_update', step: { id: 1, status: 'error', details: String(err) } });
-        } finally {
+      emit({ type: 'done' });
+      return finalResult;
+    };
+
+    // Branching Logic: Stream vs JSON
+    if (wantStream) {
+      const encoder = new TextEncoder();
+      const stream = new ReadableStream({
+        async start(controller) {
+          await runAnalysis((event) => {
+            controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
+          });
           controller.close();
         }
+      });
+      return new Response(stream, {
+        headers: { ...corsHeaders, 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache' }
+      });
+    } else {
+      // Non-streaming mode (JSON)
+      try {
+        const finalJSON = await runAnalysis();
+        return new Response(JSON.stringify({ result: finalJSON }), {
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+      } catch (err) {
+        return new Response(JSON.stringify({ error: String(err) }), {
+          status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
       }
-    });
-
-    return new Response(stream, {
-      headers: { ...corsHeaders, 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache' }
-    });
-
+    }
   } catch (error) {
     console.error('Erreur Deep Research:', error);
     return new Response(

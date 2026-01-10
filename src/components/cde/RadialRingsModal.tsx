@@ -4905,6 +4905,9 @@ IMPORTANT: Retourne UNIQUEMENT les IDs des nœuds qui forment le schéma thérap
                                 const uniqueNewNodes: any[] = [];
 
                                 rawNodes.forEach((n: any) => {
+                                    // Fix: Map API 'label' to 'name' if missing
+                                    if (!n.name && n.label) n.name = n.label;
+
                                     const normName = n.name?.trim().toLowerCase();
                                     if (!normName) return;
 
@@ -4951,6 +4954,9 @@ IMPORTANT: Retourne UNIQUEMENT les IDs des nœuds qui forment le schéma thérap
                             // Handle Edge Events
                             else if (eventData.type === 'edges') {
                                 const newEdges = eventData.edges.map((e: any) => {
+                                    // Fix: Map API 'edge_type' to 'relationship' if missing
+                                    if (!e.relationship && e.edge_type) e.relationship = e.edge_type;
+
                                     // Apply redirects
                                     const source = localRedirects.get(e.source) || e.source;
                                     const target = localRedirects.get(e.target) || e.target;
@@ -6092,7 +6098,7 @@ IMPORTANT: Retourne UNIQUEMENT les IDs des nœuds qui forment le schéma thérap
                     sourceNode={selectedEdgeSource}
                     targetNode={selectedEdgeTarget}
                     multiNodes={multiNodesForAnalysis}
-                    pathology={pathology}
+                    pathology={pathology || centralNode || (typeof activePathologies !== 'undefined' && activePathologies[0]) || ''}
                     onSetCentral={handleSetCentral}
                 />
             </div>

@@ -11,7 +11,7 @@ declare const Deno: {
 
 export interface AIResponse {
     text: string;
-    provider: 'anthropic' | 'google' | 'none';
+    provider: 'anthropic' | 'google' | 'huggingface' | 'none';
     model: string;
 }
 
@@ -54,12 +54,77 @@ export async function callAI(
 ): Promise<AIResponse> {
     const CLAUDE_API_KEY = Deno.env.get('CLAUDE_API_KEY') || Deno.env.get('ANTHROPIC_API_KEY');
     const GEMINI_API_KEY = Deno.env.get('GEMINI_API_KEY');
+    const HF_TOKEN = Deno.env.get('HUGGING_FACE_ACCESS_TOKEN') || Deno.env.get('HUGGING_FACE_TOKEN');
 
     const model = options.model || 'claude-3-5-sonnet-20240620';
-    const geminiModel = 'gemini-3-flash-preview';
-    const geminiProModel = 'gemini-1.5-pro-002'; // Secondary fallback
 
+    // 0. Check for Hugging Face specific request FIRST
+    const isHFModel = options.model?.includes('/') || options.model === 'biogpt';
 
+    if (HF_TOKEN && isHFModel) {
+        const hfModel = options.model === 'biogpt' ? 'microsoft/BioGPT-Large' : (options.model || 'microsoft/BioGPT-Large');
+        try {
+            console.log(`[AI-Client] Calling Hugging Face (${hfModel})...`);
+
+            // Construct a single string prompt since BioGPT is a completion model
+            let fullPrompt = `${systemPrompt}\n\n`;
+            if (typeof userPrompt === 'string') {
+                fullPrompt += `User: ${userPrompt}\nAnswer:`;
+            } else {
+                userPrompt.forEach(m => {
+                    const content = typeof m.content === 'string' ? m.content : m.content.map(c => c.text).join(' ');
+                    fullPrompt += `${m.role === 'user' ? 'User' : 'Assistant'}: ${content}\n`;
+                });
+                fullPrompt += 'Answer:';
+            }
+
+            const response = await fetch(`https://api-inference.huggingface.co/models/${hfModel}`, {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${HF_TOKEN}`,
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    inputs: fullPrompt,
+                    parameters: {
+                        max_new_tokens: 250, // BioGPT is often short context
+                        temperature: options.temperature ?? 0.7,
+                        return_full_text: false
+                    }
+                })
+            });
+
+            if (response.ok) {
+                const data = await response.json();
+                // HF generic output is usually [{ generated_text: "..." }]
+                const text = Array.isArray(data) ? data[0]?.generated_text : (data.generated_text || JSON.stringify(data));
+                return {
+                    text: text || '',
+                    provider: 'huggingface',
+                    model: hfModel
+                };
+            }
+
+            const errorText = await response.text();
+            console.warn(`[AI-Client] Hugging Face failed: ${errorText}`);
+
+        } catch (error) {
+            console.error(`[AI-Client] Hugging Face error:`, error);
+        }
+        // If HF fails, we could technically fall back, but usually if a specific model was requested we stop or let it fall through.
+        // For now, let it fall through to other providers if needed, or return error?
+        // Let's assume if it was a specific HF model request, and it failed, we shouldn't send that logic to Claude.
+        return {
+            text: JSON.stringify({ error: "Hugging Face model failed." }),
+            provider: 'huggingface',
+            model: hfModel
+        };
+    }
+
+    // Updated to use the most powerful stable model as primary
+    const geminiModel = 'gemini-1.5-pro';
+    // Fallback to the latest experimental flash model for speed if needed
+    const geminiProModel = 'gemini-2.0-flash-exp';
 
     // Helper to format messages for Anthropic
     const formatAnthropicMessages = (prompt: string | AIMessage[]) => {
@@ -167,7 +232,9 @@ export async function callAI(
 
             // If primary Gemini fails, try Pro identifier
             if (!response.ok) {
-                console.warn(`[AI-Client] Gemini ${geminiModel} failed, trying ${geminiProModel}...`);
+                const errText = await response.text();
+                console.warn(`[AI-Client] Gemini ${geminiModel} failed (${response.status}): ${errText}. Trying ${geminiProModel}...`);
+
                 url = `https://generativelanguage.googleapis.com/v1beta/models/${geminiProModel}:generateContent?key=${GEMINI_API_KEY}`;
                 response = await fetch(url, {
                     method: 'POST',
@@ -202,6 +269,16 @@ export async function callAI(
             console.error(`[AI-Client] Gemini fallback error:`, error);
         }
     }
+
+    // 3. Fallback to Hugging Face (Specific Models or BioGPT default)
+    // REMOVED - Logic moved to top.
+
+    // Fallthrough error
+    return {
+        text: JSON.stringify({ notes: "Erreur: Aucun fournisseur d'IA n'a pu répondre." }),
+        provider: 'none',
+        model: 'none'
+    };
 
     return {
         text: JSON.stringify({ notes: "Erreur: Aucun fournisseur d'IA n'a pu répondre (Anthropic/Gemini indisponibles ou balance épuisée)." }),
@@ -250,8 +327,8 @@ export async function streamAI(
     const GEMINI_API_KEY = Deno.env.get('GEMINI_API_KEY');
 
     const model = options.model || 'claude-3-5-sonnet-20240620';
-    const geminiModel = 'gemini-3-flash-preview';
-    const geminiProModel = 'gemini-1.5-pro-002';
+    const geminiModel = 'gemini-1.5-pro';
+    const geminiProModel = 'gemini-2.0-flash-exp';
 
 
 
