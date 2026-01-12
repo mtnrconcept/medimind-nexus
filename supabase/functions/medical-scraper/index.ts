@@ -70,10 +70,12 @@ serve(async (req) => {
     if (!firecrawlApiKey) throw new Error('FIRECRAWL_API_KEY non configurée');
 
     // Helper pour appeler l'IA (callAI gère Anthropic -> Gemini fallback)
-    async function extractWithAI(markdown: string, type: 'medication' | 'pathology'): Promise<any> {
+    async function extractWithAI(markdown: string, type: 'medication' | 'pathology' | 'molecule'): Promise<any> {
       const systemPrompt = type === 'medication'
         ? "Tu es un expert pharmacologue suisse. Extrais les données structurées de cette notice de médicament (Compendium.ch) en JSON strict."
-        : "Tu es un médecin expert. Extrais les données structurées de cette page médicale en JSON strict.";
+        : type === 'molecule'
+          ? "Tu es un chimiste expert. Extrais les données structurées de cette molécule en JSON strict."
+          : "Tu es un médecin expert. Extrais les données structurées de cette page médicale en JSON strict.";
 
       const schemaMedication = `{
         "medication": {
@@ -88,6 +90,14 @@ serve(async (req) => {
         "contraindications": [{"condition": "string", "severity": "string", "description": "string"}]
       }`;
 
+      const schemaMolecule = `{
+        "molecule": {
+          "name": "string", "iupac_name": "string", "chemical_formula": "string", "smiles": "string",
+          "molecular_weight": number, "description": "string", "indications": "string", 
+          "side_effects": "string", "contraindications": "string", "therapeutic_category": "string"
+        }
+      }`;
+
       const schemaPathology = `{
         "pathology": {
           "name": "string", "icd_code": "string", "description": "string", "category": "string",
@@ -100,7 +110,7 @@ serve(async (req) => {
       const userPrompt = `Extrais TOUTES les informations disponibles au format JSON.
       
       Schéma attendu:
-      ${type === 'medication' ? schemaMedication : schemaPathology}
+      ${type === 'medication' ? schemaMedication : type === 'molecule' ? schemaMolecule : schemaPathology}
 
       Contenu Markdown:
       ${markdown.substring(0, 50000)} (tronqué si trop long)`;
@@ -419,6 +429,9 @@ serve(async (req) => {
             lowerLink.includes('diagnosis') ||
             lowerLink.includes('diagnostic') ||
             lowerLink.includes('medication') ||
+            lowerLink.includes('molecule') ||
+            lowerLink.includes('medicament') ||
+            lowerLink.includes('sommaire') ||
             lowerLink.includes('therapy') ||
             lowerLink.includes('/topics/') ||
             lowerLink.includes('/conditions/') ||
@@ -664,6 +677,121 @@ serve(async (req) => {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
+    // Action: Scrape molecule - Scraper une page de molécule Creapharma
+    if (action === 'scrape-molecule') {
+      console.log('Scraping molécule:', url);
+
+      let scrapeResult;
+      try {
+        scrapeResult = await scrapeWithRateLimitRetry(firecrawl, url);
+      } catch (err: any) {
+        const errorMessage = err?.message || String(err);
+        if (errorMessage.includes('429') || errorMessage.includes('rate limit') || errorMessage.includes('402')) {
+          console.log('Rate limit/402 pour:', url);
+          return new Response(JSON.stringify({
+            success: false,
+            error: 'Rate limit ou crédits Firecrawl insuffisants',
+            rateLimited: true
+          }), {
+            status: 429,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          });
+        }
+        throw err;
+      }
+
+      if (!scrapeResult.success) {
+        throw new Error('Échec du scraping de la molécule');
+      }
+
+      const markdown = scrapeResult.markdown || '';
+      console.log('Contenu molécule extrait, longueur:', markdown.length);
+
+      // Extraction des données par l'IA
+      const extractedData = await extractWithAI(markdown, 'molecule');
+      console.log('Données extraites:', extractedData.molecule?.name);
+
+      const stats = {
+        moleculesAdded: 0,
+        moleculesUpdated: 0
+      };
+
+      // Insérer la molécule dans substances
+      if (extractedData.molecule?.name) {
+        const mol = extractedData.molecule;
+        const normalizedName = mol.name.trim().toLowerCase();
+
+        const { data: existingMol } = await supabase
+          .from('substances')
+          .select('id, properties')
+          .eq('name_normalized', normalizedName)
+          .maybeSingle();
+
+        if (!existingMol) {
+          const { error: insertError } = await supabase
+            .from('substances')
+            .insert({
+              name: mol.name,
+              source: 'creapharma',
+              properties: {
+                iupacName: mol.iupac_name,
+                formula: mol.chemical_formula,
+                smiles: mol.smiles,
+                molecularWeight: mol.molecular_weight,
+                description: mol.description,
+                indications: mol.indications,
+                sideEffects: mol.side_effects,
+                contraindications: mol.contraindications,
+                therapeuticCategory: mol.therapeutic_category,
+                sourceUrl: url
+              }
+            });
+
+          if (insertError) {
+            console.error('Erreur insertion molécule:', insertError);
+          } else {
+            stats.moleculesAdded = 1;
+            console.log(`Molécule insérée: ${mol.name}`);
+          }
+        } else {
+          // Update existing with new fields if missing
+          const updatedProperties = {
+            ...existingMol.properties,
+            iupacName: mol.iupac_name || existingMol.properties?.iupacName,
+            formula: mol.chemical_formula || existingMol.properties?.formula,
+            smiles: mol.smiles || existingMol.properties?.smiles,
+            molecularWeight: mol.molecular_weight || existingMol.properties?.molecularWeight,
+            description: mol.description || existingMol.properties?.description,
+            indications: mol.indications || existingMol.properties?.indications,
+            sideEffects: mol.side_effects || existingMol.properties?.sideEffects,
+            contraindications: mol.contraindications || existingMol.properties?.contraindications,
+            therapeuticCategory: mol.therapeutic_category || existingMol.properties?.therapeuticCategory,
+            sourceUrl: url
+          };
+
+          const { error: updateError } = await supabase
+            .from('substances')
+            .update({ properties: updatedProperties })
+            .eq('id', existingMol.id);
+
+          if (updateError) {
+            console.error('Erreur mise à jour molécule:', updateError);
+          } else {
+            stats.moleculesUpdated = 1;
+            console.log(`Molécule mise à jour: ${mol.name}`);
+          }
+        }
+      }
+
+      return new Response(JSON.stringify({
+        success: true,
+        url,
+        extractedData,
+        stats
+      }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
 
     // Action: Batch medications - Scraper plusieurs médicaments
     if (action === 'batch-medications') {
@@ -718,6 +846,67 @@ serve(async (req) => {
         }
         return acc;
       }, { medicationsAdded: 0, sideEffectsAdded: 0, interactionsAdded: 0, contraindicationsAdded: 0 });
+
+      return new Response(JSON.stringify({
+        success: true,
+        processed: results.length,
+        results,
+        totalStats
+      }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
+    // Action: Batch molecules - Scraper plusieurs molécules
+    if (action === 'batch-molecules') {
+      const results = [];
+      const batchUrls = urls || [];
+
+      for (let i = 0; i < batchUrls.length; i++) {
+        const currentUrl = batchUrls[i];
+        console.log(`Batch molecule ${i + 1}/${batchUrls.length}: ${currentUrl}`);
+
+        try {
+          const scrapeResult = await fetch(req.url, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': req.headers.get('Authorization') || ''
+            },
+            body: JSON.stringify({ action: 'scrape-molecule', url: currentUrl, options })
+          });
+
+          const resultData = await scrapeResult.json();
+          results.push({
+            url: currentUrl,
+            success: resultData.success,
+            stats: resultData.stats
+          });
+
+          if (resultData.rateLimited) {
+            console.log('Rate limit atteint, arrêt du batch');
+            break;
+          }
+        } catch (err: any) {
+          console.error(`Erreur pour ${currentUrl}:`, err);
+          results.push({
+            url: currentUrl,
+            success: false,
+            error: err?.message || 'Erreur inconnue'
+          });
+        }
+
+        // Pause pour éviter le rate limiting
+        await new Promise(resolve => setTimeout(resolve, 8000));
+      }
+
+      const totalStats = results.reduce((acc, r) => {
+        if (r.stats) {
+          acc.moleculesAdded += r.stats.moleculesAdded || 0;
+          acc.moleculesUpdated += r.stats.moleculesUpdated || 0;
+        }
+        return acc;
+      }, { moleculesAdded: 0, moleculesUpdated: 0 });
 
       return new Response(JSON.stringify({
         success: true,

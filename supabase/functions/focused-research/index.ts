@@ -1070,22 +1070,32 @@ Cherche des corrélations subtiles et inattendues:
 }
 \`\`\`
 
-### PARTIE 2 : SYNTHÈSE RAISONNEMENT (10-15 lignes max)
+### PARTIE 2 : SYNTHÈSE RAISONNEMENT APPROFONDI (25-40 lignes)
 RAISONNEMENT:
-- Points clés de l'analyse (bullet points concis)
-- Schéma thérapeutique principal proposé
-- Gaps critiques identifiés
+- Points clés de l'analyse (bullet points détaillés)
+- Schéma thérapeutique principal proposé avec posologie
+- Schémas thérapeutiques alternatifs
+- Gaps critiques identifiés et pistes de recherche
+- Mécanismes moléculaires clés et voies métaboliques
+- Profil de patients idéal pour chaque approche
+- Risques et surveillance recommandée
+- Perspectives d'évolution et thérapies émergentes
 
-### PARTIE 3 : EXPLICATION ENFANT (5 phrases max)
-EXPLICATION_ENFANT:
-[Métaphore simple pour enfant de 10 ans]
+### PARTIE 3 : SYNTHÈSE GRAND PUBLIC (10-12 phrases)
+SYNTHÈSE_ACCESSIBLE:
+[Explication claire et accessible pour le grand public, utilisant des analogies du quotidien si nécessaire, sans jargon médical complexe. Ton respectueux et informatif, adapté à un adulte non-spécialiste qui souhaite comprendre sa condition ou celle d'un proche.]
+
+### PARTIE 4 : RÉSUMÉ CLINIQUE (pour professionnels)
+RÉSUMÉ_CLINIQUE:
+[Synthèse en 5-8 points clés pour application clinique immédiate]
 
 ## CONTRAINTES IMPÉRATIVES
 - ❌ PAS de longues explications narratives
 - ❌ PAS de répétition d'informations connues
 - ✅ FOCUS sur hypothèses originales et schémas de traitement
-- ✅ JSON COMPLET avec minimum 4 découvertes
-- ✅ CONCIS : privilégie la densité d'information`;
+- ✅ JSON COMPLET avec minimum 8 découvertes (idéal: 10-12)
+- ✅ ANALYSE APPROFONDIE : exploite TOUTES les données fournies
+- ✅ INNOVATION : propose des approches révolutionnaires`;
 
                     const userPrompt = `## RECHERCHE CIBLÉE: ${targetName} (${targetType})
 
@@ -1099,16 +1109,27 @@ ${customPrompt}
 Réponds à cette demande en intégrant ta réponse dans les découvertes JSON.
 ` : ''}
 
-## INSTRUCTIONS CONCISES
+## INSTRUCTIONS POUR ANALYSE APPROFONDIE
 
-⚠️ **COMMENCE IMMÉDIATEMENT par le bloc JSON** avec tes 4-6 découvertes.
+⚠️ **COMMENCE IMMÉDIATEMENT par le bloc JSON** avec tes **8-12 découvertes** (minimum 8 obligatoires).
 
-Après le JSON, ajoute uniquement:
-1. RAISONNEMENT (10-15 lignes max - bullet points)
-2. EXPLICATION_ENFANT (5 phrases max)
+Après le JSON, ajoute les sections suivantes:
+1. **RAISONNEMENT** (25-40 lignes - analyse approfondie avec bullet points détaillés)
+   - Schémas thérapeutiques avec posologie
+   - Mécanismes moléculaires clés
+   - Profils de patients idéaux
+   - Risques et surveillance
+2. **SYNTHÈSE_ACCESSIBLE** (10-12 phrases - explication claire pour le grand public, sans infantiliser)
+3. **RÉSUMÉ_CLINIQUE** (5-8 points clés pour application immédiate)
 
-**FOCUS**: Schémas de traitement, hypothèses originales, mécanismes clés.
-**ÉVITE**: Longues explications, répétitions, préambules.
+**FOCUS**: 
+- Schémas de traitement DÉTAILLÉS avec posologies
+- Hypothèses originales et RÉVOLUTIONNAIRES
+- Mécanismes moléculaires précis
+- Synergies thérapeutiques innovantes
+- Thérapies émergentes (CAR-T, thérapie génique, etc.)
+
+**ÉVITE**: Préambules inutiles, répétitions.
 
 Commence par le JSON maintenant.`;
 
@@ -1123,8 +1144,9 @@ Commence par le JSON maintenant.`;
                             sendEvent(controller, { type: 'text', content: text });
                         },
                         {
-                            model: "claude-3-5-sonnet-20240620",
-                            maxTokens: 32000,
+                            model: "claude-3-5-sonnet-latest",
+                            maxTokens: 80000,
+                            temperature: 0.7,
                         }
                     );
 

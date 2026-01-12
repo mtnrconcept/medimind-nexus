@@ -30,7 +30,7 @@ import { MatrixLoader } from "@/components/ui/MatrixLoader"; // Import du nouvea
 
 // --- CONFIGURATION ---
 
-type ScraperMode = "pathologies" | "medications";
+type ScraperMode = "pathologies" | "medications" | "molecules";
 type RateLimitMode = "slow" | "normal" | "fast";
 
 const RATE_LIMIT_DELAYS: Record<RateLimitMode, number> = {
@@ -357,6 +357,12 @@ export const MedicalScraperPanel = () => {
                           Médicaments (Compendium)
                         </div>
                       </SelectItem>
+                      <SelectItem value="molecules">
+                        <div className="flex items-center gap-2">
+                          <Database className="h-4 w-4" />
+                          Molécules (Creapharma)
+                        </div>
+                      </SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
@@ -402,14 +408,18 @@ export const MedicalScraperPanel = () => {
                 <label className="text-sm font-medium">
                   {scraperMode === "medications"
                     ? "URL Compendium.ch ou laisser vide pour https://compendium.ch/fr/product"
-                    : "URL du site médical à scraper (ex: https://www.webmd.com/)"
+                    : scraperMode === "molecules"
+                      ? "URL Creapharma ou laisser vide pour https://www.creapharma.ch/medicaments-en-suisse/molecules-en-suisse"
+                      : "URL du site médical à scraper (ex: https://www.webmd.com/)"
                   }
                 </label>
                 <div className="flex gap-2">
                   <Input
                     placeholder={scraperMode === "medications"
                       ? "https://compendium.ch/fr/product"
-                      : "https://www.mayoclinic.org/diseases-conditions"
+                      : scraperMode === "molecules"
+                        ? "https://www.creapharma.ch/medicaments-en-suisse/molecules-en-suisse"
+                        : "https://www.mayoclinic.org/diseases-conditions"
                     }
                     value={url}
                     onChange={(e) => setUrl(e.target.value)}
@@ -425,7 +435,9 @@ export const MedicalScraperPanel = () => {
                         const action = scraperMode === "medications" ? "map-compendium" : "map";
                         const targetUrl = url || (scraperMode === "medications"
                           ? "https://compendium.ch/fr/product"
-                          : "https://www.webmd.com/"
+                          : scraperMode === "molecules"
+                            ? "https://www.creapharma.ch/medicaments-en-suisse/molecules-en-suisse"
+                            : "https://www.webmd.com/"
                         );
 
                         setScraperLogs(prev => [...prev, {
@@ -494,7 +506,9 @@ export const MedicalScraperPanel = () => {
                           pathologiesAdded: 0,
                           symptomsAdded: 0,
                           treatmentsAdded: 0,
-                          linksCreated: 0
+                          linksCreated: 0,
+                          moleculesAdded: 0,
+                          moleculesUpdated: 0
                         };
 
                         // Découper en chunks de PARALLEL_BATCH_SIZE
@@ -514,7 +528,11 @@ export const MedicalScraperPanel = () => {
                           });
 
                           // Traiter le chunk en parallèle
-                          const singleAction = scraperMode === "medications" ? "scrape-medication" : "scrape";
+                          const singleAction = scraperMode === "medications"
+                            ? "scrape-medication"
+                            : scraperMode === "molecules"
+                              ? "scrape-molecule"
+                              : "scrape";
                           const results = await Promise.allSettled(
                             chunk.map(async (currentUrl) => {
                               const { data, error } = await supabase.functions.invoke("medical-scraper", {
@@ -539,6 +557,8 @@ export const MedicalScraperPanel = () => {
                                 stats.symptomsAdded += data.stats.symptomsAdded || 0;
                                 stats.treatmentsAdded += data.stats.treatmentsAdded || 0;
                                 stats.linksCreated += data.stats.linksCreated || 0;
+                                stats.moleculesAdded += data.stats.moleculesAdded || 0;
+                                stats.moleculesUpdated += data.stats.moleculesUpdated || 0;
                               }
                               processed++;
                             } else {
@@ -565,6 +585,8 @@ export const MedicalScraperPanel = () => {
 
                         if (scraperMode === "medications") {
                           setScraperLogs(prev => [...prev, { type: "info", message: `📊 Total: ${stats.medicationsAdded} méd, ${stats.sideEffectsAdded} effets, ${stats.interactionsAdded} interactions.` }]);
+                        } else if (scraperMode === "molecules") {
+                          setScraperLogs(prev => [...prev, { type: "info", message: `📊 Total: ${stats.moleculesAdded} Molécules ajoutées, ${stats.moleculesUpdated} mises à jour.` }]);
                         } else {
                           setScraperLogs(prev => [...prev, { type: "info", message: `📊 Total: ${stats.pathologiesAdded} path, ${stats.symptomsAdded} sympt, ${stats.treatmentsAdded} traits.` }]);
                         }
@@ -640,6 +662,7 @@ export const MedicalScraperPanel = () => {
                 <ul className="text-sm text-blue-800 dark:text-blue-200 space-y-1 list-disc list-inside">
                   <li><strong>Pathologies</strong>: Scrape les descriptions de maladies, symptômes associés et traitements</li>
                   <li><strong>Médicaments</strong>: Scrape les notices Compendium (composition, effets secondaires, interactions)</li>
+                  <li><strong>Molécules</strong>: Scrape les informations détaillées sur Creapharma (IUPAC, SMILES, indications)</li>
                   <li>Utilisez le mode "Lent" pour éviter le rate-limiting de Firecrawl</li>
                 </ul>
               </div>

@@ -89,6 +89,10 @@ const ContinuousDiscovery = () => {
     const [currentPrompt, setCurrentPrompt] = useState('');
     const [currentAnalysis, setCurrentAnalysis] = useState<any[]>([]);
     const [showResearchDetails, setShowResearchDetails] = useState(true);
+    // NEW: Pathology targeting for systematic analysis
+    const [targetPathology, setTargetPathology] = useState('');
+    const [analysisMode, setAnalysisMode] = useState<'all' | 'oncology' | 'cardiology' | 'neurology' | 'metabolic' | 'custom'>('all');
+    const [pathologyContext, setPathologyContext] = useState<any>(null);
     // Radial rings state
     const [isRadialModalOpen, setIsRadialModalOpen] = useState(false);
     const [radialQueries, setRadialQueries] = useState<string[]>([]);
@@ -737,7 +741,10 @@ const ContinuousDiscovery = () => {
                                                                 'Authorization': `Bearer ${session.access_token}`,
                                                                 'apikey': import.meta.env.VITE_SUPABASE_ANON_KEY,
                                                             },
-                                                            body: JSON.stringify({ action: 'start' }),
+                                                            body: JSON.stringify({
+                                                                action: 'start',
+                                                                target_pathology: targetPathology || null
+                                                            }),
                                                         });
                                                         const startData = await startRes.json();
                                                         if (!startData.success) throw new Error(startData.error);
@@ -840,6 +847,85 @@ const ContinuousDiscovery = () => {
                                 </div>
                             </CardHeader>
                             <CardContent className="space-y-4">
+                                {/* NEW: Pathology Targeting Section */}
+                                {!isSystematicRunning && (
+                                    <div className="p-4 rounded-lg bg-gradient-to-r from-violet-50 to-purple-50 dark:from-violet-900/20 dark:to-purple-900/20 border border-violet-200 dark:border-violet-800 space-y-4">
+                                        <div className="flex items-center gap-2 mb-2">
+                                            <Crosshair className="h-5 w-5 text-violet-600" />
+                                            <span className="font-semibold text-violet-800 dark:text-violet-200">
+                                                {t('Ciblage par Pathologie')}
+                                            </span>
+                                            <Badge variant="secondary" className="ml-auto text-xs">
+                                                {t('Optionnel')}
+                                            </Badge>
+                                        </div>
+
+                                        {/* Mode Quick Select */}
+                                        <div className="flex flex-wrap gap-2">
+                                            {[
+                                                { key: 'all', label: 'Analyse Globale', icon: '🌐' },
+                                                { key: 'oncology', label: 'Oncologie', icon: '🎗️', pathology: 'cancer' },
+                                                { key: 'cardiology', label: 'Cardiologie', icon: '❤️', pathology: 'cardiologie' },
+                                                { key: 'neurology', label: 'Neurologie', icon: '🧠', pathology: 'neurologie' },
+                                                { key: 'metabolic', label: 'Métabolique', icon: '⚡', pathology: 'diabète' },
+                                                { key: 'custom', label: 'Personnalisé', icon: '✏️' }
+                                            ].map((mode) => (
+                                                <Button
+                                                    key={mode.key}
+                                                    size="sm"
+                                                    variant={analysisMode === mode.key ? 'default' : 'outline'}
+                                                    className={`gap-1 ${analysisMode === mode.key
+                                                        ? 'bg-gradient-to-r from-violet-500 to-purple-600 text-white'
+                                                        : 'hover:bg-violet-100 dark:hover:bg-violet-900/30'}`}
+                                                    onClick={() => {
+                                                        setAnalysisMode(mode.key as any);
+                                                        if (mode.key === 'all') {
+                                                            setTargetPathology('');
+                                                        } else if (mode.key !== 'custom' && mode.pathology) {
+                                                            setTargetPathology(mode.pathology);
+                                                        }
+                                                    }}
+                                                >
+                                                    <span>{mode.icon}</span>
+                                                    {t(mode.label)}
+                                                </Button>
+                                            ))}
+                                        </div>
+
+                                        {/* Custom Pathology Input */}
+                                        {analysisMode === 'custom' && (
+                                            <div className="flex gap-2 items-center">
+                                                <div className="relative flex-1">
+                                                    <Stethoscope className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
+                                                    <Input
+                                                        placeholder={t('Ex: Syndrome néphrotique, Diabète type 2, Leucémie...')}
+                                                        value={targetPathology}
+                                                        onChange={(e) => setTargetPathology(e.target.value)}
+                                                        className="pl-10 bg-white dark:bg-slate-800"
+                                                    />
+                                                </div>
+                                            </div>
+                                        )}
+
+                                        {/* Context Display */}
+                                        {targetPathology && (
+                                            <div className="flex items-center gap-2 text-sm text-violet-700 dark:text-violet-300 bg-violet-100 dark:bg-violet-900/40 rounded-lg px-3 py-2">
+                                                <Crosshair className="h-4 w-4" />
+                                                <span>{t('L\'analyse sera orientée vers')}: <strong>{targetPathology}</strong></span>
+                                                <button
+                                                    onClick={() => {
+                                                        setTargetPathology('');
+                                                        setAnalysisMode('all');
+                                                    }}
+                                                    className="ml-auto text-violet-500 hover:text-red-500"
+                                                >
+                                                    ✕
+                                                </button>
+                                            </div>
+                                        )}
+                                    </div>
+                                )}
+
                                 <div className="p-4 rounded-lg bg-slate-100 dark:bg-slate-900 space-y-3">
                                     <div className="flex items-center justify-between">
                                         <span className="text-sm font-medium">{t('Progression')}</span>

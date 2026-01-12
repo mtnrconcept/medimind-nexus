@@ -339,6 +339,7 @@ interface SVGFallbackProps {
     currentGroupCenter?: string | null;
     onAddToGroup?: (nodeId: string) => void;
     onStartGroupCreation?: (nodeId: string) => void;
+    onCreateGroupWithNodes?: (centerId: string, memberIds: string[]) => void;
     onFinishGroupCreation?: () => void;
     customNodePositions?: Map<string, { x: number, y: number }>;
     deepAnalysisMode?: boolean;
@@ -364,12 +365,16 @@ interface SVGFallbackProps {
         nodeSpacing: number;
         levelHeight: number;
         organicStrength: number;
+        nodeSize?: number;
+        maxLevels?: number;
     };
     setLayoutParams: React.Dispatch<React.SetStateAction<{
         gridCols: number;
         nodeSpacing: number;
         levelHeight: number;
         organicStrength: number;
+        nodeSize?: number;
+        maxLevels?: number;
     }>>;
     zoom: number;
     setZoom: React.Dispatch<React.SetStateAction<number>>;
@@ -409,6 +414,7 @@ function SVGFallback({
     currentGroupCenter = null,
     onAddToGroup,
     onStartGroupCreation,
+    onCreateGroupWithNodes,
     onFinishGroupCreation,
     onDissolveGroup,
     customNodePositions = new Map(),
@@ -439,6 +445,7 @@ function SVGFallback({
     // Dragging state for center nodes (Hoisted)
     const [dragOffsets, setDragOffsets] = useState<Map<string, { x: number, y: number }>>(new Map());
     const [draggingNode, setDraggingNode] = useState<string | null>(null);
+    const [draggingGroup, setDraggingGroup] = useState<string | null>(null); // For dragging entire groups via rectangle
 
     // State to ignore chat-based custom positions (Reset feature)
     const [ignoreCustomPositions, setIgnoreCustomPositions] = useState(false);
@@ -625,6 +632,39 @@ function SVGFallback({
         container.addEventListener('wheel', handleWheelNative, { passive: false });
         return () => container.removeEventListener('wheel', handleWheelNative);
     }, []);
+
+    // Helper: Map for fast node lookups by ID
+    const nodeLookup = useMemo(() => {
+        const map = new Map<string, RingNode>();
+        data?.knowledge_graph.nodes.forEach(n => map.set(n.id, n));
+        return map;
+    }, [data]);
+
+    // Target set for batch dragging (memoized for use in mouseMove)
+    const draggedNodeSet = useMemo(() => {
+        const targets = new Set<string>();
+        if (draggingNode) {
+            targets.add(draggingNode);
+            // If dragging a group center, move members
+            if (nodeGroups.has(draggingNode)) {
+                nodeGroups.get(draggingNode)!.forEach(id => targets.add(id));
+            }
+            // If dragging a selected node, move selection
+            if (multiSelectedNodeIds.has(draggingNode)) {
+                multiSelectedNodeIds.forEach(id => {
+                    targets.add(id);
+                    if (nodeGroups.has(id)) {
+                        nodeGroups.get(id)!.forEach(mid => targets.add(mid));
+                    }
+                });
+            }
+        } else if (draggingGroup) {
+            targets.add(draggingGroup);
+            const members = nodeGroups.get(draggingGroup);
+            if (members) members.forEach(id => targets.add(id));
+        }
+        return targets;
+    }, [draggingNode, draggingGroup, nodeGroups, multiSelectedNodeIds]);
 
     // Calculate node positions - NON-OVERLAPPING RADIAL LAYOUT
     // Dynamic ring sizing based on node count to prevent overlaps
@@ -977,6 +1017,47 @@ function SVGFallback({
         return { nodePositions: positions, ringRadii: radii, uniqueNodes: nodes, idRedirects };
     }, [data, center, visibleNodeCount, layoutParams, activePathologies, hiddenNodeTypes, hiddenNodes, getNodeTypes, layoutMode, dragOffsets]);
 
+    // Calculate bounding boxes for groups for visual rectangle rendering
+    const groupBoundingBoxes = useMemo(() => {
+        const boxes = new Map<string, { x: number, y: number, width: number, height: number, label: string }>();
+
+        nodeGroups.forEach((members, centerId) => {
+            // Get all node IDs in this group (center + members)
+            const allGroupNodeIds = [centerId, ...Array.from(members)];
+
+            // Calculate bounding box from all node positions
+            let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+            let validNodeCount = 0;
+
+            allGroupNodeIds.forEach(nodeId => {
+                const pos = nodePositions.get(nodeId);
+                if (pos) {
+                    minX = Math.min(minX, pos.x);
+                    minY = Math.min(minY, pos.y);
+                    maxX = Math.max(maxX, pos.x);
+                    maxY = Math.max(maxY, pos.y);
+                    validNodeCount++;
+                }
+            });
+
+            // Only create box if we have valid nodes
+            if (validNodeCount > 0 && minX !== Infinity) {
+                const padding = 35; // Padding around nodes
+                const centerNode = data?.knowledge_graph.nodes.find(n => n.id === centerId);
+
+                boxes.set(centerId, {
+                    x: minX - padding,
+                    y: minY - padding,
+                    width: (maxX - minX) + padding * 2,
+                    height: (maxY - minY) + padding * 2,
+                    label: centerNode?.name || `Groupe (${validNodeCount})`
+                });
+            }
+        });
+
+        return boxes;
+    }, [nodeGroups, nodePositions, data]);
+
     // Handle drag/pan state
     const handleMouseDown = useCallback((e: React.MouseEvent) => {
         // If we are already dragging a node (set via onMouseDown on the node itself), don't pan
@@ -1008,20 +1089,16 @@ function SVGFallback({
 
     const handleMouseMove = useCallback((e: React.MouseEvent) => {
         // 1. Handle Node Dragging
-        if (draggingNode) {
+        if (draggingNode || draggingGroup) {
             e.preventDefault();
             e.stopPropagation();
 
-            // Calculate new offset in SVG coordinates
-            // We need to map screen delta to SVG delta (considering zoom)
             const rect = containerRef.current?.getBoundingClientRect();
             if (!rect) return;
 
-            // Calculate delta
             const deltaX = e.movementX / zoom;
             const deltaY = e.movementY / zoom;
 
-            // Mark that actual dragging occurred (to prevent click triggering)
             if (Math.abs(deltaX) > 0.5 || Math.abs(deltaY) > 0.5) {
                 didDragRef.current = true;
             }
@@ -1029,55 +1106,28 @@ function SVGFallback({
             setDragOffsets(prev => {
                 const newMap = new Map(prev);
 
-                // Apply delta to the dragged node
-                const current = prev.get(draggingNode) || { x: 0, y: 0 };
-                newMap.set(draggingNode, {
-                    x: current.x + deltaX,
-                    y: current.y + deltaY
-                });
+                draggedNodeSet.forEach(nodeId => {
+                    // radial layout optimization: skip if parent is also moving
+                    if (layoutMode === 'radial') {
 
-                // If this node is a group center, also move all group members
-                if (nodeGroups.has(draggingNode)) {
-                    const members = nodeGroups.get(draggingNode)!;
-                    members.forEach(memberId => {
-                        const memberCurrent = prev.get(memberId) || { x: 0, y: 0 };
-                        newMap.set(memberId, {
-                            x: memberCurrent.x + deltaX,
-                            y: memberCurrent.y + deltaY
-                        });
-                    });
-                }
-
-                // NEW: Handle Multi-Selection Dragging
-                // If the dragged node is part of a selection, move ALL selected nodes
-                if (multiSelectedNodeIds.has(draggingNode)) {
-                    multiSelectedNodeIds.forEach(selectedId => {
-                        if (selectedId === draggingNode) return; // Already handled
-
-                        const current = prev.get(selectedId) || { x: 0, y: 0 };
-                        newMap.set(selectedId, {
-                            x: current.x + deltaX,
-                            y: current.y + deltaY
-                        });
-
-                        // Also handle if the selected node is a group center
-                        if (nodeGroups.has(selectedId)) {
-                            const members = nodeGroups.get(selectedId)!;
-                            members.forEach(memberId => {
-                                const memberCurrent = prev.get(memberId) || { x: 0, y: 0 };
-                                newMap.set(memberId, {
-                                    x: memberCurrent.x + deltaX,
-                                    y: memberCurrent.y + deltaY
-                                });
-                            });
+                        const node = nodeLookup.get(nodeId);
+                        if (node && node.ring !== 0 && node.parent_pathology) {
+                            const parent = Array.from(nodeLookup.values()).find(
+                                n => n.ring === 0 && n.name === node.parent_pathology
+                            );
+                            if (parent && draggedNodeSet.has(parent.id)) return;
                         }
-                    });
-                }
+                    }
+                    const current = prev.get(nodeId) || { x: 0, y: 0 };
+                    newMap.set(nodeId, { x: current.x + deltaX, y: current.y + deltaY });
+                });
 
                 return newMap;
             });
             return;
         }
+
+
 
         // 2. Handle Selection Drawing
         if (isSelecting) {
@@ -1094,7 +1144,7 @@ function SVGFallback({
         if (isPanning) {
             setPan({ x: e.clientX - panStart.x, y: e.clientY - panStart.y });
         }
-    }, [isPanning, panStart, draggingNode, zoom, nodeGroups, isSelecting]);
+    }, [isPanning, panStart, draggingNode, draggingGroup, zoom, nodeGroups, isSelecting, data, layoutMode, multiSelectedNodeIds]);
 
     const handleMouseUp = useCallback((e: React.MouseEvent | MouseEvent | any) => {
         // Handle explicit event passing or fallback
@@ -1185,7 +1235,8 @@ function SVGFallback({
 
         setIsPanning(false);
         setDraggingNode(null); // Stop dragging node
-    }, [isSelecting, selectionPoints, selectionMode, zoom, pan, nodePositions, hiddenNodes]);
+        setDraggingGroup(null); // Stop dragging group
+    }, [isSelecting, selectionPoints, selectionMode, zoom, pan, nodePositions, hiddenNodes, draggingGroup]);
 
     // Calculate node positions - NON-OVERLAPPING RADIAL LAYOUT
     // Dynamic ring sizing based on node count to prevent overlaps
@@ -1398,6 +1449,73 @@ function SVGFallback({
                                 transition: 'opacity 0.3s ease-out'
                             }}
                         />
+                    );
+                })}
+
+                {/* GROUP VISUAL RECTANGLES - Render boxes around grouped nodes */}
+                {Array.from(groupBoundingBoxes.entries()).map(([centerId, box]) => {
+                    const isBeingDragged = draggingGroup === centerId;
+                    const members = nodeGroups.get(centerId);
+                    const nodeCount = (members?.size || 0) + 1;
+
+                    return (
+                        <g key={`group-${centerId}`}>
+                            {/* Glow effect behind the rectangle */}
+                            <rect
+                                x={box.x - 4}
+                                y={box.y - 4}
+                                width={box.width + 8}
+                                height={box.height + 8}
+                                rx={16}
+                                ry={16}
+                                fill="none"
+                                stroke="#a855f7"
+                                strokeWidth="8"
+                                opacity={isBeingDragged ? 0.4 : 0.15}
+                                filter="url(#glow)"
+                            />
+                            {/* Main rectangle */}
+                            <rect
+                                x={box.x}
+                                y={box.y}
+                                width={box.width}
+                                height={box.height}
+                                rx={12}
+                                ry={12}
+                                fill={isBeingDragged ? "rgba(168, 85, 247, 0.15)" : "rgba(168, 85, 247, 0.06)"}
+                                stroke="#a855f7"
+                                strokeWidth={isBeingDragged ? 3 : 2}
+                                strokeDasharray={isBeingDragged ? "none" : "8 4"}
+                                opacity={isBeingDragged ? 1 : 0.8}
+                                style={{ cursor: 'grab', transition: 'fill 0.2s, stroke-width 0.2s' }}
+                                onMouseDown={(e) => {
+                                    e.stopPropagation();
+                                    setDraggingGroup(centerId);
+                                }}
+                            />
+                            {/* Group label at top */}
+                            <rect
+                                x={box.x + 8}
+                                y={box.y - 10}
+                                width={Math.min(box.label.length * 7 + 40, box.width - 16)}
+                                height={20}
+                                rx={10}
+                                ry={10}
+                                fill="#1f2937"
+                                stroke="#a855f7"
+                                strokeWidth="1"
+                                opacity="0.95"
+                            />
+                            <text
+                                x={box.x + 28}
+                                y={box.y + 4}
+                                fill="#a855f7"
+                                fontSize="10"
+                                fontWeight="600"
+                            >
+                                📦 {box.label.slice(0, 20)}{box.label.length > 20 ? '...' : ''} ({nodeCount})
+                            </text>
+                        </g>
                     );
                 })}
 
@@ -2886,14 +3004,18 @@ function SVGFallback({
                                 {/* Group Action */}
                                 <button
                                     onClick={() => {
-                                        // Pick the first node as center for now
-                                        const centerId = Array.from(multiSelectedNodeIds)[0];
-                                        if (onStartGroupCreation) {
+                                        // Pick the first node as center
+                                        const allIds = Array.from(multiSelectedNodeIds);
+                                        const centerId = allIds[0];
+                                        const memberIds = allIds.slice(1);
+
+                                        if (onCreateGroupWithNodes && allIds.length >= 2) {
+                                            // Use batch group creation to add all nodes at once
+                                            onCreateGroupWithNodes(centerId, memberIds);
+                                            setMultiSelectedNodeIds(new Set());
+                                        } else if (onStartGroupCreation) {
+                                            // Fallback to old behavior
                                             onStartGroupCreation(centerId);
-                                            // Add others
-                                            const others = Array.from(multiSelectedNodeIds).filter(id => id !== centerId);
-                                            // This requires logic to add multiple, currently one by one
-                                            // For now, let's just trigger the mode
                                         }
                                     }}
                                     className="flex items-center gap-3 px-3 py-2 bg-gray-800 hover:bg-gray-700/80 rounded-lg text-white text-sm transition-all text-left"
@@ -3327,9 +3449,11 @@ function LinkExplanationModal({ isOpen, onClose, edge, sourceNode, targetNode, m
         }
     };
 
-    // Determine if this is a multi-node analysis
+    // Determine if this is a multi-node analysis (more than 2 nodes selected)
     const isMultiNodeAnalysis = multiNodes && multiNodes.length > 2;
-    const allNodeNames = isMultiNodeAnalysis ? multiNodes.map(n => n.name) : [sourceNode?.name, targetNode?.name].filter(Boolean);
+    const allNodeNames = multiNodes && multiNodes.length >= 2
+        ? multiNodes.map(n => n.name)
+        : [sourceNode?.name, targetNode?.name].filter(Boolean);
 
     useEffect(() => {
         if (isOpen && edge && sourceNode && targetNode) {
@@ -3344,16 +3468,22 @@ function LinkExplanationModal({ isOpen, onClose, edge, sourceNode, targetNode, m
         setExplanation('');
         setFromCache(false);
 
-        // Normalize node names for consistent cache lookup (alphabetical order)
-        const [normSource, normTarget] = [sourceNode.name, targetNode.name].sort();
+        // Normalize node names for consistent cache lookup
+        // For multi-node analysis, create a unique cache key from all node names sorted alphabetically
+        const allNodesToAnalyze = isMultiNodeAnalysis && multiNodes
+            ? multiNodes.map(n => n.name).sort()
+            : [sourceNode.name, targetNode.name].sort();
+        const cacheKey = allNodesToAnalyze.join('|');
+        const [normSource, normTarget] = [allNodesToAnalyze[0], allNodesToAnalyze[allNodesToAnalyze.length - 1]];
 
         try {
             // Step 1: Check cache first
+            // For multi-node, we use source_name to store the full cache key
             const { data: cached, error: cacheError } = await supabase
                 .from('link_explanations_cache' as any)
                 .select('id, explanation')
-                .eq('source_name', normSource)
-                .eq('target_name', normTarget)
+                .eq('source_name', isMultiNodeAnalysis ? cacheKey : normSource)
+                .eq('target_name', isMultiNodeAnalysis ? 'MULTI_NODE' : normTarget)
                 .eq('pathology', pathology)
                 .maybeSingle();
 
@@ -3479,13 +3609,14 @@ Fournis:
             setExplanation(aiExplanation);
 
             // Step 3: Save to cache for future use (fire and forget)
+            // For multi-node analysis, use cacheKey as source_name and 'MULTI_NODE' as target_name
             supabase
                 .from('link_explanations_cache' as any)
                 .upsert({
-                    source_name: normSource,
-                    target_name: normTarget,
+                    source_name: isMultiNodeAnalysis ? cacheKey : normSource,
+                    target_name: isMultiNodeAnalysis ? 'MULTI_NODE' : normTarget,
                     pathology: pathology,
-                    relationship: edge.relationship,
+                    relationship: isMultiNodeAnalysis ? `Multi-node analysis (${allNodesToAnalyze.length} nodes)` : edge.relationship,
                     evidence_grade: edge.evidence_grade,
                     explanation: aiExplanation
                 }, {
@@ -3521,9 +3652,14 @@ Fournis:
                                 <ExternalLink className="w-5 h-5" style={{ color }} />
                             </div>
                             <div>
-                                <h3 className="text-lg font-bold text-white">Analyse du lien</h3>
+                                <h3 className="text-lg font-bold text-white">
+                                    {isMultiNodeAnalysis ? 'Analyse multi-nœuds' : 'Analyse du lien'}
+                                </h3>
                                 <p className="text-sm text-gray-400">
-                                    {sourceNode.name} → {targetNode.name}
+                                    {isMultiNodeAnalysis && multiNodes
+                                        ? `${multiNodes.length} nœuds: ${multiNodes.slice(0, 3).map(n => n.name).join(', ')}${multiNodes.length > 3 ? ` +${multiNodes.length - 3} autres` : ''}`
+                                        : `${sourceNode.name} → ${targetNode.name}`
+                                    }
                                 </p>
                             </div>
                         </div>
@@ -5343,6 +5479,43 @@ IMPORTANT: Retourne UNIQUEMENT les IDs des nœuds qui forment le schéma thérap
                                                     ➕ Ajouter
                                                 </button>
                                                 <button
+                                                    onClick={() => {
+                                                        const membersSet = nodeGroups.get(centerId);
+                                                        const allGroupNodeIds = [centerId, ...Array.from(membersSet || [])];
+
+                                                        console.log(`[Group Analysis] Analyzing group ${centerId} with ${allGroupNodeIds.length} nodes:`, allGroupNodeIds);
+
+                                                        const nodesToAnalyze = data?.knowledge_graph.nodes.filter(n =>
+                                                            allGroupNodeIds.includes(n.id)
+                                                        );
+
+                                                        console.log(`[Group Analysis] Found ${nodesToAnalyze?.length} nodes in graph data`);
+
+                                                        if (nodesToAnalyze && nodesToAnalyze.length >= 2) {
+                                                            const syntheticEdge: RingEdge = {
+                                                                id: `multi-group-${Date.now()}`,
+                                                                source: nodesToAnalyze[0].id,
+                                                                target: nodesToAnalyze[nodesToAnalyze.length - 1].id,
+                                                                relationship: `Analyse multi-noeuds du groupe`,
+                                                                evidence_grade: 'D',
+                                                                translation_gap: false,
+                                                                weight: 0.5
+                                                            };
+                                                            handleEdgeSelect(syntheticEdge, nodesToAnalyze[0], nodesToAnalyze[nodesToAnalyze.length - 1], nodesToAnalyze);
+                                                        } else {
+                                                            console.warn(`[Group Analysis] Not enough nodes to analyze. Count: ${nodesToAnalyze?.length}`);
+                                                            // Fallback if we only have 1 node, try to show at least that node's info
+                                                            if (nodesToAnalyze && nodesToAnalyze.length === 1) {
+                                                                setSelectedNodeId(nodesToAnalyze[0].id);
+                                                            }
+                                                        }
+                                                    }}
+                                                    className="flex-1 px-2 py-1 bg-amber-600/30 hover:bg-amber-600/50 text-amber-300 text-[9px] rounded transition-colors"
+                                                    title="Analyser le groupe"
+                                                >
+                                                    ✨ Analyser
+                                                </button>
+                                                <button
                                                     onClick={() => dissolveGroup(centerId)}
                                                     className="flex-1 px-2 py-1 bg-red-600/30 hover:bg-red-600/50 text-red-300 text-[9px] rounded transition-colors"
                                                     title="Dissoudre le groupe"
@@ -5765,6 +5938,7 @@ IMPORTANT: Retourne UNIQUEMENT les IDs des nœuds qui forment le schéma thérap
                             currentGroupCenter={currentGroupCenter}
                             onAddToGroup={addNodeToGroup}
                             onStartGroupCreation={startGroupCreation}
+                            onCreateGroupWithNodes={createGroupWithNodes}
                             onFinishGroupCreation={finishGroupCreation}
                             onDissolveGroup={dissolveGroup}
                             customNodePositions={customNodePositions}

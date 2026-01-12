@@ -18,6 +18,7 @@ interface CausalQuery {
     context?: {
         sourceNode?: string;
         targetNode?: string;
+        multiNodes?: { name: string; type: string }[]; // For multi-node analysis
         relationship?: string;
         evidence_grade?: string;
         pathology?: string;
@@ -83,7 +84,64 @@ async function generateLinkExplanationWithClaude(
     context: CausalQuery['context'],
     claudeApiKey: string
 ): Promise<string> {
-    const systemPrompt = `Tu es un expert médical clinicien senior spécialisé dans la synthèse des connaissances médicales.
+    // Check if this is a multi-node analysis
+    const isMultiNode = context?.multiNodes && context.multiNodes.length > 2;
+
+    let systemPrompt: string;
+    let userPrompt: string;
+
+    if (isMultiNode) {
+        // Multi-node analysis prompt
+        systemPrompt = `Tu es un expert médical clinicien senior spécialisé dans l'analyse systémique des relations entre concepts médicaux.
+    Ta mission est de produire une ANALYSE MULTI-NOEUDS COMPLÈTE et ACTIONNABLE des relations entre TOUS les concepts médicaux fournis.
+
+    Règles:
+    - Analyse TOUTES les relations entre TOUS les concepts fournis, pas seulement des paires.
+    - Identifie les synergies, antagonismes et interactions croisées.
+    - Fournis une vision holistique des implications thérapeutiques.
+    - Ton ton doit être professionnel mais pédagogique.
+
+    FORMAT DE RÉPONSE OBLIGATOIRE :
+
+    ## 🔬 Analyse Multi-Concepts (${context.multiNodes!.length} nœuds)
+
+    **Contexte pathologique:** [Pathologie]
+
+    ### Vue d'ensemble
+    [Paragraphe décrivant la relation globale entre tous ces concepts]
+
+    ### Interactions Clés
+    •   [Interaction 1]: [Description] 🔗
+    •   [Interaction 2]: [Description] ⚠️
+    •   [Interaction 3]: [Description] ✅
+
+    ### Synergies Thérapeutiques
+    [Description des combinaisons bénéfiques potentielles]
+
+    ### Contre-indications et Risques Croisés
+    [Description des risques quand ces concepts sont combinés]
+
+    ### Recommandation Clinique Intégrée
+    [Recommandation finale tenant compte de TOUS les concepts]
+
+    IMPORTANT:
+    - Utilise des puces (•) pour les listes.
+    - Mets les emojis à la fin des points clés.
+    - Analyse les ${context.multiNodes!.length} concepts ENSEMBLE, pas séparément.`;
+
+        userPrompt = `Génère une ANALYSE MULTI-NOEUDS COMPLÈTE des relations entre ces ${context.multiNodes!.length} concepts médicaux:
+
+${context.multiNodes!.map((n, i) => `${i + 1}. **${n.name}** (${n.type})`).join('\n')}
+
+**Contexte pathologique:** ${context?.pathology || 'Non spécifié'}
+
+${query}
+
+Analyse TOUTES les interactions entre ces concepts et fournis une recommandation clinique globale.`;
+
+    } else {
+        // Standard 2-node analysis prompt (original)
+        systemPrompt = `Tu es un expert médical clinicien senior spécialisé dans la synthèse des connaissances médicales.
     Ta mission est de produire une SYNTHÈSE COMPLÈTE et ACTIONNABLE de la relation entre deux concepts médicaux.
 
     Règles:
@@ -111,7 +169,7 @@ async function generateLinkExplanationWithClaude(
     - Mets les emojis à la fin des paragraphes correspondants.
     - La section "Suggestions" doit être numérotée 1, 2, 3.`;
 
-    const userPrompt = `Génère une SYNTHÈSE MÉDICALE COMPLÈTE sur la relation entre:
+        userPrompt = `Génère une SYNTHÈSE MÉDICALE COMPLÈTE sur la relation entre:
 
 **Concept 1:** ${context?.sourceNode || 'Non spécifié'}
 **Concept 2:** ${context?.targetNode || 'Non spécifié'}
@@ -123,7 +181,7 @@ async function generateLinkExplanationWithClaude(
 ${query}
 
 Produis une synthèse exhaustive et médicalement rigoureuse de cette relation.`;
-
+    }
 
     try {
         const aiResponse = await callAI(
@@ -131,7 +189,7 @@ Produis une synthèse exhaustive et médicalement rigoureuse de cette relation.`
             userPrompt,
             {
                 model: 'claude-3-5-sonnet-20240620', // Defaulting to robust model
-                maxTokens: 2000
+                maxTokens: isMultiNode ? 4000 : 2000 // More tokens for multi-node analysis
             }
         );
 
@@ -171,9 +229,15 @@ serve(async (req) => {
                 try {
                     // Check if this is a link explanation request (has source/target/pathology)
                     const isLinkExplanation = explanationContext.sourceNode && explanationContext.targetNode && explanationContext.pathology;
+                    // Check if this is a multi-node analysis (more than 2 nodes)
+                    const isMultiNodeAnalysis = explanationContext.multiNodes && explanationContext.multiNodes.length > 2;
 
-                    if (isLinkExplanation) {
-                        console.log(`[CAUSAL-REASONING] Generating JSON explanation for ${explanationContext.sourceNode} -> ${explanationContext.targetNode}`);
+                    if (isLinkExplanation || isMultiNodeAnalysis) {
+                        if (isMultiNodeAnalysis) {
+                            console.log(`[CAUSAL-REASONING] Generating MULTI-NODE analysis for ${explanationContext.multiNodes!.length} nodes`);
+                        } else {
+                            console.log(`[CAUSAL-REASONING] Generating JSON explanation for ${explanationContext.sourceNode} -> ${explanationContext.targetNode}`);
+                        }
                         const explanation = await generateLinkExplanationWithClaude(
                             explanationQuery,
                             explanationContext,
@@ -182,7 +246,9 @@ serve(async (req) => {
 
                         return new Response(JSON.stringify({
                             analysis: explanation,
-                            explanation: explanation // Support both field names for compatibility
+                            explanation: explanation, // Support both field names for compatibility
+                            isMultiNode: isMultiNodeAnalysis,
+                            nodeCount: isMultiNodeAnalysis ? explanationContext.multiNodes!.length : 2
                         }), {
                             headers: { ...corsHeaders, "Content-Type": "application/json" }
                         });

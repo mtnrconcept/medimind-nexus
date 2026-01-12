@@ -2,6 +2,7 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { callAI } from "../_shared/ai-client.ts";
 import { buildMedicationCatalog, isInteractionDocumented } from "./medication-catalog.ts";
+import { filterMedicationsByPathology, buildPathologyPrompt, buildPathologyUserPrompt, PathologyMapping } from "./pathology-filter.ts";
 
 const corsHeaders = {
     "Access-Control-Allow-Origin": "*",
@@ -38,7 +39,7 @@ serve(async (req) => {
         if (!CLAUDE_API_KEY) throw new Error("CLAUDE_API_KEY non configurée");
 
         const supabase = createClient(supabaseUrl, supabaseKey);
-        const { action, run_id, substance_index } = await req.json();
+        const { action, run_id, substance_index, target_pathology } = await req.json();
 
         // ============================================
         // ACTION: START - Create a new analysis run
@@ -67,7 +68,16 @@ serve(async (req) => {
 
             console.log(`✅ Catalog built: ${comprehensiveCatalog.length} total medications`);
 
-            const entities = comprehensiveCatalog;
+            // Apply pathology filter if specified
+            let entities = comprehensiveCatalog;
+            let pathologyContext: PathologyMapping | null = null;
+
+            if (target_pathology) {
+                const filterResult = filterMedicationsByPathology(comprehensiveCatalog, target_pathology);
+                entities = filterResult.filtered;
+                pathologyContext = filterResult.pathologyContext;
+                console.log(`🎯 Pathology targeting: "${target_pathology}" → ${pathologyContext?.name || 'custom'}`);
+            }
 
             if (entities.length < 2) {
                 return new Response(JSON.stringify({
@@ -79,7 +89,7 @@ serve(async (req) => {
             // Calculate total pairs
             const totalPairs = (entities.length * (entities.length - 1)) / 2;
 
-            // Create analysis run
+            // Create analysis run (target_pathology stored in response, not DB until migration applied)
             const { data: run, error: runError } = await supabase
                 .from("cde_analysis_runs")
                 .insert({
@@ -99,7 +109,13 @@ serve(async (req) => {
                 run_id: run.id,
                 total_substances: entities.length,
                 total_pairs: totalPairs,
-                substances: entities.slice(0, 50).map((e: any) => e.name)
+                substances: entities.slice(0, 50).map((e: any) => e.name),
+                target_pathology: target_pathology || null,
+                pathology_context: pathologyContext ? {
+                    name: pathologyContext.name,
+                    therapeutic_classes: pathologyContext.therapeuticClasses,
+                    atc_prefixes: pathologyContext.atcPrefixes
+                } : null
             }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
         }
 
@@ -144,7 +160,19 @@ serve(async (req) => {
 
             console.log(`Catalog rebuilt: ${allEntities.length} medications`);
 
-            const entityA = allEntities[substance_index];
+            // Retrieve pathology context from run if set
+            const runPathology = run.target_pathology || null;
+            let pathologyContext: PathologyMapping | null = null;
+            let sortedEntities = allEntities;
+
+            if (runPathology) {
+                const filterResult = filterMedicationsByPathology(allEntities, runPathology);
+                sortedEntities = filterResult.filtered;
+                pathologyContext = filterResult.pathologyContext;
+                console.log(`🎯 Continuing with pathology: "${runPathology}"`);
+            }
+
+            const entityA = sortedEntities[substance_index];
             if (!entityA) {
                 // Analysis complete
                 await supabase
@@ -160,7 +188,7 @@ serve(async (req) => {
             }
 
             // Get remaining entities to test (avoid duplicates)
-            let remainingEntities = allEntities.slice(substance_index + 1);
+            let remainingEntities = sortedEntities.slice(substance_index + 1);
 
             // ============================================
             // FILTER: Remove already-analyzed pairs
@@ -220,18 +248,15 @@ serve(async (req) => {
                     success: true,
                     substance_completed: entityA.name,
                     next_index: substance_index + 1,
-                    skipped: skippedCount,
+                    skipped: totalSkipped,
                     discoveries: []
                 }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
             }
 
-            // Build prompt for Claude - adapt based on entity type
-            const entityType = entityA.node_type;
-            const entitiesList = remainingEntities.slice(0, 25).map((e: any, i: number) =>
-                `${i + 1}. [${e.node_type.toUpperCase()}] ${e.name}`
-            ).join("\n");
+            // Build prompt for Claude - adapt based on entity type and pathology
+            const entityType = entityA.node_type || 'substance';
 
-            const systemPrompt = `Tu es un chercheur en pharmacologie et toxicologie computationnelle. Tu analyses TOUTES les interactions potentielles entre:
+            const baseSystemPrompt = `Tu es un chercheur en pharmacologie et toxicologie computationnelle. Tu analyses TOUTES les interactions potentielles entre:
 - Substances médicamenteuses (principes actifs)
 - Pathologies (maladies, syndromes)
 - Aliments (qui peuvent interagir avec les médicaments)
@@ -247,29 +272,9 @@ Types d'analyses:
 
 Réponds UNIQUEMENT en JSON valide.`;
 
-            const userPrompt = `ENTITÉ PRINCIPALE: [${entityType.toUpperCase()}] ${entityA.name}
-${(entityA.properties as any)?.atc_prefix ? `Code ATC: ${(entityA.properties as any).atc_prefix}` : ''}
-
-ENTITÉS À TESTER:
-${entitiesList}
-
-Analyse chaque paire et retourne un JSON:
-{
-  "pairs": [
-    {
-      "entity_b_name": "nom",
-      "entity_b_type": "substance|pathology|medication",
-      "is_documented": true/false,
-      "discovery_type": "interaction|synergie|contre-indication|risque_combine|aggravation|benefice|aucun",
-      "plausibility_score": 0.0-1.0,
-      "severity": "faible|moderee|elevee|critique",
-      "reasoning": "explication courte du mécanisme",
-      "mechanism": "mécanisme pharmacologique/physiologique",
-      "recommendation": "action recommandée"
-    }
-  ],
-  "synthesis": "résumé des découvertes non documentées pour ${entityA.name}"
-}`;
+            // Apply pathology-aware prompt enhancement
+            const systemPrompt = buildPathologyPrompt(pathologyContext, baseSystemPrompt);
+            const userPrompt = buildPathologyUserPrompt(entityA, remainingEntities, pathologyContext);
 
             // Call Claude (non-streaming for structured response)
             const aiResult = await callAI(

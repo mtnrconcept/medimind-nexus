@@ -122,7 +122,7 @@ export async function callAI(
     }
 
     // Updated to use the most powerful stable model as primary
-    const geminiModel = 'gemini-1.5-pro';
+    const geminiModel = 'gemini-2.0-flash';
     // Fallback to the latest experimental flash model for speed if needed
     const geminiProModel = 'gemini-2.0-flash-exp';
 
@@ -327,7 +327,7 @@ export async function streamAI(
     const GEMINI_API_KEY = Deno.env.get('GEMINI_API_KEY');
 
     const model = options.model || 'claude-3-5-sonnet-20240620';
-    const geminiModel = 'gemini-1.5-pro';
+    const geminiModel = 'gemini-2.0-flash';
     const geminiProModel = 'gemini-2.0-flash-exp';
 
 
