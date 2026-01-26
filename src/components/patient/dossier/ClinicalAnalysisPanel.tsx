@@ -9,6 +9,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '@/integrations/supabase/client';
+import { useAI } from '@/contexts/AIContext';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -61,6 +62,7 @@ interface ClinicalAnalysis {
 }
 
 const ClinicalAnalysisPanel = ({ patientId, refreshTrigger }: ClinicalAnalysisPanelProps) => {
+    const { invokeAI } = useAI();
     const [analysis, setAnalysis] = useState<ClinicalAnalysis | null>(null);
     const [loading, setLoading] = useState(true);
     const [analyzing, setAnalyzing] = useState(false);
@@ -71,8 +73,8 @@ const ClinicalAnalysisPanel = ({ patientId, refreshTrigger }: ClinicalAnalysisPa
 
         try {
             // Call the cross-data-analyzer function
-            const { data, error } = await supabase.functions.invoke('cross-data-analyzer', {
-                body: { patientId, forceRefresh }
+            const { data, error } = await invokeAI('cross-data-analyzer', {
+                patientId, forceRefresh
             });
 
             if (error) throw error;

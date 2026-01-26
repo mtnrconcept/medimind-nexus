@@ -12,6 +12,7 @@
 
 import { useState, useEffect, useMemo } from 'react';
 import { supabase } from '@/integrations/supabase/client';
+import { useAI } from '@/contexts/AIContext';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -107,6 +108,7 @@ const CATEGORY_CONFIG: Record<string, { label: string; icon: typeof FileText; co
 // =====================================================
 
 const DocumentGallery = ({ patientId, onDocumentIntegrated }: DocumentGalleryProps) => {
+    const { invokeAI } = useAI();
     const [documents, setDocuments] = useState<Document[]>([]);
     const [loading, setLoading] = useState(true);
     const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
@@ -401,9 +403,7 @@ const DocumentGallery = ({ patientId, onDocumentIntegrated }: DocumentGalleryPro
                 formData.append('documentId', docData.id);
                 formData.append('patientId', patientId);
 
-                const { error: analysisError } = await supabase.functions.invoke('document-analyzer', {
-                    body: formData,
-                });
+                const { error: analysisError } = await invokeAI('document-analyzer', formData as any);
 
                 if (analysisError) throw analysisError;
                 successCount++;

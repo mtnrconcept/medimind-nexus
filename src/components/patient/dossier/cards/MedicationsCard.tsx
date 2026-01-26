@@ -7,6 +7,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { Badge } from '@/components/ui/badge';
+import { useAI } from '@/contexts/AIContext';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -81,6 +82,7 @@ const ROUTES = [
 
 
 const MedicationsCard = ({ patientId }: MedicationsCardProps) => {
+    const { invokeAI } = useAI();
     const { maxZIndex } = useWindowManager();
     const [medications, setMedications] = useState<Medication[]>([]);
     const [loading, setLoading] = useState(true);
@@ -154,8 +156,8 @@ const MedicationsCard = ({ patientId }: MedicationsCardProps) => {
                 .limit(20);
 
             // 2. Search External (Edge Function)
-            const externalPromise = supabase.functions.invoke('search-medical-concepts', {
-                body: { query, type: 'medication' }
+            const externalPromise = invokeAI('search-medical-concepts', {
+                query, type: 'medication'
             });
 
             const [localRes, externalRes] = await Promise.all([localPromise, externalPromise]);

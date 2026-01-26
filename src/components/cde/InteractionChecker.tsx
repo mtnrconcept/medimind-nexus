@@ -6,6 +6,7 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { AlertCircle, Plus, X, Activity, ShieldCheck, ShieldAlert, Loader2, Globe } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { useAutoTranslation } from '@/contexts/TranslationContext';
+import { useAI } from '@/contexts/AIContext';
 import { toast } from 'sonner';
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem } from '@/components/ui/command';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
@@ -21,6 +22,7 @@ interface Interaction {
 }
 
 const InteractionChecker = () => {
+    const { invokeAI } = useAI();
     const { t } = useAutoTranslation();
     const [open, setOpen] = useState(false);
     const [searchQuery, setSearchQuery] = useState('');
@@ -44,8 +46,8 @@ const InteractionChecker = () => {
             // For now, let's rely on the edge function which can search local + external if configured, 
             // or just external. The edge function "search-medical-concepts" searches NCBI/PubMed/MedGen.
 
-            const { data, error } = await supabase.functions.invoke('search-medical-concepts', {
-                body: { query, type: 'medication' }
+            const { data, error } = await invokeAI('search-medical-concepts', {
+                query, type: 'medication'
             });
 
             if (error) throw error;
@@ -114,13 +116,11 @@ const InteractionChecker = () => {
                             - recommendation (what to do).
                             Only report established interactions. If none, return empty array.`;
 
-            const { data, error } = await supabase.functions.invoke('focused-research', {
-                body: {
-                    query: aiQuery,
-                    context: {
-                        type: 'interaction_check',
-                        drugs: drugNames
-                    }
+            const { data, error } = await invokeAI('focused-research', {
+                query: aiQuery,
+                context: {
+                    type: 'interaction_check',
+                    drugs: drugNames
                 }
             });
 

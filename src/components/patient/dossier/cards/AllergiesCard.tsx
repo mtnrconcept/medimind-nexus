@@ -9,6 +9,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { useAI } from '@/contexts/AIContext';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -75,6 +76,7 @@ const COMMON_ALLERGENS = {
 };
 
 const AllergiesCard = ({ patientId }: AllergiesCardProps) => {
+    const { invokeAI } = useAI();
     const { maxZIndex } = useWindowManager();
     const [allergies, setAllergies] = useState<Allergy[]>([]);
     const [loading, setLoading] = useState(true);
@@ -188,8 +190,8 @@ const AllergiesCard = ({ patientId }: AllergiesCardProps) => {
     const handleMedicationSearch = useCallback(async (query: string) => {
         if (query.length < 3) return;
         try {
-            const { data } = await supabase.functions.invoke('search-medical-concepts', {
-                body: { query, type: 'medication' }
+            const { data } = await invokeAI('search-medical-concepts', {
+                query, type: 'medication'
             });
             if (data?.concepts) {
                 const newOptions: SelectOption[] = data.concepts.map((c: NCBIConcept) => ({

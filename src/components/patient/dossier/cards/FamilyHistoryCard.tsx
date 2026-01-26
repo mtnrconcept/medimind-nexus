@@ -9,6 +9,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { useAI } from '@/contexts/AIContext';
 import { Textarea } from '@/components/ui/textarea';
 import {
     Select,
@@ -98,6 +99,7 @@ const COMMON_FAMILY_CONDITIONS = [
 const RISK_CONDITIONS = ['Cancer', 'Maladie coronarienne', 'Infarctus', 'AVC', 'Diabète', 'Alzheimer'];
 
 const FamilyHistoryCard = ({ patientId }: FamilyHistoryCardProps) => {
+    const { invokeAI } = useAI();
     const { maxZIndex } = useWindowManager();
     const [history, setHistory] = useState<FamilyHistory[]>([]);
     const [loading, setLoading] = useState(true);
@@ -182,8 +184,8 @@ const FamilyHistoryCard = ({ patientId }: FamilyHistoryCardProps) => {
     const handlePathologySearch = async (query: string) => {
         if (query.length < 3) return;
         try {
-            const { data } = await supabase.functions.invoke('search-medical-concepts', {
-                body: { query, type: 'pathology' }
+            const { data } = await invokeAI('search-medical-concepts', {
+                query, type: 'pathology'
             });
             if (data?.concepts) {
                 const newOptions: SelectOption[] = data.concepts.map((c: NCBIConcept) => ({

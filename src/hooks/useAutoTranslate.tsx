@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { supabase } from '@/integrations/supabase/client';
+import { useAI } from '@/contexts/AIContext';
 
 // Cache global des traductions pour persister entre les rendus
 const globalTranslationCache: Record<string, Record<string, string>> = {};
@@ -70,12 +71,11 @@ export function useAutoTranslate(options: UseAutoTranslateOptions = {}) {
             for (let i = 0; i < textsToTranslate.length; i += batchSize) {
                 const batch = textsToTranslate.slice(i, i + batchSize);
 
-                const { data, error } = await supabase.functions.invoke('translate', {
-                    body: {
-                        texts: batch,
-                        targetLang: currentLang,
-                        sourceLang: 'fr'
-                    }
+                const { invokeAI } = useAI();
+                const { data, error } = await invokeAI('translate', {
+                    texts: batch,
+                    targetLang: currentLang,
+                    sourceLang: 'fr'
                 });
 
                 if (error) {

@@ -16,6 +16,7 @@ import { AlertTriangle, ShieldCheck, Search, Loader2, Globe } from 'lucide-react
 
 import { supabase } from '@/integrations/supabase/client';
 import { useAutoTranslation } from '@/contexts/TranslationContext';
+import { useAI } from '@/contexts/AIContext';
 import { toast } from 'sonner';
 
 interface InteractionDialogProps {
@@ -39,6 +40,7 @@ interface Medication {
 }
 
 export function InteractionDialog({ open, onOpenChange, node }: InteractionDialogProps) {
+    const { invokeAI } = useAI();
     const { t } = useAutoTranslation();
     const [interactions, setInteractions] = useState<Interaction[]>([]);
     const [safeMeds, setSafeMeds] = useState<Medication[]>([]);
@@ -131,15 +133,13 @@ export function InteractionDialog({ open, onOpenChange, node }: InteractionDialo
         toast.info("Recherche dans la base mondiale DrugBank...");
 
         try {
-            const response = await supabase.functions.invoke('focused-research', {
-                body: {
-                    query: `Find known drug interactions for ${node.name}. 
-                           Return a JSON array with fields: interacting_drug, severity (high/moderate/low), description, recommendation.
-                           Focus on clinically significant interactions. Limit to 10.`,
-                    context: {
-                        node: node.name,
-                        type: node.node_type
-                    }
+            const response = await invokeAI('focused-research', {
+                query: `Find known drug interactions for ${node.name}. 
+                       Return a JSON array with fields: interacting_drug, severity (high/moderate/low), description, recommendation.
+                       Focus on clinically significant interactions. Limit to 10.`,
+                context: {
+                    node: node.name,
+                    type: node.node_type
                 }
             });
 

@@ -18,6 +18,7 @@ import {
     Link as LinkIcon
 } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
+import { useAI } from '@/contexts/AIContext';
 import { toast } from 'sonner';
 import RadialRingsModal from '@/components/cde/RadialRingsModal';
 import { useTheme } from 'next-themes';
@@ -1894,19 +1895,18 @@ function AdversarialReview({ hypothesis, onReviewComplete }: { hypothesis?: Hypo
     const [review, setReview] = useState<any>(null);
     const [isLoading, setIsLoading] = useState(false);
 
+    const { invokeAI } = useAI();
     const runAdversarialReview = async () => {
         if (!hypothesis) return;
 
         setIsLoading(true);
         try {
-            const { data, error } = await supabase.functions.invoke('adversarial-reviewer', {
-                body: {
-                    hypothesis: {
-                        hypothesis_id: hypothesis.hypothesis_id,
-                        statement: hypothesis.statement,
-                        predictions: hypothesis.predictions,
-                        scores: hypothesis.scores
-                    }
+            const { data, error } = await invokeAI('adversarial-reviewer', {
+                hypothesis: {
+                    hypothesis_id: hypothesis.hypothesis_id,
+                    statement: hypothesis.statement,
+                    predictions: hypothesis.predictions,
+                    scores: hypothesis.scores
                 }
             });
 
@@ -2344,11 +2344,12 @@ function AlertsPanel() {
     const [isLoading, setIsLoading] = useState(false);
     const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
 
+    const { invokeAI } = useAI();
     const fetchAlerts = useCallback(async () => {
         setIsLoading(true);
         try {
-            const { data, error } = await supabase.functions.invoke('continuous-discovery-pipeline', {
-                body: { action: 'get_alerts' }
+            const { data, error } = await invokeAI('continuous-discovery-pipeline', {
+                action: 'get_alerts'
             });
 
             if (error) throw error;
@@ -2932,21 +2933,20 @@ const DiscoveryPlatform = () => {
         }
     };
 
+    const { invokeAI } = useAI();
     // Search handler - calls discovery-platform Edge Function
     const handleSearch = async (query: string, filters: any) => {
         setIsSearching(true);
         try {
-            const { data, error } = await supabase.functions.invoke('discovery-platform', {
-                body: {
-                    action: 'search',
-                    query,
-                    maxResults: 20,
-                    sources: filters.type === 'trial'
-                        ? ['clinicaltrials']
-                        : filters.type === 'article'
-                            ? ['pubmed', 'europepmc']
-                            : ['pubmed', 'europepmc', 'clinicaltrials']
-                }
+            const { data, error } = await invokeAI('discovery-platform', {
+                action: 'search',
+                query,
+                maxResults: 20,
+                sources: filters.type === 'trial'
+                    ? ['clinicaltrials']
+                    : filters.type === 'article'
+                        ? ['pubmed', 'europepmc']
+                        : ['pubmed', 'europepmc', 'clinicaltrials']
             });
 
             if (error) throw error;
@@ -3051,12 +3051,11 @@ const DiscoveryPlatform = () => {
                 ? lastSearchAbstracts.join('\n\n')
                 : searchResults.map(r => `${r.title}\n${r.abstract || ''}`).join('\n\n');
 
-            const { data, error } = await supabase.functions.invoke('knowledge-extractor', {
-                body: {
-                    text: textToAnalyze.slice(0, 15000), // Limit text size
-                    use_claude: true,
-                    include_relations: true
-                }
+            const { invokeAI } = useAI();
+            const { data, error } = await invokeAI('knowledge-extractor', {
+                text: textToAnalyze.slice(0, 15000), // Limit text size
+                use_claude: true,
+                include_relations: true
             });
 
             if (error) throw error;
@@ -3175,8 +3174,8 @@ const DiscoveryPlatform = () => {
 
             // Trigger the background processor explicitly from the client 
             // to ensure it starts even if the fire-and-forget fetch in the edge function fails
-            supabase.functions.invoke('hypothesis-processor', {
-                body: { job_id: jobId }
+            invokeAI('hypothesis-processor', {
+                job_id: jobId
             }).catch(e => console.warn('Client-side processor trigger warning:', e));
 
             // Subscribe to BROADCAST channel for live streaming text
@@ -3361,12 +3360,10 @@ const DiscoveryPlatform = () => {
         setIsExpandingGraph(true);
 
         try {
-            const { data, error } = await supabase.functions.invoke('expand-graph', {
-                body: {
-                    center_node: node.label,
-                    existing_nodes: knowledgeGraph.nodes.map(n => n.label),
-                    node_type: node.type
-                }
+            const { data, error } = await invokeAI('expand-graph', {
+                center_node: node.label,
+                existing_nodes: knowledgeGraph.nodes.map(n => n.label),
+                node_type: node.type
             });
 
             if (error) throw error;

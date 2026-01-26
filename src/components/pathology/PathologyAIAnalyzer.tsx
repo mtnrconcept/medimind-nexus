@@ -3,6 +3,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
+import { useAI } from '@/contexts/AIContext';
 import { supabase } from '@/integrations/supabase/client';
 import {
   Brain,
@@ -70,15 +71,14 @@ const PathologyAIAnalyzer = ({ pathologyId, pathologyName }: PathologyAIAnalyzer
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<AnalysisResult | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const { invokeAI } = useAI();
 
   const runAnalysis = async () => {
     setLoading(true);
     setError(null);
 
     try {
-      const { data, error: fnError } = await supabase.functions.invoke('pathology-analyzer', {
-        body: { pathologyId },
-      });
+      const { data, error: fnError } = await invokeAI('pathology-analyzer', { pathologyId });
 
       if (fnError) throw fnError;
       if (data?.error) throw new Error(data.error);

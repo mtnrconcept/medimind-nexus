@@ -62,6 +62,7 @@ import {
     FileText,
 } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
+import { useAI } from '@/contexts/AIContext';
 import { toast } from 'sonner';
 
 // Types étendus avec severity/toxicity
@@ -261,8 +262,9 @@ export function RiskNetworkGraph({
     analysisResultFromParent,
     onAnalysisResultChange,
 }: RiskNetworkGraphProps = {}) {
+    const { invokeAI } = useAI();
     // États
-    const [nodes, setNodes, onNodesChange] = useNodesState([]);
+    const [nodes, setNodes, onNodesChangeOriginal] = useNodesState([]);
     const [edges, setEdges, onEdgesChange] = useEdgesState([]);
     const [searchTerm, setSearchTerm] = useState('');
     const [activeTab, setActiveTab] = useState<'pathology' | 'symptom' | 'treatment' | 'medication'>('pathology');
@@ -344,6 +346,25 @@ export function RiskNetworkGraph({
         return score;
     }, []);
 
+    // Helper pour obtenir le label d'adéquation selon les types d'entités
+    const getAppropriatenessLabel = useCallback((link: CausalLink) => {
+        const isMedicationInvolved = link.fromType === 'medication' || link.toType === 'medication' ||
+            link.fromType === 'treatment' || link.toType === 'treatment';
+
+        const isPathologyToSymptom = (link.fromType === 'pathology' && link.toType === 'symptom');
+
+        if (isPathologyToSymptom) {
+            return link.isAppropriate ? '✓ Classique/Confirmé' : '✗ Atypique/Incohérent';
+        }
+
+        if (isMedicationInvolved) {
+            return link.isAppropriate ? '✓ Adapté' : '✗ Contre-indiqué';
+        }
+
+        // Fallback par défaut
+        return link.isAppropriate ? '✓ Adapté' : '✗ Non indiqué';
+    }, []);
+
     // Helper: Convertir coordonnée écran (relative container) -> coordonnée graphe (World)
     const screenToFlow = useCallback((point: { x: number; y: number }, vp: { x: number; y: number; zoom: number }) => {
         return {
@@ -373,8 +394,8 @@ export function RiskNetworkGraph({
 
     // === ÉTAT POUR LE SCHÉMA PROPOSÉ ===
     const [showProposedSchema, setShowProposedSchema] = useState(false);
-    const [proposedNodes, setProposedNodes] = useState<Node[]>([]);
-    const [proposedEdges, setProposedEdges] = useState<Edge[]>([]);
+    const [proposedNodes, setProposedNodes, onProposedNodesChangeOriginal] = useNodesState([]);
+    const [proposedEdges, setProposedEdges, onProposedEdgesChange] = useEdgesState([]);
 
     // Calcul des statistiques en temps réel basé sur les nœuds/liens visibles
     const liveStats = useMemo((): SchemaStats => {
@@ -541,7 +562,11 @@ export function RiskNetworkGraph({
     // Générer le schéma proposé en appliquant les modifications
     // Ce useEffect se déclenche à chaque changement de hiddenNodes pour refléter les nœuds actuellement visibles
     useEffect(() => {
-        // Copier les nœuds visibles (sans groupes et sans nœuds cachés)
+        // Ne regenerer le schéma proposé que si l'analyse ou les nœuds de base changent
+        // On utilise les IDs des nœuds pour éviter de réinitialiser à chaque mouvement (changement de position)
+        const visibleNodeIds = nodes.filter(n => !hiddenNodes.has(n.id) && n.data.type !== 'group').map(n => n.id).join(',');
+
+        // Copier les nœuds visibles
         const visibleNodes = nodes.filter(n => !hiddenNodes.has(n.id) && n.data.type !== 'group');
 
         // Si pas de nœuds visibles ou pas d'edges, pas de schéma proposé
@@ -559,9 +584,9 @@ export function RiskNetworkGraph({
         let proposedNodesList = visibleNodes.map(n => ({
             ...n,
             id: `proposed-${n.id}`,
-            position: { ...n.position }, // Mêmes positions
-            draggable: false,
-            selectable: false,
+            position: { ...n.position }, // Mêmes positions initiales
+            draggable: true,
+            selectable: true,
             connectable: false,
             data: {
                 ...n.data,
@@ -664,7 +689,7 @@ export function RiskNetworkGraph({
         console.log('[ProposedSchema] Edges générées:', newEdges.length);
         setProposedNodes(proposedNodesList);
         setProposedEdges(newEdges);
-    }, [analysisResult, nodes, edges, hiddenNodes, edgeLinkMap]);
+    }, [analysisResult, nodes.length, hiddenNodes, edgeLinkMap, setProposedNodes, setProposedEdges]);
 
     // Toggle une carte
     const toggleLinkExpand = (linkId: string) => {
@@ -885,8 +910,8 @@ export function RiskNetworkGraph({
             });
 
             // Appeler l'API
-            const { data, error } = await supabase.functions.invoke('cross-data-analyzer', {
-                body: { pathologyIds, symptomIds, treatmentIds, medicationIds }
+            const { data, error } = await invokeAI('cross-data-analyzer', {
+                pathologyIds, symptomIds, treatmentIds, medicationIds
             });
 
             if (data?.error) {
@@ -1332,6 +1357,116 @@ export function RiskNetworkGraph({
             toast.success(`${newSelection.length} éléments sélectionnés`);
         }
     };
+
+
+    // --- Logique de REDIMENSIONNEMENT AUTOMATIQUE des groupes ---
+
+    const handleGroupAutoResize = useCallback((nds: Node[], changes: any[]) => {
+        const padding = 40;
+        const parentIdsToUpdate = new Set<string>();
+
+        // Identifier quels parents ont des enfants qui ont bougé
+        changes.forEach(change => {
+            if (change.type === 'position' && change.dragging) {
+                const node = nds.find(n => n.id === change.id);
+                if (node?.parentId) {
+                    parentIdsToUpdate.add(node.parentId);
+                }
+            }
+        });
+
+        if (parentIdsToUpdate.size === 0) return nds;
+
+        let updatedNodes = [...nds];
+
+        parentIdsToUpdate.forEach(parentId => {
+            const parent = updatedNodes.find(n => n.id === parentId);
+            if (!parent) return;
+
+            const children = updatedNodes.filter(n => n.parentId === parentId);
+            if (children.length === 0) return;
+
+            // Calculer la bounding box des enfants (positions relatives)
+            let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+
+            children.forEach(child => {
+                const x = child.position.x;
+                const y = child.position.y;
+                const w = child.measured?.width || 150;
+                const h = child.measured?.height || 60;
+
+                minX = Math.min(minX, x);
+                minY = Math.min(minY, y);
+                maxX = Math.max(maxX, x + w);
+                maxY = Math.max(maxY, y + h);
+            });
+
+            // Ajustements si les enfants sortent par le haut/gauche (coords négatives)
+            let shiftX = 0;
+            let shiftY = 0;
+
+            if (minX < padding) {
+                shiftX = minX - padding;
+            }
+            if (minY < padding) {
+                shiftY = minY - padding;
+            }
+
+            // Nouvelles dimensions
+            const currentWidth = parseFloat(String(parent.style?.width || 0));
+            const currentHeight = parseFloat(String(parent.style?.height || 0));
+            const newWidth = maxX - minX + padding * 2;
+            const newHeight = maxY - minY + padding * 2;
+
+            // Ne mettre à jour que si nécessaire (évite les boucles infinies de re-render)
+            const needsResize = Math.abs(newWidth - currentWidth) > 1 || Math.abs(newHeight - currentHeight) > 1;
+            const needsShift = shiftX !== 0 || shiftY !== 0;
+
+            if (needsResize || needsShift) {
+                updatedNodes = updatedNodes.map(n => {
+                    // Update Parent
+                    if (n.id === parentId) {
+                        return {
+                            ...n,
+                            position: {
+                                x: n.position.x + shiftX,
+                                y: n.position.y + shiftY
+                            },
+                            style: {
+                                ...n.style,
+                                width: newWidth,
+                                height: newHeight
+                            }
+                        };
+                    }
+                    // Shift Children if parent moved
+                    if (n.parentId === parentId && needsShift) {
+                        return {
+                            ...n,
+                            position: {
+                                x: n.position.x - shiftX,
+                                y: n.position.y - shiftY
+                            }
+                        };
+                    }
+                    return n;
+                });
+            }
+        });
+
+        return updatedNodes;
+    }, []);
+
+    // Wrappers pour onNodesChange qui incluent le resize
+    const onNodesChange = useCallback((changes: any[]) => {
+        onNodesChangeOriginal(changes);
+        setNodes(nds => handleGroupAutoResize(nds, changes));
+    }, [onNodesChangeOriginal, handleGroupAutoResize, setNodes]);
+
+    const onProposedNodesChange = useCallback((changes: any[]) => {
+        onProposedNodesChangeOriginal(changes);
+        setProposedNodes(nds => handleGroupAutoResize(nds, changes));
+    }, [onProposedNodesChangeOriginal, handleGroupAutoResize, setProposedNodes]);
 
 
     // --- Gestion des sélections et groupes visuels ---
@@ -2403,6 +2538,8 @@ export function RiskNetworkGraph({
                                     <ReactFlow
                                         nodes={proposedNodes}
                                         edges={proposedEdges}
+                                        onNodesChange={onProposedNodesChange}
+                                        onEdgesChange={onProposedEdgesChange}
                                         nodesDraggable={true}
                                         nodesConnectable={false}
                                         elementsSelectable={true}
@@ -2656,7 +2793,7 @@ export function RiskNetworkGraph({
                                                         <Badge
                                                             className={`text-xs ${link.isAppropriate ? 'bg-green-500 text-white' : 'bg-red-500 text-white'}`}
                                                         >
-                                                            {link.isAppropriate ? '✓' : '✗'}
+                                                            {getAppropriatenessLabel(link).split(' ')[0]}
                                                         </Badge>
                                                     )}
                                                     {link.symptomFrequency && (
@@ -2698,7 +2835,7 @@ export function RiskNetworkGraph({
                                                             <Badge
                                                                 className={`text-xs ${link.isAppropriate ? 'bg-green-500 text-white' : 'bg-red-500 text-white'}`}
                                                             >
-                                                                {link.isAppropriate ? '✓ Adapté' : '✗ Contre-indiqué'}
+                                                                {getAppropriatenessLabel(link)}
                                                             </Badge>
                                                         )}
                                                         {link.symptomFrequency && (
@@ -3138,13 +3275,15 @@ export function RiskNetworkGraph({
                             <div className="grid grid-cols-2 gap-3">
                                 {hoveredLink.isAppropriate !== undefined && (
                                     <div className="p-3 rounded-lg border">
-                                        <p className="text-xs text-muted-foreground mb-1">Adéquation</p>
+                                        <p className="text-xs text-muted-foreground mb-1">
+                                            {hoveredLink.fromType === 'pathology' && hoveredLink.toType === 'symptom' ? 'Cohérence' : 'Adéquation'}
+                                        </p>
                                         <Badge
                                             className={hoveredLink.isAppropriate
                                                 ? 'bg-green-500/20 text-green-700 border-green-500/30'
                                                 : 'bg-red-500/20 text-red-700 border-red-500/30'}
                                         >
-                                            {hoveredLink.isAppropriate ? '✓ Adapté' : '✗ Contre-indiqué'}
+                                            {getAppropriatenessLabel(hoveredLink)}
                                         </Badge>
                                     </div>
                                 )}

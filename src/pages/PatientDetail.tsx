@@ -4,6 +4,7 @@ import AppLayout from '@/components/layout/AppLayout';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { supabase } from '@/integrations/supabase/client';
+import { useAI } from '@/contexts/AIContext';
 import { ArrowLeft, Lock, Shield, Loader2 } from 'lucide-react';
 import AIAssistant from '@/components/patient/AIAssistant';
 import SafetyAlertBanner from '@/components/patient/SafetyAlertBanner';
@@ -63,6 +64,7 @@ interface Patient {
 }
 
 const PatientDetail = () => {
+  const { invokeAI } = useAI();
   const { id } = useParams<{ id: string }>();
   const [patient, setPatient] = useState<Patient | null>(null);
   const [loading, setLoading] = useState(true);
@@ -173,8 +175,8 @@ const PatientDetail = () => {
     if (!id || aiSynthesis) return;
     setFetchingSynthesis(true);
     try {
-      const { data, error } = await supabase.functions.invoke('patient-health-synthesis', {
-        body: { patient_id: id },
+      const { data, error } = await invokeAI('patient-health-synthesis', {
+        patient_id: id
       });
       if (!error) {
         setAiSynthesis(data);

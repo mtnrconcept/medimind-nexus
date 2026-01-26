@@ -10,6 +10,7 @@ import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { supabase } from '@/integrations/supabase/client';
+import { useAI } from '@/contexts/AIContext';
 import { Search as SearchIcon, Activity, ChevronRight, X, Sparkles, Database, Globe, Filter, Loader2, MessageCircle } from 'lucide-react';
 import DeepResearchPanel from '@/components/search/DeepResearchPanel';
 import SymptomQuestionnaireModal from '@/components/search/SymptomQuestionnaireModal';
@@ -38,6 +39,7 @@ interface PathologyResult {
 }
 
 const Search = () => {
+  const { invokeAI } = useAI();
   const [dbSymptoms, setDbSymptoms] = useState<Symptom[]>([]);
   const [selectedSymptoms, setSelectedSymptoms] = useState<string[]>([]);
   const [selectedSymptomNames, setSelectedSymptomNames] = useState<string[]>([]);
@@ -91,8 +93,8 @@ const Search = () => {
     const debounceTimer = setTimeout(async () => {
       setNcbiLoading(true);
       try {
-        const { data, error } = await supabase.functions.invoke('search-medical-concepts', {
-          body: { query: ncbiSearchQuery, type: 'symptom' }
+        const { data, error } = await invokeAI('search-medical-concepts', {
+          query: ncbiSearchQuery, type: 'symptom'
         });
 
         if (error) throw error;

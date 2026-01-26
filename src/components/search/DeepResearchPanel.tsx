@@ -22,6 +22,7 @@ import {
   CheckCircle2,
   Filter
 } from 'lucide-react';
+import { useAI } from '@/contexts/AIContext';
 import { toast } from 'sonner';
 
 interface WebSource {
@@ -58,6 +59,7 @@ interface DeepResearchPanelProps {
 }
 
 const DeepResearchPanel = ({ selectedSymptomIds, selectedSymptomNames }: DeepResearchPanelProps) => {
+  const { invokeAI } = useAI();
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<DeepResearchResult | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -94,12 +96,10 @@ const DeepResearchPanel = ({ selectedSymptomIds, selectedSymptomNames }: DeepRes
     setResult(null);
 
     try {
-      const { data, error: fnError } = await supabase.functions.invoke('deep-research', {
-        body: {
-          symptomIds: selectedSymptomIds,
-          symptomNames: selectedSymptomNames,
-          stream: false
-        }
+      const { data, error: fnError } = await invokeAI('deep-research', {
+        symptomIds: selectedSymptomIds,
+        symptomNames: selectedSymptomNames,
+        stream: false
       });
 
       if (fnError) throw fnError;

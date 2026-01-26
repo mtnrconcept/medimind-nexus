@@ -5,6 +5,7 @@ import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Brain, Send, Loader2, Sparkles, Info } from 'lucide-react';
 import { toast } from 'sonner';
+import { useAI } from '@/contexts/AIContext';
 import ExplainabilityPanel, { type ExplainabilityData } from './ExplainabilityPanel';
 import type { ExtendedLabResults, PatientAlert } from '@/hooks/usePatientAlerts';
 
@@ -133,6 +134,7 @@ const AIAssistant = ({ patient }: AIAssistantProps) => {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const { llmMode, localLLMConfig } = useAI();
   const [showExplainability, setShowExplainability] = useState<number | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -181,68 +183,135 @@ const AIAssistant = ({ patient }: AIAssistantProps) => {
         medical_notes: patient.medical_notes_nlp,
       };
 
-      const response = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/ai-assistant`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`,
-        },
-        body: JSON.stringify({
-          message: userMessage,
-          patient: patientContext,
-          conversationHistory: messages,
-        }),
-      });
+      if (llmMode === 'cloud') {
+        const response = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/ai-assistant`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`,
+          },
+          body: JSON.stringify({
+            message: userMessage,
+            patient: patientContext,
+            conversationHistory: messages,
+          }),
+        });
 
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || 'Erreur de communication avec l\'assistant');
-      }
+        if (!response.ok) {
+          const errorData = await response.json();
+          throw new Error(errorData.error || 'Erreur de communication avec l\'assistant');
+        }
 
-      if (!response.body) throw new Error('No response body');
+        if (!response.body) throw new Error('No response body');
 
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-      let assistantContent = '';
-      let buffer = '';
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let assistantContent = '';
+        let buffer = '';
 
-      // Add empty assistant message that we'll update
-      setMessages(prev => [...prev, { role: 'assistant', content: '' }]);
+        // Add empty assistant message that we'll update
+        setMessages(prev => [...prev, { role: 'assistant', content: '' }]);
 
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
 
-        buffer += decoder.decode(value, { stream: true });
+          buffer += decoder.decode(value, { stream: true });
 
-        // Process line by line
-        let newlineIndex: number;
-        while ((newlineIndex = buffer.indexOf('\n')) !== -1) {
-          let line = buffer.slice(0, newlineIndex);
-          buffer = buffer.slice(newlineIndex + 1);
+          // Process line by line
+          let newlineIndex: number;
+          while ((newlineIndex = buffer.indexOf('\n')) !== -1) {
+            let line = buffer.slice(0, newlineIndex);
+            buffer = buffer.slice(newlineIndex + 1);
 
-          if (line.endsWith('\r')) line = line.slice(0, -1);
-          if (line.startsWith(':') || line.trim() === '') continue;
-          if (!line.startsWith('data: ')) continue;
+            if (line.endsWith('\r')) line = line.slice(0, -1);
+            if (line.startsWith(':') || line.trim() === '') continue;
+            if (!line.startsWith('data: ')) continue;
 
-          const jsonStr = line.slice(6).trim();
-          if (jsonStr === '[DONE]') break;
+            const jsonStr = line.slice(6).trim();
+            if (jsonStr === '[DONE]') break;
 
-          try {
-            const parsed = JSON.parse(jsonStr);
-            const content = parsed.choices?.[0]?.delta?.content;
-            if (content) {
-              assistantContent += content;
-              setMessages(prev => {
-                const updated = [...prev];
-                updated[updated.length - 1] = { role: 'assistant', content: assistantContent };
-                return updated;
-              });
+            try {
+              const parsed = JSON.parse(jsonStr);
+              const content = parsed.choices?.[0]?.delta?.content;
+              if (content) {
+                assistantContent += content;
+                setMessages(prev => {
+                  const updated = [...prev];
+                  updated[updated.length - 1] = { role: 'assistant', content: assistantContent };
+                  return updated;
+                });
+              }
+            } catch {
+              // Incomplete JSON, put back and continue
+              buffer = line + '\n' + buffer;
+              break;
             }
-          } catch {
-            // Incomplete JSON, put back and continue
-            buffer = line + '\n' + buffer;
-            break;
+          }
+        }
+      } else {
+        // LOCAL MODE (Streaming with Meditron/OpenAI format)
+        console.log('[AI-Local] Streaming with local LLM...');
+
+        // Prepare local context-rich prompt
+        const historyStr = messages.map(m => `${m.role === 'user' ? 'Directeur Médical' : 'Assistant MediCore'}: ${m.content}`).join('\n');
+
+        const localPrompt = `Tu es l'Assistant MediCore, un expert en analyse médicale.
+CONTEXTE PATIENT :
+${JSON.stringify(patientContext, null, 2)}
+
+HISTORIQUE :
+${historyStr}
+
+Directeur Médical : ${userMessage}
+Assistant MediCore :`;
+
+        const response = await fetch(`${localLLMConfig.baseUrl}/chat/completions`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            model: localLLMConfig.model,
+            messages: [{ role: 'user', content: localPrompt }],
+            stream: true,
+          }),
+        });
+
+        if (!response.ok) throw new Error(`Local LLM stream error: ${response.statusText}`);
+        if (!response.body) throw new Error('No response body');
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let assistantContent = '';
+        let buffer = '';
+
+        setMessages(prev => [...prev, { role: 'assistant', content: '' }]);
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n');
+          buffer = lines.pop() || '';
+
+          for (const line of lines) {
+            if (line.trim() === '' || line === 'data: [DONE]') continue;
+            if (line.startsWith('data: ')) {
+              try {
+                const data = JSON.parse(line.slice(6));
+                const content = data.choices?.[0]?.delta?.content || '';
+                if (content) {
+                  assistantContent += content;
+                  setMessages(prev => {
+                    const updated = [...prev];
+                    updated[updated.length - 1] = { role: 'assistant', content: assistantContent };
+                    return updated;
+                  });
+                }
+              } catch (e) {
+                // Ignore incomplete chunks
+              }
+            }
           }
         }
       }

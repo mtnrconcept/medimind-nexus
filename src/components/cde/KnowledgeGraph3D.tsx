@@ -5,6 +5,7 @@ import * as THREE from 'three';
 import { InteractionDialog } from './InteractionDialog';
 import { Microscope, ShieldCheck, Activity } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
+import { useAI } from '@/contexts/AIContext';
 
 // Node interface
 interface KGNode {
@@ -525,6 +526,7 @@ function NodeInfoPanel({
 
 // Main 3D Knowledge Graph component
 export default function KnowledgeGraph3D() {
+    const { invokeAI } = useAI();
     const [nodes, setNodes] = useState<KGNode[]>([]);
     const [edges, setEdges] = useState<KGEdge[]>([]);
     const [positionMap, setPositionMap] = useState<Map<string, THREE.Vector3>>(new Map());
@@ -651,15 +653,13 @@ export default function KnowledgeGraph3D() {
             const nodeTypes = selectedNodes.map(n => n.node_type);
 
             // Call the focused-research function for analysis
-            const response = await supabase.functions.invoke('focused-research', {
-                body: {
-                    query: `Analyze the therapeutic relationship between: ${nodeNames.join(', ')}.
+            const response = await invokeAI('focused-research', {
+                query: `Analyze the therapeutic relationship between: ${nodeNames.join(', ')}.
 Classify as: beneficial, contraindicated, danger, neutral, or unknown.
                            Provide confidence level and recommendations.`,
-                    context: {
-                        nodes: selectedNodes.map(n => ({ name: n.name, type: n.node_type, properties: n.properties })),
-                        analysisType: 'link_analysis'
-                    }
+                context: {
+                    nodes: selectedNodes.map(n => ({ name: n.name, type: n.node_type, properties: n.properties })),
+                    analysisType: 'link_analysis'
                 }
             });
 

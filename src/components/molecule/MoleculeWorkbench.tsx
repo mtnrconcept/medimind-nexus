@@ -1,6 +1,7 @@
 
 import React, { useState, useMemo } from 'react';
 import { supabase } from '@/integrations/supabase/client';
+import { useAI } from '@/contexts/AIContext';
 import { MoleculeViewer } from './MoleculeViewer';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -21,6 +22,7 @@ import {
 } from "@/components/ui/dialog";
 
 export function MoleculeWorkbench() {
+    const { invokeAI } = useAI();
     const [inputPrompt, setInputPrompt] = useState('');
     const [generatedSmiles, setGeneratedSmiles] = useState<string>('');
     const [isGenerating, setIsGenerating] = useState(false);
@@ -44,8 +46,8 @@ export function MoleculeWorkbench() {
         setGeneratedSmiles('');
 
         try {
-            const { data, error } = await supabase.functions.invoke('generate-molecule', {
-                body: { prompt: inputPrompt }
+            const { data, error } = await invokeAI('generate-molecule', {
+                prompt: inputPrompt
             });
 
             if (error) throw error;

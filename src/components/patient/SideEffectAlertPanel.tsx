@@ -5,6 +5,7 @@
 
 import { useState, useEffect } from 'react';
 import { supabase } from '@/integrations/supabase/client';
+import { useAI } from '@/contexts/AIContext';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -77,6 +78,7 @@ const CATEGORY_ICONS: Record<string, string> = {
 };
 
 export const SideEffectAlertPanel = ({ patientId, onAlertCountChange }: SideEffectAlertPanelProps) => {
+    const { invokeAI } = useAI();
     const [alerts, setAlerts] = useState<SideEffectAlert[]>([]);
     const [loading, setLoading] = useState(true);
     const [analyzing, setAnalyzing] = useState(false);
@@ -107,8 +109,8 @@ export const SideEffectAlertPanel = ({ patientId, onAlertCountChange }: SideEffe
     const runAnalysis = async () => {
         setAnalyzing(true);
         try {
-            const { data, error } = await supabase.functions.invoke('detect-side-effects', {
-                body: { patient_id: patientId }
+            const { data, error } = await invokeAI('detect-side-effects', {
+                patient_id: patientId
             });
 
             if (error) throw error;
@@ -209,8 +211,8 @@ export const SideEffectAlertPanel = ({ patientId, onAlertCountChange }: SideEffe
                                     onOpenChange={() => toggleExpand(alert.id)}
                                 >
                                     <Card className={`border-l-4 ${alert.status === 'pending' ? 'border-l-yellow-500' :
-                                            alert.status === 'escalated' ? 'border-l-red-500' :
-                                                'border-l-gray-300'
+                                        alert.status === 'escalated' ? 'border-l-red-500' :
+                                            'border-l-gray-300'
                                         }`}>
                                         <CollapsibleTrigger asChild>
                                             <CardHeader className="cursor-pointer hover:bg-muted/50 transition-colors py-3">

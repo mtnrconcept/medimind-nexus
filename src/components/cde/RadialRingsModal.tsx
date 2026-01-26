@@ -5,6 +5,7 @@ import { OrbitControls, Html, Line } from '@react-three/drei';
 import * as THREE from 'three';
 import { X, Play, Pause, RotateCcw, Sparkles, Loader2, MessageSquare, ExternalLink, Plus, GitBranch, Search, Save, FolderOpen, MousePointer2, Lasso, Circle as CircleIcon, Square, EyeOff, GripHorizontal } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
+import { useAI } from '@/contexts/AIContext';
 import { RingNode, RingEdge, MicroSignal, RadialRingsData } from '@/types/graph';
 import { RING_COLORS, LANE_COLORS, NODE_TYPE_COLORS, EDGE_TYPE_COLORS, TIMING } from '@/config/graphSemantics';
 import { isWebGLAvailable, getSemanticEdgeColor, isNodeType, transformNode, transformEdge, getEdgeKey, dedupeEdges } from '@/utils/graphUtils';
@@ -387,6 +388,16 @@ interface SVGFallbackProps {
     onLoadGraph?: (graph: any) => void;
     showExplorer: boolean;
     setShowExplorer: (show: boolean) => void;
+    onSetFocusMode?: (focused: boolean) => void;
+    setSelectedEdge: (edge: RingEdge | null) => void;
+    setSelectedEdgeSource: (node: RingNode | null) => void;
+    setSelectedEdgeTarget: (node: RingNode | null) => void;
+    setMultiNodesForAnalysis: (nodes: RingNode[]) => void;
+    setShowLinkModal: (show: boolean) => void;
+    setNodeGroups: (groups: Map<string, Set<string>> | ((prev: Map<string, Set<string>>) => Map<string, Set<string>>)) => void;
+    setGroupCreationMode: (mode: boolean) => void;
+    setCurrentGroupCenter: (nodeId: string | null) => void;
+    setData: (data: RadialRingsData | null) => void;
 }
 
 function SVGFallback({
@@ -440,7 +451,17 @@ function SVGFallback({
     setCollapsedCategories,
     onLoadGraph,
     showExplorer,
-    setShowExplorer
+    setShowExplorer,
+    onSetFocusMode,
+    setSelectedEdge,
+    setSelectedEdgeSource,
+    setSelectedEdgeTarget,
+    setMultiNodesForAnalysis,
+    setShowLinkModal,
+    setNodeGroups,
+    setGroupCreationMode,
+    setCurrentGroupCenter,
+    setData
 }: SVGFallbackProps) {
     // Dragging state for center nodes (Hoisted)
     const [dragOffsets, setDragOffsets] = useState<Map<string, { x: number, y: number }>>(new Map());
@@ -449,6 +470,9 @@ function SVGFallback({
 
     // State to ignore chat-based custom positions (Reset feature)
     const [ignoreCustomPositions, setIgnoreCustomPositions] = useState(false);
+
+    // AI Context
+    const { invokeAI } = useAI();
 
     // Graph Explorer State
     const [showHiddenPanel, setShowHiddenPanel] = useState(false);
@@ -548,6 +572,9 @@ function SVGFallback({
 
     // Node selection state
     const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
+
+    // AI Context
+    const { invokeAI } = useAI();
 
     // Hover/Tooltip state
     const [hoveredNode, setHoveredNode] = useState<RingNode | null>(null);
@@ -1370,6 +1397,8 @@ function SVGFallback({
                 if (e.target === e.currentTarget || (e.target as HTMLElement).tagName === 'DIV') {
                     setSelectedNodeId(null);
                     setSelectedNodesForAnalysis(new Set());
+                    // Sync focus mode if requested
+                    if (onSetFocusMode) onSetFocusMode(false);
                 }
             }}
             style={{ cursor: isPanning ? 'grabbing' : 'grab' }}
@@ -2150,7 +2179,7 @@ function SVGFallback({
 
             {/* Unified Floating Menu - Bottom Left */}
             <DraggablePanel
-                initialPosition={{ x: 24, y: 700 }}
+                initialPosition={{ x: 24, y: window.innerHeight - 120 }}
                 handleClass="menu-drag-handle"
                 className="z-30"
                 resizable
@@ -2439,6 +2468,216 @@ function SVGFallback({
                                     </button>
                                 </div>
                             </div>
+
+                            {/* Divider */}
+                            <div className="h-px bg-gray-700/50" />
+
+                            {/* Selection Actions Category - NEW */}
+                            <div className="space-y-2">
+                                <div className="text-xs font-semibold text-gray-400 uppercase tracking-wider px-1">🖱️ Actions sur Sélection</div>
+                                <div className="flex flex-col gap-1.5">
+                                    {/* Multi-node Analyze Button */}
+                                    <button
+                                        onClick={() => {
+                                            const nodesToAnalyze = data?.knowledge_graph.nodes.filter(n =>
+                                                multiSelectedNodeIds.has(n.id)
+                                            ) || [];
+                                            if (nodesToAnalyze.length >= 2) {
+                                                const syntheticEdge: RingEdge = {
+                                                    id: `multi-${Date.now()}`,
+                                                    source: nodesToAnalyze[0].id,
+                                                    target: nodesToAnalyze[nodesToAnalyze.length - 1].id,
+                                                    relationship: `Analyse multi-noeuds`,
+                                                    evidence_grade: 'D',
+                                                    translation_gap: false,
+                                                    weight: 0.5
+                                                };
+                                                setSelectedEdge(syntheticEdge);
+                                                setSelectedEdgeSource(nodesToAnalyze[0]);
+                                                setSelectedEdgeTarget(nodesToAnalyze[nodesToAnalyze.length - 1]);
+                                                setMultiNodesForAnalysis(nodesToAnalyze);
+                                                setShowLinkModal(true);
+                                            }
+                                        }
+                                        }
+                                        disabled={multiSelectedNodeIds.size < 2}
+                                        className="flex items-center gap-2 px-3 py-2 bg-amber-600/20 hover:bg-amber-600/40 disabled:opacity-30 disabled:cursor-not-allowed border border-amber-500/30 rounded-lg text-amber-200 text-xs transition-all text-left"
+                                    >
+                                        <Sparkles className="w-3.5 h-3.5" />
+                                        <span className="flex-1 font-medium">Analyser les liens</span>
+                                        {multiSelectedNodeIds.size >= 2 && <span className="bg-amber-500/30 px-1.5 rounded text-[10px]">{multiSelectedNodeIds.size}</span>}
+                                    </button>
+
+                                    {/* Group creation */}
+                                    <button
+                                        onClick={() => {
+                                            const allIds = Array.from(multiSelectedNodeIds);
+                                            if (allIds.length >= 2) {
+                                                const centerId = allIds[0];
+                                                const memberIds = allIds.slice(1);
+                                                const next = new Map(nodeGroups);
+                                                const members = new Set(memberIds.filter(id => id !== centerId));
+                                                next.set(centerId, members);
+                                                setNodeGroups(next);
+                                                setMultiSelectedNodeIds(new Set());
+                                            } else if (selectedNodeId) {
+                                                setGroupCreationMode(true);
+                                                setCurrentGroupCenter(selectedNodeId);
+                                                setNodeGroups(prev => {
+                                                    const next = new Map(prev);
+                                                    if (!next.has(selectedNodeId)) next.set(selectedNodeId, new Set());
+                                                    return next;
+                                                });
+                                            }
+                                        }}
+                                        disabled={multiSelectedNodeIds.size < 1 && !selectedNodeId}
+                                        className="flex items-center gap-2 px-3 py-2 bg-purple-600/20 hover:bg-purple-600/40 disabled:opacity-30 disabled:cursor-not-allowed border border-purple-500/30 rounded-lg text-purple-200 text-xs transition-all text-left"
+                                    >
+                                        <span>📦</span>
+                                        <span className="flex-1">Créer un groupe</span>
+                                    </button>
+
+                                    {/* Set as center - only for single node */}
+                                    {selectedNodeId && multiSelectedNodeIds.size <= 1 && (
+                                        <button
+                                            onClick={() => {
+                                                if (onSetCentral) onSetCentral(selectedNodeId);
+                                                setSelectedNodeId(null);
+                                            }}
+                                            className="flex items-center gap-2 px-3 py-2 bg-indigo-600/20 hover:bg-indigo-600/40 border border-indigo-500/30 rounded-lg text-indigo-200 text-xs transition-all text-left"
+                                        >
+                                            <span>🎯</span>
+                                            <span className="flex-1">Définir comme centre</span>
+                                        </button>
+                                    )}
+
+                                    {/* Analyze with center - only for single node */}
+                                    {selectedNodeId && multiSelectedNodeIds.size <= 1 && (
+                                        <button
+                                            onClick={() => {
+                                                const centerNode = data?.knowledge_graph.nodes.find(n => n.ring === 0);
+                                                const actionNode = data?.knowledge_graph.nodes.find(n => n.id === selectedNodeId);
+                                                if (centerNode && actionNode && actionNode.id !== centerNode.id) {
+                                                    const syntheticEdge: RingEdge = {
+                                                        id: `${actionNode.id}-${centerNode.id}`,
+                                                        source: actionNode.id,
+                                                        target: centerNode.id,
+                                                        relationship: 'analyse demandée',
+                                                        evidence_grade: 'D',
+                                                        translation_gap: false,
+                                                        weight: 0.5
+                                                    };
+                                                    setSelectedEdge(syntheticEdge);
+                                                    setSelectedEdgeSource(actionNode);
+                                                    setSelectedEdgeTarget(centerNode);
+                                                    setMultiNodesForAnalysis([actionNode, centerNode]);
+                                                    setShowLinkModal(true);
+                                                }
+                                            }}
+                                            className="flex items-center gap-2 px-3 py-2 bg-blue-600/20 hover:bg-blue-600/40 border border-blue-500/30 rounded-lg text-blue-200 text-xs transition-all text-left"
+                                        >
+                                            <span>🔍</span>
+                                            <span className="flex-1">Analyser avec centre</span>
+                                        </button>
+                                    )}
+
+                                    {/* Analyze ALL links - only for single node */}
+                                    {selectedNodeId && multiSelectedNodeIds.size <= 1 && (
+                                        <button
+                                            onClick={() => {
+                                                const actionNode = data?.knowledge_graph.nodes.find(n => n.id === selectedNodeId);
+                                                if (actionNode && data) {
+                                                    // Find all neighbors
+                                                    const neighbors = new Set<RingNode>();
+                                                    neighbors.add(actionNode);
+
+                                                    data.knowledge_graph.edges.forEach(edge => {
+                                                        const s = typeof edge.source === 'object' ? (edge.source as any).id : edge.source;
+                                                        const t = typeof edge.target === 'object' ? (edge.target as any).id : edge.target;
+
+                                                        if (s === actionNode.id) {
+                                                            const targetNode = data.knowledge_graph.nodes.find(n => n.id === t);
+                                                            if (targetNode) neighbors.add(targetNode);
+                                                        } else if (t === actionNode.id) {
+                                                            const sourceNode = data.knowledge_graph.nodes.find(n => n.id === s);
+                                                            if (sourceNode) neighbors.add(sourceNode);
+                                                        }
+                                                    });
+
+                                                    if (neighbors.size >= 2) {
+                                                        const neighborsArray = Array.from(neighbors);
+                                                        const syntheticEdge: RingEdge = {
+                                                            id: `all-links-${actionNode.id}`,
+                                                            source: actionNode.id,
+                                                            target: neighborsArray[1].id,
+                                                            relationship: 'analyse globale des liens',
+                                                            evidence_grade: 'D',
+                                                            translation_gap: false,
+                                                            weight: 0.5
+                                                        };
+                                                        setSelectedEdge(syntheticEdge);
+                                                        setSelectedEdgeSource(actionNode);
+                                                        setSelectedEdgeTarget(neighborsArray[1]);
+                                                        setMultiNodesForAnalysis(neighborsArray);
+                                                        setShowLinkModal(true);
+                                                    }
+                                                }
+                                            }}
+                                            className="flex items-center gap-2 px-3 py-2 bg-cyan-600/20 hover:bg-cyan-600/40 border border-cyan-500/30 rounded-lg text-cyan-200 text-xs transition-all text-left"
+                                        >
+                                            <Sparkles className="w-3.5 h-3.5" />
+                                            <span className="flex-1 font-medium">Analyser tous les liens</span>
+                                        </button>
+                                    )}
+
+                                    {/* Mask/Hide */}
+                                    <button
+                                        onClick={() => {
+                                            const newHidden = new Set(hiddenNodes);
+                                            if (multiSelectedNodeIds.size > 0) {
+                                                multiSelectedNodeIds.forEach(id => newHidden.add(id));
+                                                setMultiSelectedNodeIds(new Set());
+                                            } else if (selectedNodeId) {
+                                                newHidden.add(selectedNodeId);
+                                                setSelectedNodeId(null);
+                                            }
+                                            setHiddenNodes(newHidden);
+                                        }}
+                                        disabled={multiSelectedNodeIds.size < 1 && !selectedNodeId}
+                                        className="flex items-center gap-2 px-3 py-2 bg-gray-800 hover:bg-gray-700 disabled:opacity-30 disabled:cursor-not-allowed border border-gray-700 rounded-lg text-gray-300 text-xs transition-all text-left"
+                                    >
+                                        <span>👁️‍🗨️</span>
+                                        <span className="flex-1">Masquer</span>
+                                    </button>
+
+                                    {/* Delete */}
+                                    <button
+                                        onClick={() => {
+                                            const idsToRemove = multiSelectedNodeIds.size > 0
+                                                ? Array.from(multiSelectedNodeIds)
+                                                : selectedNodeId ? [selectedNodeId] : [];
+
+                                            if (idsToRemove.length > 0 && data) {
+                                                const keptNodes = data.knowledge_graph.nodes.filter(n => !idsToRemove.includes(n.id));
+                                                const keptEdges = data.knowledge_graph.edges.filter(e =>
+                                                    !idsToRemove.includes(e.source) && !idsToRemove.includes(e.target)
+                                                );
+                                                setData({
+                                                    ...data,
+                                                    knowledge_graph: { nodes: keptNodes, edges: keptEdges }
+                                                });
+                                                setMultiSelectedNodeIds(new Set());
+                                                setSelectedNodeId(null);
+                                            }
+                                        }}
+                                        disabled={multiSelectedNodeIds.size < 1 && !selectedNodeId}
+                                        className="flex items-center gap-2 px-3 py-2 bg-red-900/20 hover:bg-red-900/40 disabled:opacity-30 disabled:cursor-not-allowed border border-red-500/20 rounded-lg text-red-200 text-xs transition-all text-left"
+                                    >
+                                        <span>🗑️</span>
+                                        <span className="flex-1">Supprimer</span>
+                                    </button>
+                                </div>
+                            </div>
                         </div>
                     </div>
                 )}
@@ -2576,7 +2815,7 @@ function SVGFallback({
             {/* Sidebar Explorer - Draggable panel with visibility toggle */}
             {showExplorer && (
                 <DraggablePanel
-                    initialPosition={{ x: 10, y: 60 }}
+                    initialPosition={{ x: 10, y: 80 }}
                     handleClass="explorer-drag-handle"
                     className="z-40"
                     resizable
@@ -2852,6 +3091,53 @@ function SVGFallback({
                                     <div>
                                         <div className="font-medium text-white">Analyser le lien avec d'autres nœuds</div>
                                         <div className="text-xs text-gray-400">Sélectionnez plusieurs nœuds pour analyse</div>
+                                    </div>
+                                </button>
+
+                                {/* Option 3b: Analyze ALL links */}
+                                <button
+                                    onClick={() => {
+                                        setShowNodeActionModal(false);
+                                        const neighbors = new Set<RingNode>();
+                                        neighbors.add(actionNode);
+
+                                        data?.knowledge_graph.edges.forEach(edge => {
+                                            const s = typeof edge.source === 'object' ? (edge.source as any).id : edge.source;
+                                            const t = typeof edge.target === 'object' ? (edge.target as any).id : edge.target;
+
+                                            if (s === actionNode.id) {
+                                                const targetNode = data.knowledge_graph.nodes.find(n => n.id === t);
+                                                if (targetNode) neighbors.add(targetNode);
+                                            } else if (t === actionNode.id) {
+                                                const sourceNode = data.knowledge_graph.nodes.find(n => n.id === s);
+                                                if (sourceNode) neighbors.add(sourceNode);
+                                            }
+                                        });
+
+                                        if (neighbors.size >= 2) {
+                                            const neighborsArray = Array.from(neighbors);
+                                            const syntheticEdge: RingEdge = {
+                                                id: `all-links-${actionNode.id}`,
+                                                source: actionNode.id,
+                                                target: neighborsArray[1].id,
+                                                relationship: 'analyse globale des liens',
+                                                evidence_grade: 'D',
+                                                translation_gap: false,
+                                                weight: 0.5
+                                            };
+                                            onEdgeClick(syntheticEdge, actionNode, neighborsArray[1], neighborsArray);
+                                        }
+                                    }}
+                                    className="w-full flex items-center gap-3 px-4 py-3 bg-cyan-600/20 hover:bg-cyan-600/40 border border-cyan-500/30 rounded-lg text-left transition-colors"
+                                >
+                                    <Sparkles className="w-6 h-6 text-cyan-400" />
+                                    <div>
+                                        <div className="font-medium text-white">Analyser tous ses liens</div>
+                                        <div className="text-xs text-gray-400">Analyse IA avec {Array.from(data?.knowledge_graph.edges.filter(e => {
+                                            const s = typeof e.source === 'object' ? (e.source as any).id : e.source;
+                                            const t = typeof e.target === 'object' ? (e.target as any).id : e.target;
+                                            return s === actionNode.id || t === actionNode.id;
+                                        }) || []).length} voisins</div>
                                     </div>
                                 </button>
 
@@ -3387,6 +3673,7 @@ interface LinkModalProps {
 }
 
 function LinkExplanationModal({ isOpen, onClose, edge, sourceNode, targetNode, multiNodes, pathology, onSetCentral }: LinkModalProps) {
+    const { invokeAI } = useAI();
     const [explanation, setExplanation] = useState<string>('');
     const [isLoading, setIsLoading] = useState(false);
     const [fromCache, setFromCache] = useState(false);
@@ -3424,17 +3711,15 @@ function LinkExplanationModal({ isOpen, onClose, edge, sourceNode, targetNode, m
         setIsChatLoading(true);
 
         try {
-            const { data, error } = await supabase.functions.invoke('graph-chat', {
-                body: {
-                    mode: 'analysis_qa',
-                    message: userMessage,
-                    context: {
-                        analysisContent: explanation,
-                        sourceNode: sourceNode?.name,
-                        targetNode: targetNode?.name,
-                        pathology,
-                        conversationHistory: chatMessages
-                    }
+            const { data, error } = await invokeAI('graph-chat', {
+                mode: 'analysis_qa',
+                message: userMessage,
+                context: {
+                    analysisContent: explanation,
+                    sourceNode: sourceNode?.name,
+                    targetNode: targetNode?.name,
+                    pathology,
+                    conversationHistory: chatMessages
                 }
             });
 
@@ -3524,18 +3809,16 @@ Fournis:
 3. Les implications thérapeutiques potentielles
 4. Les limitations ou incertitudes connues`;
 
-            const response = await supabase.functions.invoke('causal-reasoning', {
-                body: {
-                    stream: false, // Try JSON first, but handle fallback
-                    query: queryPrompt,
-                    context: {
-                        sourceNode: sourceNode.name,
-                        targetNode: targetNode.name,
-                        multiNodes: isMultiNodeAnalysis ? multiNodes!.map(n => ({ name: n.name, type: n.node_type })) : undefined,
-                        relationship: edge.relationship,
-                        evidence_grade: edge.evidence_grade,
-                        pathology
-                    }
+            const response = await invokeAI('causal-reasoning', {
+                stream: false, // Try JSON first, but handle fallback
+                query: queryPrompt,
+                context: {
+                    sourceNode: sourceNode.name,
+                    targetNode: targetNode.name,
+                    multiNodes: isMultiNodeAnalysis ? multiNodes!.map(n => ({ name: n.name, type: n.node_type })) : undefined,
+                    relationship: edge.relationship,
+                    evidence_grade: edge.evidence_grade,
+                    pathology
                 }
             });
 
@@ -4045,6 +4328,7 @@ function GraphInteractiveChat({
     onShowOnlyGroup,
     onSetCentral
 }: GraphChatProps) {
+    const { invokeAI } = useAI();
     const [isExpanded, setIsExpanded] = useState(false);
     const [messages, setMessages] = useState<{ role: 'user' | 'assistant', content: string }[]>([]);
     const [input, setInput] = useState('');
@@ -4074,18 +4358,16 @@ function GraphInteractiveChat({
         setIsLoading(true);
 
         try {
-            const { data, error } = await supabase.functions.invoke('graph-chat', {
-                body: {
-                    mode: 'graph_command',
-                    message: userMessage,
-                    context: {
-                        graphState: {
-                            nodes: graphNodes.map(n => ({ id: n.id, name: n.name, node_type: n.node_type, ring: n.ring })),
-                            edges: graphEdges.slice(0, 50).map(e => ({ id: e.id, source: e.source, target: e.target, relationship: e.relationship }))
-                        },
-                        pathology,
-                        conversationHistory: messages
-                    }
+            const { data, error } = await invokeAI('graph-chat', {
+                mode: 'graph_command',
+                message: userMessage,
+                context: {
+                    graphState: {
+                        nodes: graphNodes.map(n => ({ id: n.id, name: n.name, node_type: n.node_type, ring: n.ring })),
+                        edges: graphEdges.slice(0, 50).map(e => ({ id: e.id, source: e.source, target: e.target, relationship: e.relationship }))
+                    },
+                    pathology,
+                    conversationHistory: messages
                 }
             });
 
@@ -4552,10 +4834,9 @@ export default function RadialRingsModal({
             }));
 
             // Call AI to analyze optimal treatment (non-streaming JSON mode)
-            const { data: aiResponse, error } = await supabase.functions.invoke('causal-reasoning', {
-                body: {
-                    stream: false, // Request JSON response instead of SSE stream
-                    query: `Analyse ce graphe de connaissances médicales pour la pathologie "${primaryPathology}".
+            const { data: aiResponse, error } = await invokeAI('causal-reasoning', {
+                stream: false, // Request JSON response instead of SSE stream
+                query: `Analyse ce graphe de connaissances médicales pour la pathologie "${primaryPathology}".
 
 NŒUDS DISPONIBLES:
 ${nodesContext.map(n => `- ${n.name} (${n.type}, ID: ${n.id})`).join('\n')}
@@ -4576,10 +4857,9 @@ RÉPONDS EN JSON STRICT:
 }
 
 IMPORTANT: Retourne UNIQUEMENT les IDs des nœuds qui forment le schéma thérapeutique optimal. Maximum 10 nœuds.`,
-                    context: {
-                        pathology: primaryPathology,
-                        graph_size: { nodes: nodesContext.length, edges: edgesContext.length }
-                    }
+                context: {
+                    pathology: primaryPathology,
+                    graph_size: { nodes: nodesContext.length, edges: edgesContext.length }
                 }
             });
 
@@ -4793,6 +5073,17 @@ IMPORTANT: Retourne UNIQUEMENT les IDs des nœuds qui forment le schéma thérap
     useEffect(() => {
         setWebglAvailable(isWebGLAvailable());
     }, []);
+
+    // Scroll Lock when modal is open
+    useEffect(() => {
+        if (isOpen) {
+            const originalStyle = window.getComputedStyle(document.body).overflow;
+            document.body.style.overflow = 'hidden';
+            return () => {
+                document.body.style.overflow = originalStyle;
+            };
+        }
+    }, [isOpen]);
 
     useEffect(() => {
         if (isOpen && allPathologies.length > 0) {
@@ -5169,14 +5460,12 @@ IMPORTANT: Retourne UNIQUEMENT les IDs des nœuds qui forment le schéma thérap
 
             console.log(`[EXPAND] Sending ${existingNodesForCrossLink.length} existing nodes for cross-link analysis`);
 
-            const response = await supabase.functions.invoke('deep-research-graph', {
-                body: {
-                    topic: node.name,
-                    max_nodes: 100,
-                    include_pubmed: true,
-                    include_fda: true,
-                    existing_nodes: existingNodesForCrossLink
-                }
+            const response = await invokeAI('deep-research-graph', {
+                topic: node.name,
+                max_nodes: 100,
+                include_pubmed: true,
+                include_fda: true,
+                existing_nodes: existingNodesForCrossLink
             });
 
             if (response.error) throw response.error;
@@ -5385,7 +5674,7 @@ IMPORTANT: Retourne UNIQUEMENT les IDs des nœuds qui forment le schéma thérap
 
     return (
         <PanelRegistryProvider>
-            <div className="fixed inset-0 z-50">
+            <div className="fixed inset-0 z-[80]">
                 <div className="absolute inset-0 bg-black" onClick={handleClose} />
 
                 <div
@@ -5410,7 +5699,7 @@ IMPORTANT: Retourne UNIQUEMENT les IDs des nœuds qui forment le schéma thérap
 
                     {nodeGroups.size > 0 && (
                         <DraggablePanel
-                            initialPosition={{ x: 340, y: 20 }}
+                            initialPosition={{ x: 200, y: 80 }}
                             handleClass="groups-drag-handle"
                             className="z-20 shadow-2xl"
                         >
@@ -5923,6 +6212,7 @@ IMPORTANT: Retourne UNIQUEMENT les IDs des nœuds qui forment le schéma thérap
                             centralNodeId={data.knowledge_graph.nodes.find(n => n.ring === 0)?.id || null}
                             filterSelectedNodeId={filterSelectedNodeId}
                             focusMode={focusMode}
+                            onSetFocusMode={setFocusMode}
                             activePathologies={activePathologies}
                             visibleNodeCount={visibleNodeCount}
                             nodeSpacing={nodeSpacing}
@@ -5965,6 +6255,15 @@ IMPORTANT: Retourne UNIQUEMENT les IDs des nœuds qui forment le schéma thérap
                             onLoadGraph={onLoad}
                             showExplorer={showExplorer}
                             setShowExplorer={setShowExplorer}
+                            setSelectedEdge={setSelectedEdge}
+                            setSelectedEdgeSource={setSelectedEdgeSource}
+                            setSelectedEdgeTarget={setSelectedEdgeTarget}
+                            setMultiNodesForAnalysis={setMultiNodesForAnalysis}
+                            setShowLinkModal={setShowLinkModal}
+                            setNodeGroups={setNodeGroups}
+                            setGroupCreationMode={setGroupCreationMode}
+                            setCurrentGroupCenter={setCurrentGroupCenter}
+                            setData={setData}
                         />
                     )}
 

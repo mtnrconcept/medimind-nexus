@@ -8,6 +8,7 @@ import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Loader2, Search, Plus, Globe, Check, AlertCircle } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
+import { useAI } from '@/contexts/AIContext';
 import { toast } from 'sonner';
 
 interface KnowledgeGraphNCBISearchModalProps {
@@ -27,6 +28,7 @@ interface NCBIConcept {
 }
 
 export default function KnowledgeGraphNCBISearchModal({ isOpen, onClose, onNodeAdded }: KnowledgeGraphNCBISearchModalProps) {
+    const { invokeAI } = useAI();
     const [query, setQuery] = useState('');
     const [debouncedQuery, setDebouncedQuery] = useState(query);
     const [nodeType, setNodeType] = useState<NodeType>('pathology');
@@ -55,8 +57,8 @@ export default function KnowledgeGraphNCBISearchModal({ isOpen, onClose, onNodeA
         setLoading(true);
         // setResults([]); // Optional: Don't clear immediately to avoid flickering
         try {
-            const { data, error } = await supabase.functions.invoke('search-medical-concepts', {
-                body: { query: searchQuery, type: nodeType }
+            const { data, error } = await invokeAI('search-medical-concepts', {
+                query: searchQuery, type: nodeType
             });
 
             if (error) throw error;

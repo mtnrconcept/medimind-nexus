@@ -1,5 +1,5 @@
 import { ReactNode, useState } from 'react';
-import { useNavigate, useLocation, Link } from 'react-router-dom';
+import { useNavigate, useLocation, Link, useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { useAuth } from '@/hooks/useAuth';
 import { Button } from '@/components/ui/button';
@@ -45,9 +45,11 @@ import {
 import { cn } from '@/lib/utils';
 import { ThemeToggle } from '@/components/ThemeToggle';
 import { LanguageSelector } from '@/components/ui/language-selector';
+import { useAI } from '@/contexts/AIContext';
 import { useTheme } from 'next-themes';
 import CursorCSS from '@/components/nexus/CursorCSS';
 import { useEffect, useRef } from 'react';
+import { Cpu, Cloud } from 'lucide-react';
 
 interface AppLayoutProps {
   children: ReactNode;
@@ -60,6 +62,7 @@ const AppLayout = ({ children }: AppLayoutProps) => {
   const { user, role, signOut } = useAuth();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const { theme } = useTheme();
+  const { llmMode, setLLMMode } = useAI();
   const scrollRef = useRef<number>(0);
 
   // Expanded menu structure
@@ -145,8 +148,14 @@ const AppLayout = ({ children }: AppLayoutProps) => {
     user?.user_metadata?.last_name?.[0]?.toUpperCase() || 'U';
 
   const [mouseAtTop, setMouseAtTop] = useState(false);
+  const [searchParams] = useSearchParams();
+  const currentTab = searchParams.get('tab');
+
+  const isRadialGraphPage = location.pathname === '/continuous-discovery' && currentTab === 'radial';
 
   useEffect(() => {
+    if (!isRadialGraphPage) return;
+
     const handleMouseMove = (e: MouseEvent) => {
       if (e.clientY < 40) {
         setMouseAtTop(true);
@@ -157,7 +166,10 @@ const AppLayout = ({ children }: AppLayoutProps) => {
     };
     window.addEventListener('mousemove', handleMouseMove);
     return () => window.removeEventListener('mousemove', handleMouseMove);
-  }, [mouseAtTop]);
+  }, [mouseAtTop, isRadialGraphPage]);
+
+  // Force header visibility if not on radial graph page
+  const showHeader = !isRadialGraphPage || mouseAtTop;
 
   return (
     <div className={cn(
@@ -182,13 +194,16 @@ const AppLayout = ({ children }: AppLayoutProps) => {
       </div>
 
       <div
-        className="fixed top-0 left-0 right-0 h-2 z-[60]"
+        className={cn(
+          "fixed top-0 left-0 right-0 h-2 z-[60]",
+          !isRadialGraphPage && "hidden"
+        )}
         onMouseEnter={() => setMouseAtTop(true)}
       />
 
       <header className={cn(
-        "fixed top-0 z-50 w-full border-b backdrop-blur-xl transition-all duration-500 ease-in-out transform",
-        !mouseAtTop ? "-translate-y-full opacity-0" : "translate-y-0 opacity-100",
+        "fixed top-0 z-[100] w-full border-b backdrop-blur-xl transition-all duration-500 ease-in-out transform",
+        !showHeader ? "-translate-y-full opacity-0" : "translate-y-0 opacity-100",
         theme === 'dark'
           ? "bg-[#020617]/80 border-white/5"
           : "bg-white/80 border-slate-200/50"
@@ -313,6 +328,25 @@ const AppLayout = ({ children }: AppLayoutProps) => {
           </div>
 
           <div className="flex items-center gap-2">
+            {/* LLM Mode Switcher */}
+            <Button
+              variant="ghost"
+              size="sm"
+              className={cn(
+                "gap-2 px-3 border border-transparent transition-all duration-300",
+                llmMode === 'local'
+                  ? "bg-purple-500/10 text-purple-400 border-purple-500/30 hover:bg-purple-500/20"
+                  : "text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-100"
+              )}
+              onClick={() => setLLMMode(llmMode === 'cloud' ? 'local' : 'cloud')}
+              title={llmMode === 'cloud' ? "Mode IA: Cloud (Gemini/Claude)" : "Mode IA: Local (Meditron)"}
+            >
+              {llmMode === 'cloud' ? <Cloud className="h-4 w-4" /> : <Cpu className="h-4 w-4" />}
+              <span className="hidden lg:inline text-xs font-semibold uppercase tracking-wider">
+                {llmMode === 'cloud' ? 'Cloud' : 'Local'}
+              </span>
+            </Button>
+
             <LanguageSelector />
             <ThemeToggle />
 
@@ -357,13 +391,16 @@ const AppLayout = ({ children }: AppLayoutProps) => {
       </header>
 
       {/* Main Content */}
-      <main className="container py-4 md:py-6 px-4 animate-fade-in relative z-10 pt-24">
+      <main className={cn(
+        "container py-4 md:py-6 px-4 animate-fade-in relative z-10",
+        !isRadialGraphPage ? "pt-24" : "pt-4"
+      )}>
         {children}
       </main>
 
       {/* Footer / Status Bar (Nexus Style) */}
       <footer className={cn(
-        "fixed bottom-0 left-0 right-0 h-8 backdrop-blur-md border-t border-white/5 flex items-center justify-between px-6 z-50 overflow-hidden text-[9px] uppercase tracking-widest",
+        "fixed bottom-0 left-0 right-0 h-8 backdrop-blur-md border-t border-white/5 flex items-center justify-between px-6 z-[100] overflow-hidden text-[9px] uppercase tracking-widest",
         theme === 'dark' ? 'bg-[#020617]/80 text-slate-400' : 'bg-white/80 text-slate-500'
       )}>
         <div className="flex items-center gap-6">

@@ -37,6 +37,7 @@ import {
   Database,
 } from 'lucide-react';
 import { toast } from 'sonner';
+import { useAI } from '@/contexts/AIContext';
 import { VideoLoader } from './VideoLoader';
 import { RelationshipMatrix } from './RelationshipMatrix';
 import { RiskNetworkGraph } from './RiskNetworkGraph';
@@ -129,6 +130,7 @@ interface NCBIConcept {
 }
 
 const CrossDataAnalyzer = ({ patientData }: CrossDataAnalyzerProps) => {
+  const { invokeAI } = useAI();
   const [pathologies, setPathologies] = useState<Pathology[]>([]);
   const [symptoms, setSymptoms] = useState<Symptom[]>([]);
   const [treatments, setTreatments] = useState<Treatment[]>([]);
@@ -209,8 +211,8 @@ const CrossDataAnalyzer = ({ patientData }: CrossDataAnalyzerProps) => {
 
     setIsSearchingWeb(true);
     try {
-      const { data, error } = await supabase.functions.invoke('search-medical-concepts', {
-        body: { query, type }
+      const { data, error } = await invokeAI('search-medical-concepts', {
+        query, type
       });
 
       if (error) throw error;
@@ -755,16 +757,14 @@ const CrossDataAnalyzer = ({ patientData }: CrossDataAnalyzerProps) => {
         .map(id => medications.find(m => m.id === id && !m.atc_code))
         .filter(Boolean);
 
-      const { data, error: fnError } = await supabase.functions.invoke('cross-data-analyzer', {
-        body: {
-          pathologyIds: dbPathologyIds,
-          symptomIds: dbSymptomIds,
-          treatmentIds: selectedTreatments, // Traitements externes pas encore supportés
-          medicationIds: dbMedicationIds,
-          externalPathologies: extPathologies,
-          externalSymptoms: extSymptoms,
-          externalMedications: extMedications
-        }
+      const { data, error: fnError } = await invokeAI('cross-data-analyzer', {
+        pathologyIds: dbPathologyIds,
+        symptomIds: dbSymptomIds,
+        treatmentIds: selectedTreatments, // Traitements externes pas encore supportés
+        medicationIds: dbMedicationIds,
+        externalPathologies: extPathologies,
+        externalSymptoms: extSymptoms,
+        externalMedications: extMedications
       });
 
       if (fnError) throw fnError;

@@ -13,6 +13,7 @@
 
 import { useState, useEffect } from 'react';
 import { supabase } from '@/integrations/supabase/client';
+import { useAI } from '@/contexts/AIContext';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -107,6 +108,7 @@ interface PatientHealthSynthesisProps {
 // =====================================================
 
 const PatientHealthSynthesis = ({ patientId }: PatientHealthSynthesisProps) => {
+    const { invokeAI } = useAI();
     const [synthesis, setSynthesis] = useState<HealthSynthesis | null>(null);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
@@ -117,8 +119,8 @@ const PatientHealthSynthesis = ({ patientId }: PatientHealthSynthesisProps) => {
         setError(null);
 
         try {
-            const { data, error: fnError } = await supabase.functions.invoke('patient-health-synthesis', {
-                body: { patient_id: patientId },
+            const { data, error: fnError } = await invokeAI('patient-health-synthesis', {
+                patient_id: patientId
             });
 
             if (fnError) throw fnError;

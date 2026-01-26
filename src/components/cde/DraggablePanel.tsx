@@ -102,7 +102,8 @@ const DraggablePanel: React.FC<DraggablePanelProps> = ({
     }, []);
 
     useEffect(() => {
-        const FOOTER_HEIGHT = 40; // Height of the footer bar
+        const HEADER_HEIGHT = 64; // Height of the header bar (h-16)
+        const FOOTER_HEIGHT = 32; // Height of the footer bar (h-8)
 
         const handleMouseMove = (e: MouseEvent) => {
             if (isDragging) {
@@ -113,9 +114,9 @@ const DraggablePanel: React.FC<DraggablePanelProps> = ({
                 const panelWidth = panelRef.current?.offsetWidth || 100;
                 const panelHeight = panelRef.current?.offsetHeight || 100;
 
-                // Clamp to viewport - keep panel fully within screen
+                // Clamp to viewport - keep panel fully within screen and between header/footer
                 newX = Math.max(0, Math.min(newX, window.innerWidth - panelWidth));
-                newY = Math.max(0, Math.min(newY, window.innerHeight - FOOTER_HEIGHT - panelHeight));
+                newY = Math.max(HEADER_HEIGHT, Math.min(newY, window.innerHeight - FOOTER_HEIGHT - panelHeight));
 
                 // Check for collision with other panels
                 if (panelRegistry) {
@@ -128,7 +129,7 @@ const DraggablePanel: React.FC<DraggablePanelProps> = ({
                     if (collision) {
                         // Use adjusted position, but re-clamp to viewport
                         newX = Math.max(0, Math.min(collision.left, window.innerWidth - panelWidth));
-                        newY = Math.max(0, Math.min(collision.top, window.innerHeight - FOOTER_HEIGHT - panelHeight));
+                        newY = Math.max(HEADER_HEIGHT, Math.min(collision.top, window.innerHeight - FOOTER_HEIGHT - panelHeight));
                     }
                 }
 

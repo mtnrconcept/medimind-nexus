@@ -21,6 +21,7 @@ import {
     ArrowRight,
     RefreshCcw
 } from 'lucide-react';
+import { useAI } from '@/contexts/AIContext';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 
@@ -43,6 +44,7 @@ const SymptomQuestionnaireModal = ({
     onComplete,
     initialSymptom
 }: SymptomQuestionnaireModalProps) => {
+    const { invokeAI } = useAI();
     const [messages, setMessages] = useState<Message[]>([]);
     const [inputValue, setInputValue] = useState('');
     const [loading, setLoading] = useState(false);
@@ -70,12 +72,10 @@ const SymptomQuestionnaireModal = ({
     const startQuestionnaire = async () => {
         setLoading(true);
         try {
-            const { data, error } = await supabase.functions.invoke('symptom-questionnaire', {
-                body: {
-                    conversationHistory: [],
-                    identifiedSymptoms: [],
-                    initialSymptom
-                }
+            const { data, error } = await invokeAI('symptom-questionnaire', {
+                conversationHistory: [],
+                identifiedSymptoms: [],
+                initialSymptom
             });
 
             if (error) throw error;
@@ -124,11 +124,9 @@ const SymptomQuestionnaireModal = ({
                 content: m.content
             }));
 
-            const { data, error } = await supabase.functions.invoke('symptom-questionnaire', {
-                body: {
-                    conversationHistory,
-                    identifiedSymptoms
-                }
+            const { data, error } = await invokeAI('symptom-questionnaire', {
+                conversationHistory,
+                identifiedSymptoms
             });
 
             if (error) throw error;

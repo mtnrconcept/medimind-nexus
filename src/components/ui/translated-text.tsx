@@ -1,6 +1,7 @@
 import { useEffect, useState, memo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { supabase } from '@/integrations/supabase/client';
+import { useAI } from '@/contexts/AIContext';
 
 // Cache global partagé
 const cache: Record<string, Record<string, string>> = {};
@@ -59,14 +60,13 @@ export const T = memo(function T({ children, as: Tag = 'span', className }: TPro
         }
 
         // Traduire
+        const { invokeAI } = useAI();
         const translateText = async () => {
             try {
-                const { data, error } = await supabase.functions.invoke('translate', {
-                    body: {
-                        texts: [children],
-                        targetLang: lang,
-                        sourceLang: 'fr'
-                    }
+                const { data, error } = await invokeAI('translate', {
+                    texts: [children],
+                    targetLang: lang,
+                    sourceLang: 'fr'
                 });
 
                 if (!error && data?.translations?.[0]) {
@@ -107,8 +107,9 @@ export function useT(text: string): string {
             return;
         }
 
-        supabase.functions.invoke('translate', {
-            body: { texts: [text], targetLang: lang, sourceLang: 'fr' }
+        const { invokeAI } = useAI();
+        invokeAI('translate', {
+            texts: [text], targetLang: lang, sourceLang: 'fr'
         }).then(({ data, error }) => {
             if (!error && data?.translations?.[0]) {
                 if (!cache[lang]) cache[lang] = {};
@@ -148,13 +149,12 @@ export async function translateBatch(
         return results.map((r, i) => r || texts[i]);
     }
 
+    const { invokeAI } = useAI();
     try {
-        const { data, error } = await supabase.functions.invoke('translate', {
-            body: {
-                texts: toTranslate.map(t => t.text),
-                targetLang,
-                sourceLang
-            }
+        const { data, error } = await invokeAI('translate', {
+            texts: toTranslate.map(t => t.text),
+            targetLang,
+            sourceLang
         });
 
         if (!error && data?.translations) {

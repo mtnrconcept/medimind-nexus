@@ -15,6 +15,7 @@ import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Badge } from '@/components/ui/badge';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { toast } from 'sonner';
+import { useAI } from '@/contexts/AIContext';
 import { format } from 'date-fns';
 import { fr } from 'date-fns/locale';
 import { Plus, Hospital, Loader2, MoreVertical, Pencil, Trash2, Stethoscope, Scissors, BedDouble, Upload } from 'lucide-react';
@@ -61,6 +62,7 @@ const SEVERITY_OPTIONS = [
 ];
 
 const MedicalHistoryCard = ({ patientId }: MedicalHistoryCardProps) => {
+    const { invokeAI } = useAI();
     const { maxZIndex } = useWindowManager();
     // 1. State declarations
     const [history, setHistory] = useState<MedicalHistory[]>([]);
@@ -175,8 +177,8 @@ const MedicalHistoryCard = ({ patientId }: MedicalHistoryCardProps) => {
                 .limit(20);
 
             // 2. Search External
-            const externalPromise = supabase.functions.invoke('search-medical-concepts', {
-                body: { query, type: 'pathology' }
+            const externalPromise = invokeAI('search-medical-concepts', {
+                query, type: 'pathology'
             });
 
             const [localRes, externalRes] = await Promise.all([localPromise, externalPromise]);
@@ -227,8 +229,8 @@ const MedicalHistoryCard = ({ patientId }: MedicalHistoryCardProps) => {
                 .limit(20);
 
             // 2. Search External
-            const externalPromise = supabase.functions.invoke('search-medical-concepts', {
-                body: { query, type: 'medication' }
+            const externalPromise = invokeAI('search-medical-concepts', {
+                query, type: 'medication'
             });
 
             const [localRes, externalRes] = await Promise.all([localPromise, externalPromise]);
