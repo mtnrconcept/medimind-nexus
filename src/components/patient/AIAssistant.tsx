@@ -151,37 +151,64 @@ const AIAssistant = ({ patient }: AIAssistantProps) => {
     setInput('');
 
     try {
-      const patientContext = {
-        // Identification
-        id: patient.id,
-        patient_id: patient.patient_id,
+      // Helper to format patient context identically to the Cloud Edge Function
+      const formatPatientContext = (ctx: any): string => {
+        if (!ctx) return "Aucune donnée patient disponible.";
 
-        // Profile
-        nom_complet: patient.first_name && patient.last_name
-          ? `${patient.first_name} ${patient.last_name}`
-          : undefined,
+        const meds = ctx.medications?.map((m: any) => `- ${m.medication_name || m.name} (${m.dosage || ''}, ${m.frequency || ''})`).join('\n') || 'Aucun';
+        const history = ctx.medical_history?.map((h: any) => `- ${h.condition_name || h.condition} (${h.diagnosis_date || h.date || ''}): ${h.status || (h.resolved ? 'Résolu' : 'Actif')}`).join('\n') || 'Aucun';
+        const allergies = ctx.allergies?.map((a: any) => `- ${a.allergen} (${a.reaction || ''}) - ${a.severity || ''}`).join('\n') || 'Aucune';
+        const consults = ctx.consultations?.map((c: any) => `- ${c.consultation_date || ''}: ${c.reason || ''} (${c.physician_name || ''})`).join('\n') || 'Aucune';
+        const vaccines = ctx.vaccinations?.map((v: any) => `- ${v.vaccine_name || v.name} (${v.vaccination_date || v.date || ''})`).join('\n') || 'Aucun';
+
+        const clinical = ctx.clinical_data?.map((d: any) => `- ${d.data_name || ''}: ${d.data_value || ''} ${d.unit || ''}`).join('\n') || 'Aucune donnée';
+        const labList = ctx.lab_results_list?.map((l: any) => `- ${l.test_name}: ${l.test_value} ${l.unit} (${l.status})`).join('\n') || 'Aucune donnée';
+
+        return `
+## 👤 PROFIL PATIENT
+- Âge: ${ctx.age} ans | Genre: ${ctx.gender} | Nationalité: ${ctx.nationality || 'N/A'}
+- Statut: ${ctx.outcome || 'N/A'}
+
+## 💊 TRAITEMENTS ACTUELS
+${meds}
+
+## 🏥 ANTÉCÉDENTS & PATHOLOGIES
+${history}
+
+## ⚠️ ALLERGIES
+${allergies}
+
+## 🔬 RÉSULTATS BIOLOGIQUES
+${labList}
+
+## 🧬 DONNÉES CLINIQUES & CONSTANTES
+${clinical}
+
+## 💉 VACCINATIONS
+${vaccines}
+
+## 📅 CONSULTATIONS RÉCENTES
+${consults}
+`;
+      };
+
+      const rawContext = {
         prenom: patient.first_name,
         nom: patient.last_name,
-        date_naissance: patient.date_of_birth,
         age: patient.age,
-        gender: patient.gender === 'M' ? 'Homme' : patient.gender === 'F' ? 'Femme' : patient.gender,
-
-        // Clinical Data (Real DB Data)
+        gender: patient.gender === 'M' ? 'Homme' : 'Femme',
+        nationality: patient.nationality,
         medications: patient.medications,
         allergies: patient.allergies,
         vaccinations: patient.vaccinations,
         medical_history: patient.medical_history,
         consultations: patient.consultations,
-        mental_health: patient.mental_health,
-        reproductive_health: patient.reproductive_health,
         clinical_data: patient.clinical_data,
-        lab_results_list: patient.lab_results_data, // List of DB entries
-
-        // Legacy/Aggregated fields
-        lab_results_summary: patient.lab_results_json,
-        alerts: patient.alerts,
-        medical_notes: patient.medical_notes_nlp,
+        lab_results_list: patient.lab_results_data,
+        outcome: patient.outcome,
       };
+
+      const formattedContext = formatPatientContext(rawContext);
 
       if (llmMode === 'cloud') {
         const response = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/ai-assistant`, {
@@ -192,8 +219,8 @@ const AIAssistant = ({ patient }: AIAssistantProps) => {
           },
           body: JSON.stringify({
             message: userMessage,
-            patient: patientContext,
-            conversationHistory: messages,
+            patient: rawContext, // Pass the standardized context
+            conversationHistory: messages.slice(-10),
           }),
         });
 
@@ -251,28 +278,43 @@ const AIAssistant = ({ patient }: AIAssistantProps) => {
         }
       } else {
         // LOCAL MODE (Streaming with Meditron/OpenAI format)
-        console.log('[AI-Local] Streaming with local LLM...');
+        console.log('[AI-Local] Streaming with local LLM (standardized)...');
 
-        // Prepare local context-rich prompt
-        const historyStr = messages.map(m => `${m.role === 'user' ? 'Directeur Médical' : 'Assistant MediCore'}: ${m.content}`).join('\n');
+        // For local mode, we need to be very careful with n_ctx (2048 limit)
+        // Patient context + prompt + history must leave room for response (~512 tokens)
+        const historyToShow = messages.slice(-1); // Only last message for local
+        const historyStr = historyToShow.map(m => `${m.role === 'user' ? 'Directeur' : 'Assistant'}: ${m.content}`).join('\n');
 
-        const localPrompt = `Tu es l'Assistant MediCore, un expert en analyse médicale.
-CONTEXTE PATIENT :
-${JSON.stringify(patientContext, null, 2)}
+        const systemPrompt = `Tu es l'Assistant MediCore expert. Tu partages le même moteur analytique que la Synthèse de Santé.
+Ton analyse doit être rigoureuse, profonde et factuelle.
+RÈGLES: 
+- Pas de diagnostic définitif. 
+- Base-toi UNIQUEMENT sur le contexte fourni. 
+- Indique si l'information est manquante. 
+- Sépare les faits des suppositions. 
+- Inclus TOUJOURS une section "Red Flags".`;
 
-HISTORIQUE :
+        const userPrompt = `[CONTEXTE PATIENT STANDARD]
+${formattedContext}
+
+[CONVERSATION]
 ${historyStr}
-
-Directeur Médical : ${userMessage}
-Assistant MediCore :`;
+Directeur : ${userMessage}
+Assistant :`;
 
         const response = await fetch(`${localLLMConfig.baseUrl}/chat/completions`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             model: localLLMConfig.model,
-            messages: [{ role: 'user', content: localPrompt }],
+            messages: [
+              { role: 'system', content: systemPrompt },
+              { role: 'user', content: userPrompt }
+            ],
             stream: true,
+            temperature: 0.1,
+            max_tokens: 600,
+            stop: ['\nUser:', '\nDirecteur:', '\nSystem:', '</s>', '###'],
           }),
         });
 
@@ -295,10 +337,12 @@ Assistant MediCore :`;
           buffer = lines.pop() || '';
 
           for (const line of lines) {
-            if (line.trim() === '' || line === 'data: [DONE]') continue;
-            if (line.startsWith('data: ')) {
+            const trimmedLine = line.trim();
+            if (!trimmedLine || trimmedLine === 'data: [DONE]') continue;
+
+            if (trimmedLine.startsWith('data: ')) {
               try {
-                const data = JSON.parse(line.slice(6));
+                const data = JSON.parse(trimmedLine.slice(6));
                 const content = data.choices?.[0]?.delta?.content || '';
                 if (content) {
                   assistantContent += content;

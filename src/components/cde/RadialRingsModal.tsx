@@ -573,9 +573,6 @@ function SVGFallback({
     // Node selection state
     const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
 
-    // AI Context
-    const { invokeAI } = useAI();
-
     // Hover/Tooltip state
     const [hoveredNode, setHoveredNode] = useState<RingNode | null>(null);
     const [tooltipPos, setTooltipPos] = useState({ x: 0, y: 0 });

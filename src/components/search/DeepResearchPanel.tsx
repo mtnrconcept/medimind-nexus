@@ -104,7 +104,7 @@ const DeepResearchPanel = ({ selectedSymptomIds, selectedSymptomNames }: DeepRes
 
       if (fnError) throw fnError;
 
-      if (data.error) {
+      if (data?.error) {
         if (data.error.includes('Crédits') || data.error.includes('402')) {
           setError('Crédits IA insuffisants. Rechargez votre compte dans Paramètres → Workspace → Usage.');
         } else if (data.error.includes('Limite') || data.error.includes('429')) {
@@ -115,8 +115,16 @@ const DeepResearchPanel = ({ selectedSymptomIds, selectedSymptomNames }: DeepRes
         return;
       }
 
-      setResult(data.result);
-      toast.success(`Deep Research terminée : ${data.result.pathologies?.length || 0} pathologies identifiées`);
+      // Handle both cloud (data.result) and local (data directly) formats
+      const researchResult = data?.result || data;
+
+      if (!researchResult || (!researchResult.pathologies && !researchResult.summary)) {
+        setError('Résultat de recherche invalide. Veuillez réessayer.');
+        return;
+      }
+
+      setResult(researchResult);
+      toast.success(`Deep Research terminée : ${researchResult.pathologies?.length || 0} pathologies identifiées`);
     } catch (err) {
       console.error('Erreur Deep Research:', err);
       setError('Erreur lors de la recherche. Veuillez réessayer.');

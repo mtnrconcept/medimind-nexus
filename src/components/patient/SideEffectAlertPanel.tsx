@@ -96,8 +96,8 @@ export const SideEffectAlertPanel = ({ patientId, onAlertCountChange }: SideEffe
             console.error('Error fetching alerts:', error);
             toast.error('Erreur chargement alertes');
         } else {
-            setAlerts(data || []);
-            onAlertCountChange?.(data?.filter(a => a.status === 'pending').length || 0);
+            setAlerts((data as any) || []);
+            onAlertCountChange?.((data as any)?.filter((a: any) => a.status === 'pending').length || 0);
         }
         setLoading(false);
     };

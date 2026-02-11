@@ -119,6 +119,7 @@ const AllergiesCard = ({ patientId }: AllergiesCardProps) => {
         reaction: '',
         onset_date: '',
         confirmed: true,
+        notes: '',
     });
 
     // Database options for medication allergens
@@ -225,6 +226,7 @@ const AllergiesCard = ({ patientId }: AllergiesCardProps) => {
             reaction: '',
             onset_date: '',
             confirmed: true,
+            notes: '',
         });
         setCustomAllergen('');
         setDialogOpen(true);
@@ -239,6 +241,7 @@ const AllergiesCard = ({ patientId }: AllergiesCardProps) => {
             reaction: allergy.reaction || '',
             onset_date: allergy.onset_date || '',
             confirmed: allergy.confirmed ?? true,
+            notes: (allergy as any).notes || '',
         });
         setDialogOpen(true);
     };
@@ -320,7 +323,7 @@ const AllergiesCard = ({ patientId }: AllergiesCardProps) => {
         try {
             await supabase
                 .from('patient_allergies')
-                .update({ confirmed: !allergy.confirmed })
+                .update({ verified: !allergy.confirmed })
                 .eq('id', allergy.id);
             fetchData();
         } catch (error) {

@@ -155,7 +155,7 @@ const FamilyHistoryCard = ({ patientId }: FamilyHistoryCardProps) => {
             .select('*')
             .eq('patient_id', patientId)
             .order('relationship');
-        setHistory(data || []);
+        setHistory((data as any) || []);
         setLoading(false);
     }, [patientId]);
 
