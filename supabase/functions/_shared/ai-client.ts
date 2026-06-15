@@ -57,12 +57,50 @@ export interface AICallOptions {
   responseFormat?: Record<string, unknown>;
 }
 
+const DEFAULT_OPENAI_MODEL = 'gpt-5.5';
+
+function isKnownNonOpenAIModel(model: string): boolean {
+  const normalized = model.trim().toLowerCase();
+  return (
+    normalized.startsWith('claude') ||
+    normalized.includes('sonnet') ||
+    normalized.includes('opus') ||
+    normalized.includes('haiku') ||
+    normalized.startsWith('anthropic/') ||
+    normalized.startsWith('gemini') ||
+    normalized.startsWith('google/') ||
+    normalized.startsWith('mistral') ||
+    normalized.startsWith('mixtral') ||
+    normalized.startsWith('deepseek') ||
+    normalized.startsWith('openrouter/') ||
+    normalized.startsWith('cohere') ||
+    normalized.startsWith('qwen') ||
+    normalized.startsWith('llama') ||
+    normalized.startsWith('meta/')
+  );
+}
+
+function resolveOpenAIModel(options: AICallOptions, envModel?: string): string {
+  const requested = options.forceModel
+    ? options.model || envModel
+    : envModel || options.model;
+  const candidate = (requested || DEFAULT_OPENAI_MODEL).trim();
+
+  if (isKnownNonOpenAIModel(candidate)) {
+    const fallback = envModel && !isKnownNonOpenAIModel(envModel)
+      ? envModel
+      : DEFAULT_OPENAI_MODEL;
+    console.warn(`[AI] Non-OpenAI model "${candidate}" requested; using "${fallback}" with OPENAI_API_KEY.`);
+    return fallback;
+  }
+
+  return candidate || DEFAULT_OPENAI_MODEL;
+}
+
 function getOpenAIConfig(options: AICallOptions) {
   const apiKey = Deno.env.get('OPENAI_API_KEY');
   const envModel = Deno.env.get('OPENAI_MODEL');
-  const model = options.forceModel
-    ? options.model || envModel || 'gpt-5.5'
-    : envModel || options.model || 'gpt-5.5';
+  const model = resolveOpenAIModel(options, envModel);
 
   if (!apiKey) {
     throw new Error('OPENAI_API_KEY not configured');

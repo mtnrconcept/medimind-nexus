@@ -48,7 +48,7 @@ async function generateEmbedding(text: string, apiKey?: string): Promise<number[
     }
 }
 
-// Alternative: Use Claude for embeddings via description generation
+// Alternative: Use OpenAI for embeddings via description generation
 // Alternative: Use AI for descriptions via description generation
 async function generateNodeDescription(node: any): Promise<string> {
     try {
@@ -56,7 +56,7 @@ async function generateNodeDescription(node: any): Promise<string> {
             "Tu es un expert médical. Génère des descriptions concises.",
             `Generate a concise medical description for embedding about: "${node.name}" (type: ${node.node_type}). Include key medical properties, mechanisms, and relationships. Keep it under 100 words.`,
             {
-                model: "claude-3-5-sonnet-20240620",
+                model: "gpt-5.5",
                 maxTokens: 200,
                 temperature: 0.3
             }

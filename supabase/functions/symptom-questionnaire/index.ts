@@ -65,7 +65,7 @@ Tu DOIS répondre UNIQUEMENT en JSON valide:
 - confidenceLevel: 0-1 indiquant la qualité des informations recueillies
 - suggestedFollowUps: 2-3 questions alternatives que l'utilisateur pourrait choisir`;
 
-        // Build the conversation for Claude
+        // Build the conversation for OpenAI
         const messages: { role: string; content: string }[] = [];
 
         if (conversationHistory.length === 0) {
@@ -96,7 +96,7 @@ Tu DOIS répondre UNIQUEMENT en JSON valide:
             systemPrompt,
             messages,
             {
-                model: 'claude-sonnet-4-20250514',
+                model: "gpt-5.5",
                 maxTokens: 1024,
                 temperature: 0.5
             }

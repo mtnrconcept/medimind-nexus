@@ -149,7 +149,7 @@ ${repro}
               controller.enqueue(encoder.encode(`data: ${JSON.stringify(openaiChunk)}\n\n`));
             },
             {
-              model: "claude-3-5-sonnet-20240620",
+              model: "gpt-5.5",
               maxTokens: 4096,
             }
           );

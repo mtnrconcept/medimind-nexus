@@ -365,8 +365,8 @@ serve(async (req) => {
                         });
                     }
 
-                    // Step 4: Claude Live Analysis
-                    sendEvent({ type: 'step_update', step: { id: 4, status: 'running', details: '🧠 Synthèse actualités Claude...', source: 'Anthropic' } });
+                    // Step 4: OpenAI Analysis
+                    sendEvent({ type: 'step_update', step: { id: 4, status: 'running', details: '🧠 Synthèse actualités OpenAI...', source: 'OpenAI' } });
 
                     const liveContext = `
 # VEILLE SCIENTIFIQUE LIVE: ${topic}
@@ -428,7 +428,7 @@ Priorise la FRAÎCHEUR et la PERTINENCE CLINIQUE.
                             sendEvent({ type: 'text', content: chunk });
                         },
                         {
-                            model: "claude-3-5-sonnet-20240620",
+                            model: "gpt-5.5",
                             maxTokens: 12000,
                             temperature: 0.4
                         }
@@ -436,7 +436,7 @@ Priorise la FRAÎCHEUR et la PERTINENCE CLINIQUE.
 
                     const textContent = aiResponse.text;
 
-                    sendEvent({ type: 'step_update', step: { id: 4, status: 'completed', details: '✅ Veille actualisée', source: 'Claude Live' } });
+                    sendEvent({ type: 'step_update', step: { id: 4, status: 'completed', details: '✅ Veille actualisée', source: 'OpenAI' } });
 
                     // Extract and emit structured updates
                     try {

@@ -450,7 +450,7 @@ Extraire pour chaque membre:
         systemPrompt,
         messages,
         {
-            model: "claude-3-5-sonnet-20240620",
+            model: "gpt-5.5",
             maxTokens: 4096,
         }
     );
@@ -1120,7 +1120,7 @@ serve(async (req) => {
         let extractedData: ExtractedMedicalData = {};
         const fileType = file.type || file.name.split('.').pop()?.toLowerCase() || '';
 
-        // Simplification: Text or Image analysis via Claude
+        // Simplification: Text or Image analysis via OpenAI
         let contentToAnalyze = '';
         let typeInfo: any = { contentType: 'text' };
 

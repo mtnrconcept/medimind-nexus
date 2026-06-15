@@ -115,7 +115,7 @@ serve(async (req) => {
             console.error("Failed to fetch edges:", edgesError);
         }
 
-        // Build the KG context for Claude
+        // Build the KG context for OpenAI
         const nodesByType: Record<string, CDENode[]> = {};
         (nodes || []).forEach((node: CDENode) => {
             if (!nodesByType[node.node_type]) nodesByType[node.node_type] = [];
@@ -284,7 +284,7 @@ Commence ton analyse maintenant. Montre tout ton raisonnement étape par étape.
                             controller.enqueue(encoder.encode(`data: ${JSON.stringify(chunk)}\n\n`));
                         },
                         {
-                            model: "claude-3-5-sonnet-20240620",
+                            model: "gpt-5.5",
                             maxTokens: 8192,
                         }
                     );
@@ -317,7 +317,7 @@ Commence ton analyse maintenant. Montre tout ton raisonnement étape par étape.
                                             severity_score: severityScore,
                                             plausibility_score: plausibilityScore,
                                             status: 'raw_signal',
-                                            sources: [{ type: 'cde_analysis', model: 'claude-3-5-sonnet' }],
+                                            sources: [{ type: 'cde_analysis', model: "gpt-5.5" }],
                                             recommended_actions: discovery.recommended_actions || [],
                                         });
 

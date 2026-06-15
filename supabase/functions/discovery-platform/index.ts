@@ -384,7 +384,7 @@ function extractClaimTags(text: string): string[] {
 }
 
 // ============================================
-// HYPOTHESIS GENERATOR (Claude or OpenAI)
+// HYPOTHESIS GENERATOR (OpenAI or OpenAI)
 // ============================================
 
 async function generateHypotheses(evidencePack: EvidencePack, onChunk?: (text: string) => void): Promise<Hypothesis[]> {
@@ -554,7 +554,7 @@ ${(() => {
 Retourne JSON strict selon le format spécifié.`;
 
     try {
-        // Call AI with streaming and Gemini fallback
+        // Call OpenAI with streaming
         const aiResponse = await streamAI(
             systemPrompt,
             userPrompt,
@@ -562,17 +562,17 @@ Retourne JSON strict selon le format spécifié.`;
                 if (onChunk) onChunk(text);
             },
             {
-                model: 'claude-opus-4-20250514',
+                model: "gpt-5.5",
                 maxTokens: 30000
             }
         );
 
         let content = aiResponse.text;
 
-        // Fallback to OpenAI if Claude failed or not available (omitted for stream mode simplicity)
+        // Fallback to OpenAI if OpenAI failed or not available (omitted for stream mode simplicity)
 
         if (!content) {
-            // If we failed to get content (e.g. Anthropic off), return empty
+            // If we failed to get content (e.g. OpenAI off), return empty
             return [];
         }
 

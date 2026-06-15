@@ -50,7 +50,7 @@ serve(async (req) => {
             throw new Error("Liens non trouvés");
         }
 
-        // Build context for Claude
+        // Build context for OpenAI
         const linksContext = edges.map(edge => {
             const source = edge.source_node as any;
             const target = edge.target_node as any;
@@ -96,7 +96,7 @@ Fournis une analyse détaillée de chaque lien.`;
             systemPrompt,
             userPrompt,
             {
-                model: "claude-3-5-sonnet-20240620",
+                model: "gpt-5.5",
                 maxTokens: 4096,
             }
         );

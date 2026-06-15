@@ -7,7 +7,7 @@ import { callAI } from "../_shared/ai-client.ts";
  * Mode 1: analysis_qa - Q&A sur les résultats d'analyse de liens/nœuds
  * Mode 2: graph_command - Commandes naturelles pour manipuler le graphe
  * 
- * Configuration: claude-sonnet-4-20250514, temperature=0.4, streaming
+ * Configuration: OpenAI via OPENAI_API_KEY, temperature=0.4, streaming
  */
 
 const corsHeaders = {
@@ -253,7 +253,7 @@ ${request.message}
 Réponds en JSON valide.`;
         }
 
-        // Build conversation history for Claude
+        // Build conversation history for OpenAI
         const messages: { role: 'user' | 'assistant', content: string }[] = [];
 
         // Add history if present
@@ -266,12 +266,12 @@ Réponds en JSON valide.`;
         // Add current message
         messages.push({ role: 'user', content: userMessage });
 
-        // Call AI with Gemini fallback
+        // Call AI with OpenAI
         const aiResponse = await callAI(
             systemPrompt,
             userMessage,
             {
-                model: "claude-3-5-sonnet-20240620",
+                model: "gpt-5.5",
                 temperature: 0.4
             }
         );

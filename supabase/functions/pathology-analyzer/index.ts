@@ -104,7 +104,7 @@ SOURCES: ${JSON.stringify(sources.slice(0, 5))}
 
 Effectue l'analyse complète.`;
 
-          sendEvent({ type: 'step_update', step: { id: 2, status: 'running', details: '🧠 Analyse multi-agents...', source: 'Claude 3.5 Sonnet' } });
+          sendEvent({ type: 'step_update', step: { id: 2, status: 'running', details: '🧠 Analyse multi-agents...', source: 'OpenAI' } });
 
           const aiResult = await streamAI(
             systemPrompt,
@@ -113,14 +113,14 @@ Effectue l'analyse complète.`;
               sendEvent({ type: 'text', content: chunk });
             },
             {
-              model: 'claude-3-5-sonnet-20240620',
+              model: "gpt-5.5",
               maxTokens: 4000,
               temperature: 0.2
             }
           );
 
           const fullText = aiResult.text;
-          sendEvent({ type: 'step_update', step: { id: 2, status: 'completed', details: '✅ Analyse terminée', source: 'Claude' } });
+          sendEvent({ type: 'step_update', step: { id: 2, status: 'completed', details: '✅ Analyse terminée', source: 'OpenAI' } });
 
           // Extraction du JSON
           try {

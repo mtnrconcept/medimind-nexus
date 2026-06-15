@@ -181,13 +181,17 @@ serve(async (req) => {
                 new Date(a.test_date).getTime() - new Date(b.test_date).getTime()
             );
 
-            const baselineValue = sortedLabs[0].value;
-            const currentValue = sortedLabs[sortedLabs.length - 1].value;
+            const firstLab = sortedLabs[0];
+            const latestLab = sortedLabs[sortedLabs.length - 1];
+            if (!firstLab || !latestLab) continue;
+
+            const baselineValue = firstLab.value;
+            const currentValue = latestLab.value;
             const changePercent = ((currentValue - baselineValue) / baselineValue) * 100;
 
             // Detect abnormal trends (>20% change or out of reference range)
-            const isOutOfRange = sortedLabs[sortedLabs.length - 1].reference_max
-                ? currentValue > sortedLabs[sortedLabs.length - 1].reference_max
+            const isOutOfRange = latestLab.reference_max
+                ? currentValue > latestLab.reference_max
                 : false;
 
             const significantChange = Math.abs(changePercent) > 20;
@@ -260,7 +264,7 @@ Réponds UNIQUEMENT en JSON valide avec ce format:
             systemPrompt,
             analysisPrompt,
             {
-                model: "claude-3-5-sonnet-20240620",
+                model: "gpt-5.5",
                 maxTokens: 2000,
             }
         );

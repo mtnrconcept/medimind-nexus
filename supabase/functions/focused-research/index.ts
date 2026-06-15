@@ -105,7 +105,7 @@ async function translateQuery(query: string): Promise<string> {
             "Translate the following medical term or query from French to English. Return ONLY the English translation, no other text. If it is already English or a universal scientific term, return it as is.",
             `Query: "${query}"`,
             {
-                model: "claude-3-haiku-20240307",
+                model: "gpt-5.5",
                 maxTokens: 100,
                 temperature: 0
             }
@@ -856,7 +856,7 @@ serve(async (req) => {
                         step: { id: 3, status: 'running', details: 'Analyse IA en cours...' }
                     });
 
-                    // Build context for Claude with ALL available data
+                    // Build context for OpenAI with ALL available data
                     const medicationsList = relatedMedications.slice(0, 100).map((m: any) =>
                         `- **${m.name}** (${m.substance || 'N/A'}) - Classe: ${m.therapeutic_class || 'N/A'}`
                     ).join('\n') || 'Aucun médicament chargé';
@@ -1134,7 +1134,7 @@ Après le JSON, ajoute les sections suivantes:
 Commence par le JSON maintenant.`;
 
 
-                    // Call AI with streaming (handles Anthropic -> Gemini fallback)
+                    // Call AI with streaming (handles OpenAI)
                     let fullText = "";
                     await streamAI(
                         systemPrompt,
@@ -1144,7 +1144,7 @@ Commence par le JSON maintenant.`;
                             sendEvent(controller, { type: 'text', content: text });
                         },
                         {
-                            model: "claude-3-5-sonnet-latest",
+                            model: "gpt-5.5",
                             maxTokens: 80000,
                             temperature: 0.7,
                         }

@@ -365,8 +365,8 @@ serve(async (req) => {
                     };
                     sendEvent('sources', totalSources);
 
-                    // Step 7: Claude Analysis (NON-STREAMING pour éviter corruption)
-                    sendEvent('step', { id: 7, status: 'running', details: '🧠 Claude: Génération de l\'analyse complète...' });
+                    // Step 7: OpenAI Analysis (NON-STREAMING pour éviter corruption)
+                    sendEvent('step', { id: 7, status: 'running', details: '🧠 OpenAI: Génération de l\'analyse complète...' });
 
                     const context = `
 # REQUÊTE DE DÉCOUVERTE
@@ -424,7 +424,7 @@ Génère une analyse COMPLÈTE et DÉTAILLÉE selon le format de ton prompt syst
                         DISCOVERY_PROMPT,
                         context,
                         {
-                            model: "claude-3-5-sonnet-20240620",
+                            model: "gpt-5.5",
                             maxTokens: 16000,
                             temperature: 0.3,
                         }

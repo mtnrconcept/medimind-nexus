@@ -69,7 +69,7 @@ serve(async (req) => {
 
     if (!firecrawlApiKey) throw new Error('FIRECRAWL_API_KEY non configurée');
 
-    // Helper pour appeler l'IA (callAI gère Anthropic -> Gemini fallback)
+    // Helper pour appeler l'IA (callAI gère OpenAI)
     async function extractWithAI(markdown: string, type: 'medication' | 'pathology' | 'molecule'): Promise<any> {
       const systemPrompt = type === 'medication'
         ? "Tu es un expert pharmacologue suisse. Extrais les données structurées de cette notice de médicament (Compendium.ch) en JSON strict."
@@ -119,7 +119,7 @@ serve(async (req) => {
         systemPrompt,
         userPrompt,
         {
-          model: 'claude-3-5-sonnet-20240620', // Optimisé
+          model: "gpt-5.5", // Optimisé
           maxTokens: 4000,
           temperature: 0
         }
@@ -1360,7 +1360,7 @@ serve(async (req) => {
       const markdown = scrapeResult.markdown || '';
       console.log('Contenu extraction équivalence, longueur:', markdown.length);
 
-      // Extract equivalence data using AI with fallback (Anthropic -> Gemini)
+      // Extract equivalence data using AI with fallback (OpenAI -> Gemini)
       const equivalencePrompt = `Tu es un pharmacologue expert. Extrais les données d'équivalence de cette page.
 
 Catégorie: ${category}
@@ -1387,12 +1387,12 @@ Schéma JSON strict attendu:
 Contenu Markdown:
 ${markdown.substring(0, 40000)}`;
 
-      // Use callAI which handles Anthropic -> Gemini fallback automatically
+      // Use callAI which handles OpenAI automatically
       const aiResponse = await callAI(
         'Tu es un pharmacologue expert en équivalences médicamenteuses.',
         equivalencePrompt,
         {
-          model: 'claude-sonnet-4-20250514',
+          model: "gpt-5.5",
           maxTokens: 4000,
           temperature: 0
         }
@@ -1401,14 +1401,14 @@ ${markdown.substring(0, 40000)}`;
       const content = aiResponse.text;
       console.log(`[scrape-equivalence] AI response from ${aiResponse.provider} (${aiResponse.model})`);
 
-      // Parse JSON from Claude response
+      // Parse JSON from OpenAI response
       const jsonMatch = content.match(/\{[\s\S]*\}/);
       let extractedData;
       try {
         extractedData = jsonMatch ? JSON.parse(jsonMatch[0]) : JSON.parse(content);
       } catch (e) {
         console.error('Failed to parse equivalence JSON:', content);
-        throw new Error('Failed to parse Claude response');
+        throw new Error('Failed to parse OpenAI response');
       }
 
       console.log('Equivalences extracted:', extractedData.equivalences?.length || 0);

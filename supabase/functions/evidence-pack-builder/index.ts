@@ -8,7 +8,7 @@ const corsHeaders = {
 
 // ============================================
 // EVIDENCE PACK BUILDER
-// Assembles context for Claude hypothesis generation
+// Assembles context for OpenAI hypothesis generation
 // ============================================
 
 interface Paper {

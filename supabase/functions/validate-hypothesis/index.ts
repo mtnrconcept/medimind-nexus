@@ -150,7 +150,7 @@ Sois particulièrement vigilant sur les affirmations pharmacologiques (transport
             systemPrompt,
             userPrompt,
             {
-                model: "claude-sonnet-4-20250514",
+                model: "gpt-5.5",
                 maxTokens: 4096
             }
         );

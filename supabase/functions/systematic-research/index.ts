@@ -451,15 +451,15 @@ function detectNovelty(analysisText: string): { isNovel: boolean; noveltyScore: 
 function selectModelStrategy(isNovel: boolean): { model: string; maxTokens: number; rationale: string } {
     if (isNovel) {
         return {
-            model: "claude-opus-4-5-20250514",
+            model: "gpt-5.5",
             maxTokens: 40000,
-            rationale: "High novelty detected - using Opus with extended tokens for comprehensive analysis"
+            rationale: "High novelty detected - using OpenAI with extended tokens for comprehensive analysis"
         };
     } else {
         return {
-            model: "claude-sonnet-4-20250514",
+            model: "gpt-5.5",
             maxTokens: 4000,
-            rationale: "Standard comparison - using Sonnet with minimal tokens for efficiency"
+            rationale: "Standard comparison - using OpenAI with minimal tokens for efficiency"
         };
     }
 }
@@ -563,8 +563,8 @@ serve(async (req) => {
                         }
                     });
 
-                    // Step 6: Claude Systematic Analysis (adaptive model selection)
-                    sendEvent({ type: 'step_update', step: { id: 6, status: 'running', details: '🧠 Synthèse systématique (analyse initiale)...', source: 'Anthropic' } });
+                    // Step 6: OpenAI Systematic Analysis (adaptive token strategy)
+                    sendEvent({ type: 'step_update', step: { id: 6, status: 'running', details: '🧠 Synthèse systématique (analyse initiale)...', source: 'OpenAI' } });
 
                     const comprehensiveContext = `
 # REVUE SYSTÉMATIQUE: ${topic}
@@ -667,7 +667,7 @@ Cite TOUTES les sources (PMID, NCT, Guidelines).
 `;
 
                     // ADAPTIVE MODEL SELECTION
-                    // Start with cheaper model (Sonnet) for initial analysis
+                    // Start with a compact token budget for initial analysis
                     let initialStrategy = selectModelStrategy(false); // Start conservative
 
                     sendEvent({ type: 'step_update', step: { id: 6, status: 'running', details: `🧠 Analyse initiale (${initialStrategy.model})...`, source: 'AI' } });
@@ -688,15 +688,15 @@ Cite TOUTES les sources (PMID, NCT, Guidelines).
                     const noveltyDetection = detectNovelty(textContent);
                     console.log(`[NOVELTY DETECTION] Score: ${noveltyDetection.noveltyScore}, Is Novel: ${noveltyDetection.isNovel}, Reason: ${noveltyDetection.reason}`);
 
-                    // If high novelty detected, re-analyze with powerful model
-                    if (noveltyDetection.isNovel && initialStrategy.model !== "claude-opus-4-5-20250514") {
+                    // If high novelty detected, re-analyze with expanded context budget.
+                    if (noveltyDetection.isNovel && initialStrategy.maxTokens < 40000) {
                         sendEvent({
                             type: 'step_update',
                             step: {
                                 id: 6,
                                 status: 'running',
-                                details: `🚀 Découverte détectée! Re-analyse avec Opus (${noveltyDetection.noveltyScore}% nouveauté)...`,
-                                source: 'Anthropic Opus'
+                                details: `🚀 Découverte détectée! Re-analyse OpenAI approfondie (${noveltyDetection.noveltyScore}% nouveauté)...`,
+                                source: 'OpenAI'
                             }
                         });
 
@@ -724,7 +724,7 @@ Cite TOUTES les sources (PMID, NCT, Guidelines).
                         }
                     }
 
-                    sendEvent({ type: 'step_update', step: { id: 6, status: 'completed', details: `✅ Revue systématique complète (Novelty: ${noveltyDetection.noveltyScore}%)`, source: 'Claude' } });
+                    sendEvent({ type: 'step_update', step: { id: 6, status: 'completed', details: `✅ Revue systématique complète (Novelty: ${noveltyDetection.noveltyScore}%)`, source: 'OpenAI' } });
 
                     // Send full analysis
                     sendEvent({ type: 'text', content: textContent });

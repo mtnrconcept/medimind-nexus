@@ -127,7 +127,7 @@ serve(async (req) => {
             }
         }
 
-        // Build context for Claude
+        // Build context for OpenAI
         const userLinksContext = userEdges.map((edge: UserEdge) => {
             const source = edge.source_node as any;
             const target = edge.target_node as any;
@@ -195,7 +195,7 @@ Pour chaque insight, structure ta réponse ainsi:
 
 Sois rigoureux mais créatif. Cherche des connexions non évidentes.`;
 
-        // Call AI with streaming and Gemini fallback
+        // Call OpenAI with streaming
         const encoder = new TextEncoder();
         const stream = new ReadableStream({
             async start(controller) {
@@ -211,7 +211,7 @@ Sois rigoureux mais créatif. Cherche des connexions non évidentes.`;
                             controller.enqueue(encoder.encode(`data: ${JSON.stringify(chunk)}\n\n`));
                         },
                         {
-                            model: "claude-opus-4-5-20251101",
+                            model: "gpt-5.5",
                             maxTokens: 8192
                         }
                     );

@@ -16,7 +16,7 @@ const corsHeaders = {
  * Unified AI analysis engine that:
  * 1. Aggregates data from ALL medical APIs (PubMed, OpenFDA, ClinicalTrials, RxNorm)
  * 2. Queries the local Knowledge Graph
- * 3. Uses Claude 3 Opus for ultra-advanced scientific reasoning
+ * 3. Uses OpenAI for ultra-advanced scientific reasoning
  * 4. Generates evidence-based hypotheses with full citations
  * 
  * This is the BRAIN of MediMind Nexus.
@@ -588,7 +588,7 @@ async function performScientificAnalysis(
         userPrompt,
         onChunk,
         {
-            model: "claude-3-opus-20240229",
+            model: "gpt-5.5",
             maxTokens: 8000,
             temperature: 0.2
         }
@@ -681,7 +681,7 @@ serve(async (req) => {
                         type: 'metadata',
                         analysis_id: `ANA-${Date.now().toString(36)}`.toUpperCase(),
                         analysis_type: request.analysis_type,
-                        model: 'claude-3-opus-20240229',
+                        model: "gpt-5.5",
                         search_depth: request.evidence_depth || 'standard',
                         estimated_sources: '19.7M événements FDA + 176K médicaments + millions d\'articles'
                     });
@@ -730,9 +730,9 @@ serve(async (req) => {
                         kg_insights: kgInsights.length
                     });
 
-                    sendProgress('🤖 Génération de l\'analyse avec Claude Opus...');
+                    sendProgress('🤖 Génération de l\'analyse avec OpenAI...');
 
-                    // Perform scientific analysis with Claude (get stream)
+                    // Perform scientific analysis with OpenAI (get stream)
                     await performScientificAnalysis(
                         request,
                         allEvidence,

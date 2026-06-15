@@ -349,7 +349,6 @@ async function agentSkeptic(drugName: string, diseaseName: string, evidence: any
 
 async function orchestrate(
     supabase: any,
-    anthropicApiKey: string,
     request: DiscoveryRequest
 ): Promise<Hypothesis[]> {
 
@@ -461,7 +460,7 @@ async function orchestrate(
             bias_assessment: skeptic.bias_flags,
             novelty_score: Math.round(noveltyScore),
             plausibility_score: Math.round(plausibilityScore),
-            triangulation_score,
+            triangulation_score: triangulationScore,
             feasibility_score: Math.round(feasibilityScore),
             validation_plan: [
                 { study_type: 'retrospective', dataset: 'EHR', endpoint: 'outcome association', timeline_days: 30 },
@@ -509,11 +508,10 @@ serve(async (req) => {
 
         const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
         const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-        const anthropicApiKey = Deno.env.get("ANTHROPIC_API_KEY") || "";
         const supabase = createClient(supabaseUrl, supabaseKey);
 
         const startTime = Date.now();
-        const hypotheses = await orchestrate(supabase, anthropicApiKey, request);
+        const hypotheses = await orchestrate(supabase, request);
         const duration = Date.now() - startTime;
 
         return new Response(JSON.stringify({
