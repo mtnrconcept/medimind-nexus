@@ -63,7 +63,7 @@ serve(async (req) => {
 
   try {
     const firecrawlApiKey = Deno.env.get('FIRECRAWL_API_KEY');
-    const lovableApiKey = Deno.env.get('LOVABLE_API_KEY');
+    const openaiApiKey = Deno.env.get('OPENAI_API_KEY');
     const supabaseUrl = Deno.env.get('SUPABASE_URL');
     const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
 
@@ -71,8 +71,8 @@ serve(async (req) => {
       throw new Error('FIRECRAWL_API_KEY non configurée');
     }
 
-    if (!lovableApiKey) {
-      throw new Error('LOVABLE_API_KEY non configurée');
+    if (!openaiApiKey) {
+      throw new Error('OPENAI_API_KEY non configurée');
     }
 
     const supabase = createClient(supabaseUrl!, supabaseServiceKey!);
@@ -229,7 +229,7 @@ serve(async (req) => {
       const markdown = scrapeResult.markdown || '';
       console.log('Contenu médicament extrait, longueur:', markdown.length);
 
-      // Extraction des données via Lovable AI
+      // Extraction des données via OpenAI
       const extractionPrompt = `Tu es un expert en pharmacologie. Analyse ce contenu markdown d'une page de médicament Compendium.ch et extrais TOUTES les informations au format JSON strict.
 
 INSTRUCTIONS CRITIQUES:
@@ -306,14 +306,14 @@ Format JSON attendu:
 Contenu à analyser:
 ${markdown.substring(0, 25000)}`;
 
-      const aiResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
+      const aiResponse = await fetch('https://api.openai.com/v1/chat/completions', {
         method: 'POST',
         headers: {
-          'Authorization': `Bearer ${lovableApiKey}`,
+          'Authorization': `Bearer ${openaiApiKey}`,
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          model: 'google/gemini-2.5-flash',
+          model: Deno.env.get('OPENAI_MODEL') || 'gpt-5.5',
           messages: [
             { role: 'system', content: 'Tu es un expert pharmacologue qui extrait des données structurées de notices de médicaments. Tu réponds uniquement en JSON valide.' },
             { role: 'user', content: extractionPrompt }
@@ -572,7 +572,7 @@ ${markdown.substring(0, 25000)}`;
       const markdown = scrapeResult.markdown || '';
       console.log('Contenu extrait, longueur:', markdown.length);
 
-      // Extraction des données via Lovable AI
+      // Extraction des données via OpenAI
       const extractionPrompt = `Tu es un expert en extraction de données médicales. Analyse ce contenu markdown d'une page médicale et extrais TOUTES les informations disponibles au format JSON strict.
 
 INSTRUCTIONS CRITIQUES:
@@ -618,14 +618,14 @@ RAPPEL: Même si la page parle principalement de symptômes, extrais TOUS les tr
 Contenu à analyser:
 ${markdown.substring(0, 18000)}`;
 
-      const aiResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
+      const aiResponse = await fetch('https://api.openai.com/v1/chat/completions', {
         method: 'POST',
         headers: {
-          'Authorization': `Bearer ${lovableApiKey}`,
+          'Authorization': `Bearer ${openaiApiKey}`,
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          model: 'google/gemini-2.5-flash',
+          model: Deno.env.get('OPENAI_MODEL') || 'gpt-5.5',
           messages: [
             { role: 'system', content: 'Tu es un expert médical qui extrait des données structurées de textes médicaux. Tu réponds uniquement en JSON valide.' },
             { role: 'user', content: extractionPrompt }

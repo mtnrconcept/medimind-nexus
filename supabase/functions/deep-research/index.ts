@@ -153,9 +153,9 @@ serve(async (req) => {
       `- "${s.title}" (${s.url})`
     ).join('\n');
 
-    const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY');
-    if (!LOVABLE_API_KEY) {
-      throw new Error('LOVABLE_API_KEY non configurée');
+    const OPENAI_API_KEY = Deno.env.get('OPENAI_API_KEY');
+    if (!OPENAI_API_KEY) {
+      throw new Error('OPENAI_API_KEY non configurée');
     }
 
     const systemPrompt = `Tu es un expert médical francophone spécialisé dans le diagnostic différentiel. Tu effectues une "Deep Research" en analysant les symptômes fournis pour identifier TOUTES les pathologies possibles.
@@ -209,16 +209,16 @@ Analyse ces symptômes et identifie TOUTES les pathologies possibles qui pourrai
 
 Classe-les par ordre de probabilité et indique les signaux d'alerte à surveiller.`;
 
-    console.log('Appel Lovable AI pour Deep Research...');
+    console.log('Appel OpenAI pour Deep Research...');
 
-    const aiResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
+    const aiResponse = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
       headers: {
-        'Authorization': `Bearer ${LOVABLE_API_KEY}`,
+        'Authorization': `Bearer ${OPENAI_API_KEY}`,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        model: 'google/gemini-2.5-flash',
+        model: Deno.env.get('OPENAI_MODEL') || 'gpt-5.5',
         messages: [
           { role: 'system', content: systemPrompt },
           { role: 'user', content: userPrompt }
