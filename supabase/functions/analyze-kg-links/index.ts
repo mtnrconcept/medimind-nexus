@@ -212,6 +212,7 @@ Sois rigoureux mais créatif. Cherche des connexions non évidentes.`;
                         },
                         {
                             model: "gpt-5.5",
+                            reasoningEffort: "high",
                             maxTokens: 8192
                         }
                     );

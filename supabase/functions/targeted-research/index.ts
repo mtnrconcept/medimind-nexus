@@ -4,13 +4,13 @@ import { streamAI } from "../_shared/ai-client.ts";
 
 /**
  * TARGETED RESEARCH - Recherche Ciblée
- * 
+ *
  * Mode: Questions précises sur un sujet médical spécifique
  * - Interactions médicamenteuses spécifiques
  * - Dosages pour populations particulières
  * - Contre-indications spécifiques
  * - Mécanismes d'action détaillés
- * 
+ *
  * Configuration: temperature=0.3, max_tokens=8000
  */
 
@@ -338,6 +338,7 @@ RAPPEL: Réponds en JSON valide. Cite chaque source (PMID). Niveau d'évidence o
                         },
                         {
                             model: "gpt-5.5",
+                            reasoningEffort: "medium",
                             maxTokens: 8000,
                             temperature: 0.3
                         }

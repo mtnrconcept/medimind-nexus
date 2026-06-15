@@ -3,10 +3,10 @@ import { callAI } from "../_shared/ai-client.ts";
 
 /**
  * GRAPH CHAT - Chat IA pour le Knowledge Graph
- * 
+ *
  * Mode 1: analysis_qa - Q&A sur les résultats d'analyse de liens/nœuds
  * Mode 2: graph_command - Commandes naturelles pour manipuler le graphe
- * 
+ *
  * Configuration: OpenAI via OPENAI_API_KEY, temperature=0.4, streaming
  */
 
@@ -272,6 +272,7 @@ Réponds en JSON valide.`;
             userMessage,
             {
                 model: "gpt-5.5",
+                reasoningEffort: "medium",
                 temperature: 0.4
             }
         );

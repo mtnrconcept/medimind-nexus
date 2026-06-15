@@ -97,6 +97,7 @@ Fournis une analyse détaillée de chaque lien.`;
             userPrompt,
             {
                 model: "gpt-5.5",
+                reasoningEffort: "medium",
                 maxTokens: 4096,
             }
         );

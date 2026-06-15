@@ -151,6 +151,7 @@ Sois particulièrement vigilant sur les affirmations pharmacologiques (transport
             userPrompt,
             {
                 model: "gpt-5.5",
+                reasoningEffort: "high",
                 maxTokens: 4096
             }
         );

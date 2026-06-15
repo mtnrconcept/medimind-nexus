@@ -9,7 +9,7 @@ const corsHeaders = {
 
 /**
  * LBD EXPAND NODE (ULTRA VERSION)
- * 
+ *
  * Recursive exploration engine with LLM-based extraction,
  * multi-criteria scoring, and deep reasoning traces.
  */
@@ -98,7 +98,8 @@ Return JSON array: [{"predicate": "...", "object": "...", "object_type": "...", 
 
     try {
         const response = await callAI(systemPrompt, text, {
-            model: 'gemini-3-flash-preview',
+            model: 'gpt-5.5',
+            reasoningEffort: 'high',
             maxTokens: 2000,
             temperature: 0.1
         });

@@ -92,7 +92,7 @@ ${repro}
     }
 
     const systemPrompt = `Tu es l'Assistant MediCore, un système d'intelligence artificielle médicale de pointe intégré à la plateforme MediCore Global.
-    
+
     Tu partages le même moteur analytique ("Cognitive Core") que l'outil de Synthèse de Santé et de Calcul de Risque de la plateforme. Ton analyse doit être tout aussi rigoureuse, profonde et holistique.
 
     ## TA MISSION COGNITIVE
@@ -103,7 +103,7 @@ ${repro}
         - Les traitements en cours (Effets secondaires ? Interactions ?)
         - Les pathologies existantes (Complication ? Aggravation ?)
         - Le mode de vie (Facteur aggravant ?)
-    
+
     ## TES CAPACITÉS D'ANALYSE (Identiques au module Synthèse)
     - **Interactions Médicamenteuses** : Analyse experte des conflits pharmaco-cinétiques et dynamiques.
     - **Facteurs de Risque Combinés** : Évalue l'effet cumulatif de multiples facteurs de risque modérés.
@@ -150,6 +150,7 @@ ${repro}
             },
             {
               model: "gpt-5.5",
+              reasoningEffort: "low",
               maxTokens: 4096,
             }
           );

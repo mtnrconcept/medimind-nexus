@@ -97,6 +97,7 @@ Tu DOIS répondre UNIQUEMENT en JSON valide:
             messages,
             {
                 model: "gpt-5.5",
+                reasoningEffort: "low",
                 maxTokens: 1024,
                 temperature: 0.5
             }

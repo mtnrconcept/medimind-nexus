@@ -4,7 +4,7 @@ import { callAI } from "../_shared/ai-client.ts";
 
 /**
  * NEURAL KNOWLEDGE GRAPH - Embedding & Network Initialization
- * 
+ *
  * Features:
  * - Generate embeddings for nodes using AI
  * - Auto-link nodes based on semantic similarity
@@ -56,7 +56,8 @@ async function generateNodeDescription(node: any): Promise<string> {
             "Tu es un expert médical. Génère des descriptions concises.",
             `Generate a concise medical description for embedding about: "${node.name}" (type: ${node.node_type}). Include key medical properties, mechanisms, and relationships. Keep it under 100 words.`,
             {
-                model: "gpt-5.5",
+                model: "gpt-5.4-mini",
+                reasoningEffort: "low",
                 maxTokens: 200,
                 temperature: 0.3
             }

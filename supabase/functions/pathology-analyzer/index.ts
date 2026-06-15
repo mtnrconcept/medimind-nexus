@@ -114,6 +114,7 @@ Effectue l'analyse complète.`;
             },
             {
               model: "gpt-5.5",
+              reasoningEffort: "high",
               maxTokens: 4000,
               temperature: 0.2
             }

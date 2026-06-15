@@ -188,6 +188,7 @@ Produis une synthèse exhaustive et médicalement rigoureuse de cette relation.`
             userPrompt,
             {
                 model: 'gpt-5.5',
+                reasoningEffort: 'high',
                 maxTokens: isMultiNode ? 4000 : 2000 // More tokens for multi-node analysis
             }
         );
@@ -268,6 +269,7 @@ Règles STRICTES:
                         userPrompt,
                         {
                             model: "gpt-5.5",
+                            reasoningEffort: "high",
                             maxTokens: 2000,
                             temperature: 0.1
                         }
@@ -352,6 +354,7 @@ Contexte:
                             },
                             {
                                 model: "gpt-5.5",
+                                reasoningEffort: "high",
                                 maxTokens: 4000,
                                 temperature: 0.1
                             }

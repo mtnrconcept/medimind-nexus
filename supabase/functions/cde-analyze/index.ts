@@ -195,7 +195,7 @@ ${symptomList}
 ### INTERACTIONS CONNUES (DrugBank Reference):
 ${interactionsList}
 
-### IMPORTANT: 
+### IMPORTANT:
 Ton analyse porte sur l'ensemble du corpus médical mondial accessible via ta base de connaissance interne (PubMed, Guidelines) croisée avec ces entités.
 Ne te limite PAS aux interactions listées ci-dessus. Ce sont des "seeds".
 Cherche des **corrélations invisibles** dans la Big Data médicale.
@@ -285,6 +285,7 @@ Commence ton analyse maintenant. Montre tout ton raisonnement étape par étape.
                         },
                         {
                             model: "gpt-5.5",
+                            reasoningEffort: "high",
                             maxTokens: 8192,
                         }
                     );

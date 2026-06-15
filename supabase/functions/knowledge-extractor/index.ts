@@ -456,7 +456,7 @@ FORMAT JSON strict:
         const aiResponse = await callAI(
             systemPrompt,
             `Extrait les entités et relations avec le système de couleurs de ce texte:\n\n${text.slice(0, 3000)}`,
-            { model: "gpt-5.5" }
+            { model: "gpt-5.5", reasoningEffort: "medium" }
         );
 
         const content = aiResponse.text;

@@ -563,6 +563,7 @@ Retourne JSON strict selon le format spécifié.`;
             },
             {
                 model: "gpt-5.5",
+                reasoningEffort: "medium",
                 maxTokens: 30000
             }
         );

@@ -6,13 +6,13 @@ import { getDrugBankComprehensiveData } from "./drugbank-api.ts";
 
 /**
  * SYSTEMATIC RESEARCH - Recherche Systématique
- * 
+ *
  * Mode: Analyse méthodique complète d'un sujet médical
  * - Revue complète d'une pathologie
  * - Évaluation d'un nouveau traitement
  * - Analyse comparative de thérapies
  * - État de l'art sur un biomarqueur
- * 
+ *
  * Configuration: temperature=0.2, max_tokens=16000
  */
 
@@ -80,7 +80,7 @@ Produire une revue systématique d'un sujet médical avec méthodologie GRADE et
       "included_studies": 45
     }
   },
-  
+
   "evidence_by_dimension": {
     "molecular": {
       "key_findings": ["Finding 1 [PMID:xxx]"],
@@ -92,7 +92,7 @@ Produire une revue systématique d'un sujet médical avec méthodologie GRADE et
     "systemic": {...},
     "population": {...}
   },
-  
+
   "grade_synthesis": [{
     "outcome": "Primary outcome",
     "studies_n": 12,
@@ -102,7 +102,7 @@ Produire une revue systématique d'un sujet médical avec méthodologie GRADE et
     "downgrade_reasons": ["Risk of bias"],
     "recommendation": "Conditional recommendation"
   }],
-  
+
   "hypotheses_generated": [{
     "id": "H1",
     "title": "Titre",
@@ -114,7 +114,7 @@ Produire une revue systématique d'un sujet médical avec méthodologie GRADE et
     "validation_required": ["Étude 1", "Étude 2"],
     "clinical_potential": "High|Medium|Low"
   }],
-  
+
   "knowledge_gaps": [{
     "domain": "Domaine",
     "gap_description": "Ce qui manque",
@@ -122,7 +122,7 @@ Produire une revue systématique d'un sujet médical avec méthodologie GRADE et
     "research_priority": 1,
     "suggested_study_design": "RCT|Cohorte|etc."
   }],
-  
+
   "clinical_implications": {
     "current_practice": "État actuel",
     "recommended_changes": ["Changement 1"],
@@ -135,7 +135,7 @@ Produire une revue systématique d'un sujet médical avec méthodologie GRADE et
       "renal_impaired": "Considérations"
     }
   },
-  
+
   "limitations": ["Limitation 1", "Limitation 2"],
   "conflicts_of_interest": "Déclaration",
   "total_sources_cited": 45
@@ -677,6 +677,7 @@ Cite TOUTES les sources (PMID, NCT, Guidelines).
                         comprehensiveContext,
                         {
                             model: initialStrategy.model,
+                            reasoningEffort: "high",
                             maxTokens: initialStrategy.maxTokens,
                             temperature: 0.2
                         }
@@ -710,6 +711,7 @@ Cite TOUTES les sources (PMID, NCT, Guidelines).
                                 comprehensiveContext,
                                 {
                                     model: upgradeStrategy.model,
+                                    reasoningEffort: "high",
                                     maxTokens: upgradeStrategy.maxTokens,
                                     temperature: 0.2
                                 }

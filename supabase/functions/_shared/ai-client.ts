@@ -128,6 +128,10 @@ function shouldUseResponsesAPI(model: string, options: AICallOptions): boolean {
   return /^gpt-5(?:\.|-|$)/i.test(model.trim()) || hasReasoningEffort(options);
 }
 
+function supportsResponsesTemperature(model: string): boolean {
+  return !/^gpt-5(?:\.|-|$)/i.test(model.trim());
+}
+
 function buildChatCompletionsBody(model: string, options: AICallOptions): Record<string, unknown> {
   const body: Record<string, unknown> = {
     model,
@@ -155,7 +159,7 @@ function buildResponsesBody(model: string, options: AICallOptions): Record<strin
     max_output_tokens: options.maxTokens || 4096,
   };
 
-  if (options.temperature !== undefined) {
+  if (options.temperature !== undefined && supportsResponsesTemperature(model)) {
     body.temperature = options.temperature;
   }
 

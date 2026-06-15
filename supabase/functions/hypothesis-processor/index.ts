@@ -194,10 +194,10 @@ STRUCTURE JSON ULTRA V3 ATTENDUE (Committee-Grade Report):
     "claims": [
       {
         "claim_id": "CLM-0001",
-        "triple": { 
-            "source": { "label": "string", "type": "string" }, 
-            "rel": "string", 
-            "target": { "label": "string", "type": "string" } 
+        "triple": {
+            "source": { "label": "string", "type": "string" },
+            "rel": "string",
+            "target": { "label": "string", "type": "string" }
         },
         "scores": { "evidence_quality": 0.0, "safety_risk": 0.0, "aggregate": 0.0 },
         "support_evidence_ids": ["EV-0001"],
@@ -287,11 +287,11 @@ NOTES CRITIQUES:
     "normalization_log": [{"raw": "string", "mapped_entity": {}, "ambiguity": "low|medium|high", "decision": "string"}],
     "inference_steps": [{"rule": "ENUM", "inputs": ["string"], "outputs": ["string"], "rationale": "string"}]
   },
-  "scores": { 
-      "novelty_score": 0.0, 
-      "technical_rigor": 0.0, 
-      "clinical_utility": 0.0, 
-      "overall_confidence": 0.0 
+  "scores": {
+      "novelty_score": 0.0,
+      "technical_rigor": 0.0,
+      "clinical_utility": 0.0,
+      "overall_confidence": 0.0
   },
   "claim_graph": {
       "claims": [{
@@ -331,7 +331,7 @@ Retourne JSON strict selon le format spécifié.`;
                 .from('hypothesis_generation_jobs')
                 .update({
                     progress_percentage: 30,
-                    progress_message: 'Analyse Ultra-Profonde RCDP (Gemini 3 Flash - Dual-Phase JSON/Reasoning)...'
+                    progress_message: 'Analyse Ultra-Profonde RCDP (GPT-5.5 - Dual-Phase JSON/Reasoning)...'
                 })
                 .eq('id', job.id);
 
@@ -376,7 +376,8 @@ Retourne JSON strict selon le format spécifié.`;
                     }
                 },
                 {
-                    model: 'gemini-3-flash-preview',
+                    model: 'gpt-5.5',
+                    reasoningEffort: 'high',
                     maxTokens: 50000
                 }
             );
@@ -689,8 +690,8 @@ Retourne JSON strict selon le format spécifié.`;
                         const outcomeEdges: any[] = [];
                         (claimGraph.outcomes || []).forEach((out: any) => {
                             (out.linked_claim_ids || []).forEach((cid: string) => {
-                                const claim = claimGraph.claims.find((c: any) => c.claim_id === cid);
-                                if (claim) {
+                                const claim = (claimGraph.claims || []).find((c: any) => c.claim_id === cid);
+                                if (claim?.triple?.target) {
                                     outcomeEdges.push({
                                         source: claim.triple.target.label,
                                         target: out.outcome.label,
@@ -778,8 +779,8 @@ Retourne JSON strict selon le format spécifié.`;
                     // Add Outcome Edges
                     (claimGraph.outcomes || []).forEach((out: any) => {
                         (out.linked_claim_ids || []).forEach((cid: string) => {
-                            const claim = claimGraph.claims.find((c: any) => c.claim_id === cid);
-                            if (claim) {
+                            const claim = (claimGraph.claims || []).find((c: any) => c.claim_id === cid);
+                            if (claim?.triple?.target) {
                                 const sKey = nodeKeys.get(claim.triple.target.label); // Link from result of claim
                                 const tKey = nodeKeys.get(out.outcome.label);
 

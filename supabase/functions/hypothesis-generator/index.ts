@@ -8,13 +8,13 @@ const corsHeaders = {
 
 /**
  * HYPOTHESIS GENERATOR
- * 
+ *
  * Consumes the unified context from context-assembler and generates:
  * 1. Falsifiable hypotheses with plausibility scores
  * 2. Treatment adaptation recommendations
  * 3. Weak signals detection
  * 4. Risk mitigation strategies
- * 
+ *
  * Uses OpenAI with strict contractual output schema.
  */
 
@@ -145,6 +145,7 @@ serve(async (req) => {
             userPrompt,
             {
                 model: "gpt-5.5",
+                reasoningEffort: "high",
                 maxTokens: 8000,
                 temperature: 0.3
             }
