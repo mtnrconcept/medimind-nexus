@@ -38,7 +38,8 @@ If a term is too vague or unknown, map it to itself with ID "Unknown".`;
 
     try {
         const response = await callAI(systemPrompt, userPrompt, {
-            model: 'gemini-3-flash-preview',
+            model: 'gpt-5.4-mini',
+            reasoningEffort: 'low',
             temperature: 0.1, // High determinism
             maxTokens: 2000
         });

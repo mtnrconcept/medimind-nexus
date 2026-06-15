@@ -217,7 +217,7 @@ Analyse complète demandée.`;
 
       emit({ type: 'step_update', step: { id: 3, status: 'running', details: '🧠 Analyse OpenAI...', source: 'OpenAI' } });
 
-      // Use streamAI even for non-streaming to get the chunks/text processing for free, 
+      // Use streamAI even for non-streaming to get the chunks/text processing for free,
       // but only emit text events if we are streaming
       const aiResult = await streamAI(
         systemPrompt,
@@ -227,6 +227,7 @@ Analyse complète demandée.`;
         },
         {
           model: "gpt-5.5",
+          reasoningEffort: "medium",
           maxTokens: 8000,
           temperature: 0.3,
         }

@@ -105,7 +105,8 @@ async function translateQuery(query: string): Promise<string> {
             "Translate the following medical term or query from French to English. Return ONLY the English translation, no other text. If it is already English or a universal scientific term, return it as is.",
             `Query: "${query}"`,
             {
-                model: "gpt-5.5",
+                model: "gpt-5.4-mini",
+                reasoningEffort: "low",
                 maxTokens: 100,
                 temperature: 0
             }
@@ -1017,7 +1018,7 @@ Pour CHAQUE gap identifié, génère une hypothèse structurée:
 - **Titre** : Nom concis de l'hypothèse
 - **Raisonnement étape par étape** (minimum 4 étapes):
   1. [Fait A établi] (source: KG/PubMed/mécanisme connu)
-  2. [Fait B établi] 
+  2. [Fait B établi]
   3. [Connexion logique A+B]
   4. [Conclusion hypothétique]
 - **Type** : interaction | contre-indication | synergie | risque_combiné | signal_faible | corrélation_émergente
@@ -1036,7 +1037,7 @@ Cherche des corrélations subtiles et inattendues:
 ## CATÉGORIES D'HYPOTHÈSES À EXPLORER
 
 1. **Interactions pharmacocinétiques** : CYP450, transporteurs, protéines de liaison
-2. **Interactions pharmacodynamiques** : récepteurs, canaux ioniques, voies de signalisation  
+2. **Interactions pharmacodynamiques** : récepteurs, canaux ioniques, voies de signalisation
 3. **Co-infections/comorbidités** : pathologies associées, risques croisés
 4. **Facteurs environnementaux** : pollution, alimentation, mode de vie
 5. **Schémas thérapeutiques** : combinaisons optimales, chronothérapie, médecine personnalisée
@@ -1122,7 +1123,7 @@ Après le JSON, ajoute les sections suivantes:
 2. **SYNTHÈSE_ACCESSIBLE** (10-12 phrases - explication claire pour le grand public, sans infantiliser)
 3. **RÉSUMÉ_CLINIQUE** (5-8 points clés pour application immédiate)
 
-**FOCUS**: 
+**FOCUS**:
 - Schémas de traitement DÉTAILLÉS avec posologies
 - Hypothèses originales et RÉVOLUTIONNAIRES
 - Mécanismes moléculaires précis
@@ -1145,6 +1146,7 @@ Commence par le JSON maintenant.`;
                         },
                         {
                             model: "gpt-5.5",
+                            reasoningEffort: "medium",
                             maxTokens: 80000,
                             temperature: 0.7,
                         }

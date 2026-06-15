@@ -271,6 +271,7 @@ Génère un graphe RICHE avec ${allPathologies.length > 1 ? 'au moins 60-100 nœ
         userPrompt,
         {
             model: "gpt-5.5",
+            reasoningEffort: "medium",
             maxTokens: 8000,
         }
     );

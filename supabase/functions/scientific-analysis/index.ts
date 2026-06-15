@@ -12,13 +12,13 @@ const corsHeaders = {
 
 /**
  * SCIENTIFIC ANALYSIS ENGINE — CLAUDE OPUS POWERED
- * 
+ *
  * Unified AI analysis engine that:
  * 1. Aggregates data from ALL medical APIs (PubMed, OpenFDA, ClinicalTrials, RxNorm)
  * 2. Queries the local Knowledge Graph
  * 3. Uses OpenAI for ultra-advanced scientific reasoning
  * 4. Generates evidence-based hypotheses with full citations
- * 
+ *
  * This is the BRAIN of MediMind Nexus.
  */
 
@@ -163,7 +163,7 @@ Calculer sur 4 axes (25 points chacun):
 {
   "executive_summary": "Synthèse clinique en 3-5 phrases",
   "detailed_analysis": "Analyse approfondie structurée",
-  
+
   "hypotheses": [
     {
       "id": "H1",
@@ -178,7 +178,7 @@ Calculer sur 4 axes (25 points chacun):
       "clinical_implications": "Si confirmé, alors..."
     }
   ],
-  
+
   "recommendations": [
     {
       "medication": "Nom",
@@ -190,7 +190,7 @@ Calculer sur 4 axes (25 points chacun):
       "evidence_pmids": ["PMID:xxx"]
     }
   ],
-  
+
   "risk_factors": [
     {
       "factor": "Description",
@@ -198,7 +198,7 @@ Calculer sur 4 axes (25 points chacun):
       "mitigation": "Stratégie"
     }
   ],
-  
+
   "confidence_level": 0.85,
   "limitations": ["Limitation 1"],
   "areas_of_uncertainty": ["Zone d'incertitude 1"]
@@ -589,6 +589,7 @@ async function performScientificAnalysis(
         onChunk,
         {
             model: "gpt-5.5",
+            reasoningEffort: "high",
             maxTokens: 8000,
             temperature: 0.2
         }
@@ -682,6 +683,7 @@ serve(async (req) => {
                         analysis_id: `ANA-${Date.now().toString(36)}`.toUpperCase(),
                         analysis_type: request.analysis_type,
                         model: "gpt-5.5",
+                        reasoningEffort: "high",
                         search_depth: request.evidence_depth || 'standard',
                         estimated_sources: '19.7M événements FDA + 176K médicaments + millions d\'articles'
                     });

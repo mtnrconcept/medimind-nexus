@@ -279,6 +279,7 @@ Réponds UNIQUEMENT en JSON valide.`;
                 userPrompt,
                 {
                     model: "gpt-5.5",
+                    reasoningEffort: "high",
                     maxTokens: 4000
                 }
             );

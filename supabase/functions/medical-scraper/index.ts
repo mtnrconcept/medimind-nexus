@@ -93,7 +93,7 @@ serve(async (req) => {
       const schemaMolecule = `{
         "molecule": {
           "name": "string", "iupac_name": "string", "chemical_formula": "string", "smiles": "string",
-          "molecular_weight": number, "description": "string", "indications": "string", 
+          "molecular_weight": number, "description": "string", "indications": "string",
           "side_effects": "string", "contraindications": "string", "therapeutic_category": "string"
         }
       }`;
@@ -108,7 +108,7 @@ serve(async (req) => {
       }`;
 
       const userPrompt = `Extrais TOUTES les informations disponibles au format JSON.
-      
+
       Schéma attendu:
       ${type === 'medication' ? schemaMedication : type === 'molecule' ? schemaMolecule : schemaPathology}
 
@@ -120,6 +120,7 @@ serve(async (req) => {
         userPrompt,
         {
           model: "gpt-5.5", // Optimisé
+          reasoningEffort: "medium",
           maxTokens: 4000,
           temperature: 0
         }
@@ -1009,7 +1010,7 @@ serve(async (req) => {
           for (const symptom of extractedData.symptoms) {
             if (!symptom.name) continue;
 
-            // Vérifier si le symptôme existe déjà
+            // Vérifier si le symptôme existe déj�
             const { data: existingSymptom } = await supabase
               .from('symptoms')
               .select('id')
@@ -1393,6 +1394,7 @@ ${markdown.substring(0, 40000)}`;
         equivalencePrompt,
         {
           model: "gpt-5.5",
+          reasoningEffort: "medium",
           maxTokens: 4000,
           temperature: 0
         }

@@ -91,6 +91,7 @@ Analyse critique en JSON:`;
             userPrompt,
             {
                 model: "gpt-5.5",
+                reasoningEffort: "medium",
                 maxTokens: 2048
             }
         );

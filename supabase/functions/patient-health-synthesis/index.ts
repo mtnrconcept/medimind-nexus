@@ -295,7 +295,7 @@ serve(async (req) => {
         let synthesis: HealthSynthesis;
         try {
             const systemPrompt = `Tu es un assistant médical expert. Analyse le dossier patient complet fourni et génère une synthèse de santé détaillée.
- 
+
  IMPORTANT: Tu dois répondre UNIQUEMENT en JSON valide selon le schéma suivant:
  {
      "global_synthesis": "Synthèse narrative de l'état de santé global du patient (2-3 paragraphes)",
@@ -353,7 +353,7 @@ serve(async (req) => {
      ],
      "summary_for_patient": "Résumé simple et compréhensible pour le patient (1-2 phrases)"
  }
- 
+
  Analyse avec attention TOUT le dossier patient:
  1. Les ANTÉCÉDENTS MÉDICAUX personnels (medical_history) - chaque pathologie passée et actuelle
  2. Les ANTÉCÉDENTS FAMILIAUX - maladies héréditaires et risques génétiques
@@ -368,7 +368,7 @@ serve(async (req) => {
  11. Les signaux faibles qui pourraient indiquer un problème émergent
  12. Les dépistages manquants ou en retard selon l'âge et le sexe
  13. La cohérence entre tous les éléments du dossier
- 
+
  IMPORTANT: Mentionne explicitement les antécédents médicaux significatifs (comme l'hépatite, les infarctus, le diabète, etc.) dans la synthèse globale.
  Sois précis, factuel et cliniquement pertinent. Le score de santé doit refléter objectivement l'état global.`;
 
@@ -377,6 +377,7 @@ serve(async (req) => {
                 `Voici le dossier patient complet à analyser:\n\n${JSON.stringify(patientContext, null, 2)}`,
                 {
                     model: "gpt-5.5",
+                    reasoningEffort: "high",
                     maxTokens: 4096,
                     temperature: 0
                 }

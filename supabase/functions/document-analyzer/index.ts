@@ -451,6 +451,7 @@ Extraire pour chaque membre:
         messages,
         {
             model: "gpt-5.5",
+            reasoningEffort: "medium",
             maxTokens: 4096,
         }
     );
@@ -527,8 +528,8 @@ async function autoIntegrateData(
                         .maybeSingle();
 
                     if (!existingPatientMed) {
-                        // Note: We don't verify if patient_medications has a 'medication_name' column. 
-                        // Usually it relies on the relation. 
+                        // Note: We don't verify if patient_medications has a 'medication_name' column.
+                        // Usually it relies on the relation.
                         // If schema has 'medication_name', we include it, otherwise just ID.
                         // But for safety based on previous code, we include what we can if field exists.
                         // Standard linking is via medication_id.

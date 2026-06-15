@@ -4,7 +4,7 @@ import { callAI } from "../_shared/ai-client.ts";
 
 /**
  * DISCOVERY ENGINE v3 - Moteur de Découverte IA avec Streaming Corrigé
- * 
+ *
  * CORRECTION: Utilise le mode non-streaming pour éviter la corruption de texte,
  * puis envoie le résultat par chunks propres au client.
  */
@@ -66,7 +66,7 @@ Pour CHAQUE hypothèse (générer exactement 4 hypothèses A, B, C, D) :
 - PLAUSIBLE = preuves précliniques solides
 - HYPOTHÈSE = logique mécanistique sans preuve directe
 
-**Énoncé :** 
+**Énoncé :**
 [Description complète de l'hypothèse en 2-3 phrases]
 
 **Fondement scientifique :**
@@ -143,16 +143,16 @@ Pour CHAQUE hypothèse (générer exactement 4 hypothèses A, B, C, D) :
 ## 8. DISCLAIMER MÉDICAL
 
 > ⚠️ **AVERTISSEMENT CRITIQUE**
-> 
+>
 > Cette analyse est générée par Intelligence Artificielle à des fins de **RECHERCHE et EXPLORATION SCIENTIFIQUE UNIQUEMENT**.
-> 
+>
 > Elle **NE REMPLACE EN AUCUN CAS** :
 > - Le jugement clinique d'un spécialiste qualifié
 > - Une consultation médicale personnalisée
 > - Les protocoles thérapeutiques établis
-> 
+>
 > **TOUTES les hypothèses présentées sont EXPÉRIMENTALES et NON APPROUVÉES.**
-> 
+>
 > Consultez impérativement votre médecin traitant.
 
 ---
@@ -425,6 +425,7 @@ Génère une analyse COMPLÈTE et DÉTAILLÉE selon le format de ton prompt syst
                         context,
                         {
                             model: "gpt-5.5",
+                            reasoningEffort: "medium",
                             maxTokens: 16000,
                             temperature: 0.3,
                         }

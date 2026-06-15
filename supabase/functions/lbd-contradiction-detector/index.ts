@@ -13,7 +13,7 @@ declare const Deno: {
 
 /**
  * LBD CONTRADICTION DETECTOR
- * 
+ *
  * Analyzes claims for a specific hypothesis to identify and document contradictions.
  * Essential for "scientific seriousness" (Ultra requirement).
  */
@@ -75,9 +75,10 @@ Return a JSON array of objects:
 
         const userPrompt = `Analyze these claims for contradictions:\n\n${claimsList}`;
 
-        // Calling the "Ultra" model as requested by user manual edit
+        // Use GPT-5.5 for contradiction analysis with strong reasoning.
         const aiResponse = await callAI(systemPrompt, userPrompt, {
-            model: 'gemini-3-flash-preview',
+            model: 'gpt-5.5',
+            reasoningEffort: 'high',
             maxTokens: 10000,
             temperature: 0.2
         });

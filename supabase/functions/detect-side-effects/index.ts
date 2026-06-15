@@ -265,6 +265,7 @@ Réponds UNIQUEMENT en JSON valide avec ce format:
             analysisPrompt,
             {
                 model: "gpt-5.5",
+                reasoningEffort: "medium",
                 maxTokens: 2000,
             }
         );

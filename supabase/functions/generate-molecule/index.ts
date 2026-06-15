@@ -19,15 +19,16 @@ serve(async (req) => {
             throw new Error("Missing prompt");
         }
 
-        // Default to NovoMolGen if not specified
-        const targetModel = model || "chandar-lab/NovoMolGen_157M_SMILES_AtomWise";
+        // Default to a fast OpenAI reasoning model if not specified
+        const targetModel = model || "gpt-5.4-mini";
 
-        // Call AI Client (which now supports generic HF models)
+        // Call the shared OpenAI client
         const response = await callAI(
             "Generate a valid SMILES string for a molecule matching the description.",
             prompt,
             {
                 model: targetModel,
+                reasoningEffort: 'low',
                 temperature: 0.8,
                 maxTokens: 100 // Molecules aren't usually super long
             }
@@ -51,7 +52,8 @@ serve(async (req) => {
         });
 
     } catch (error) {
-        return new Response(JSON.stringify({ error: error.message }), {
+        const message = error instanceof Error ? error.message : "Unknown error";
+        return new Response(JSON.stringify({ error: message }), {
             status: 500,
             headers: { ...corsHeaders, "Content-Type": "application/json" },
         });

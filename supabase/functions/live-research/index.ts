@@ -4,13 +4,13 @@ import { streamAI } from "../_shared/ai-client.ts";
 
 /**
  * LIVE RESEARCH - Recherche Live
- * 
+ *
  * Mode: Recherche en temps réel avec sources web actualisées
  * - Dernières publications sur un sujet
  * - Essais cliniques en cours
  * - Alertes de pharmacovigilance récentes
  * - Nouvelles approbations réglementaires
- * 
+ *
  * Configuration: temperature=0.4, max_tokens=12000, web_search=true
  */
 
@@ -72,7 +72,7 @@ Fournir les informations médicales les plus RÉCENTES et ACTUALISÉES sur un su
     "timestamp": "2024-12-17T12:00:00Z",
     "freshness_score": 95
   },
-  
+
   "breaking_news": [{
     "date": "2024-12-15",
     "headline": "Titre accrocheur",
@@ -81,7 +81,7 @@ Fournir les informations médicales les plus RÉCENTES et ACTUALISÉES sur un su
     "source": "PMID:xxx ou URL",
     "implications": "Impact clinique potentiel"
   }],
-  
+
   "trial_updates": [{
     "nct_id": "NCTxxxxxxxx",
     "title": "Titre de l'essai",
@@ -91,7 +91,7 @@ Fournir les informations médicales les plus RÉCENTES et ACTUALISÉES sur un su
     "expected_completion": "Date",
     "relevance": "High|Medium|Low"
   }],
-  
+
   "safety_alerts": [{
     "date": "2024-12-10",
     "drug": "Nom du médicament",
@@ -101,7 +101,7 @@ Fournir les informations médicales les plus RÉCENTES et ACTUALISÉES sur un su
     "source": "FDA|EMA|ANSM|Swissmedic",
     "severity": "Critical|Major|Moderate"
   }],
-  
+
   "regulatory_updates": [{
     "date": "2024-12-01",
     "drug": "Nom",
@@ -110,26 +110,26 @@ Fournir les informations médicales les plus RÉCENTES et ACTUALISÉES sur un su
     "indication": "Indication approuvée",
     "details": "Détails supplémentaires"
   }],
-  
+
   "emerging_research": [{
     "topic": "Sujet émergent",
     "trend": "Publications en hausse",
     "key_papers": ["PMID:xxx"],
     "watch_priority": "High|Medium|Low"
   }],
-  
+
   "practice_changing": {
     "identified": true,
     "changes": ["Changement 1", "Changement 2"],
     "guidelines_affected": ["Guideline 1"]
   },
-  
+
   "next_milestones": [{
     "event": "Résultats essai XXX attendus",
     "expected_date": "Q1 2025",
     "potential_impact": "Description"
   }],
-  
+
   "sources_summary": {
     "pubmed_recent": 25,
     "clinical_trials": 15,
@@ -429,6 +429,7 @@ Priorise la FRAÎCHEUR et la PERTINENCE CLINIQUE.
                         },
                         {
                             model: "gpt-5.5",
+                            reasoningEffort: "medium",
                             maxTokens: 12000,
                             temperature: 0.4
                         }

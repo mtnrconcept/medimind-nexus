@@ -9,13 +9,13 @@ const corsHeaders = {
 
 /**
  * DISCOVERY SEARCH ENGINE v4.0 - EVIDENCE-BASED
- * 
+ *
  * CRITICAL REQUIREMENTS:
  * - Every claim MUST have a source (PMID/DOI/NCT/Guideline)
  * - Evidence levels MUST be tagged
  * - No unsourced extrapolation
  * - Web search for additional evidence
- * 
+ *
  * Uses OpenAI 4 for maximum reasoning capability
  */
 
@@ -442,6 +442,7 @@ RAPPEL: Tu DOIS citer chaque source (PMID/NCT). Aucune affirmation sans preuve. 
                         },
                         {
                             model: "gpt-5.5",
+                            reasoningEffort: "medium",
                             maxTokens: 12000,
                             temperature: 0.1,
                         }
