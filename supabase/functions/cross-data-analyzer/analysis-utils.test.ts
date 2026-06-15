@@ -3,6 +3,7 @@ import {
   buildSelectedElements,
   computeSchemaStats,
   ensureSchemaComparison,
+  ensureTreatmentSchemasShape,
   mergeAndValidateLinks,
   normalizeCausalLink,
   scoreFromStats,
@@ -51,6 +52,50 @@ Deno.test('normalizes pathology to symptom links without treatment-only fields',
   assert(link.isAppropriate === undefined, 'isAppropriate should be removed for pathology symptoms');
   assert(link.effectType === undefined, 'effectType should be removed for pathology symptoms');
   assert(link.dangerLevel === undefined, 'dangerLevel should be removed for pathology symptoms');
+});
+
+Deno.test('strips appropriateness from medication to symptom links', () => {
+  const selected = buildSelectedElements(
+    [],
+    [{ name: 'Oedeme des paupieres' }],
+    [],
+    [{ name: 'Prednisolone' }],
+  );
+
+  const link = normalizeCausalLink({
+    from: 'Prednisolone',
+    fromType: 'medication',
+    to: 'Oedeme des paupieres',
+    toType: 'symptom',
+    relationship: 'Effet indesirable possible des corticoides',
+    probability: 'medium',
+    evidence: 'Retention hydrosodee possible.',
+    patientCount: 0,
+    webSources: [],
+    isAppropriate: false,
+  }, selected);
+
+  assert(link !== null, 'medication symptom link should be kept');
+  assert(link.isAppropriate === undefined, 'isAppropriate should not classify medication symptoms');
+  assert(link.effectType === 'adverse', 'medication symptom should default to an adverse effect when unspecified');
+});
+
+Deno.test('does not count symptom adverse effects as inappropriate treatment choices', () => {
+  const stats = computeSchemaStats([{
+    from: 'Prednisolone',
+    fromType: 'medication',
+    to: 'Oedeme des paupieres',
+    toType: 'symptom',
+    relationship: 'Effet indesirable possible',
+    probability: 'medium',
+    evidence: 'Retention hydrosodee possible.',
+    patientCount: 0,
+    webSources: [],
+    effectType: 'adverse',
+  }]);
+
+  assert(stats.inappropriateCount === 0, 'symptom side effect should not be treatment inappropriateness');
+  assert(stats.adverseEffectCount === 1, 'symptom side effect should remain an adverse effect');
 });
 
 Deno.test('deduplicates drug-drug interactions independent of direction', () => {
@@ -168,4 +213,35 @@ Deno.test('ensures schema comparison even when the model omits it', () => {
   assert(comparison.currentStats.redLinks === 1, 'one critical link should be counted');
   assert(comparison.proposedChanges.length === 1, 'fallback mitigation should be generated');
   assert(comparison.proposedScore >= comparison.currentScore, 'proposal should not reduce score');
+});
+
+Deno.test('normalizes treatment schema proposals and drops incomplete steps', () => {
+  const schemas = ensureTreatmentSchemasShape([{
+    title: 'Schéma sans AINS',
+    priority: 'preferred',
+    rationale: 'Réduit le risque rénal.',
+    expectedBenefits: ['Moins de risque iatrogène'],
+    residualRisks: ['Surveillance clinique nécessaire'],
+    monitoringPlan: ['Créatinine', 'Tension artérielle'],
+    patientWarnings: ['Consulter si œdèmes aggravés'],
+    confidence: 'high',
+    steps: [
+      {
+        action: 'replace',
+        target: 'Ibuprofene',
+        targetType: 'medication',
+        replacement: 'Paracetamol',
+        rationale: 'Évite la contre-indication rénale.',
+      },
+      {
+        action: 'remove',
+        target: '',
+        rationale: 'incomplet',
+      },
+    ],
+  }]);
+
+  assert(schemas.length === 1, 'one valid treatment schema expected');
+  assert(schemas[0].steps.length === 1, 'incomplete steps should be dropped');
+  assert(schemas[0].steps[0].replacement === 'Paracetamol', 'replacement should be preserved');
 });

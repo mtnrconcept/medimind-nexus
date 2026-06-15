@@ -42,6 +42,12 @@ import { VideoLoader } from './VideoLoader';
 import { RelationshipMatrix } from './RelationshipMatrix';
 import { RiskNetworkGraph } from './RiskNetworkGraph';
 import useMedicalStats from '@/hooks/useMedicalStats';
+import {
+  getAppropriatenessBadgeLabel,
+  isAppropriatenessSuccess,
+  isAppropriatenessWarning,
+  supportsAppropriatenessBadge,
+} from './crossDataDisplay';
 
 interface Pathology {
   id: string;
@@ -142,6 +148,28 @@ interface SchemaComparison {
   clinicalSummary: string;
 }
 
+interface TreatmentSchemaStep {
+  action: 'keep' | 'replace' | 'remove' | 'add' | 'monitor';
+  target: string;
+  targetType: 'medication' | 'treatment' | 'monitoring';
+  replacement?: string;
+  rationale: string;
+  monitoring?: string[];
+  riskMitigation?: string[];
+}
+
+interface TreatmentSchema {
+  title: string;
+  priority: 'preferred' | 'alternative' | 'cautious';
+  rationale: string;
+  expectedBenefits: string[];
+  residualRisks: string[];
+  steps: TreatmentSchemaStep[];
+  monitoringPlan: string[];
+  patientWarnings: string[];
+  confidence: 'high' | 'medium' | 'low';
+}
+
 interface AnalysisResult {
   causalLinks: CausalLink[];
   summary: string;
@@ -150,6 +178,7 @@ interface AnalysisResult {
   webResearch: WebResearch[];
   alternatives?: Alternative[];
   schemaComparison?: SchemaComparison;
+  treatmentSchemas?: TreatmentSchema[];
 }
 
 interface PatientData {
@@ -182,6 +211,7 @@ const CrossDataAnalyzer = ({ patientData }: CrossDataAnalyzerProps) => {
   const [showLoader, setShowLoader] = useState(true);
   const [fadeOut, setFadeOut] = useState(false);
   const [analyzing, setAnalyzing] = useState(false);
+  const [generatingTreatmentSchemas, setGeneratingTreatmentSchemas] = useState(false);
   const [isAutoSelecting, setIsAutoSelecting] = useState(false);
   const [result, setResult] = useState<AnalysisResult | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -773,6 +803,33 @@ const CrossDataAnalyzer = ({ patientData }: CrossDataAnalyzerProps) => {
   const getTotalSelected = () =>
     selectedPathologies.length + selectedSymptoms.length + selectedTreatments.length + selectedMedications.length;
 
+  const buildAnalysisRequestBody = () => {
+    const dbPathologyIds = selectedPathologies.filter(id => !pathologies.find(p => p.id === id && p.category === 'NCBI'));
+    const extPathologies = selectedPathologies
+      .map(id => pathologies.find(p => p.id === id && p.category === 'NCBI'))
+      .filter(Boolean);
+
+    const dbSymptomIds = selectedSymptoms.filter(id => !symptoms.find(s => s.id === id && s.body_system === 'NCBI'));
+    const extSymptoms = selectedSymptoms
+      .map(id => symptoms.find(s => s.id === id && s.body_system === 'NCBI'))
+      .filter(Boolean);
+
+    const dbMedicationIds = selectedMedications.filter(id => !medications.find(m => m.id === id && !m.atc_code));
+    const extMedications = selectedMedications
+      .map(id => medications.find(m => m.id === id && !m.atc_code))
+      .filter(Boolean);
+
+    return {
+      pathologyIds: dbPathologyIds,
+      symptomIds: dbSymptomIds,
+      treatmentIds: selectedTreatments,
+      medicationIds: dbMedicationIds,
+      externalPathologies: extPathologies,
+      externalSymptoms: extSymptoms,
+      externalMedications: extMedications
+    };
+  };
+
   const runAnalysis = async () => {
     if (getTotalSelected() < 2) {
       toast.error('Sélectionnez au moins 2 éléments pour analyser les liens de causalité');
@@ -784,31 +841,7 @@ const CrossDataAnalyzer = ({ patientData }: CrossDataAnalyzerProps) => {
     setResult(null);
 
     try {
-      // Séparer les IDs DB des items externes
-      const dbPathologyIds = selectedPathologies.filter(id => !pathologies.find(p => p.id === id && p.category === 'NCBI'));
-      const extPathologies = selectedPathologies
-        .map(id => pathologies.find(p => p.id === id && p.category === 'NCBI'))
-        .filter(Boolean);
-
-      const dbSymptomIds = selectedSymptoms.filter(id => !symptoms.find(s => s.id === id && s.body_system === 'NCBI'));
-      const extSymptoms = selectedSymptoms
-        .map(id => symptoms.find(s => s.id === id && s.body_system === 'NCBI'))
-        .filter(Boolean);
-
-      const dbMedicationIds = selectedMedications.filter(id => !medications.find(m => m.id === id && !m.atc_code)); // Hack: NCBI meds have null ATC
-      const extMedications = selectedMedications
-        .map(id => medications.find(m => m.id === id && !m.atc_code))
-        .filter(Boolean);
-
-      const { data, error: fnError } = await invokeAI('cross-data-analyzer', {
-        pathologyIds: dbPathologyIds,
-        symptomIds: dbSymptomIds,
-        treatmentIds: selectedTreatments, // Traitements externes pas encore supportés
-        medicationIds: dbMedicationIds,
-        externalPathologies: extPathologies,
-        externalSymptoms: extSymptoms,
-        externalMedications: extMedications
-      });
+      const { data, error: fnError } = await invokeAI('cross-data-analyzer', buildAnalysisRequestBody());
 
       if (fnError) throw fnError;
 
@@ -830,6 +863,40 @@ const CrossDataAnalyzer = ({ patientData }: CrossDataAnalyzerProps) => {
       setError('Erreur lors de l\'analyse. Veuillez réessayer.');
     } finally {
       setAnalyzing(false);
+    }
+  };
+
+  const runTreatmentSchemaGeneration = async () => {
+    if (!result) {
+      toast.error('Lancez d’abord une analyse des liens avant de générer les schémas alternatifs');
+      return;
+    }
+
+    setGeneratingTreatmentSchemas(true);
+    setError(null);
+
+    try {
+      const { data, error: fnError } = await invokeAI('cross-data-analyzer', {
+        ...buildAnalysisRequestBody(),
+        analysisMode: 'treatment_schemas',
+        currentAnalysis: result,
+      });
+
+      if (fnError) throw fnError;
+      if (data.error) throw new Error(data.error);
+
+      const treatmentSchemas = data.treatmentSchemas || data.analysis?.treatmentSchemas || [];
+      setResult(prev => prev ? {
+        ...prev,
+        treatmentSchemas,
+        schemaComparison: data.analysis?.schemaComparison || prev.schemaComparison,
+      } : prev);
+      toast.success(`${treatmentSchemas.length} schéma(s) thérapeutique(s) alternatif(s) généré(s)`);
+    } catch (err) {
+      console.error('Erreur génération schémas alternatifs:', err);
+      setError('Erreur lors de la génération des schémas thérapeutiques alternatifs.');
+    } finally {
+      setGeneratingTreatmentSchemas(false);
     }
   };
 
@@ -1014,6 +1081,8 @@ const CrossDataAnalyzer = ({ patientData }: CrossDataAnalyzerProps) => {
               selectedMedicationIds={selectedMedications}
               analysisResultFromParent={result}
               onAnalysisResultChange={setResult}
+              onGenerateTreatmentSchemas={runTreatmentSchemaGeneration}
+              isGeneratingTreatmentSchemas={generatingTreatmentSchemas}
             />
           ) : (
             <>
@@ -1598,6 +1667,16 @@ const CrossDataAnalyzer = ({ patientData }: CrossDataAnalyzerProps) => {
                       <SchemaComparisonPanel comparison={result.schemaComparison} />
                     )}
 
+                    <TreatmentSchemaGenerator
+                      hasSchemas={(result.treatmentSchemas?.length || 0) > 0}
+                      isGenerating={generatingTreatmentSchemas}
+                      onGenerate={runTreatmentSchemaGeneration}
+                    />
+
+                    {result.treatmentSchemas && result.treatmentSchemas.length > 0 && (
+                      <TreatmentSchemasPanel schemas={result.treatmentSchemas} />
+                    )}
+
                     {result.alternatives && result.alternatives.length > 0 && (
                       <AlternativesPanel alternatives={result.alternatives} />
                     )}
@@ -1889,16 +1968,145 @@ function AlternativesPanel({ alternatives }: { alternatives: Alternative[] }) {
   );
 }
 
+function TreatmentSchemaGenerator({
+  hasSchemas,
+  isGenerating,
+  onGenerate,
+}: {
+  hasSchemas: boolean;
+  isGenerating: boolean;
+  onGenerate: () => void;
+}) {
+  return (
+    <div className="rounded-lg border bg-card p-4 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+      <div>
+        <h4 className="font-medium flex items-center gap-2">
+          <Brain className="h-4 w-4 text-primary" />
+          Schémas thérapeutiques alternatifs
+        </h4>
+        <p className="text-sm text-muted-foreground mt-1">
+          Génération dédiée après l’analyse initiale avec GPT-5.5 Pro et raisonnement xhigh.
+        </p>
+      </div>
+      <Button onClick={onGenerate} disabled={isGenerating} className="shrink-0">
+        {isGenerating ? (
+          <>
+            <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+            Génération...
+          </>
+        ) : (
+          <>
+            <Brain className="h-4 w-4 mr-2" />
+            {hasSchemas ? 'Régénérer les schémas' : 'Générer les schémas'}
+          </>
+        )}
+      </Button>
+    </div>
+  );
+}
+
+function TreatmentSchemasPanel({ schemas }: { schemas: TreatmentSchema[] }) {
+  return (
+    <div className="rounded-lg border bg-card p-4 space-y-4">
+      <h4 className="font-medium flex items-center gap-2 text-green-700 dark:text-green-300">
+        <CheckCircle2 className="h-4 w-4" />
+        Schémas alternatifs proposés
+      </h4>
+      <div className="space-y-4">
+        {schemas.map((schema, index) => (
+          <div key={`${schema.title}-${index}`} className="rounded-md border bg-muted/30 p-4 space-y-3">
+            <div className="flex flex-wrap items-center gap-2">
+              <Badge className={
+                schema.priority === 'preferred'
+                  ? 'bg-green-500/20 text-green-700 dark:text-green-300 border-green-500/30'
+                  : schema.priority === 'cautious'
+                    ? 'bg-orange-500/20 text-orange-700 dark:text-orange-300 border-orange-500/30'
+                    : 'bg-blue-500/20 text-blue-700 dark:text-blue-300 border-blue-500/30'
+              }>
+                {schema.priority === 'preferred' ? 'Préféré' : schema.priority === 'cautious' ? 'Prudent' : 'Alternative'}
+              </Badge>
+              <span className="font-medium">{schema.title}</span>
+              <Badge variant="outline">Confiance {schema.confidence === 'high' ? 'forte' : schema.confidence === 'medium' ? 'moyenne' : 'faible'}</Badge>
+            </div>
+            <p className="text-sm text-muted-foreground">{schema.rationale}</p>
+
+            <div className="space-y-2">
+              {schema.steps.map((step, stepIndex) => (
+                <div key={`${step.target}-${stepIndex}`} className="rounded-md border bg-background p-3">
+                  <div className="flex flex-wrap items-center gap-2 mb-1">
+                    <Badge variant="outline">
+                      {step.action === 'replace' ? 'Remplacer' :
+                        step.action === 'remove' ? 'Retirer' :
+                          step.action === 'add' ? 'Ajouter' :
+                            step.action === 'keep' ? 'Conserver' : 'Surveiller'}
+                    </Badge>
+                    <span className="text-sm font-medium">{step.target}</span>
+                    {step.replacement && (
+                      <>
+                        <ArrowRight className="h-3 w-3 text-muted-foreground" />
+                        <span className="text-sm font-medium text-green-700 dark:text-green-300">{step.replacement}</span>
+                      </>
+                    )}
+                  </div>
+                  <p className="text-sm text-muted-foreground">{step.rationale}</p>
+                </div>
+              ))}
+            </div>
+
+            <div className="grid gap-3 md:grid-cols-3">
+              <SchemaList title="Bénéfices attendus" items={schema.expectedBenefits} />
+              <SchemaList title="Risques résiduels" items={schema.residualRisks} />
+              <SchemaList title="Surveillance" items={schema.monitoringPlan} />
+            </div>
+
+            {schema.patientWarnings.length > 0 && (
+              <div className="rounded-md border border-yellow-500/30 bg-yellow-500/10 p-3">
+                <p className="text-sm font-medium text-yellow-800 dark:text-yellow-300 flex items-center gap-2">
+                  <AlertTriangle className="h-4 w-4" />
+                  Points patient
+                </p>
+                <ul className="mt-2 space-y-1">
+                  {schema.patientWarnings.map((warning) => (
+                    <li key={warning} className="text-sm text-muted-foreground">• {warning}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function SchemaList({ title, items }: { title: string; items: string[] }) {
+  return (
+    <div className="rounded-md border bg-background p-3">
+      <p className="text-xs font-medium text-muted-foreground mb-2">{title}</p>
+      {items.length > 0 ? (
+        <ul className="space-y-1">
+          {items.map((item) => (
+            <li key={item} className="text-xs text-muted-foreground">• {item}</li>
+          ))}
+        </ul>
+      ) : (
+        <p className="text-xs text-muted-foreground">Non précisé</p>
+      )}
+    </div>
+  );
+}
+
 // Composant Carte rétractable pour un lien de causalité
 function CausalLinkCard({ link }: { link: CausalLink }) {
   const [isExpanded, setIsExpanded] = useState(false);
+  const appropriatenessLabel = getAppropriatenessBadgeLabel(link);
 
   return (
     <div
       className={`border rounded-lg bg-card transition-all ${link.dangerLevel === 'critical' || link.dangerLevel === 'high' ? 'border-destructive/60 bg-destructive/5' :
         link.dangerLevel === 'moderate' ? 'border-orange-500/50 bg-orange-500/5' :
-          link.isAppropriate === true ? 'border-green-500/50 bg-green-500/5' :
-        link.isAppropriate === false ? 'border-destructive/50 bg-destructive/5' :
+          isAppropriatenessSuccess(link) ? 'border-green-500/50 bg-green-500/5' :
+        isAppropriatenessWarning(link) ? 'border-destructive/50 bg-destructive/5' :
           link.effectType === 'both' ? 'border-orange-500/50 bg-orange-500/5' :
             link.effectType === 'therapeutic' ? 'border-green-500/30' :
               link.effectType === 'adverse' ? 'border-destructive/30' : ''
@@ -1923,16 +2131,16 @@ function CausalLinkCard({ link }: { link: CausalLink }) {
           {getProbabilityBadge(link.probability)}
 
           {/* Badges résumés */}
-          {link.isAppropriate !== undefined && (
+          {supportsAppropriatenessBadge(link) && (
             link.isAppropriate ? (
               <Badge className="bg-green-500/20 text-green-700 dark:text-green-400 border-green-500/30 flex items-center gap-1 h-6">
                 <CheckCircle2 className="h-3 w-3" />
-                Adapté
+                {appropriatenessLabel}
               </Badge>
             ) : (
               <Badge className="bg-destructive/20 text-destructive border-destructive/30 flex items-center gap-1 h-6">
                 <XCircle className="h-3 w-3" />
-                Non adapté
+                {appropriatenessLabel}
               </Badge>
             )
           )}

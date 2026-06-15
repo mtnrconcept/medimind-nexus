@@ -8,7 +8,9 @@ import {
   buildSelectedElements,
   ensureAnalysisShape,
   ensureSchemaComparison,
+  ensureTreatmentSchemasShape,
   mergeAndValidateLinks,
+  type TreatmentSchema,
 } from "./analysis-utils.ts";
 
 const corsHeaders = {
@@ -83,6 +85,7 @@ interface AnalysisResult {
   recommendations: string[];
   alternatives: Alternative[];
   schemaComparison?: SchemaComparison;
+  treatmentSchemas?: TreatmentSchema[];
   webResearch: {
     query: string;
     findings: string[];
@@ -264,7 +267,9 @@ serve(async (req) => {
   try {
     const {
       pathologyIds, symptomIds, treatmentIds, medicationIds,
-      externalPathologies = [], externalSymptoms = [], externalTreatments = [], externalMedications = []
+      externalPathologies = [], externalSymptoms = [], externalTreatments = [], externalMedications = [],
+      analysisMode = 'full_analysis',
+      currentAnalysis = null
     } = await req.json();
 
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
@@ -453,6 +458,123 @@ serve(async (req) => {
         `- ${left.type}:${left.name} <> ${right.type}:${right.name}`
       )
     ).slice(0, 120).join('\n') || 'Pas assez de paires a auditer.';
+
+    if (analysisMode === 'treatment_schemas') {
+      const baseAnalysis = ensureAnalysisShape(currentAnalysis);
+      baseAnalysis.causalLinks = mergeAndValidateLinks(
+        selectedElements,
+        evidenceLinks,
+        baseAnalysis.causalLinks,
+        cachedLinks,
+      );
+      baseAnalysis.schemaComparison = ensureSchemaComparison(baseAnalysis);
+
+      const linkContext = baseAnalysis.causalLinks.slice(0, 80).map((link) =>
+        `- ${link.fromType}:${link.from} -> ${link.toType}:${link.to} | ${link.relationship} | prob=${link.probability} | danger=${link.dangerLevel || 'none'} | effet=${link.effectType || 'none'} | preuve=${link.evidence}`
+      ).join('\n') || 'Aucun lien valide.';
+
+      const schemaPrompt = `Tu es un expert clinicien francophone. Tu utilises GPT-5.5 Pro avec raisonnement maximal pour proposer des schémas thérapeutiques alternatifs après une première analyse cross-data.
+
+OBJECTIF:
+Proposer 2 à 4 schémas alternatifs cliniquement cohérents, actionnables et prudents, en réanalysant rigoureusement les connexions entre pathologies, symptômes, traitements et médicaments.
+
+RÈGLES:
+- Ne propose un changement que s'il réduit un risque explicite, une contre-indication, une interaction ou un effet indésirable évitable.
+- Ne qualifie jamais un médicament→symptôme comme "non adapté"; ce sont des effets thérapeutiques, indésirables ou mixtes.
+- Préserve les traitements utiles lorsqu'ils couvrent une pathologie active sans risque majeur.
+- Pour chaque schéma, indique les bénéfices attendus, les risques résiduels, les étapes concrètes et la surveillance.
+- Toute proposition doit rester à valider par un médecin et ne doit pas inventer de posologie non fournie.
+
+FORMAT JSON STRICT:
+{
+  "treatmentSchemas": [
+    {
+      "title": "Nom court du schéma",
+      "priority": "preferred" | "alternative" | "cautious",
+      "rationale": "Pourquoi ce schéma est proposé",
+      "expectedBenefits": ["..."],
+      "residualRisks": ["..."],
+      "steps": [
+        {
+          "action": "keep" | "replace" | "remove" | "add" | "monitor",
+          "target": "médicament/traitement/surveillance concerné",
+          "targetType": "medication" | "treatment" | "monitoring",
+          "replacement": "option de remplacement si action=replace",
+          "rationale": "justification clinique liée aux connexions",
+          "monitoring": ["..."],
+          "riskMitigation": ["..."]
+        }
+      ],
+      "monitoringPlan": ["..."],
+      "patientWarnings": ["..."],
+      "confidence": "high" | "medium" | "low"
+    }
+  ]
+}`;
+
+      const schemaUserPrompt = `## PATHOLOGIES
+${selectedPathologiesContext || 'Aucune'}
+
+## SYMPTÔMES
+${selectedSymptomsContext || 'Aucun'}
+
+## TRAITEMENTS ACTUELS
+${selectedTreatmentsContext || 'Aucun'}
+
+## MÉDICAMENTS ACTUELS
+${selectedMedicationsContext || 'Aucun'}
+
+## LIENS VALIDÉS À RÉANALYSER
+${linkContext}
+
+## COMPARAISON BÉNÉFICE/RISQUE ACTUELLE
+${JSON.stringify(baseAnalysis.schemaComparison)}
+
+## WARNINGS ET RECOMMANDATIONS INITIALES
+Warnings: ${JSON.stringify(baseAnalysis.warnings)}
+Recommandations: ${JSON.stringify(baseAnalysis.recommendations)}
+
+## PREUVES DB
+${evidenceLinksContext}
+
+## RECHERCHE PUBMED
+${webResearchContext || 'Aucune recherche effectuée'}
+
+Génère uniquement le JSON des schémas thérapeutiques alternatifs.`;
+
+      const schemaAIResult = await callAI(schemaPrompt, schemaUserPrompt, {
+        model: Deno.env.get('OPENAI_CROSS_DATA_MODEL') || OPENAI_CROSS_DATA_MODEL,
+        forceModel: true,
+        reasoningEffort: OPENAI_CROSS_DATA_REASONING_EFFORT,
+        responseFormat: { type: 'json_object' },
+        maxTokens: 12000,
+      });
+
+      let treatmentSchemas: TreatmentSchema[] = [];
+      try {
+        const parsed = JSON.parse(cleanJsonString(schemaAIResult.text));
+        treatmentSchemas = ensureTreatmentSchemasShape(parsed.treatmentSchemas || parsed.schemas || parsed);
+      } catch (parseError) {
+        console.error('Erreur parsing schémas thérapeutiques:', parseError, 'Contenu:', schemaAIResult.text);
+      }
+
+      return new Response(
+        JSON.stringify({
+          treatmentSchemas,
+          analysis: {
+            ...baseAnalysis,
+            treatmentSchemas,
+          },
+          context: {
+            model: schemaAIResult.model,
+            reasoningEffort: OPENAI_CROSS_DATA_REASONING_EFFORT,
+            validatedLinks: baseAnalysis.causalLinks.length,
+            pubmedSearches: webResearchResults.length,
+          },
+        }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
 
     const systemPrompt = `Tu es un MÉDECIN EXPERT francophone spécialisé dans l'analyse cross-data et l'évaluation thérapeutique.
 Tu travailles avec GPT-5.5 Pro et le raisonnement maximal. Ton objectif est une analyse clinique utile, sourcée, prudente et actionnable.

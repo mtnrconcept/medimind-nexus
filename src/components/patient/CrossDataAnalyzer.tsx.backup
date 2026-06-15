@@ -94,6 +94,11 @@ interface AnalysisResult {
   webResearch: WebResearch[];
 }
 
+const supportsTherapeuticAppropriateness = (link: CausalLink) =>
+  (link.fromType === 'medication' || link.fromType === 'treatment') &&
+  link.toType === 'pathology' &&
+  typeof link.isAppropriate === 'boolean';
+
 const CrossDataAnalyzer = () => {
   const [pathologies, setPathologies] = useState<Pathology[]>([]);
   const [symptoms, setSymptoms] = useState<Symptom[]>([]);
@@ -943,8 +948,8 @@ const CrossDataAnalyzer = () => {
                     <div 
                       key={index} 
                       className={`p-4 border rounded-lg bg-card space-y-3 ${
-                        link.isAppropriate === true ? 'border-green-500/50 bg-green-500/5' :
-                        link.isAppropriate === false ? 'border-destructive/50 bg-destructive/5' :
+                        supportsTherapeuticAppropriateness(link) && link.isAppropriate === true ? 'border-green-500/50 bg-green-500/5' :
+                        supportsTherapeuticAppropriateness(link) && link.isAppropriate === false ? 'border-destructive/50 bg-destructive/5' :
                         link.effectType === 'both' ? 'border-orange-500/50 bg-orange-500/5' :
                         link.effectType === 'therapeutic' ? 'border-green-500/30' :
                         link.effectType === 'adverse' ? 'border-destructive/30' : ''
@@ -964,7 +969,7 @@ const CrossDataAnalyzer = () => {
                         </div>
                         {getProbabilityBadge(link.probability)}
                         {/* Indicateur d'adéquation thérapeutique */}
-                        {link.isAppropriate !== undefined && (
+                        {supportsTherapeuticAppropriateness(link) && (
                           link.isAppropriate ? (
                             <Badge className="bg-green-500/20 text-green-700 dark:text-green-400 border-green-500/30 flex items-center gap-1">
                               <CheckCircle2 className="h-3 w-3" />
@@ -973,7 +978,7 @@ const CrossDataAnalyzer = () => {
                           ) : (
                             <Badge className="bg-destructive/20 text-destructive border-destructive/30 flex items-center gap-1">
                               <XCircle className="h-3 w-3" />
-                              Non adapté
+                              Contre-indiqué
                             </Badge>
                           )
                         )}

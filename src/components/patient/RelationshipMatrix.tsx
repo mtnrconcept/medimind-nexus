@@ -18,6 +18,11 @@ import {
     ArrowRight,
     Info,
 } from 'lucide-react';
+import {
+    isAppropriatenessSuccess,
+    isAppropriatenessWarning,
+    supportsAppropriatenessBadge,
+} from './crossDataDisplay';
 
 interface Pathology {
     id: string;
@@ -259,7 +264,7 @@ export function RelationshipMatrix({
 
         // 🟠 ORANGE - CONTRE-INDIQUÉ
         // Médicament contre-indiqué pour pathologie, ou danger modéré
-        if (link.isAppropriate === false || link.dangerLevel === 'moderate') {
+        if (isAppropriatenessWarning(link) || link.dangerLevel === 'moderate') {
             return {
                 type: 'contraindicated',
                 label: '✗ Contre-indiqué',
@@ -285,7 +290,7 @@ export function RelationshipMatrix({
         }
 
         // 🟢 VERT - TRAITE / ADAPTÉ (médicament → pathologie)
-        if (link.isAppropriate === true || link.effectType === 'therapeutic') {
+        if (isAppropriatenessSuccess(link) || link.effectType === 'therapeutic') {
             return {
                 type: 'treats',
                 label: '✓ Traite',
@@ -518,7 +523,7 @@ export function RelationshipMatrix({
 
                             {/* Indicateurs */}
                             <div className="grid grid-cols-2 gap-3">
-                                {selectedLink.isAppropriate !== undefined && (
+                                {supportsAppropriatenessBadge(selectedLink) && (
                                     <div className="p-3 rounded-lg border">
                                         <p className="text-xs text-muted-foreground mb-1">Adéquation</p>
                                         <Badge

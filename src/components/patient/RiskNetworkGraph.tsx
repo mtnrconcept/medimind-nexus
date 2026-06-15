@@ -64,6 +64,12 @@ import {
 import { supabase } from '@/integrations/supabase/client';
 import { useAI } from '@/contexts/AIContext';
 import { toast } from 'sonner';
+import {
+    getAppropriatenessBadgeLabel,
+    isAppropriatenessSuccess,
+    isAppropriatenessWarning,
+    supportsAppropriatenessBadge,
+} from './crossDataDisplay';
 
 // Types étendus avec severity/toxicity
 interface Pathology {
@@ -152,6 +158,28 @@ interface SchemaComparison {
     clinicalSummary: string;
 }
 
+interface TreatmentSchemaStep {
+    action: 'keep' | 'replace' | 'remove' | 'add' | 'monitor';
+    target: string;
+    targetType: 'medication' | 'treatment' | 'monitoring';
+    replacement?: string;
+    rationale: string;
+    monitoring?: string[];
+    riskMitigation?: string[];
+}
+
+interface TreatmentSchema {
+    title: string;
+    priority: 'preferred' | 'alternative' | 'cautious';
+    rationale: string;
+    expectedBenefits: string[];
+    residualRisks: string[];
+    steps: TreatmentSchemaStep[];
+    monitoringPlan: string[];
+    patientWarnings: string[];
+    confidence: 'high' | 'medium' | 'low';
+}
+
 interface AnalysisResult {
     causalLinks: CausalLink[];
     summary?: string;
@@ -159,6 +187,7 @@ interface AnalysisResult {
     recommendations?: string[];
     alternatives?: Alternative[];
     schemaComparison?: SchemaComparison;
+    treatmentSchemas?: TreatmentSchema[];
 }
 
 
@@ -177,6 +206,50 @@ interface PathologyGroup {
     pathologyName: string;
     memberIds: string[]; // IDs des médicaments/traitements/symptômes dans ce groupe
     color: string;
+}
+
+function TreatmentSchemasGraphPanel({ schemas }: { schemas: TreatmentSchema[] }) {
+    return (
+        <div className="p-3 bg-green-50 dark:bg-green-900/20 rounded-lg border border-green-200 dark:border-green-800">
+            <p className="text-sm font-medium text-green-800 dark:text-green-300 mb-2">
+                <Lightbulb className="h-4 w-4 inline mr-1" />
+                Schémas thérapeutiques alternatifs
+            </p>
+            <div className="space-y-3">
+                {schemas.map((schema, idx) => (
+                    <div key={`${schema.title}-${idx}`} className="p-2 bg-white dark:bg-gray-800 rounded border space-y-2">
+                        <div className="flex flex-wrap items-center gap-2">
+                            <Badge className={`text-xs ${schema.priority === 'preferred'
+                                ? 'bg-green-500 text-white'
+                                : schema.priority === 'cautious'
+                                    ? 'bg-orange-500 text-white'
+                                    : 'bg-blue-500 text-white'
+                                }`}>
+                                {schema.priority === 'preferred' ? 'Préféré' : schema.priority === 'cautious' ? 'Prudent' : 'Alternative'}
+                            </Badge>
+                            <span className="text-sm font-medium">{schema.title}</span>
+                            <Badge variant="outline" className="text-xs">Confiance {schema.confidence}</Badge>
+                        </div>
+                        <p className="text-xs text-gray-600 dark:text-gray-400">{schema.rationale}</p>
+                        <div className="space-y-1">
+                            {schema.steps.slice(0, 4).map((step, stepIdx) => (
+                                <div key={`${step.target}-${stepIdx}`} className="text-xs rounded bg-gray-50 dark:bg-gray-900 p-2">
+                                    <span className="font-medium">
+                                        {step.action === 'replace' ? 'Remplacer' :
+                                            step.action === 'remove' ? 'Retirer' :
+                                                step.action === 'add' ? 'Ajouter' :
+                                                    step.action === 'keep' ? 'Conserver' : 'Surveiller'} {step.target}
+                                    </span>
+                                    {step.replacement && <span className="text-green-600"> → {step.replacement}</span>}
+                                    <p className="text-gray-500 mt-1">{step.rationale}</p>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                ))}
+            </div>
+        </div>
+    );
 }
 
 // Couleurs de liens selon le type de relation
@@ -247,6 +320,8 @@ interface RiskNetworkGraphProps {
     selectedMedicationIds?: string[];
     analysisResultFromParent?: AnalysisResult | null;
     onAnalysisResultChange?: (result: AnalysisResult) => void;
+    onGenerateTreatmentSchemas?: () => void;
+    isGeneratingTreatmentSchemas?: boolean;
 }
 
 // Composant principal
@@ -261,6 +336,8 @@ export function RiskNetworkGraph({
     selectedMedicationIds,
     analysisResultFromParent,
     onAnalysisResultChange,
+    onGenerateTreatmentSchemas,
+    isGeneratingTreatmentSchemas = false,
 }: RiskNetworkGraphProps = {}) {
     const { invokeAI } = useAI();
     // États
@@ -338,7 +415,7 @@ export function RiskNetworkGraph({
         else if (link.dangerLevel === 'high') score += 75;
         else if (link.dangerLevel === 'moderate') score += 50;
         else if (link.dangerLevel === 'low') score += 25;
-        if (link.isAppropriate === false) score += 60;
+        if (isAppropriatenessWarning(link)) score += 60;
         if (link.effectType === 'adverse') score += 40;
         else if (link.effectType === 'both') score += 20;
         if (link.interactionType === 'drug-drug') score += 30;
@@ -348,21 +425,9 @@ export function RiskNetworkGraph({
 
     // Helper pour obtenir le label d'adéquation selon les types d'entités
     const getAppropriatenessLabel = useCallback((link: CausalLink) => {
-        const isMedicationInvolved = link.fromType === 'medication' || link.toType === 'medication' ||
-            link.fromType === 'treatment' || link.toType === 'treatment';
-
-        const isPathologyToSymptom = (link.fromType === 'pathology' && link.toType === 'symptom');
-
-        if (isPathologyToSymptom) {
-            return link.isAppropriate ? '✓ Classique/Confirmé' : '✗ Atypique/Incohérent';
-        }
-
-        if (isMedicationInvolved) {
-            return link.isAppropriate ? '✓ Adapté' : '✗ Contre-indiqué';
-        }
-
-        // Fallback par défaut
-        return link.isAppropriate ? '✓ Adapté' : '✗ Non indiqué';
+        const label = getAppropriatenessBadgeLabel(link);
+        if (!label) return '';
+        return link.isAppropriate ? `✓ ${label}` : `✗ ${label}`;
     }, []);
 
     // Helper: Convertir coordonnée écran (relative container) -> coordonnée graphe (World)
@@ -424,11 +489,11 @@ export function RiskNetworkGraph({
             } else if (link.dangerLevel === 'moderate') {
                 orangeLinks++;
                 totalDangerScore += 50;
-            } else if (link.isAppropriate === true || !link.dangerLevel) {
+            } else if (isAppropriatenessSuccess(link) || !link.dangerLevel) {
                 greenLinks++;
             }
 
-            if (link.isAppropriate === false) inappropriateCount++;
+            if (isAppropriatenessWarning(link)) inappropriateCount++;
             if (link.effectType === 'adverse') adverseEffectCount++;
         });
 
@@ -946,10 +1011,17 @@ export function RiskNetworkGraph({
             const nodeUpdates: Record<string, { status: 'success' | 'danger' | 'warning' | 'neutral' }> = {};
             const newEdgeLinkMap: Record<string, CausalLink> = {};
 
-            // Fonction pour trouver un nœud par son nom
-            const findNodeByName = (name: string) => {
+            // Fonction pour trouver un nœud par son nom et son type clinique.
+            const findNodeByName = (name: string, type?: string) => {
                 const normalizedName = normalizeForComparison(name);
-                return nodes.find(n => {
+                const typedCandidates = type
+                    ? nodes.filter(n => n.data.type === type)
+                    : nodes;
+
+                const exactMatch = typedCandidates.find(n => normalizeForComparison(String(n.data.label)) === normalizedName);
+                if (exactMatch) return exactMatch;
+
+                return typedCandidates.find(n => {
                     const nodeNameNorm = normalizeForComparison(n.data.label);
                     return nodeNameNorm.includes(normalizedName) ||
                         normalizedName.includes(nodeNameNorm) ||
@@ -959,8 +1031,8 @@ export function RiskNetworkGraph({
 
             causalLinks.forEach((link: CausalLink) => {
                 // Trouver les nœuds source et cible
-                const sourceNode = findNodeByName(link.from);
-                const targetNode = findNodeByName(link.to);
+                const sourceNode = findNodeByName(link.from, link.fromType);
+                const targetNode = findNodeByName(link.to, link.toType);
 
                 if (sourceNode && targetNode && sourceNode.id !== targetNode.id) {
                     // Déterminer la couleur du lien selon le type de relation
@@ -973,12 +1045,12 @@ export function RiskNetworkGraph({
                         alertType = 'danger';
                     }
                     // Orange: Contre-indication "Non indiqué" (mais pas forcément mortel)
-                    else if (link.isAppropriate === false) {
+                    else if (isAppropriatenessWarning(link)) {
                         strokeColor = linkColors.orange;
                         alertType = 'warning'; // Change from danger to warning
                     }
                     // Jaune/Orange: Risque d'interaction modéré
-                    else if (link.dangerLevel === 'moderate' || (link.effectType === 'adverse' && link.isAppropriate !== true)) {
+                    else if (link.dangerLevel === 'moderate' || (link.effectType === 'adverse' && !isAppropriatenessSuccess(link))) {
                         strokeColor = linkColors.orange;
                         alertType = 'warning';
                     }
@@ -987,7 +1059,7 @@ export function RiskNetworkGraph({
                         strokeColor = linkColors.yellow;
                     }
                     // Vert: Adapté ou lien normal (traitement approprié, symptôme principal/fréquent)
-                    else if (link.isAppropriate === true || link.effectType === 'therapeutic' || link.symptomFrequency === 'principal' || link.symptomFrequency === 'frequent') {
+                    else if (isAppropriatenessSuccess(link) || link.effectType === 'therapeutic' || link.symptomFrequency === 'principal' || link.symptomFrequency === 'frequent') {
                         strokeColor = linkColors.green;
                     }
 
@@ -1858,9 +1930,7 @@ export function RiskNetworkGraph({
             if (!fromNode || !toNode) return;
 
             // 1. Médicament/Traitement → Pathologie (TRAITE)
-            if ((link.fromType === 'medication' || link.fromType === 'treatment') &&
-                link.toType === 'pathology' &&
-                link.isAppropriate === true) {
+            if (isAppropriatenessSuccess(link)) {
 
                 // Trouver la pathologie ciblée
                 const pathologyNode = pathologyNodes.find(p =>
@@ -2172,9 +2242,9 @@ export function RiskNetworkGraph({
     // Obtenir la couleur du lien pour l'affichage
     const getLinkDisplayColor = (link: CausalLink) => {
         if (link.dangerLevel === 'critical' || link.dangerLevel === 'high') return 'border-red-500 bg-red-50 dark:bg-red-900/20';
-        if (link.dangerLevel === 'moderate' || link.isAppropriate === false) return 'border-orange-500 bg-orange-50 dark:bg-orange-900/20';
+        if (link.dangerLevel === 'moderate' || isAppropriatenessWarning(link)) return 'border-orange-500 bg-orange-50 dark:bg-orange-900/20';
         if (link.dangerLevel === 'low' || link.symptomFrequency === 'possible' || link.symptomFrequency === 'rare') return 'border-yellow-500 bg-yellow-50 dark:bg-yellow-900/20';
-        if (link.isAppropriate === true || link.symptomFrequency === 'principal' || link.symptomFrequency === 'frequent') return 'border-green-500 bg-green-50 dark:bg-green-900/20';
+        if (isAppropriatenessSuccess(link) || link.symptomFrequency === 'principal' || link.symptomFrequency === 'frequent') return 'border-green-500 bg-green-50 dark:bg-green-900/20';
         return 'border-blue-500 bg-blue-50 dark:bg-blue-900/20';
     };
 
@@ -2789,7 +2859,7 @@ export function RiskNetworkGraph({
                                                                     link.dangerLevel === 'moderate' ? '🔸' : '✓'}
                                                         </Badge>
                                                     )}
-                                                    {link.isAppropriate !== undefined && (
+                                                    {supportsAppropriatenessBadge(link) && (
                                                         <Badge
                                                             className={`text-xs ${link.isAppropriate ? 'bg-green-500 text-white' : 'bg-red-500 text-white'}`}
                                                         >
@@ -2831,7 +2901,7 @@ export function RiskNetworkGraph({
                                                                         link.dangerLevel === 'moderate' ? '🔸 Modéré' : '✓ Faible'}
                                                             </Badge>
                                                         )}
-                                                        {link.isAppropriate !== undefined && (
+                                                        {supportsAppropriatenessBadge(link) && (
                                                             <Badge
                                                                 className={`text-xs ${link.isAppropriate ? 'bg-green-500 text-white' : 'bg-red-500 text-white'}`}
                                                             >
@@ -2981,6 +3051,42 @@ export function RiskNetworkGraph({
                                     ))}
                                 </ul>
                             </div>
+                        )}
+
+                        {onGenerateTreatmentSchemas && analysisResult && (
+                            <div className="p-3 bg-primary/5 rounded-lg border border-primary/20 flex flex-col gap-3">
+                                <div>
+                                    <p className="text-sm font-medium flex items-center gap-2">
+                                        <Lightbulb className="h-4 w-4 text-primary" />
+                                        Schémas thérapeutiques alternatifs
+                                    </p>
+                                    <p className="text-xs text-muted-foreground mt-1">
+                                        Génération dédiée après l’analyse initiale avec GPT-5.5 Pro xhigh.
+                                    </p>
+                                </div>
+                                <Button
+                                    size="sm"
+                                    onClick={onGenerateTreatmentSchemas}
+                                    disabled={isGeneratingTreatmentSchemas}
+                                    className="w-full"
+                                >
+                                    {isGeneratingTreatmentSchemas ? (
+                                        <>
+                                            <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                                            Génération...
+                                        </>
+                                    ) : (
+                                        <>
+                                            <Lightbulb className="h-4 w-4 mr-2" />
+                                            {(analysisResult.treatmentSchemas?.length || 0) > 0 ? 'Régénérer les schémas' : 'Générer les schémas'}
+                                        </>
+                                    )}
+                                </Button>
+                            </div>
+                        )}
+
+                        {analysisResult?.treatmentSchemas && analysisResult.treatmentSchemas.length > 0 && (
+                            <TreatmentSchemasGraphPanel schemas={analysisResult.treatmentSchemas} />
                         )}
 
                         {/* Alternatives suggérées (pour les dangers) */}
@@ -3273,10 +3379,10 @@ export function RiskNetworkGraph({
 
                             {/* Indicateurs */}
                             <div className="grid grid-cols-2 gap-3">
-                                {hoveredLink.isAppropriate !== undefined && (
+                                {supportsAppropriatenessBadge(hoveredLink) && (
                                     <div className="p-3 rounded-lg border">
                                         <p className="text-xs text-muted-foreground mb-1">
-                                            {hoveredLink.fromType === 'pathology' && hoveredLink.toType === 'symptom' ? 'Cohérence' : 'Adéquation'}
+                                            Adéquation thérapeutique
                                         </p>
                                         <Badge
                                             className={hoveredLink.isAppropriate
