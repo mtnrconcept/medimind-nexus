@@ -309,6 +309,45 @@ serve(async (req) => {
     ];
     const selectedElements = buildSelectedElements(pathologies, symptoms, treatments, medications);
 
+    if (selectedElements.length < 2) {
+      const summary = selectedElements.length === 0
+        ? "Aucun element medical n'a ete fourni pour l'analyse cross-data."
+        : "Un seul element medical a ete fourni; aucune paire clinique ne peut etre auditee.";
+      const analysis = ensureAnalysisShape({
+        causalLinks: [],
+        summary,
+        warnings: [
+          "L'absence de lien detecte ne signifie pas absence de risque: les donnees fournies sont insuffisantes.",
+          "Les interactions, contre-indications et effets indesirables necessitent au moins deux elements medicaux a comparer.",
+        ],
+        recommendations: [
+          "Ajouter au moins deux elements parmi pathologies, symptomes, traitements ou medicaments avant de relancer l'analyse.",
+          "Verifier les donnees reelles du patient, notamment traitements actuels, antecedents, allergies et comorbidites.",
+          "Ne pas prendre de decision therapeutique sur la base d'une analyse vide ou incomplete.",
+        ],
+        alternatives: [],
+        webResearch: [],
+      });
+      analysis.schemaComparison = ensureSchemaComparison(analysis);
+
+      return new Response(
+        JSON.stringify({
+          analysis,
+          context: {
+            pathologiesCount: pathologies.length,
+            symptomsCount: symptoms.length,
+            treatmentsCount: treatments.length,
+            medicationsCount: medications.length,
+            patientsAnalyzed: 0,
+            pubmedSearches: 0,
+            cacheHits: 0,
+            newLinksGenerated: 0
+          }
+        }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
     // Rechercher les liens existants en cache
     console.log('[CrossDataAnalyzer] Recherche dans le cache...');
     const cachedLinks = await findCachedLinks(supabase, allElements);
@@ -547,7 +586,7 @@ Génère uniquement le JSON des schémas thérapeutiques alternatifs.`;
         forceModel: true,
         reasoningEffort: OPENAI_CROSS_DATA_REASONING_EFFORT,
         responseFormat: { type: 'json_object' },
-        maxTokens: 12000,
+        maxTokens: 6000,
       });
 
       let treatmentSchemas: TreatmentSchema[] = [];
@@ -829,7 +868,7 @@ Réponds UNIQUEMENT en français avec le JSON demandé. Génère uniquement les 
         forceModel: true,
         reasoningEffort: OPENAI_CROSS_DATA_REASONING_EFFORT,
         responseFormat: { type: 'json_object' },
-        maxTokens: 16000,
+        maxTokens: 8000,
       }
     );
 
