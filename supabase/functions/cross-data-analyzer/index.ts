@@ -582,7 +582,7 @@ ${webResearchContext || 'Aucune recherche effectuée'}
 Génère uniquement le JSON des schémas thérapeutiques alternatifs.`;
 
       const schemaAIResult = await callAI(schemaPrompt, schemaUserPrompt, {
-        model: Deno.env.get('OPENAI_CROSS_DATA_MODEL') || OPENAI_CROSS_DATA_MODEL,
+        model: OPENAI_CROSS_DATA_MODEL,
         forceModel: true,
         reasoningEffort: OPENAI_CROSS_DATA_REASONING_EFFORT,
         responseFormat: { type: 'json_object' },
@@ -864,7 +864,7 @@ Réponds UNIQUEMENT en français avec le JSON demandé. Génère uniquement les 
       systemPrompt,
       userPrompt + "\n\nGénère maintenant le JSON final. Raisonne sur chaque paire, conserve seulement les liens directement justifiés, puis produis une synthèse clinique exploitable.",
       {
-        model: Deno.env.get('OPENAI_CROSS_DATA_MODEL') || OPENAI_CROSS_DATA_MODEL,
+        model: OPENAI_CROSS_DATA_MODEL,
         forceModel: true,
         reasoningEffort: OPENAI_CROSS_DATA_REASONING_EFFORT,
         responseFormat: { type: 'json_object' },
