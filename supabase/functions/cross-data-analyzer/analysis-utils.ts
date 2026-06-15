@@ -62,6 +62,28 @@ export interface SchemaComparison {
   clinicalSummary: string;
 }
 
+export interface TreatmentSchemaStep {
+  action: 'keep' | 'replace' | 'remove' | 'add' | 'monitor';
+  target: string;
+  targetType: 'medication' | 'treatment' | 'monitoring';
+  replacement?: string;
+  rationale: string;
+  monitoring?: string[];
+  riskMitigation?: string[];
+}
+
+export interface TreatmentSchema {
+  title: string;
+  priority: 'preferred' | 'alternative' | 'cautious';
+  rationale: string;
+  expectedBenefits: string[];
+  residualRisks: string[];
+  steps: TreatmentSchemaStep[];
+  monitoringPlan: string[];
+  patientWarnings: string[];
+  confidence: Probability;
+}
+
 export interface AnalysisResult {
   causalLinks: CausalLink[];
   summary: string;
@@ -69,6 +91,7 @@ export interface AnalysisResult {
   recommendations: string[];
   alternatives: Alternative[];
   schemaComparison?: SchemaComparison;
+  treatmentSchemas?: TreatmentSchema[];
   webResearch: {
     query: string;
     findings: string[];
@@ -202,7 +225,13 @@ export function normalizeCausalLink(rawLink: unknown, selectedElements: Selected
   }
 
   const isMedicationOrTreatment = normalized.fromType === 'medication' || normalized.fromType === 'treatment';
-  if (isMedicationOrTreatment && normalized.toType === 'pathology') {
+  const isTherapeuticAppropriatenessLink = isMedicationOrTreatment && normalized.toType === 'pathology';
+
+  if (!isTherapeuticAppropriatenessLink) {
+    delete normalized.isAppropriate;
+  }
+
+  if (isTherapeuticAppropriatenessLink) {
     normalized.effectType ||= normalized.isAppropriate === false ? 'adverse' : 'therapeutic';
     if (normalized.isAppropriate === false) {
       normalized.dangerLevel ||= 'moderate';
@@ -484,6 +513,54 @@ export function ensureAnalysisShape(rawAnalysis: Partial<AnalysisResult> | null 
     recommendations: Array.isArray(rawAnalysis?.recommendations) ? rawAnalysis.recommendations.filter((value): value is string => typeof value === 'string') : [],
     alternatives: Array.isArray(rawAnalysis?.alternatives) ? rawAnalysis.alternatives as Alternative[] : [],
     schemaComparison: rawAnalysis?.schemaComparison,
+    treatmentSchemas: ensureTreatmentSchemasShape(rawAnalysis?.treatmentSchemas),
     webResearch: Array.isArray(rawAnalysis?.webResearch) ? rawAnalysis.webResearch : [],
   };
+}
+
+export function ensureTreatmentSchemasShape(rawSchemas: unknown): TreatmentSchema[] {
+  if (!Array.isArray(rawSchemas)) return [];
+
+  return rawSchemas
+    .map((rawSchema): TreatmentSchema | null => {
+      const schema = rawSchema as Partial<TreatmentSchema> | null;
+      if (!schema || typeof schema !== 'object') return null;
+
+      const steps = Array.isArray(schema.steps)
+        ? schema.steps
+          .map((rawStep): TreatmentSchemaStep | null => {
+            const step = rawStep as Partial<TreatmentSchemaStep> | null;
+            if (!step || typeof step !== 'object') return null;
+            const target = coerceString(step.target);
+            const rationale = coerceString(step.rationale);
+            if (!target || !rationale) return null;
+
+            return {
+              action: coerceEnum(step.action, ['keep', 'replace', 'remove', 'add', 'monitor'], 'monitor'),
+              target,
+              targetType: coerceEnum(step.targetType, ['medication', 'treatment', 'monitoring'], 'monitoring'),
+              replacement: step.replacement ? coerceString(step.replacement) : undefined,
+              rationale,
+              monitoring: Array.isArray(step.monitoring) ? step.monitoring.filter((item): item is string => typeof item === 'string') : [],
+              riskMitigation: Array.isArray(step.riskMitigation) ? step.riskMitigation.filter((item): item is string => typeof item === 'string') : [],
+            };
+          })
+          .filter((step): step is TreatmentSchemaStep => Boolean(step))
+        : [];
+
+      if (steps.length === 0) return null;
+
+      return {
+        title: coerceString(schema.title, 'Schéma thérapeutique alternatif'),
+        priority: coerceEnum(schema.priority, ['preferred', 'alternative', 'cautious'], 'alternative'),
+        rationale: coerceString(schema.rationale, 'Schéma proposé à partir des liens de risque détectés.'),
+        expectedBenefits: Array.isArray(schema.expectedBenefits) ? schema.expectedBenefits.filter((item): item is string => typeof item === 'string') : [],
+        residualRisks: Array.isArray(schema.residualRisks) ? schema.residualRisks.filter((item): item is string => typeof item === 'string') : [],
+        steps,
+        monitoringPlan: Array.isArray(schema.monitoringPlan) ? schema.monitoringPlan.filter((item): item is string => typeof item === 'string') : [],
+        patientWarnings: Array.isArray(schema.patientWarnings) ? schema.patientWarnings.filter((item): item is string => typeof item === 'string') : [],
+        confidence: coerceEnum(schema.confidence, VALID_PROBABILITIES, 'medium'),
+      };
+    })
+    .filter((schema): schema is TreatmentSchema => Boolean(schema));
 }
