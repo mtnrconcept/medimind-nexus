@@ -99,6 +99,47 @@ interface CausalLink {
   effectType?: 'therapeutic' | 'adverse' | 'both'; // Type d'effet: thérapeutique, indésirable ou les deux
   therapeuticDetails?: string; // Détails de l'effet thérapeutique
   adverseDetails?: string; // Détails de l'effet indésirable
+  dangerLevel?: 'critical' | 'high' | 'moderate' | 'low';
+  interactionType?: 'drug-drug' | 'drug-treatment' | 'pathology-danger';
+  symptomFrequency?: 'principal' | 'frequent' | 'possible' | 'rare';
+}
+
+interface Alternative {
+  for: string;
+  forType: string;
+  reason: string;
+  suggestions: string[];
+  evidence?: string;
+}
+
+interface ProposedChange {
+  action: 'replace' | 'remove' | 'add';
+  target: string;
+  targetType: 'medication' | 'treatment';
+  reason: string;
+  replacement?: string;
+  replacementType?: 'medication' | 'treatment';
+  improvementScore: number;
+}
+
+interface SchemaStats {
+  redLinks: number;
+  orangeLinks: number;
+  greenLinks: number;
+  totalDangerScore: number;
+  inappropriateCount: number;
+  adverseEffectCount: number;
+}
+
+interface SchemaComparison {
+  currentScore: number;
+  proposedScore: number;
+  improvementPercent: number;
+  currentStats: SchemaStats;
+  proposedStats: SchemaStats;
+  proposedChanges: ProposedChange[];
+  benefitRiskRatio: { current: number; proposed: number };
+  clinicalSummary: string;
 }
 
 interface AnalysisResult {
@@ -107,6 +148,8 @@ interface AnalysisResult {
   warnings: string[];
   recommendations: string[];
   webResearch: WebResearch[];
+  alternatives?: Alternative[];
+  schemaComparison?: SchemaComparison;
 }
 
 interface PatientData {
@@ -1551,6 +1594,14 @@ const CrossDataAnalyzer = ({ patientData }: CrossDataAnalyzerProps) => {
                       <p className="text-sm text-muted-foreground">{result.summary}</p>
                     </div>
 
+                    {result.schemaComparison && (
+                      <SchemaComparisonPanel comparison={result.schemaComparison} />
+                    )}
+
+                    {result.alternatives && result.alternatives.length > 0 && (
+                      <AlternativesPanel alternatives={result.alternatives} />
+                    )}
+
                     {/* Liens de causalité */}
                     {result.causalLinks && result.causalLinks.length > 0 && (
                       <div className="space-y-3">
@@ -1696,13 +1747,157 @@ const getTypeIcon = (type: string) => {
   }
 };
 
+const getDangerBadge = (dangerLevel?: CausalLink['dangerLevel']) => {
+  switch (dangerLevel) {
+    case 'critical':
+      return <Badge className="bg-red-600 text-white border-red-700">Critique</Badge>;
+    case 'high':
+      return <Badge className="bg-orange-500 text-white border-orange-600">Élevé</Badge>;
+    case 'moderate':
+      return <Badge className="bg-yellow-500/20 text-yellow-800 dark:text-yellow-300 border-yellow-500/30">Modéré</Badge>;
+    case 'low':
+      return <Badge className="bg-blue-500/20 text-blue-700 dark:text-blue-300 border-blue-500/30">Faible</Badge>;
+    default:
+      return null;
+  }
+};
+
+const getInteractionLabel = (interactionType?: CausalLink['interactionType']) => {
+  switch (interactionType) {
+    case 'drug-drug':
+      return 'Interaction médicament-médicament';
+    case 'drug-treatment':
+      return 'Interaction médicament-traitement';
+    case 'pathology-danger':
+      return 'Risque lié à la pathologie';
+    default:
+      return null;
+  }
+};
+
+const getSymptomFrequencyLabel = (frequency?: CausalLink['symptomFrequency']) => {
+  switch (frequency) {
+    case 'principal':
+      return 'Symptôme cardinal';
+    case 'frequent':
+      return 'Symptôme fréquent';
+    case 'possible':
+      return 'Symptôme possible';
+    case 'rare':
+      return 'Symptôme rare';
+    default:
+      return null;
+  }
+};
+
+function SchemaComparisonPanel({ comparison }: { comparison: SchemaComparison }) {
+  const improvement = comparison.improvementPercent > 0 ? `+${comparison.improvementPercent}%` : `${comparison.improvementPercent}%`;
+
+  return (
+    <div className="rounded-lg border bg-card p-4 space-y-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h4 className="font-medium flex items-center gap-2">
+            <Activity className="h-4 w-4 text-primary" />
+            Score bénéfice/risque
+          </h4>
+          <p className="text-sm text-muted-foreground mt-1">{comparison.clinicalSummary}</p>
+        </div>
+        <Badge className="bg-green-500/20 text-green-700 dark:text-green-300 border-green-500/30">
+          {improvement} amélioration
+        </Badge>
+      </div>
+
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <ScoreTile label="Actuel" value={`${comparison.currentScore}/100`} tone="muted" />
+        <ScoreTile label="Proposé" value={`${comparison.proposedScore}/100`} tone="success" />
+        <ScoreTile label="Risques rouges" value={`${comparison.currentStats.redLinks} → ${comparison.proposedStats.redLinks}`} tone="danger" />
+        <ScoreTile label="Ratio B/R" value={`${comparison.benefitRiskRatio.current} → ${comparison.benefitRiskRatio.proposed}`} tone="success" />
+      </div>
+
+      {comparison.proposedChanges.length > 0 && (
+        <div className="space-y-2">
+          <p className="text-sm font-medium">Changements proposés</p>
+          <div className="space-y-2">
+            {comparison.proposedChanges.slice(0, 4).map((change, index) => (
+              <div key={`${change.target}-${index}`} className="rounded-md border bg-muted/30 p-3">
+                <div className="flex flex-wrap items-center gap-2 mb-1">
+                  <Badge variant="outline">{change.action === 'replace' ? 'Remplacer' : change.action === 'remove' ? 'Retirer' : 'Ajouter'}</Badge>
+                  <span className="text-sm font-medium">{change.target}</span>
+                  {change.replacement && (
+                    <>
+                      <ArrowRight className="h-3 w-3 text-muted-foreground" />
+                      <span className="text-sm font-medium text-green-700 dark:text-green-300">{change.replacement}</span>
+                    </>
+                  )}
+                  <Badge className="bg-primary/10 text-primary border-primary/20">+{change.improvementScore}</Badge>
+                </div>
+                <p className="text-sm text-muted-foreground">{change.reason}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ScoreTile({ label, value, tone }: { label: string; value: string; tone: 'muted' | 'success' | 'danger' }) {
+  const toneClass = tone === 'success'
+    ? 'border-green-500/30 bg-green-500/10 text-green-700 dark:text-green-300'
+    : tone === 'danger'
+      ? 'border-red-500/30 bg-red-500/10 text-red-700 dark:text-red-300'
+      : 'border-border bg-muted/30 text-foreground';
+
+  return (
+    <div className={`rounded-md border p-3 ${toneClass}`}>
+      <p className="text-xs text-muted-foreground">{label}</p>
+      <p className="text-lg font-semibold">{value}</p>
+    </div>
+  );
+}
+
+function AlternativesPanel({ alternatives }: { alternatives: Alternative[] }) {
+  return (
+    <div className="rounded-lg border bg-card p-4 space-y-3">
+      <h4 className="font-medium flex items-center gap-2 text-blue-700 dark:text-blue-300">
+        <CheckCircle2 className="h-4 w-4" />
+        Alternatives thérapeutiques à examiner
+      </h4>
+      <div className="grid gap-3 md:grid-cols-2">
+        {alternatives.map((alternative, index) => (
+          <div key={`${alternative.for}-${index}`} className="rounded-md border bg-muted/30 p-3 space-y-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <Badge variant="outline">{alternative.forType}</Badge>
+              <span className="text-sm font-medium">{alternative.for}</span>
+            </div>
+            <p className="text-sm text-muted-foreground">{alternative.reason}</p>
+            <div className="flex flex-wrap gap-2">
+              {alternative.suggestions.map((suggestion) => (
+                <Badge key={suggestion} className="bg-green-500/20 text-green-700 dark:text-green-300 border-green-500/30">
+                  {suggestion}
+                </Badge>
+              ))}
+            </div>
+            {alternative.evidence && (
+              <p className="text-xs text-muted-foreground border-l-2 pl-2">{alternative.evidence}</p>
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 // Composant Carte rétractable pour un lien de causalité
 function CausalLinkCard({ link }: { link: CausalLink }) {
   const [isExpanded, setIsExpanded] = useState(false);
 
   return (
     <div
-      className={`border rounded-lg bg-card transition-all ${link.isAppropriate === true ? 'border-green-500/50 bg-green-500/5' :
+      className={`border rounded-lg bg-card transition-all ${link.dangerLevel === 'critical' || link.dangerLevel === 'high' ? 'border-destructive/60 bg-destructive/5' :
+        link.dangerLevel === 'moderate' ? 'border-orange-500/50 bg-orange-500/5' :
+          link.isAppropriate === true ? 'border-green-500/50 bg-green-500/5' :
         link.isAppropriate === false ? 'border-destructive/50 bg-destructive/5' :
           link.effectType === 'both' ? 'border-orange-500/50 bg-orange-500/5' :
             link.effectType === 'therapeutic' ? 'border-green-500/30' :
@@ -1748,6 +1943,20 @@ function CausalLinkCard({ link }: { link: CausalLink }) {
           {link.effectType === 'adverse' && (
             <Badge className="bg-destructive/20 text-destructive border-destructive/30 flex items-center gap-1 h-6">Risque</Badge>
           )}
+
+          {getDangerBadge(link.dangerLevel)}
+
+          {link.interactionType && (
+            <Badge className="bg-purple-500/20 text-purple-700 dark:text-purple-300 border-purple-500/30 h-6">
+              {getInteractionLabel(link.interactionType)}
+            </Badge>
+          )}
+
+          {link.symptomFrequency && (
+            <Badge className="bg-blue-500/20 text-blue-700 dark:text-blue-300 border-blue-500/30 h-6">
+              {getSymptomFrequencyLabel(link.symptomFrequency)}
+            </Badge>
+          )}
         </div>
 
         <Button variant="ghost" size="sm" className="h-8 w-8 p-0 shrink-0">
@@ -1779,6 +1988,29 @@ function CausalLinkCard({ link }: { link: CausalLink }) {
                 Effet indésirable potentiel
               </div>
               <p className="text-sm text-muted-foreground">{link.adverseDetails}</p>
+            </div>
+          )}
+
+          {(link.dangerLevel || link.interactionType || link.symptomFrequency) && (
+            <div className="grid gap-2 md:grid-cols-3">
+              {link.dangerLevel && (
+                <div className="rounded-md border bg-muted/30 p-3">
+                  <p className="text-xs text-muted-foreground">Niveau de risque</p>
+                  <div className="mt-1">{getDangerBadge(link.dangerLevel)}</div>
+                </div>
+              )}
+              {link.interactionType && (
+                <div className="rounded-md border bg-muted/30 p-3">
+                  <p className="text-xs text-muted-foreground">Type d'interaction</p>
+                  <p className="text-sm font-medium mt-1">{getInteractionLabel(link.interactionType)}</p>
+                </div>
+              )}
+              {link.symptomFrequency && (
+                <div className="rounded-md border bg-muted/30 p-3">
+                  <p className="text-xs text-muted-foreground">Fréquence clinique</p>
+                  <p className="text-sm font-medium mt-1">{getSymptomFrequencyLabel(link.symptomFrequency)}</p>
+                </div>
+              )}
             </div>
           )}
 

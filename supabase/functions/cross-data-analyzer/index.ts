@@ -1,6 +1,15 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { callAI } from "../_shared/ai-client.ts";
+import { callAI, cleanJsonString } from "../_shared/ai-client.ts";
+import {
+  OPENAI_CROSS_DATA_MODEL,
+  OPENAI_CROSS_DATA_REASONING_EFFORT,
+  buildEvidenceLinks,
+  buildSelectedElements,
+  ensureAnalysisShape,
+  ensureSchemaComparison,
+  mergeAndValidateLinks,
+} from "./analysis-utils.ts";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -293,6 +302,7 @@ serve(async (req) => {
       ...treatments.map((t: any) => ({ name: t.name, type: 'treatment' })),
       ...medications.map((m: any) => ({ name: m.name, type: 'medication' })),
     ];
+    const selectedElements = buildSelectedElements(pathologies, symptoms, treatments, medications);
 
     // Rechercher les liens existants en cache
     console.log('[CrossDataAnalyzer] Recherche dans le cache...');
@@ -313,6 +323,14 @@ serve(async (req) => {
         .in('pathology_id', pathologyIds);
       symptomLinks = links || [];
     }
+
+    const evidenceLinks = buildEvidenceLinks({
+      pathologies,
+      symptoms,
+      treatments,
+      medications,
+      symptomLinks,
+    });
 
     // Construire les requêtes de recherche web
     const webSearchQueries: string[] = [];
@@ -424,7 +442,27 @@ serve(async (req) => {
       return `Recherche: "${wr.query}"\nArticles trouvés:\n${articlesInfo || '  Aucun article trouvé'}`;
     }).join('\n\n');
 
+    const evidenceLinksContext = evidenceLinks.length > 0
+      ? evidenceLinks.slice(0, 80).map((link) =>
+        `- ${link.fromType}:${link.from} -> ${link.toType}:${link.to} | ${link.relationship} | risque=${link.dangerLevel || 'none'} | effet=${link.effectType || 'none'} | preuve=${link.evidence}`
+      ).join('\n')
+      : 'Aucun lien deterministe trouve dans la base.';
+
+    const pairAuditContext = selectedElements.flatMap((left, leftIndex) =>
+      selectedElements.slice(leftIndex + 1).map((right) =>
+        `- ${left.type}:${left.name} <> ${right.type}:${right.name}`
+      )
+    ).slice(0, 120).join('\n') || 'Pas assez de paires a auditer.';
+
     const systemPrompt = `Tu es un MÉDECIN EXPERT francophone spécialisé dans l'analyse cross-data et l'évaluation thérapeutique.
+Tu travailles avec GPT-5.5 Pro et le raisonnement maximal. Ton objectif est une analyse clinique utile, sourcée, prudente et actionnable.
+
+## CONTRAT DE QUALITÉ
+- Audite toutes les paires fournies, mais ne retourne que les liens avec une preuve directe.
+- Une preuve directe doit venir d'au moins une source: base de données interne, effet secondaire, contre-indication, interaction, association pathologie-symptôme, indication thérapeutique, PubMed, ou mécanisme pharmacologique clairement établi.
+- N'invente pas de causalité entre deux pathologies non liées.
+- Priorise les liens dangereux, contre-indiqués, interactionnels, puis les liens thérapeutiques et symptomatiques.
+- Donne des recommandations de surveillance et d'alternatives seulement quand elles découlent d'un risque explicite.
 
 ## RÈGLES LOGIQUES FONDAMENTALES (À RESPECTER IMPÉRATIVEMENT)
 
@@ -616,6 +654,12 @@ ${patientContext || 'Aucun patient trouvé'}
 ## RECHERCHE SCIENTIFIQUE PUBMED
 ${webResearchContext || 'Aucune recherche effectuée'}
 
+## PREUVES DETERMINISTES DEJA DETECTEES
+${evidenceLinksContext}
+
+## MATRICE DES PAIRES A AUDITER
+${pairAuditContext}
+
 ## ⚠️ INSTRUCTIONS CRITIQUES - GÉNÉRATION SYSTÉMATIQUE DE LIENS ⚠️
 
 Tu DOIS générer un lien pour CHAQUE paire d'éléments ayant une relation médicale.
@@ -639,8 +683,9 @@ Tu DOIS générer un lien pour CHAQUE paire d'éléments ayant une relation méd
 **4. POUR CHAQUE MÉDICAMENT × CHAQUE AUTRE MÉDICAMENT:**
 - Y a-t-il une interaction médicamenteuse? → interactionType="drug-drug", dangerLevel
 
-### RÈGLE D'OR: MIEUX VAUT TROP DE LIENS QUE PAS ASSEZ!
-Si tu hésites, CRÉE LE LIEN avec une probabilité "low" ou "medium".
+### REGLE D'OR: PRECISION CLINIQUE AVANT QUANTITE
+Si tu hésites ou si la preuve est indirecte, NE CREE PAS le lien. Mentionne plutôt l'incertitude dans les recommandations.
+Chaque lien retourné doit être utile pour comprendre un mécanisme, un symptôme, une indication, une contre-indication, une interaction ou une décision thérapeutique.
 
 ### SYNTHÈSE OBLIGATOIRE:
 Tu DOIS générer:
@@ -650,45 +695,51 @@ Tu DOIS générer:
 
 Base tes analyses sur les indications officielles, les contre-indications, la littérature médicale et tes connaissances médicales.
 
-Réponds UNIQUEMENT en français avec le JSON demandé. GÉNÈRE LE MAXIMUM DE LIENS PERTINENTS!`;
+Réponds UNIQUEMENT en français avec le JSON demandé. Génère uniquement les liens pertinents, justifiés et actionnables.`;
 
     console.log('Appel de l\'IA pour l\'analyse cross-data...');
 
     const aiResult = await callAI(
       systemPrompt,
-      userPrompt + "\n\nGénère maintenant le JSON avec TOUS les liens pertinents. Réfléchis bien à chaque relation médicale avant de répondre.",
+      userPrompt + "\n\nGénère maintenant le JSON final. Raisonne sur chaque paire, conserve seulement les liens directement justifiés, puis produis une synthèse clinique exploitable.",
       {
-        model: 'claude-3-5-sonnet-20240620',
-        maxTokens: 8000,
+        model: Deno.env.get('OPENAI_CROSS_DATA_MODEL') || OPENAI_CROSS_DATA_MODEL,
+        forceModel: true,
+        reasoningEffort: OPENAI_CROSS_DATA_REASONING_EFFORT,
+        responseFormat: { type: 'json_object' },
+        maxTokens: 16000,
       }
     );
 
     const content = aiResult.text;
 
     if (!content) {
-      throw new Error('Aucun contenu dans la réponse Claude');
+      throw new Error('Aucun contenu dans la réponse OpenAI');
     }
 
     // Parser le JSON de la réponse
     let analysis: AnalysisResult;
     try {
-      const jsonMatch = content.match(/\{[\s\S]*\}/);
-      if (jsonMatch) {
-        analysis = JSON.parse(jsonMatch[0]);
-      } else {
-        throw new Error('Aucun JSON trouvé dans la réponse');
-      }
+      analysis = ensureAnalysisShape(JSON.parse(cleanJsonString(content)));
     } catch (parseError) {
       console.error('Erreur de parsing JSON:', parseError, 'Contenu:', content);
-      analysis = {
+      analysis = ensureAnalysisShape({
         causalLinks: [],
         summary: "L'analyse n'a pas pu être complétée correctement.",
         warnings: ["Erreur de parsing de la réponse IA"],
         recommendations: ["Veuillez réessayer l'analyse"],
         alternatives: [],
         webResearch: []
-      };
+      });
     }
+
+    analysis.causalLinks = mergeAndValidateLinks(
+      selectedElements,
+      evidenceLinks,
+      analysis.causalLinks,
+      cachedLinks,
+    );
+    analysis.schemaComparison = ensureSchemaComparison(analysis);
 
     // Ajouter les sources web si non présentes
     if (!analysis.webResearch || analysis.webResearch.length === 0) {
@@ -702,7 +753,7 @@ Réponds UNIQUEMENT en français avec le JSON demandé. GÉNÈRE LE MAXIMUM DE L
     console.log('Analyse terminée avec succès');
 
     // Sauvegarder les nouveaux liens en cache
-    const aiModel = 'claude-opus-4-5-20251101';
+    const aiModel = aiResult.model;
     console.log(`[CrossDataAnalyzer] Sauvegarde de ${analysis.causalLinks?.length || 0} liens en cache...`);
 
     for (const link of (analysis.causalLinks || [])) {
@@ -710,22 +761,9 @@ Réponds UNIQUEMENT en français avec le JSON demandé. GÉNÈRE LE MAXIMUM DE L
     }
     console.log('[CrossDataAnalyzer] Liens sauvegardés en cache');
 
-    // Fusionner avec les liens du cache existants (éviter les doublons)
-    const existingFromTo = new Set(
-      (analysis.causalLinks || []).map((l: CausalLink) => `${l.from}|${l.to}`)
-    );
-
-    const mergedLinks = [
-      ...(analysis.causalLinks || []),
-      ...cachedLinks.filter((cl: CausalLink) => !existingFromTo.has(`${cl.from}|${cl.to}`))
-    ];
-
     return new Response(
       JSON.stringify({
-        analysis: {
-          ...analysis,
-          causalLinks: mergedLinks,
-        },
+        analysis,
         context: {
           pathologiesCount: pathologies.length,
           symptomsCount: symptoms.length,
