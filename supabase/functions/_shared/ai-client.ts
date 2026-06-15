@@ -48,9 +48,21 @@ type OpenAIMessage = {
   content: string | OpenAIContentPart[];
 };
 
-function getOpenAIConfig(options: { model?: string; maxTokens?: number; temperature?: number }) {
+export interface AICallOptions {
+  model?: string;
+  forceModel?: boolean;
+  maxTokens?: number;
+  temperature?: number;
+  reasoningEffort?: 'none' | 'low' | 'medium' | 'high' | 'xhigh';
+  responseFormat?: Record<string, unknown>;
+}
+
+function getOpenAIConfig(options: AICallOptions) {
   const apiKey = Deno.env.get('OPENAI_API_KEY');
-  const model = Deno.env.get('OPENAI_MODEL') || options.model || 'gpt-5.5';
+  const envModel = Deno.env.get('OPENAI_MODEL');
+  const model = options.forceModel
+    ? options.model || envModel || 'gpt-5.5'
+    : envModel || options.model || 'gpt-5.5';
 
   if (!apiKey) {
     throw new Error('OPENAI_API_KEY not configured');
@@ -63,6 +75,14 @@ function getOpenAIConfig(options: { model?: string; maxTokens?: number; temperat
 
   if (options.temperature !== undefined) {
     body.temperature = options.temperature;
+  }
+
+  if (options.reasoningEffort) {
+    body.reasoning_effort = options.reasoningEffort;
+  }
+
+  if (options.responseFormat) {
+    body.response_format = options.responseFormat;
   }
 
   return { apiKey, model, body };
@@ -144,11 +164,7 @@ function buildMessages(systemPrompt: string, userPrompt: string | AIMessage[]): 
 export async function callAI(
   systemPrompt: string,
   userPrompt: string | AIMessage[],
-  options: {
-    model?: string;
-    maxTokens?: number;
-    temperature?: number;
-  } = {},
+  options: AICallOptions = {},
 ): Promise<AIResponse> {
   const { apiKey, model, body } = getOpenAIConfig(options);
 
@@ -200,11 +216,7 @@ export async function streamAI(
   systemPrompt: string,
   userPrompt: string | AIMessage[],
   onChunk: (text: string) => void | Promise<void>,
-  options: {
-    model?: string;
-    maxTokens?: number;
-    temperature?: number;
-  } = {},
+  options: AICallOptions = {},
 ): Promise<AIResponse> {
   const { apiKey, model, body } = getOpenAIConfig(options);
 

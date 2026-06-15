@@ -89,7 +89,7 @@ export const AIProvider: React.FC<{ children: React.ReactNode }> = ({ children }
     const setLLMMode = (mode: LLMMode) => {
         setLLMModeState(mode);
         localStorage.setItem('medimind_llm_mode', mode);
-        toast.info(`Mode IA changé : ${mode === 'cloud' ? 'Cloud (Gemini/Claude)' : 'Local (Meditron)'}`);
+        toast.info(`Mode IA changé : ${mode === 'cloud' ? 'Cloud (OpenAI)' : 'Local (Meditron)'}`);
     };
 
     const invokeAI = async (functionName: string, body: any) => {
