@@ -9,7 +9,7 @@ const corsHeaders = {
 // ============================================
 // KNOWLEDGE EXTRACTOR
 // NER + Relation Extraction + Evidence Classification
-// Uses Claude for advanced extraction
+// Uses OpenAI for advanced extraction
 // ============================================
 
 // Entity types for medical NER
@@ -403,7 +403,7 @@ function calculateExtractedScoring(entities: Entity[], relations: Relation[]): S
     };
 }
 
-// AI-enhanced extraction for complex cases (Claude with Gemini fallback)
+// AI-enhanced extraction for complex cases (OpenAI with OpenAI)
 async function extractWithAI(text: string): Promise<ExtractionResult | null> {
     const systemPrompt = `Tu es un expert en extraction d'informations biomédicales pour un graphe de connaissances médical.
 
@@ -456,7 +456,7 @@ FORMAT JSON strict:
         const aiResponse = await callAI(
             systemPrompt,
             `Extrait les entités et relations avec le système de couleurs de ce texte:\n\n${text.slice(0, 3000)}`,
-            { model: 'claude-3-5-sonnet-20240620' }
+            { model: "gpt-5.5" }
         );
 
         const content = aiResponse.text;
@@ -599,13 +599,13 @@ serve(async (req) => {
 
         let result: ExtractionResult;
 
-        // Priority: Python > Claude > Regex
+        // Priority: Python > OpenAI > Regex
         if (use_python) {
             const pythonResult = await extractWithPython(text);
             if (pythonResult) {
                 result = pythonResult;
             } else if (use_claude) {
-                // Fallback to Claude
+                // Fallback to OpenAI
                 const aiResult = await extractWithAI(text);
                 if (aiResult) {
                     result = {

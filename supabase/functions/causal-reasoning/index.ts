@@ -9,7 +9,7 @@ const corsHeaders = {
 
 /**
  * Causal Reasoning Engine
- * - For link explanations: Uses Claude Opus 4.5 to generate detailed explanations
+ * - For link explanations: Uses OpenAI to generate detailed explanations
  * - For other queries: Queries the Knowledge Graph causal rules
  */
 
@@ -76,13 +76,12 @@ interface RiskSummary {
 }
 
 // ============================================
-// CLAUDE OPUS 4.5 LINK EXPLANATION
+// OPENAI LINK EXPLANATION
 // ============================================
 
-async function generateLinkExplanationWithClaude(
+async function generateLinkExplanationWithOpenAI(
     query: string,
-    context: CausalQuery['context'],
-    claudeApiKey: string
+    context: CausalQuery['context']
 ): Promise<string> {
     // Check if this is a multi-node analysis
     const isMultiNode = context?.multiNodes && context.multiNodes.length > 2;
@@ -188,7 +187,7 @@ Produis une synthèse exhaustive et médicalement rigoureuse de cette relation.`
             systemPrompt,
             userPrompt,
             {
-                model: 'claude-3-5-sonnet-20240620', // Defaulting to robust model
+                model: 'gpt-5.5',
                 maxTokens: isMultiNode ? 4000 : 2000 // More tokens for multi-node analysis
             }
         );
@@ -214,7 +213,6 @@ serve(async (req) => {
 
         const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
         const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-        const claudeApiKey = Deno.env.get("ANTHROPIC_API_KEY") || Deno.env.get("CLAUDE_API_KEY");
         const supabase = createClient(supabaseUrl, supabaseKey);
 
         // ============================================
@@ -238,10 +236,9 @@ serve(async (req) => {
                         } else {
                             console.log(`[CAUSAL-REASONING] Generating JSON explanation for ${explanationContext.sourceNode} -> ${explanationContext.targetNode}`);
                         }
-                        const explanation = await generateLinkExplanationWithClaude(
+                        const explanation = await generateLinkExplanationWithOpenAI(
                             explanationQuery,
-                            explanationContext,
-                            claudeApiKey!
+                            explanationContext
                         );
 
                         return new Response(JSON.stringify({
@@ -270,7 +267,7 @@ Règles STRICTES:
                         systemPrompt,
                         userPrompt,
                         {
-                            model: "claude-3-5-sonnet-20240620",
+                            model: "gpt-5.5",
                             maxTokens: 2000,
                             temperature: 0.1
                         }
@@ -354,7 +351,7 @@ Contexte:
                                 sendEvent({ type: 'text', content: chunk });
                             },
                             {
-                                model: "claude-3-5-sonnet-20240620",
+                                model: "gpt-5.5",
                                 maxTokens: 4000,
                                 temperature: 0.1
                             }

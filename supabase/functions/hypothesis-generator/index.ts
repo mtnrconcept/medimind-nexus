@@ -15,7 +15,7 @@ const corsHeaders = {
  * 3. Weak signals detection
  * 4. Risk mitigation strategies
  * 
- * Uses Claude with strict contractual output schema.
+ * Uses OpenAI with strict contractual output schema.
  */
 
 const SYSTEM_PROMPT = `Tu es un pharmacologue clinicien expert travaillant avec un système de raisonnement médical.
@@ -139,12 +139,12 @@ serve(async (req) => {
 
         userPrompt += `\n\n## Instructions\nAnalyse ce contexte patient et génère:\n1. Des hypothèses falsifiables avec scores de plausibilité\n2. Des recommandations d'adaptation de traitement\n3. Des signaux faibles à surveiller\n4. Un plan de surveillance`;
 
-        // Call AI with Gemini fallback
+        // Call AI with OpenAI
         const aiResponse = await callAI(
             SYSTEM_PROMPT,
             userPrompt,
             {
-                model: "claude-3-5-sonnet-20241022",
+                model: "gpt-5.5",
                 maxTokens: 8000,
                 temperature: 0.3
             }

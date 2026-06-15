@@ -16,7 +16,7 @@ const corsHeaders = {
  * - No unsourced extrapolation
  * - Web search for additional evidence
  * 
- * Uses Claude Opus 4 for maximum reasoning capability
+ * Uses OpenAI 4 for maximum reasoning capability
  */
 
 interface StreamEvent {
@@ -395,7 +395,7 @@ serve(async (req) => {
                     // PHASE 7: CLAUDE SONNET ANALYSIS
                     // ============================================
 
-                    sendEvent({ type: 'step_update', step: { id: 7, status: 'running', details: '🧠 Analyse Claude Sonnet (evidence-based)...', source: 'Anthropic' } });
+                    sendEvent({ type: 'step_update', step: { id: 7, status: 'running', details: '🧠 Analyse OpenAI (evidence-based)...', source: 'OpenAI' } });
 
                     // Build evidence context with citations
                     const evidenceContext = `
@@ -441,7 +441,7 @@ RAPPEL: Tu DOIS citer chaque source (PMID/NCT). Aucune affirmation sans preuve. 
                             sendEvent({ type: 'text', content: chunk });
                         },
                         {
-                            model: "claude-3-5-sonnet-20240620",
+                            model: "gpt-5.5",
                             maxTokens: 12000,
                             temperature: 0.1,
                         }
@@ -449,7 +449,7 @@ RAPPEL: Tu DOIS citer chaque source (PMID/NCT). Aucune affirmation sans preuve. 
 
                     const textContent = aiResult.text;
 
-                    sendEvent({ type: 'step_update', step: { id: 7, status: 'completed', details: '✅ Analyse terminée', source: 'Claude Sonnet' } });
+                    sendEvent({ type: 'step_update', step: { id: 7, status: 'completed', details: '✅ Analyse terminée', source: 'OpenAI' } });
 
                     // Extract discoveries
                     const discoveries: any[] = [];

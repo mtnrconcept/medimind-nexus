@@ -27,7 +27,7 @@ const corsHeaders = {
 };
 
 // ============================================
-// HYPOTHESIS GENERATION (Claude AI)
+// HYPOTHESIS GENERATION (OpenAI)
 // ============================================
 
 async function generateHypothesesWithAI(
@@ -71,7 +71,7 @@ Réponds en JSON: { "hypotheses": [{"title": "...", "probability": X, "rationale
             "Tu es un expert en génération d'hypothèses médicales falsifiables. Réponds uniquement en JSON.",
             prompt,
             {
-                model: "claude-3-5-sonnet-20240620",
+                model: "gpt-5.5",
                 maxTokens: 4000,
                 temperature: 0.3
             }

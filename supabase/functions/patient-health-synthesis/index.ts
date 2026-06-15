@@ -376,7 +376,7 @@ serve(async (req) => {
                 systemPrompt,
                 `Voici le dossier patient complet à analyser:\n\n${JSON.stringify(patientContext, null, 2)}`,
                 {
-                    model: "claude-3-5-sonnet-20240620",
+                    model: "gpt-5.5",
                     maxTokens: 4096,
                     temperature: 0
                 }
@@ -458,7 +458,7 @@ serve(async (req) => {
     } catch (error) {
         console.error("Error in health synthesis:", error);
         return new Response(
-            JSON.stringify({ error: error.message || "Internal server error" }),
+            JSON.stringify({ error: error instanceof Error ? error.message : "Internal server error" }),
             { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );
     }

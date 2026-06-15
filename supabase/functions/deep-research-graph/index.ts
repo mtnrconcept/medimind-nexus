@@ -1,6 +1,6 @@
 // ============================================
 // DEEP RESEARCH SEMANTIC GRAPH ENGINE
-// Uses Claude Opus 4.5 for comprehensive multi-source research
+// Uses OpenAI for comprehensive multi-source research
 // ============================================
 
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
@@ -132,7 +132,7 @@ async function fetchLocalData(supabase: any, topic: string): Promise<{
 // CLAUDE OPUS SYNTHESIS
 // ============================================
 
-async function synthesizeWithClaude(
+async function synthesizeWithOpenAI(
     topic: string,
     localData: any,
     pubmedArticles: any[],
@@ -270,7 +270,7 @@ Génère un graphe RICHE avec ${allPathologies.length > 1 ? 'au moins 60-100 nœ
         systemPrompt,
         userPrompt,
         {
-            model: "claude-3-5-sonnet-20240620",
+            model: "gpt-5.5",
             maxTokens: 8000,
         }
     );
@@ -471,11 +471,11 @@ serve(async (req) => {
             }
         }
 
-        // Use cached nodes as existing_nodes for Claude to build upon
-        const nodesForClaude = existing_nodes.length > 0 ? existing_nodes : cachedNodes;
+        // Use cached nodes as existing_nodes for OpenAI to build upon
+        const nodesForOpenAI = existing_nodes.length > 0 ? existing_nodes : cachedNodes;
 
-        if (nodesForClaude.length > 0) {
-            console.log(`[DEEP-RESEARCH] Passing ${nodesForClaude.length} existing nodes to Claude for expansion`);
+        if (nodesForOpenAI.length > 0) {
+            console.log(`[DEEP-RESEARCH] Passing ${nodesForOpenAI.length} existing nodes to OpenAI for expansion`);
         }
 
         // Step 1: Fetch local data
@@ -491,22 +491,22 @@ serve(async (req) => {
         ]);
         console.log(`[DEEP-RESEARCH] PubMed: ${pubmedArticles.length}, FDA: ${fdaEvents.length}`);
 
-        // Step 3: Claude synthesis (pass cached/existing nodes for incremental discovery)
-        console.log('[DEEP-RESEARCH] Synthesizing with Claude...');
-        const claudeResult = await synthesizeWithClaude(topic, localData, pubmedArticles, fdaEvents, nodesForClaude, allPathologies);
+        // Step 3: OpenAI synthesis (pass cached/existing nodes for incremental discovery)
+        console.log('[DEEP-RESEARCH] Synthesizing with OpenAI...');
+        const claudeResult = await synthesizeWithOpenAI(topic, localData, pubmedArticles, fdaEvents, nodesForOpenAI, allPathologies);
         const providerName = claudeResult.ai_provider ? claudeResult.ai_provider.toUpperCase() : 'AI';
         console.log(`[DEEP-RESEARCH] ${providerName} generated ${claudeResult.nodes.length} nodes, ${claudeResult.edges.length} edges`);
 
-        // Step 4: MERGE cached nodes with Claude's new discoveries (deduplicate by ID)
+        // Step 4: MERGE cached nodes with OpenAI's new discoveries (deduplicate by ID)
         const existingNodeIds = new Set(cachedNodes.map((n: any) => n.id));
-        const newNodesFromClaude = claudeResult.nodes.filter((n: any) => !existingNodeIds.has(n.id));
-        const mergedNodes = [...cachedNodes, ...newNodesFromClaude];
+        const newNodesFromOpenAI = claudeResult.nodes.filter((n: any) => !existingNodeIds.has(n.id));
+        const mergedNodes = [...cachedNodes, ...newNodesFromOpenAI];
 
         const existingEdgeIds = new Set(cachedEdges.map((e: any) => `${e.source_id}-${e.target_id}`));
-        const newEdgesFromClaude = claudeResult.edges.filter((e: any) => !existingEdgeIds.has(`${e.source_id}-${e.target_id}`));
-        const mergedEdges = [...cachedEdges, ...newEdgesFromClaude];
+        const newEdgesFromOpenAI = claudeResult.edges.filter((e: any) => !existingEdgeIds.has(`${e.source_id}-${e.target_id}`));
+        const mergedEdges = [...cachedEdges, ...newEdgesFromOpenAI];
 
-        console.log(`[DEEP-RESEARCH] Merged: ${cachedNodes.length} cached + ${newNodesFromClaude.length} new = ${mergedNodes.length} total nodes`);
+        console.log(`[DEEP-RESEARCH] Merged: ${cachedNodes.length} cached + ${newNodesFromOpenAI.length} new = ${mergedNodes.length} total nodes`);
 
         const result = {
             nodes: mergedNodes,
@@ -590,14 +590,14 @@ serve(async (req) => {
                         }
 
                         // 2. Stream new nodes one by one with delay
-                        for (let i = 0; i < newNodesFromClaude.length; i++) {
-                            const node = newNodesFromClaude[i];
+                        for (let i = 0; i < newNodesFromOpenAI.length; i++) {
+                            const node = newNodesFromOpenAI[i];
                             controller.enqueue(encoder.encode(
                                 `data: ${JSON.stringify({
                                     type: 'node',
                                     node,
                                     index: i,
-                                    total: newNodesFromClaude.length
+                                    total: newNodesFromOpenAI.length
                                 })}\n\n`
                             ));
 
@@ -606,11 +606,11 @@ serve(async (req) => {
                         }
 
                         // 3. Stream new edges
-                        if (newEdgesFromClaude.length > 0) {
+                        if (newEdgesFromOpenAI.length > 0) {
                             controller.enqueue(encoder.encode(
                                 `data: ${JSON.stringify({
                                     type: 'edges',
-                                    edges: newEdgesFromClaude
+                                    edges: newEdgesFromOpenAI
                                 })}\n\n`
                             ));
                         }
@@ -624,7 +624,7 @@ serve(async (req) => {
                                 compute_time_ms: computeTime,
                                 cache_stats: {
                                     cached_nodes_used: cachedNodes.length,
-                                    new_nodes_discovered: newNodesFromClaude.length
+                                    new_nodes_discovered: newNodesFromOpenAI.length
                                 }
                             })}\n\n`
                         ));
@@ -658,7 +658,7 @@ serve(async (req) => {
                 from_cache: cachedNodes.length > 0 ? 'hybrid' : false,
                 cache_stats: {
                     cached_nodes_used: cachedNodes.length,
-                    new_nodes_discovered: newNodesFromClaude.length,
+                    new_nodes_discovered: newNodesFromOpenAI.length,
                     total_nodes: result.nodes.length
                 },
                 metrics: {

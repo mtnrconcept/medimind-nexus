@@ -32,11 +32,8 @@ serve(async (req) => {
     }
 
     try {
-        const CLAUDE_API_KEY = Deno.env.get("CLAUDE_API_KEY");
         const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
         const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-
-        if (!CLAUDE_API_KEY) throw new Error("CLAUDE_API_KEY non configurée");
 
         const supabase = createClient(supabaseUrl, supabaseKey);
         const { action, run_id, substance_index, target_pathology } = await req.json();
@@ -253,7 +250,7 @@ serve(async (req) => {
                 }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
             }
 
-            // Build prompt for Claude - adapt based on entity type and pathology
+            // Build prompt for OpenAI - adapt based on entity type and pathology
             const entityType = entityA.node_type || 'substance';
 
             const baseSystemPrompt = `Tu es un chercheur en pharmacologie et toxicologie computationnelle. Tu analyses TOUTES les interactions potentielles entre:
@@ -276,12 +273,12 @@ Réponds UNIQUEMENT en JSON valide.`;
             const systemPrompt = buildPathologyPrompt(pathologyContext, baseSystemPrompt);
             const userPrompt = buildPathologyUserPrompt(entityA, remainingEntities, pathologyContext);
 
-            // Call Claude (non-streaming for structured response)
+            // Call OpenAI (non-streaming for structured response)
             const aiResult = await callAI(
                 systemPrompt,
                 userPrompt,
                 {
-                    model: "claude-3-5-sonnet-20240620",
+                    model: "gpt-5.5",
                     maxTokens: 4000
                 }
             );
@@ -397,7 +394,7 @@ Réponds UNIQUEMENT en JSON valide.`;
                 {
                     step: 1,
                     title: "Identification de l'entité principale",
-                    description: `Analyse de [${entityA.node_type.toUpperCase()}] ${entityA.name}`,
+                    description: `Analyse de [${(entityA.node_type || entityType).toUpperCase()}] ${entityA.name}`,
                     details: entityA.properties || {}
                 },
                 {
@@ -411,7 +408,7 @@ Réponds UNIQUEMENT en JSON valide.`;
                 },
                 {
                     step: 3,
-                    title: "Envoi au modèle Claude",
+                    title: "Envoi au modèle OpenAI",
                     description: "Analyse pharmacologique et toxicologique des interactions potentielles",
                     prompt_preview: userPrompt.substring(0, 500) + "..."
                 },

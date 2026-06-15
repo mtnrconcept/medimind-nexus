@@ -168,7 +168,7 @@ serve(async (req) => {
       }
       emit({ type: 'step_update', step: { id: 2, status: 'completed', details: `✅ ${pubmedSources.length + additionalSearches.length} sources PubMed identifiées`, source: 'PubMed' } });
 
-      // 3. Claude Analysis
+      // 3. OpenAI Analysis
       const dbContext = dbPathologies.length > 0
         ? dbPathologies.map(p => `- ${p.name} (CIM: ${p.icd_code || 'N/A'}, sévérité: ${p.severity || 'N/A'}): ${p.description || 'Pas de description'}\n  Symptômes correspondants: ${p.matchedSymptoms.join(', ')}`).join('\n')
         : 'Aucune pathologie trouvée dans la base de données locale';
@@ -215,7 +215,7 @@ ${webContext}
 
 Analyse complète demandée.`;
 
-      emit({ type: 'step_update', step: { id: 3, status: 'running', details: '🧠 Analyse Claude 3.5 Sonnet...', source: 'Anthropic' } });
+      emit({ type: 'step_update', step: { id: 3, status: 'running', details: '🧠 Analyse OpenAI...', source: 'OpenAI' } });
 
       // Use streamAI even for non-streaming to get the chunks/text processing for free, 
       // but only emit text events if we are streaming
@@ -226,14 +226,14 @@ Analyse complète demandée.`;
           if (wantStream) emit({ type: 'text', content: chunk });
         },
         {
-          model: 'claude-3-5-sonnet-20240620',
+          model: "gpt-5.5",
           maxTokens: 8000,
           temperature: 0.3,
         }
       );
 
       const content = aiResult.text;
-      emit({ type: 'step_update', step: { id: 3, status: 'completed', details: '✅ Analyse terminée', source: 'Claude' } });
+      emit({ type: 'step_update', step: { id: 3, status: 'completed', details: '✅ Analyse terminée', source: 'OpenAI' } });
 
       // Extract and Process JSON
       let finalResult = null;

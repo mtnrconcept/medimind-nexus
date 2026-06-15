@@ -298,8 +298,8 @@ serve(async (req) => {
                         }
                     });
 
-                    // Step 3: Claude Analysis
-                    sendEvent({ type: 'step_update', step: { id: 3, status: 'running', details: '🧠 Analyse ciblée Claude...', source: 'Anthropic' } });
+                    // Step 3: OpenAI Analysis
+                    sendEvent({ type: 'step_update', step: { id: 3, status: 'running', details: '🧠 Analyse ciblée OpenAI...', source: 'OpenAI' } });
 
                     const evidenceContext = `
 # QUESTION DE RECHERCHE CIBLÉE
@@ -337,7 +337,7 @@ RAPPEL: Réponds en JSON valide. Cite chaque source (PMID). Niveau d'évidence o
                             // Keeping original behavior of waiting for full response
                         },
                         {
-                            model: "claude-sonnet-4-20250514",
+                            model: "gpt-5.5",
                             maxTokens: 8000,
                             temperature: 0.3
                         }
@@ -345,7 +345,7 @@ RAPPEL: Réponds en JSON valide. Cite chaque source (PMID). Niveau d'évidence o
 
                     const textContent = aiResponse.text;
 
-                    sendEvent({ type: 'step_update', step: { id: 3, status: 'completed', details: '✅ Analyse terminée', source: 'Claude' } });
+                    sendEvent({ type: 'step_update', step: { id: 3, status: 'completed', details: '✅ Analyse terminée', source: 'OpenAI' } });
 
                     // Send analysis
                     sendEvent({ type: 'text', content: textContent });

@@ -8,7 +8,7 @@ const corsHeaders = {
 
 // ============================================
 // ADVERSARIAL REVIEWER
-// Uses Claude to critically analyze hypotheses
+// Uses OpenAI to critically analyze hypotheses
 // ============================================
 
 interface Hypothesis {
@@ -90,7 +90,7 @@ Analyse critique en JSON:`;
             systemPrompt,
             userPrompt,
             {
-                model: 'claude-3-5-sonnet-20240620',
+                model: "gpt-5.5",
                 maxTokens: 2048
             }
         );
@@ -139,18 +139,19 @@ serve(async (req) => {
         const review = await performAdversarialReview(hypothesis, evidence_context);
 
         // Calculate adjusted scores if original scores exist
-        let adjusted_scores = null;
+        let adjusted_scores: Record<string, number> | null = null;
         if (hypothesis.scores) {
-            adjusted_scores = { ...hypothesis.scores };
-            for (const key of Object.keys(adjusted_scores)) {
-                if (typeof adjusted_scores[key] === 'number') {
-                    adjusted_scores[key] = Math.max(0, adjusted_scores[key] + (review.confidence_adjustment * 10));
+            const scores: Record<string, number> = { ...hypothesis.scores };
+            for (const key of Object.keys(scores)) {
+                if (typeof scores[key] === 'number') {
+                    scores[key] = Math.max(0, scores[key] + (review.confidence_adjustment * 10));
                 }
             }
             // Recalculate total
             const scoreKeys = ['novelty', 'plausibility', 'strength', 'feasibility', 'impact'];
-            const validScores = scoreKeys.filter(k => typeof adjusted_scores[k] === 'number');
-            adjusted_scores.total = validScores.reduce((sum, k) => sum + adjusted_scores[k], 0) / validScores.length;
+            const validScores = scoreKeys.filter(k => typeof scores[k] === 'number');
+            scores.total = validScores.reduce((sum, k) => sum + scores[k], 0) / validScores.length;
+            adjusted_scores = scores;
         }
 
         return new Response(
