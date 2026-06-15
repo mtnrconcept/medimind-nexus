@@ -1211,7 +1211,7 @@ serve(async (req) => {
       // Get medications without substance data
       const { data: medsToEnrich, error: fetchError } = await supabase
         .from('medications')
-        .select('id, name, substance, composition')
+        .select('id, name, substance, composition, atc_code')
         .or('substance.is.null,substance.eq.')
         .limit(options?.limit || 20);
 

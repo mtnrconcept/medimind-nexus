@@ -504,8 +504,6 @@ export async function generateCommitteeGradePDF(data: PDFData): Promise<void> {
 
     y = 25;
 
-    const execSum = data.hypothesis.executive_summary;
-
     if (execSum) {
         // Context
         doc.setFont('helvetica', 'bold');
