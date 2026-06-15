@@ -3051,7 +3051,6 @@ const DiscoveryPlatform = () => {
                 ? lastSearchAbstracts.join('\n\n')
                 : searchResults.map(r => `${r.title}\n${r.abstract || ''}`).join('\n\n');
 
-            const { invokeAI } = useAI();
             const { data, error } = await invokeAI('knowledge-extractor', {
                 text: textToAnalyze.slice(0, 15000), // Limit text size
                 use_claude: true,

@@ -10,6 +10,7 @@ import {
   ensureSchemaComparison,
   ensureTreatmentSchemasShape,
   mergeAndValidateLinks,
+  normalizeMedicalName,
   type TreatmentSchema,
 } from "./analysis-utils.ts";
 
@@ -145,10 +146,10 @@ async function searchPubMed(query: string, maxResults: number = 5, apiKey?: stri
 // Fonction pour générer un hash de requête (pour le cache)
 function generateRequestHash(pathologyIds: string[], symptomIds: string[], treatmentIds: string[], medicationIds: string[]): string {
   const sorted = [
-    ...pathologyIds.sort(),
-    ...symptomIds.sort(),
-    ...treatmentIds.sort(),
-    ...medicationIds.sort()
+    ...[...pathologyIds].sort(),
+    ...[...symptomIds].sort(),
+    ...[...treatmentIds].sort(),
+    ...[...medicationIds].sort()
   ].join('|');
   // Simple hash
   let hash = 0;
@@ -158,6 +159,94 @@ function generateRequestHash(pathologyIds: string[], symptomIds: string[], treat
     hash = hash & hash;
   }
   return hash.toString(36);
+}
+
+function buildPairHash(fromName: string, fromType: string, toName: string, toType: string): string {
+  return [
+    `${normalizeMedicalName(fromName)}|${fromType}`,
+    `${normalizeMedicalName(toName)}|${toType}`,
+  ].sort().join('|');
+}
+
+function uniqueElements(elements: { name: string; type: string }[]): { name: string; type: string }[] {
+  const seen = new Set<string>();
+  return elements.filter((element) => {
+    const key = `${element.type}:${normalizeMedicalName(element.name)}`;
+    if (!element.name || !element.type || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function toCausalLink(link: any): CausalLink {
+  return {
+    from: link.from_element,
+    fromType: link.from_type,
+    to: link.to_element,
+    toType: link.to_type,
+    relationship: link.relationship,
+    probability: link.probability || 'medium',
+    evidence: link.evidence || '',
+    patientCount: 0,
+    webSources: [],
+    isAppropriate: link.is_appropriate,
+    effectType: link.effect_type,
+    therapeuticDetails: link.therapeutic_details,
+    adverseDetails: link.adverse_details,
+    dangerLevel: link.danger_level,
+    interactionType: link.interaction_type,
+    symptomFrequency: link.symptom_frequency,
+  };
+}
+
+async function findCachedLinksBatched(
+  supabase: any,
+  elements: { name: string; type: string }[]
+): Promise<CausalLink[]> {
+  const candidates = uniqueElements(elements);
+  const pairHashes: string[] = [];
+
+  for (let i = 0; i < candidates.length; i++) {
+    for (let j = i + 1; j < candidates.length; j++) {
+      const elem1 = candidates[i];
+      const elem2 = candidates[j];
+      pairHashes.push(buildPairHash(elem1.name, elem1.type, elem2.name, elem2.type));
+    }
+  }
+
+  if (pairHashes.length === 0) return [];
+
+  const cachedRows: any[] = [];
+  const uniquePairHashes = [...new Set(pairHashes)];
+
+  for (let i = 0; i < uniquePairHashes.length; i += 100) {
+    const chunk = uniquePairHashes.slice(i, i + 100);
+    const { data, error } = await supabase
+      .from('causal_links_cache')
+      .select('id, from_element, from_type, to_element, to_type, relationship, probability, evidence, is_appropriate, effect_type, therapeutic_details, adverse_details, danger_level, interaction_type, symptom_frequency, hit_count')
+      .in('pair_hash', chunk);
+
+    if (error) {
+      console.warn('[Cache] Lecture batch impossible:', error.message || error);
+      continue;
+    }
+
+    cachedRows.push(...(data || []));
+  }
+
+  if (cachedRows.length > 0) {
+    const updatedAt = new Date().toISOString();
+    await Promise.allSettled(
+      cachedRows.slice(0, 100).map((link) =>
+        supabase
+          .from('causal_links_cache')
+          .update({ hit_count: (link.hit_count || 0) + 1, updated_at: updatedAt })
+          .eq('id', link.id)
+      )
+    );
+  }
+
+  return cachedRows.map(toCausalLink);
 }
 
 // Fonction pour chercher les liens en cache
@@ -224,10 +313,7 @@ async function findCachedLinks(
 async function saveLinkToCache(supabase: any, link: CausalLink, aiModel: string): Promise<void> {
   try {
     // Générer le hash de la paire
-    const pairHash = [link.from, link.fromType, link.to, link.toType]
-      .map(s => s.toLowerCase())
-      .sort()
-      .join('|');
+    const pairHash = buildPairHash(link.from, link.fromType, link.to, link.toType);
 
     await supabase.from('causal_links_cache').upsert({
       from_element: link.from,
@@ -274,23 +360,32 @@ serve(async (req) => {
 
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
     const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+    if (!supabaseUrl || !supabaseKey) {
+      throw new Error('Supabase function environment is incomplete: SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY are required');
+    }
     const supabase = createClient(supabaseUrl, supabaseKey);
 
     // Récupérer les données sélectionnées (incluant les médicaments) depuis la DB
     const [pathologiesRes, symptomsRes, treatmentsRes, medicationsRes, patientsRes] = await Promise.all([
       pathologyIds?.length > 0
-        ? supabase.from('pathologies').select('*').in('id', pathologyIds)
+        ? supabase.from('pathologies').select('id, name, icd_code, severity, description').in('id', pathologyIds)
         : Promise.resolve({ data: [] }),
       symptomIds?.length > 0
-        ? supabase.from('symptoms').select('*').in('id', symptomIds)
+        ? supabase.from('symptoms').select('id, name, body_system, description').in('id', symptomIds)
         : Promise.resolve({ data: [] }),
       treatmentIds?.length > 0
-        ? supabase.from('treatments').select('*, pathologies(name)').in('id', treatmentIds)
+        ? supabase.from('treatments').select('id, name, type, pathology_id, description, contraindications, pathologies(name)').in('id', treatmentIds)
         : Promise.resolve({ data: [] }),
       medicationIds?.length > 0
-        ? supabase.from('medications').select('*, side_effects(*), contraindications(*), drug_interactions(*)').in('id', medicationIds)
+        ? supabase.from('medications').select('id, name, atc_code, substance, indications, posology, side_effects(name, severity, frequency, description), contraindications(condition, severity, description), drug_interactions(interacting_drug, severity, description)').in('id', medicationIds)
         : Promise.resolve({ data: [] }),
-      supabase.from('patients').select('*, pathologies(name)')
+      pathologyIds?.length > 0
+        ? supabase
+          .from('patients')
+          .select('id, patient_id, age, gender, treatment, outcome, pathology_id, pathologies(name)')
+          .in('pathology_id', pathologyIds)
+          .limit(100)
+        : Promise.resolve({ data: [] })
     ]);
 
     // Fusionner données DB et données externes (NCBI)
@@ -350,7 +445,7 @@ serve(async (req) => {
 
     // Rechercher les liens existants en cache
     console.log('[CrossDataAnalyzer] Recherche dans le cache...');
-    const cachedLinks = await findCachedLinks(supabase, allElements);
+    const cachedLinks = await findCachedLinksBatched(supabase, allElements);
     console.log(`[CrossDataAnalyzer] ${cachedLinks.length} liens trouvés en cache`);
 
     // Si on a trouvé des liens en cache pour TOUTES les paires, on peut les retourner directement

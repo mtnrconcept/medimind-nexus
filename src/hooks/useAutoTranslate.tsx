@@ -19,6 +19,7 @@ interface UseAutoTranslateOptions {
 export function useAutoTranslate(options: UseAutoTranslateOptions = {}) {
     const { enabled = true, batchSize = 50, debounceMs = 100 } = options;
     const { i18n } = useTranslation();
+    const { invokeAI } = useAI();
     const currentLang = i18n.language;
     const [isTranslating, setIsTranslating] = useState(false);
 
@@ -71,7 +72,6 @@ export function useAutoTranslate(options: UseAutoTranslateOptions = {}) {
             for (let i = 0; i < textsToTranslate.length; i += batchSize) {
                 const batch = textsToTranslate.slice(i, i + batchSize);
 
-                const { invokeAI } = useAI();
                 const { data, error } = await invokeAI('translate', {
                     texts: batch,
                     targetLang: currentLang,
@@ -109,7 +109,7 @@ export function useAutoTranslate(options: UseAutoTranslateOptions = {}) {
         } finally {
             setIsTranslating(false);
         }
-    }, [currentLang, batchSize]);
+    }, [batchSize, currentLang, invokeAI]);
 
     // Fonction pour ajouter un texte à la file d'attente
     const translate = useCallback((text: string): Promise<string> => {
