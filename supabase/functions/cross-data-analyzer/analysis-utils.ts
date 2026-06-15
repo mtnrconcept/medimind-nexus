@@ -113,7 +113,7 @@ interface BuildEvidenceLinksInput {
 }
 
 export const OPENAI_CROSS_DATA_MODEL = 'gpt-5.5-pro';
-export const OPENAI_CROSS_DATA_REASONING_EFFORT = 'xhigh';
+export const OPENAI_CROSS_DATA_REASONING_EFFORT = 'high';
 
 const VALID_TYPES: MedicalEntityType[] = ['symptom', 'pathology', 'treatment', 'medication'];
 const VALID_PROBABILITIES: Probability[] = ['high', 'medium', 'low'];

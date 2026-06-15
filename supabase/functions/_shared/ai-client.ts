@@ -48,6 +48,15 @@ type OpenAIMessage = {
   content: string | OpenAIContentPart[];
 };
 
+type ResponsesContentPart =
+  | { type: 'input_text'; text: string }
+  | { type: 'input_image'; image_url: string; detail?: 'low' | 'high' | 'auto' };
+
+type ResponsesMessage = {
+  role: 'system' | 'developer' | 'user' | 'assistant';
+  content: string | ResponsesContentPart[];
+};
+
 export interface AICallOptions {
   model?: string;
   forceModel?: boolean;
@@ -58,6 +67,8 @@ export interface AICallOptions {
 }
 
 const DEFAULT_OPENAI_MODEL = 'gpt-5.5';
+const OPENAI_CHAT_COMPLETIONS_URL = 'https://api.openai.com/v1/chat/completions';
+const OPENAI_RESPONSES_URL = 'https://api.openai.com/v1/responses';
 
 function isKnownNonOpenAIModel(model: string): boolean {
   const normalized = model.trim().toLowerCase();
@@ -106,6 +117,18 @@ function getOpenAIConfig(options: AICallOptions) {
     throw new Error('OPENAI_API_KEY not configured');
   }
 
+  return { apiKey, model };
+}
+
+function hasReasoningEffort(options: AICallOptions): boolean {
+  return Boolean(options.reasoningEffort && options.reasoningEffort !== 'none');
+}
+
+function shouldUseResponsesAPI(model: string, options: AICallOptions): boolean {
+  return /^gpt-5(?:\.|-|$)/i.test(model.trim()) || hasReasoningEffort(options);
+}
+
+function buildChatCompletionsBody(model: string, options: AICallOptions): Record<string, unknown> {
   const body: Record<string, unknown> = {
     model,
     max_completion_tokens: options.maxTokens || 4096,
@@ -115,7 +138,7 @@ function getOpenAIConfig(options: AICallOptions) {
     body.temperature = options.temperature;
   }
 
-  if (options.reasoningEffort) {
+  if (hasReasoningEffort(options)) {
     body.reasoning_effort = options.reasoningEffort;
   }
 
@@ -123,11 +146,40 @@ function getOpenAIConfig(options: AICallOptions) {
     body.response_format = options.responseFormat;
   }
 
-  return { apiKey, model, body };
+  return body;
+}
+
+function buildResponsesBody(model: string, options: AICallOptions): Record<string, unknown> {
+  const body: Record<string, unknown> = {
+    model,
+    max_output_tokens: options.maxTokens || 4096,
+  };
+
+  if (options.temperature !== undefined) {
+    body.temperature = options.temperature;
+  }
+
+  if (hasReasoningEffort(options)) {
+    body.reasoning = { effort: options.reasoningEffort };
+  }
+
+  if (options.responseFormat) {
+    body.text = { format: options.responseFormat };
+  }
+
+  return body;
 }
 
 function toOpenAIRole(role: string): 'user' | 'assistant' {
   return role === 'assistant' ? 'assistant' : 'user';
+}
+
+function toResponsesRole(role: string): ResponsesMessage['role'] {
+  if (role === 'assistant' || role === 'system' || role === 'developer') {
+    return role;
+  }
+
+  return 'user';
 }
 
 function contentBlockToOpenAI(block: AIContentBlock): OpenAIContentPart {
@@ -164,6 +216,42 @@ function contentBlockToOpenAI(block: AIContentBlock): OpenAIContentPart {
   return { type: 'text', text: block.text || '' };
 }
 
+function contentBlockToResponses(block: AIContentBlock): ResponsesContentPart {
+  if (block.type === 'image') {
+    if (block.image_url?.url) {
+      return { type: 'input_image', image_url: block.image_url.url, detail: 'auto' };
+    }
+
+    if (block.source?.data && block.source.media_type) {
+      return {
+        type: 'input_image',
+        image_url: `data:${block.source.media_type};base64,${block.source.data}`,
+        detail: 'auto',
+      };
+    }
+
+    if (block.inline_data?.data && block.inline_data.mime_type) {
+      return {
+        type: 'input_image',
+        image_url: `data:${block.inline_data.mime_type};base64,${block.inline_data.data}`,
+        detail: 'auto',
+      };
+    }
+  }
+
+  if (block.type === 'document') {
+    const source = block.source || block.document;
+    if (source?.data) {
+      return {
+        type: 'input_text',
+        text: `[Document ${source.media_type}, base64 omitted from prompt. Extracted text should be supplied separately when available.]`,
+      };
+    }
+  }
+
+  return { type: 'input_text', text: block.text || '' };
+}
+
 function formatContent(content: string | AIContentBlock[]): string | OpenAIContentPart[] {
   if (typeof content === 'string') {
     return content;
@@ -171,6 +259,18 @@ function formatContent(content: string | AIContentBlock[]): string | OpenAIConte
 
   const parts = content.map(contentBlockToOpenAI).filter((part) => {
     return part.type !== 'text' || part.text.trim().length > 0;
+  });
+
+  return parts.length > 0 ? parts : '';
+}
+
+function formatResponsesContent(content: string | AIContentBlock[]): string | ResponsesContentPart[] {
+  if (typeof content === 'string') {
+    return content;
+  }
+
+  const parts = content.map(contentBlockToResponses).filter((part) => {
+    return part.type !== 'input_text' || part.text.trim().length > 0;
   });
 
   return parts.length > 0 ? parts : '';
@@ -196,6 +296,69 @@ function buildMessages(systemPrompt: string, userPrompt: string | AIMessage[]): 
   return messages;
 }
 
+function buildResponsesInput(systemPrompt: string, userPrompt: string | AIMessage[]): ResponsesMessage[] {
+  const messages: ResponsesMessage[] = [
+    { role: 'system', content: systemPrompt },
+  ];
+
+  if (typeof userPrompt === 'string') {
+    messages.push({ role: 'user', content: userPrompt });
+    return messages;
+  }
+
+  for (const message of userPrompt) {
+    messages.push({
+      role: toResponsesRole(message.role),
+      content: formatResponsesContent(message.content),
+    });
+  }
+
+  return messages;
+}
+
+function extractResponsesText(data: Record<string, unknown>): string {
+  if (typeof data.output_text === 'string') {
+    return data.output_text;
+  }
+
+  const chunks: string[] = [];
+  const output = Array.isArray(data.output) ? data.output : [];
+
+  for (const item of output) {
+    if (!item || typeof item !== 'object') continue;
+
+    const content = (item as { content?: unknown }).content;
+    if (!Array.isArray(content)) continue;
+
+    for (const part of content) {
+      if (!part || typeof part !== 'object') continue;
+
+      const text = (part as { text?: unknown }).text;
+      if (typeof text === 'string') {
+        chunks.push(text);
+      }
+    }
+  }
+
+  return chunks.join('');
+}
+
+function extractResponsesStreamDelta(event: Record<string, unknown>): string {
+  if (typeof event.delta === 'string') {
+    return event.delta;
+  }
+
+  if (typeof event.text === 'string') {
+    return event.text;
+  }
+
+  if (typeof event.output_text === 'string') {
+    return event.output_text;
+  }
+
+  return '';
+}
+
 /**
  * Standard non-streaming AI call.
  */
@@ -204,28 +367,40 @@ export async function callAI(
   userPrompt: string | AIMessage[],
   options: AICallOptions = {},
 ): Promise<AIResponse> {
-  const { apiKey, model, body } = getOpenAIConfig(options);
+  const { apiKey, model } = getOpenAIConfig(options);
+  const useResponsesAPI = shouldUseResponsesAPI(model, options);
+  const body = useResponsesAPI
+    ? {
+        ...buildResponsesBody(model, options),
+        input: buildResponsesInput(systemPrompt, userPrompt),
+      }
+    : {
+        ...buildChatCompletionsBody(model, options),
+        messages: buildMessages(systemPrompt, userPrompt),
+      };
 
-  const response = await fetch('https://api.openai.com/v1/chat/completions', {
+  const response = await fetch(useResponsesAPI ? OPENAI_RESPONSES_URL : OPENAI_CHAT_COMPLETIONS_URL, {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${apiKey}`,
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({
-      ...body,
-      messages: buildMessages(systemPrompt, userPrompt),
-    }),
+    body: JSON.stringify(body),
   });
 
   if (!response.ok) {
     const errorText = await response.text();
-    throw new Error(`OpenAI request failed (${response.status}): ${errorText}`);
+    const apiName = useResponsesAPI ? 'Responses' : 'Chat Completions';
+    throw new Error(`OpenAI ${apiName} request failed (${response.status}): ${errorText}`);
   }
 
   const data = await response.json();
+  const text = useResponsesAPI
+    ? extractResponsesText(data)
+    : data.choices?.[0]?.message?.content || '';
+
   return {
-    text: data.choices?.[0]?.message?.content || '',
+    text,
     provider: 'openai',
     model,
   };
@@ -256,24 +431,33 @@ export async function streamAI(
   onChunk: (text: string) => void | Promise<void>,
   options: AICallOptions = {},
 ): Promise<AIResponse> {
-  const { apiKey, model, body } = getOpenAIConfig(options);
+  const { apiKey, model } = getOpenAIConfig(options);
+  const useResponsesAPI = shouldUseResponsesAPI(model, options);
+  const body = useResponsesAPI
+    ? {
+        ...buildResponsesBody(model, options),
+        input: buildResponsesInput(systemPrompt, userPrompt),
+        stream: true,
+      }
+    : {
+        ...buildChatCompletionsBody(model, options),
+        messages: buildMessages(systemPrompt, userPrompt),
+        stream: true,
+      };
 
-  const response = await fetch('https://api.openai.com/v1/chat/completions', {
+  const response = await fetch(useResponsesAPI ? OPENAI_RESPONSES_URL : OPENAI_CHAT_COMPLETIONS_URL, {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${apiKey}`,
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({
-      ...body,
-      messages: buildMessages(systemPrompt, userPrompt),
-      stream: true,
-    }),
+    body: JSON.stringify(body),
   });
 
   if (!response.ok || !response.body) {
     const errorText = await response.text();
-    throw new Error(`OpenAI stream failed (${response.status}): ${errorText}`);
+    const apiName = useResponsesAPI ? 'Responses' : 'Chat Completions';
+    throw new Error(`OpenAI ${apiName} stream failed (${response.status}): ${errorText}`);
   }
 
   const reader = response.body.getReader();
@@ -298,7 +482,9 @@ export async function streamAI(
 
       try {
         const event = JSON.parse(payload);
-        const text = event.choices?.[0]?.delta?.content || '';
+        const text = useResponsesAPI
+          ? extractResponsesStreamDelta(event)
+          : event.choices?.[0]?.delta?.content || '';
         if (text) {
           fullText += text;
           await onChunk(text);
