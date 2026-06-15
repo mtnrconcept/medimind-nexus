@@ -1,0 +1,532 @@
+/**
+ * FamilyHistoryCard - Complete family medical history
+ * Features: Family member relationship, conditions, age of onset
+ */
+
+import { useState, useEffect, useCallback } from 'react';
+import { supabase } from '@/integrations/supabase/client';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { useAI } from '@/contexts/AIContext';
+import { Textarea } from '@/components/ui/textarea';
+import {
+    Select,
+    SelectContent,
+    SelectItem,
+    SelectTrigger,
+    SelectValue,
+} from '@/components/ui/select';
+import {
+    DropdownMenu,
+    DropdownMenuContent,
+    DropdownMenuItem,
+    DropdownMenuSeparator,
+    DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import { Checkbox } from '@/components/ui/checkbox';
+import { Plus, Users, Loader2, MoreVertical, Pencil, Trash2, Heart, Brain, Activity, AlertTriangle, Search, Globe } from 'lucide-react';
+import { toast } from 'sonner';
+import { SearchableSelect, SelectOption } from '@/components/ui/searchable-select';
+import { useWindowManager } from '@/contexts/WindowManagerContext';
+import AppWindow from '../AppWindow';
+
+interface NCBIConcept {
+    id: string;
+    name: string;
+    description?: string;
+    source?: string;
+    type?: string;
+}
+
+interface FamilyHistoryCardProps {
+    patientId: string;
+}
+
+interface FamilyHistory {
+    id: string;
+    relationship: string;
+    condition: string;
+    age_at_diagnosis?: number;
+    is_deceased: boolean;
+    age_at_death?: number;
+    cause_of_death?: string;
+    notes?: string;
+}
+
+const RELATIONSHIPS = [
+    { value: 'mother', label: 'Mère' },
+    { value: 'father', label: 'Père' },
+    { value: 'maternal_grandmother', label: 'Grand-mère maternelle' },
+    { value: 'maternal_grandfather', label: 'Grand-père maternel' },
+    { value: 'paternal_grandmother', label: 'Grand-mère paternelle' },
+    { value: 'paternal_grandfather', label: 'Grand-père paternel' },
+    { value: 'sister', label: 'Sœur' },
+    { value: 'brother', label: 'Frère' },
+    { value: 'maternal_aunt', label: 'Tante maternelle' },
+    { value: 'maternal_uncle', label: 'Oncle maternel' },
+    { value: 'paternal_aunt', label: 'Tante paternelle' },
+    { value: 'paternal_uncle', label: 'Oncle paternel' },
+    { value: 'child', label: 'Enfant' },
+];
+
+const COMMON_FAMILY_CONDITIONS = [
+    'Diabète type 2',
+    'Hypertension artérielle',
+    'Maladie coronarienne',
+    'Infarctus du myocarde',
+    'AVC',
+    'Cancer du sein',
+    'Cancer du côlon',
+    'Cancer de la prostate',
+    'Cancer du poumon',
+    'Alzheimer',
+    'Parkinson',
+    'Dépression',
+    'Trouble bipolaire',
+    'Schizophrénie',
+    'Asthme',
+    'Arthrite rhumatoïde',
+    'Ostéoporose',
+    'Thyroïde',
+    'Épilepsie',
+    'Maladie rénale',
+    'Glaucome',
+    'Dégénérescence maculaire',
+];
+
+const RISK_CONDITIONS = ['Cancer', 'Maladie coronarienne', 'Infarctus', 'AVC', 'Diabète', 'Alzheimer'];
+
+const FamilyHistoryCard = ({ patientId }: FamilyHistoryCardProps) => {
+    const { invokeAI } = useAI();
+    const { maxZIndex } = useWindowManager();
+    const [history, setHistory] = useState<FamilyHistory[]>([]);
+    const [loading, setLoading] = useState(true);
+    const [dialogOpen, setDialogOpen] = useState(false);
+    const [editing, setEditing] = useState<FamilyHistory | null>(null);
+    const [saving, setSaving] = useState(false);
+    const [selectedIds, setSelectedIds] = useState<string[]>([]);
+
+    const handleSelectAll = (checked: boolean) => {
+        if (checked) setSelectedIds(history.map(h => h.id));
+        else setSelectedIds([]);
+    };
+
+    const handleSelect = (id: string, checked: boolean) => {
+        if (checked) setSelectedIds(prev => [...prev, id]);
+        else setSelectedIds(prev => prev.filter(i => i !== id));
+    };
+
+    const handleBulkDelete = async () => {
+        if (!selectedIds.length) return;
+        if (!window.confirm(`Supprimer ${selectedIds.length} antécédents ?`)) return;
+
+        try {
+            const { error } = await supabase.from('patient_family_history').delete().in('id', selectedIds);
+            if (error) throw error;
+            toast.success(`${selectedIds.length} antécédents supprimés`);
+            setSelectedIds([]);
+            fetchData();
+        } catch (err) {
+            console.error(err);
+            toast.error('Erreur lors de la suppression multiple');
+        }
+    };
+
+    const [formData, setFormData] = useState({
+        relationship: 'mother',
+        condition: '',
+        age_at_diagnosis: undefined as number | undefined,
+        is_deceased: false,
+        age_at_death: undefined as number | undefined,
+        cause_of_death: '',
+        notes: '',
+    });
+
+    const [pathologyOptions, setPathologyOptions] = useState<SelectOption[]>([]);
+    const [pathologiesLoading, setPathologiesLoading] = useState(false);
+    const [customConditionName, setCustomConditionName] = useState('');
+
+    const fetchData = useCallback(async () => {
+        setLoading(true);
+        const { data } = await supabase
+            .from('patient_family_history')
+            .select('*')
+            .eq('patient_id', patientId)
+            .order('relationship');
+        setHistory((data as any) || []);
+        setLoading(false);
+    }, [patientId]);
+
+    const fetchInitialOptions = useCallback(async () => {
+        setPathologiesLoading(true);
+        try {
+            const { data: pathologies } = await supabase.from('pathologies').select('id, name').limit(50);
+            if (pathologies) {
+                setPathologyOptions([
+                    ...pathologies.map(p => ({ value: p.id, label: p.name, category: 'Base de données' })),
+                    { value: '__custom__', label: 'Autre condition...', category: 'Autre' }
+                ]);
+            }
+        } catch (err) {
+            console.error('Error fetching initial options:', err);
+        } finally {
+            setPathologiesLoading(false);
+        }
+    }, []);
+
+    useEffect(() => {
+        fetchData();
+        fetchInitialOptions();
+    }, [fetchData, fetchInitialOptions]);
+
+    const handlePathologySearch = async (query: string) => {
+        if (query.length < 3) return;
+        try {
+            const { data } = await invokeAI('search-medical-concepts', {
+                query, type: 'pathology'
+            });
+            if (data?.concepts) {
+                const newOptions: SelectOption[] = data.concepts.map((c: NCBIConcept) => ({
+                    value: `ext-${c.id}`,
+                    label: c.name,
+                    description: c.description,
+                    category: 'NCBI'
+                }));
+                setPathologyOptions(prev => {
+                    const existingLabels = new Set(prev.map(p => p.label.toLowerCase()));
+                    const filtered = newOptions.filter(o => !existingLabels.has(o.label.toLowerCase()));
+                    return [...prev, ...filtered];
+                });
+            }
+        } catch (err) {
+            console.error('Pathology search error:', err);
+        }
+    };
+
+    const openAddDialog = () => {
+        setEditing(null);
+        setFormData({
+            relationship: 'mother',
+            condition: '',
+            age_at_diagnosis: undefined,
+            is_deceased: false,
+            age_at_death: undefined,
+            cause_of_death: '',
+            notes: '',
+        });
+        setDialogOpen(true);
+    };
+
+    const openEditDialog = (item: FamilyHistory) => {
+        setEditing(item);
+        setFormData({
+            relationship: item.relationship,
+            condition: item.condition,
+            age_at_diagnosis: item.age_at_diagnosis,
+            is_deceased: item.is_deceased,
+            age_at_death: item.age_at_death,
+            cause_of_death: item.cause_of_death || '',
+            notes: item.notes || '',
+        });
+        setDialogOpen(true);
+    };
+
+    const handleSave = async () => {
+        let conditionName = formData.condition;
+
+        if (conditionName === '__custom__') {
+            if (!customConditionName.trim()) {
+                toast.error('Veuillez entrer un nom pour la condition');
+                return;
+            }
+            conditionName = customConditionName;
+        } else if (conditionName && conditionName.startsWith('ext-')) {
+            const option = pathologyOptions.find(o => o.value === conditionName);
+            if (option) conditionName = option.label;
+        } else if (conditionName) {
+            const option = pathologyOptions.find(o => o.value === conditionName);
+            if (option) conditionName = option.label;
+        }
+
+        if (!conditionName || !conditionName.trim()) {
+            toast.error('Veuillez saisir une pathologie');
+            return;
+        }
+
+        setSaving(true);
+        try {
+            const payload = {
+                relationship: formData.relationship,
+                condition: conditionName.trim(),
+                age_at_diagnosis: formData.age_at_diagnosis || null,
+                is_deceased: formData.is_deceased,
+                age_at_death: formData.age_at_death || null,
+                cause_of_death: formData.cause_of_death?.trim() || null,
+                notes: formData.notes?.trim() || null,
+                patient_id: patientId
+            };
+
+            if (editing) {
+                const { error } = await supabase.from('patient_family_history').update(payload).eq('id', editing.id);
+                if (error) throw error;
+                toast.success('Antécédent mis à jour');
+            } else {
+                const { error } = await supabase.from('patient_family_history').insert(payload);
+                if (error) throw error;
+                toast.success('Antécédent ajouté');
+            }
+            setDialogOpen(false);
+            setCustomConditionName('');
+            fetchData();
+        } catch (error) {
+            console.error('Save error:', error);
+            toast.error('Erreur lors de la sauvegarde');
+        } finally {
+            setSaving(false);
+        }
+    };
+
+    const handleDelete = async (id: string) => {
+        try {
+            await supabase.from('patient_family_history').delete().eq('id', id);
+            toast.success('Antécédent supprimé');
+            fetchData();
+        } catch (error) {
+            toast.error('Erreur');
+        }
+    };
+
+    // Group by relationship
+    const groupedHistory = history.reduce((acc, h) => {
+        if (!acc[h.relationship]) acc[h.relationship] = [];
+        acc[h.relationship].push(h);
+        return acc;
+    }, {} as Record<string, FamilyHistory[]>);
+
+    // Risk factors
+    const riskFactors = history.filter(h => RISK_CONDITIONS.some(rc => h.condition.toLowerCase().includes(rc.toLowerCase())));
+
+    if (loading) {
+        return <div className="flex justify-center py-8"><Loader2 className="h-6 w-6 animate-spin" /></div>;
+    }
+
+    return (
+        <div className="space-y-4">
+            <div className="flex justify-between items-center">
+                <span className="text-sm text-muted-foreground">{history.length} antécédent(s)</span>
+                <Button size="sm" variant="outline" onClick={openAddDialog}>
+                    <Plus className="h-3 w-3 mr-1" />Ajouter
+                </Button>
+            </div>
+
+            {/* Risk factors highlight */}
+            {riskFactors.length > 0 && (
+                <div className="p-3 rounded-lg bg-orange-500/10 border border-orange-500/30">
+                    <div className="flex items-center gap-2 text-orange-500 text-sm font-medium mb-2">
+                        <AlertTriangle className="h-4 w-4" />
+                        Facteurs de risque familiaux
+                    </div>
+                    <div className="flex flex-wrap gap-1">
+                        {riskFactors.map(rf => (
+                            <Badge key={rf.id} variant="outline" className="text-[10px] bg-orange-500/5 text-orange-500 border-orange-500/30">
+                                {rf.condition} ({RELATIONSHIPS.find(r => r.value === rf.relationship)?.label})
+                            </Badge>
+                        ))}
+                    </div>
+                </div>
+            )}
+
+            {/* Family history by member */}
+            {history.length === 0 ? (
+                <div className="text-center py-8 text-muted-foreground">
+                    <Users className="h-8 w-8 mx-auto mb-2 opacity-50" />
+                    <p>Aucun antécédent familial</p>
+                </div>
+            ) : (
+                <div className="space-y-3">
+                    <div className="flex items-center space-x-2 mb-2 p-2 bg-muted/20 rounded-lg justify-between">
+                        <div className="flex items-center space-x-2">
+                            <Checkbox
+                                id="select-all-family"
+                                checked={history.length > 0 && selectedIds.length === history.length}
+                                onCheckedChange={(c) => handleSelectAll(c as boolean)}
+                            />
+                            <Label htmlFor="select-all-family" className="text-xs text-muted-foreground cursor-pointer">
+                                Tout sélectionner
+                            </Label>
+                        </div>
+                        {selectedIds.length > 0 && (
+                            <Button variant="destructive" size="sm" onClick={handleBulkDelete} className="h-7 text-xs">
+                                <Trash2 className="h-3 w-3 mr-2" /> Supprimer ({selectedIds.length})
+                            </Button>
+                        )}
+                    </div>
+
+                    {Object.entries(groupedHistory).map(([relationship, conditions]) => (
+                        <div key={relationship} className="p-3 rounded-lg border bg-card">
+                            <div className="font-medium text-sm mb-2 flex items-center gap-2">
+                                <Users className="h-4 w-4 text-purple-500" />
+                                {RELATIONSHIPS.find(r => r.value === relationship)?.label || relationship}
+                                {conditions.some(c => c.is_deceased) && (
+                                    <Badge variant="secondary" className="text-[10px]">Décédé(e)</Badge>
+                                )}
+                            </div>
+                            <div className="space-y-2">
+                                {conditions.map(cond => (
+                                    <div key={cond.id} className="flex items-center justify-between group">
+                                        <div className="flex items-center gap-3 flex-1">
+                                            <Checkbox
+                                                checked={selectedIds.includes(cond.id)}
+                                                onCheckedChange={(c) => handleSelect(cond.id, c as boolean)}
+                                            />
+                                            <div className="text-sm flex items-center gap-2">
+                                                <span className={RISK_CONDITIONS.some(rc => cond.condition.toLowerCase().includes(rc.toLowerCase())) ? 'text-orange-500 font-medium' : ''}>
+                                                    {cond.condition}
+                                                </span>
+                                                {cond.age_at_diagnosis && (
+                                                    <span className="text-[10px] text-muted-foreground">
+                                                        (à {cond.age_at_diagnosis} ans)
+                                                    </span>
+                                                )}
+                                            </div>
+                                        </div>
+                                        <DropdownMenu>
+                                            <DropdownMenuTrigger asChild>
+                                                <Button variant="ghost" size="icon" className="h-6 w-6 opacity-0 group-hover:opacity-100">
+                                                    <MoreVertical className="h-3 w-3" />
+                                                </Button>
+                                            </DropdownMenuTrigger>
+                                            <DropdownMenuContent align="end">
+                                                <DropdownMenuItem onClick={() => openEditDialog(cond)}>
+                                                    <Pencil className="h-4 w-4 mr-2" />Modifier
+                                                </DropdownMenuItem>
+                                                <DropdownMenuSeparator />
+                                                <DropdownMenuItem className="text-destructive" onClick={() => handleDelete(cond.id)}>
+                                                    <Trash2 className="h-4 w-4 mr-2" />Supprimer
+                                                </DropdownMenuItem>
+                                            </DropdownMenuContent>
+                                        </DropdownMenu>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    ))}
+                </div>
+            )}
+
+            {dialogOpen && (
+                <AppWindow
+                    id={`family-form-${patientId}`}
+                    title={editing ? 'Modifier l\'antécédent' : 'Ajouter un antécédent familial'}
+                    onClose={() => setDialogOpen(false)}
+                    zIndex={maxZIndex + 10}
+                    defaultSize={{ width: 500, height: 650 }}
+                >
+                    <div className="space-y-6">
+                        <div className="space-y-4 py-2">
+                            <div className="space-y-2">
+                                <Label>Membre de la famille *</Label>
+                                <Select value={formData.relationship} onValueChange={(v) => setFormData({ ...formData, relationship: v })}>
+                                    <SelectTrigger><SelectValue /></SelectTrigger>
+                                    <SelectContent>
+                                        {RELATIONSHIPS.map((r) => (
+                                            <SelectItem key={r.value} value={r.value}>{r.label}</SelectItem>
+                                        ))}
+                                    </SelectContent>
+                                </Select>
+                            </div>
+
+                            <div className="space-y-2">
+                                <Label>Pathologie *</Label>
+                                <SearchableSelect
+                                    options={pathologyOptions}
+                                    value={formData.condition}
+                                    onValueChange={(v) => {
+                                        setFormData({ ...formData, condition: v });
+                                        if (v !== '__custom__') setCustomConditionName('');
+                                    }}
+                                    onSearch={handlePathologySearch}
+                                    placeholder="Sélectionner ou rechercher..."
+                                    searchPlaceholder="Taper une maladie..."
+                                    loading={pathologiesLoading}
+                                    externalSearch={true}
+                                />
+                                {formData.condition === '__custom__' && (
+                                    <Input
+                                        className="mt-2"
+                                        placeholder="Saisir la pathologie..."
+                                        value={customConditionName}
+                                        onChange={(e) => setCustomConditionName(e.target.value)}
+                                    />
+                                )}
+                            </div>
+
+                            <div className="space-y-2">
+                                <Label>Âge au diagnostic</Label>
+                                <Input
+                                    type="number"
+                                    placeholder="Ex: 55"
+                                    value={formData.age_at_diagnosis || ''}
+                                    onChange={(e) => setFormData({ ...formData, age_at_diagnosis: parseInt(e.target.value) || undefined })}
+                                />
+                            </div>
+
+                            <div className="flex items-center gap-2">
+                                <input
+                                    type="checkbox"
+                                    id="is_deceased"
+                                    checked={formData.is_deceased}
+                                    onChange={(e) => setFormData({ ...formData, is_deceased: e.target.checked })}
+                                    className="rounded"
+                                />
+                                <Label htmlFor="is_deceased">Décédé(e)</Label>
+                            </div>
+
+                            {formData.is_deceased && (
+                                <div className="space-y-4 pt-2 border-t border-border/10">
+                                    <div className="space-y-2">
+                                        <Label>Âge au décès</Label>
+                                        <Input
+                                            type="number"
+                                            value={formData.age_at_death || ''}
+                                            onChange={(e) => setFormData({ ...formData, age_at_death: parseInt(e.target.value) || undefined })}
+                                        />
+                                    </div>
+                                    <div className="space-y-2">
+                                        <Label>Cause du décès</Label>
+                                        <Input
+                                            value={formData.cause_of_death}
+                                            onChange={(e) => setFormData({ ...formData, cause_of_death: e.target.value })}
+                                        />
+                                    </div>
+                                </div>
+                            )}
+
+                            <div className="space-y-2 text-area-parent">
+                                <Label>Notes</Label>
+                                <Textarea
+                                    placeholder="Informations complémentaires..."
+                                    value={formData.notes}
+                                    onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
+                                    rows={2}
+                                />
+                            </div>
+                        </div>
+
+                        <div className="flex justify-end gap-2 pt-4 border-t border-border/10">
+                            <Button variant="outline" onClick={() => setDialogOpen(false)}>Annuler</Button>
+                            <Button onClick={handleSave} disabled={saving}>
+                                {saving && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                                {editing ? 'Mettre à jour' : 'Ajouter'}
+                            </Button>
+                        </div>
+                    </div>
+                </AppWindow>
+            )}
+        </div>
+    );
+};
+
+export default FamilyHistoryCard;

@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
+import { useAutoTranslation } from "@/contexts/TranslationContext";
 import AppLayout from "@/components/layout/AppLayout";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -12,6 +13,9 @@ import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 // Assurez-vous que ce chemin est correct selon votre structure de dossiers
 import { MedicalScraperPanel } from "@/components/admin/MedicalScraperPanel";
+import DataImportPanel from "@/components/admin/DataImportPanel";
+import DatabaseTranslationPanel from "@/components/admin/DatabaseTranslationPanel";
+import OpenFDAImportPanel from "@/components/admin/OpenFDAImportPanel";
 import {
   Users,
   Activity,
@@ -54,6 +58,7 @@ interface Stats {
 const Admin = () => {
   const navigate = useNavigate();
   const { role } = useAuth();
+  const { t } = useAutoTranslation();
   const [users, setUsers] = useState<UserWithRole[]>([]);
   const [stats, setStats] = useState<Stats>({
     totalUsers: 0,
@@ -71,10 +76,11 @@ const Admin = () => {
   const [importIcdProgress, setImportIcdProgress] = useState({ current: 0, total: 0 });
 
   useEffect(() => {
-    if (role !== "admin") {
-      navigate("/dashboard");
-      return;
-    }
+    // TEMPORAIRE: Désactivé pour config initiale
+    // if (role !== "admin") {
+    //   navigate("/dashboard");
+    //   return;
+    // }
 
     const fetchData = async () => {
       try {
@@ -192,9 +198,10 @@ const Admin = () => {
     }
   };
 
-  if (role !== "admin") {
-    return null;
-  }
+  // TEMPORAIRE: Désactivé pour config initiale
+  // if (role !== "admin") {
+  //   return null;
+  // }
 
   return (
     <AppLayout>
@@ -202,21 +209,21 @@ const Admin = () => {
         <div>
           <h1 className="text-3xl font-bold flex items-center gap-2">
             <Settings className="h-8 w-8" />
-            Administration
+            {t('Administration')}
           </h1>
-          <p className="text-muted-foreground mt-1">Gérez les utilisateurs et les données de la plateforme</p>
+          <p className="text-muted-foreground mt-1">{t('Gérez les utilisateurs et les données de la plateforme')}</p>
         </div>
 
         {/* Stats globales */}
         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
           <Card>
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Utilisateurs</CardTitle>
+              <CardTitle className="text-sm font-medium">{t('Utilisateurs')}</CardTitle>
               <Users className="h-4 w-4 text-muted-foreground" />
             </CardHeader>
             <CardContent>
               <div className="text-2xl font-bold">{stats.totalUsers}</div>
-              <p className="text-xs text-muted-foreground">comptes actifs</p>
+              <p className="text-xs text-muted-foreground">{t('comptes actifs')}</p>
             </CardContent>
           </Card>
           <Card>
@@ -226,22 +233,22 @@ const Admin = () => {
             </CardHeader>
             <CardContent>
               <div className="text-2xl font-bold">{stats.pathologies}</div>
-              <p className="text-xs text-muted-foreground">dans l'index</p>
+              <p className="text-xs text-muted-foreground">{t('dans l\'index')}</p>
             </CardContent>
           </Card>
           <Card>
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Symptômes</CardTitle>
+              <CardTitle className="text-sm font-medium">{t('Symptômes')}</CardTitle>
               <Activity className="h-4 w-4 text-muted-foreground" />
             </CardHeader>
             <CardContent>
               <div className="text-2xl font-bold">{stats.symptoms}</div>
-              <p className="text-xs text-muted-foreground">répertoriés</p>
+              <p className="text-xs text-muted-foreground">{t('répertoriés')}</p>
             </CardContent>
           </Card>
           <Card>
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Médicaments</CardTitle>
+              <CardTitle className="text-sm font-medium">{t('Médicaments')}</CardTitle>
               <Pill className="h-4 w-4 text-muted-foreground" />
             </CardHeader>
             <CardContent>
@@ -384,8 +391,18 @@ const Admin = () => {
             </div>
           </TabsContent>
 
-          {/* Onglet Outils (Intégration du Panel Unifié) */}
-          <TabsContent value="tools">
+          {/* Onglet Outils (Import fichiers + Scraper + Traduction) */}
+          <TabsContent value="tools" className="space-y-6">
+            {/* Import des données gratuites (OpenFDA, symptômes) */}
+            <OpenFDAImportPanel />
+
+            {/* Traduction des données en français */}
+            <DatabaseTranslationPanel />
+
+            {/* Import de fichiers CSV/Excel */}
+            <DataImportPanel />
+
+            {/* Scraper web */}
             <MedicalScraperPanel />
           </TabsContent>
         </Tabs>

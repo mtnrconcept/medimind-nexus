@@ -5,6 +5,7 @@ import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import { supabase } from '@/integrations/supabase/client';
+import { useAI } from '@/contexts/AIContext';
 import { Search, ExternalLink, RefreshCw, BookOpen } from 'lucide-react';
 
 interface PubMedArticle {
@@ -21,6 +22,7 @@ interface PubMedArticlesProps {
 }
 
 const PubMedArticles = ({ pathologyName }: PubMedArticlesProps) => {
+  const { invokeAI } = useAI();
   const [articles, setArticles] = useState<PubMedArticle[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -30,14 +32,14 @@ const PubMedArticles = ({ pathologyName }: PubMedArticlesProps) => {
   const fetchArticles = async (query: string) => {
     setLoading(true);
     setError(null);
-    
+
     try {
-      const { data, error: fnError } = await supabase.functions.invoke('pubmed-search', {
-        body: { query, maxResults: 10 },
+      const { data, error: fnError } = await invokeAI('pubmed-search', {
+        query, maxResults: 10
       });
 
       if (fnError) throw fnError;
-      
+
       setArticles(data?.articles || []);
       setHasSearched(true);
     } catch (err) {

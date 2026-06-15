@@ -1,36 +1,20 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { callAI, streamAI } from "../_shared/ai-client.ts";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
-interface AnalysisResult {
-  interactions: Array<{
-    symptom: string;
-    treatment: string;
-    probability: string;
-    explanation: string;
-  }>;
-  correlations: Array<{
-    symptom: string;
-    related_pathology: string;
-    evidence: string;
-  }>;
-  patient_insights: Array<{
-    finding: string;
-    patient_count: number;
-    confidence: string;
-  }>;
-  recommendations: Array<{
-    action: string;
-    priority: string;
-    rationale: string;
-  }>;
+interface StreamEvent {
+  type: 'step_update' | 'text' | 'analysis' | 'done';
+  step?: { id: number; status: string; details?: string; source?: string };
+  content?: string;
+  analysis?: any;
 }
 
-serve(async (req) => {
+serve(async (req: Request) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
   }
@@ -47,196 +31,127 @@ serve(async (req) => {
 
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
     const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
-    const supabase = createClient(supabaseUrl, supabaseKey);
 
-    // Fetch all related data in parallel
-    const [pathologyRes, symptomsRes, treatmentsRes, patientsRes, sourcesRes] = await Promise.all([
-      supabase.from('pathologies').select('*').eq('id', pathologyId).single(),
-      supabase.from('pathology_symptoms')
-        .select('frequency_percent, is_primary, symptoms(*)')
-        .eq('pathology_id', pathologyId),
-      supabase.from('treatments').select('*').eq('pathology_id', pathologyId),
-      supabase.from('patients').select('*').eq('pathology_id', pathologyId),
-      supabase.from('medical_sources').select('*').eq('pathology_id', pathologyId),
-    ]);
+    // Fix: Force Service Role to bypass RLS, same as in embed-data
+    const supabase = createClient(supabaseUrl, supabaseKey, {
+      auth: {
+        autoRefreshToken: false,
+        persistSession: false
+      },
+      global: {
+        headers: { Authorization: `Bearer ${supabaseKey}` }
+      }
+    });
 
-    const pathology = pathologyRes.data;
-    const symptoms = symptomsRes.data || [];
-    const treatments = treatmentsRes.data || [];
-    const patients = patientsRes.data || [];
-    const sources = sourcesRes.data || [];
+    const encoder = new TextEncoder();
+    const stream = new ReadableStream({
+      async start(controller) {
+        const sendEvent = (event: StreamEvent) => {
+          controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
+        };
 
-    if (!pathology) {
-      return new Response(
-        JSON.stringify({ error: 'Pathology not found' }),
-        { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
-    }
+        try {
+          sendEvent({ type: 'step_update', step: { id: 1, status: 'running', details: '📊 Collecte des données cliniques...', source: 'Supabase' } });
 
-    // Build context for AI analysis
-    const symptomsContext = symptoms.map((s: any) => ({
-      name: s.symptoms?.name,
-      frequency: s.frequency_percent,
-      isPrimary: s.is_primary,
-      bodySystem: s.symptoms?.body_system,
-      description: s.symptoms?.description,
-    }));
+          const [pathologyRes, symptomsRes, treatmentsRes, patientsRes, sourcesRes] = await Promise.all([
+            supabase.from('pathologies').select('*').eq('id', pathologyId).single(),
+            supabase.from('pathology_symptoms')
+              .select('frequency_percent, is_primary, symptoms(name, body_system, description)')
+              .eq('pathology_id', pathologyId),
+            supabase.from('treatments').select('*').eq('pathology_id', pathologyId),
+            supabase.from('patients').select('*').eq('pathology_id', pathologyId).limit(50),
+            supabase.from('medical_sources').select('*').eq('pathology_id', pathologyId),
+          ]);
 
-    const treatmentsContext = treatments.map((t: any) => ({
-      name: t.name,
-      type: t.type,
-      description: t.description,
-      contraindications: t.contraindications || [],
-    }));
+          const pathology = pathologyRes.data;
+          if (!pathology) {
+            sendEvent({ type: 'step_update', step: { id: 1, status: 'error', details: 'Pathologie non trouvée' } });
+            controller.close();
+            return;
+          }
 
-    const patientsContext = patients.map((p: any) => ({
-      age: p.age,
-      gender: p.gender,
-      treatment: p.treatment,
-      outcome: p.outcome,
-      medicalNotes: p.medical_notes_nlp,
-      labResults: p.lab_results_json,
-    }));
+          const symptoms = symptomsRes.data || [];
+          const treatments = treatmentsRes.data || [];
+          const patients = patientsRes.data || [];
+          const sources = sourcesRes.data || [];
 
-    const sourcesContext = sources.map((s: any) => ({
-      title: s.title,
-      type: s.source_type,
-      pubmedId: s.pubmed_id,
-    }));
+          sendEvent({ type: 'step_update', step: { id: 1, status: 'completed', details: `✅ ${symptoms.length} symptômes, ${treatments.length} traitements`, source: 'Local DB' } });
 
-    const systemPrompt = `Tu es un expert en analyse médicale cross-data spécialisé dans la détection de corrélations entre symptômes, traitements et données cliniques des patients.
+          const systemPrompt = `Tu es un expert en analyse médicale cross-data.
+Ton but est de détecter des corrélations entre symptômes, traitements et données cliniques pour la pathologie "${pathology.name}".
 
-Analyse les données suivantes pour la pathologie "${pathology.name}" (${pathology.icd_code || 'Code non disponible'}):
+# INSTRUCTIONS
+1. Analyse les données fournies (JSON).
+2. Identifie les interactions, corrélations et insights patients.
+3. Formule des recommandations prioritaires.
+4. Format de sortie: Texte d'analyse explicatif suivi d'un JSON structuré.
 
-**Symptômes associés:**
-${JSON.stringify(symptomsContext, null, 2)}
-
-**Traitements:**
-${JSON.stringify(treatmentsContext, null, 2)}
-
-**Données cliniques patients (${patients.length} cas):**
-${JSON.stringify(patientsContext, null, 2)}
-
-**Sources médicales:**
-${JSON.stringify(sourcesContext, null, 2)}
-
-Ta mission:
-1. **Interactions symptômes-traitements**: Identifie si certains symptômes pourraient être des effets secondaires des traitements
-2. **Corrélations pathologiques**: Détecte si des symptômes sont communs à d'autres pathologies
-3. **Insights patients**: Analyse les patterns dans les données cliniques (âge, genre, outcomes)
-4. **Recommandations**: Propose des actions avec niveau de priorité
-
-Réponds UNIQUEMENT avec un JSON valide au format suivant (sans markdown, sans commentaires):
+# FORMAT JSON ATTENDU
 {
   "interactions": [{"symptom": "...", "treatment": "...", "probability": "haute|moyenne|faible", "explanation": "..."}],
   "correlations": [{"symptom": "...", "related_pathology": "...", "evidence": "..."}],
   "patient_insights": [{"finding": "...", "patient_count": 0, "confidence": "haute|moyenne|faible"}],
   "recommendations": [{"action": "...", "priority": "haute|moyenne|faible", "rationale": "..."}]
-}`;
+}
+`;
 
-    const OPENAI_API_KEY = Deno.env.get('OPENAI_API_KEY');
-    if (!OPENAI_API_KEY) {
-      return new Response(
-        JSON.stringify({ error: 'OPENAI_API_KEY not configured' }),
-        { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
-    }
+          const userPrompt = `Analyse de la pathologie: ${pathology.name} (${pathology.icd_code || 'N/A'})
 
-    const aiResponse = await fetch('https://api.openai.com/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${OPENAI_API_KEY}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        model: Deno.env.get('OPENAI_MODEL') || 'gpt-5.5',
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: `Analyse cette pathologie et retourne le JSON d'analyse.` },
-        ],
-        stream: false,
-      }),
+SYMPTÔMES: ${JSON.stringify(symptoms.slice(0, 20))}
+TRAITEMENTS: ${JSON.stringify(treatments.slice(0, 10))}
+PATIENTS (N=${patients.length}): ${JSON.stringify(patients.slice(0, 10))}
+SOURCES: ${JSON.stringify(sources.slice(0, 5))}
+
+Effectue l'analyse complète.`;
+
+          sendEvent({ type: 'step_update', step: { id: 2, status: 'running', details: '🧠 Analyse multi-agents...', source: 'Claude 3.5 Sonnet' } });
+
+          const aiResult = await streamAI(
+            systemPrompt,
+            userPrompt,
+            (chunk) => {
+              sendEvent({ type: 'text', content: chunk });
+            },
+            {
+              model: 'claude-3-5-sonnet-20240620',
+              maxTokens: 4000,
+              temperature: 0.2
+            }
+          );
+
+          const fullText = aiResult.text;
+          sendEvent({ type: 'step_update', step: { id: 2, status: 'completed', details: '✅ Analyse terminée', source: 'Claude' } });
+
+          // Extraction du JSON
+          try {
+            const jsonMatch = fullText.match(/\{[\s\S]*\}/);
+            if (jsonMatch) {
+              const analysis = JSON.parse(jsonMatch[0]);
+              sendEvent({ type: 'analysis', analysis });
+            }
+          } catch (e) {
+            console.error("Pathology analysis JSON parse error:", e);
+          }
+
+          sendEvent({ type: 'done' });
+        } catch (err) {
+          console.error("Pathology analyzer error:", err);
+          sendEvent({ type: 'step_update', step: { id: 1, status: 'error', details: String(err) } });
+        } finally {
+          controller.close();
+        }
+      }
     });
 
-    if (!aiResponse.ok) {
-      if (aiResponse.status === 429) {
-        return new Response(
-          JSON.stringify({ error: 'Limite de requêtes dépassée. Réessayez plus tard.' }),
-          { status: 429, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-        );
-      }
-      if (aiResponse.status === 402) {
-        return new Response(
-          JSON.stringify({ error: 'Crédits insuffisants. Veuillez recharger votre compte.' }),
-          { status: 402, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-        );
-      }
-      const errorText = await aiResponse.text();
-      console.error('OpenAI error:', aiResponse.status, errorText);
-      return new Response(
-        JSON.stringify({ error: 'Erreur du service IA' }),
-        { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
-    }
-
-    const aiData = await aiResponse.json();
-    const content = aiData.choices?.[0]?.message?.content;
-
-    if (!content) {
-      return new Response(
-        JSON.stringify({ error: 'Réponse IA vide' }),
-        { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
-    }
-
-    // Parse the JSON response, handling potential markdown code blocks
-    let analysis: AnalysisResult;
-    try {
-      let jsonContent = content.trim();
-      // Remove markdown code blocks if present
-      if (jsonContent.startsWith('```json')) {
-        jsonContent = jsonContent.slice(7);
-      } else if (jsonContent.startsWith('```')) {
-        jsonContent = jsonContent.slice(3);
-      }
-      if (jsonContent.endsWith('```')) {
-        jsonContent = jsonContent.slice(0, -3);
-      }
-      analysis = JSON.parse(jsonContent.trim());
-    } catch (parseError) {
-      console.error('Failed to parse AI response:', content);
-      return new Response(
-        JSON.stringify({ 
-          error: 'Erreur de parsing de la réponse IA',
-          raw: content 
-        }),
-        { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
-    }
-
-    return new Response(
-      JSON.stringify({
-        pathology: {
-          id: pathology.id,
-          name: pathology.name,
-          icdCode: pathology.icd_code,
-        },
-        dataContext: {
-          symptomsCount: symptoms.length,
-          treatmentsCount: treatments.length,
-          patientsCount: patients.length,
-          sourcesCount: sources.length,
-        },
-        analysis,
-      }),
-      { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    );
+    return new Response(stream, {
+      headers: { ...corsHeaders, 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache' }
+    });
 
   } catch (error) {
     console.error('Pathology analyzer error:', error);
     return new Response(
       JSON.stringify({ error: error instanceof Error ? error.message : 'Unknown error' }),
-      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
   }
 });

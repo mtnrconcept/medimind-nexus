@@ -1,0 +1,293 @@
+{
+    "ontology_version": "mm-1.0",
+    "domain": "medical_knowledge_exploration",
+    "facet_schema": {
+        "CLINICAL_CONTEXT": {
+            "label": "Contexte clinique",
+            "subcategories": [
+                "Pathologie",
+                "Sous-type",
+                "Stade / sévérité",
+                "Terrain",
+                "Antécédents",
+                "Comorbidités",
+                "Facteurs aggravants",
+                "Facteurs protecteurs"
+            ]
+        },
+        "SYMPTOMS_SIGNS": {
+            "label": "Symptômes et signes",
+            "subcategories": [
+                "Symptômes subjectifs",
+                "Signes objectifs",
+                "Précoces",
+                "Tardifs",
+                "Atypiques",
+                "Systémiques",
+                "Locaux",
+                "Extra-organiques",
+                "Gravité",
+                "Complication"
+            ]
+        },
+        "ORGANS_SYSTEMS": {
+            "label": "Organes et systèmes",
+            "subcategories": [
+                "Organe cible",
+                "Organe secondaire",
+                "Systèmes",
+                "Tissus",
+                "Cellules",
+                "Barrières biologiques",
+                "Axes inter-organes"
+            ]
+        },
+        "PHYSIOPATHOLOGY": {
+            "label": "Physiologie et physiopathologie",
+            "subcategories": [
+                "Mécanismes",
+                "Cascades",
+                "Inflammation",
+                "Dysfonction immunitaire",
+                "Stress oxydatif",
+                "Hypoxie",
+                "Apoptose/Nécrose",
+                "Dysbiose",
+                "Métabolique"
+            ]
+        },
+        "MOLECULAR_BIOLOGY": {
+            "label": "Biologie moléculaire",
+            "subcategories": [
+                "Molécules",
+                "Protéines",
+                "Enzymes",
+                "Récepteurs",
+                "Voies",
+                "Gènes",
+                "Mutations",
+                "Épigénétique",
+                "ARN",
+                "Biomarqueurs",
+                "Cibles thérapeutiques"
+            ]
+        },
+        "THERAPEUTICS": {
+            "label": "Traitements et thérapeutiques",
+            "subcategories": [
+                "1ère ligne",
+                "2e ligne",
+                "3e ligne",
+                "Biothérapies",
+                "Thérapies ciblées",
+                "Génique",
+                "Symptomatique",
+                "Préventif",
+                "Schémas",
+                "Escalade",
+                "Dé-escalade",
+                "Off-label"
+            ]
+        },
+        "SUBSTANCES": {
+            "label": "Molécules et substances",
+            "subcategories": [
+                "Principe actif",
+                "Métabolites",
+                "Excipients",
+                "Naturel",
+                "Compléments",
+                "Toxines",
+                "Polluants",
+                "Additifs",
+                "Alcool",
+                "Nicotine",
+                "Drogues"
+            ]
+        },
+        "ADVERSE_EFFECTS": {
+            "label": "Effets indésirables et risques",
+            "subcategories": [
+                "Effets secondaires",
+                "Graves",
+                "Toxicités",
+                "Interactions",
+                "Contre-indications",
+                "Court terme",
+                "Long terme",
+                "Tolérance",
+                "Résistance",
+                "Iatrogénie"
+            ]
+        },
+        "IMMUNOLOGY_INFECTIONS": {
+            "label": "Immunologie et infections",
+            "subcategories": [
+                "Innée",
+                "Adaptative",
+                "Auto-immunité",
+                "Allergies",
+                "Hypersensibilités",
+                "Virales",
+                "Bactériennes",
+                "Parasitaires",
+                "Fongiques",
+                "Opportunistes",
+                "Vaccins",
+                "Immunodépression"
+            ]
+        },
+        "LIFESTYLE": {
+            "label": "Habitudes de vie",
+            "subcategories": [
+                "Alimentation",
+                "Hydratation",
+                "Activité physique",
+                "Sommeil",
+                "Stress",
+                "Gestion émotionnelle",
+                "Observance",
+                "Hygiène de vie"
+            ]
+        },
+        "ENVIRONMENT": {
+            "label": "Environnement et expositions",
+            "subcategories": [
+                "Professionnel",
+                "Pollution",
+                "Chimique",
+                "Biologique",
+                "Physique",
+                "Habitat",
+                "Climat",
+                "Géographie",
+                "Voyages",
+                "Saisonnalité"
+            ]
+        },
+        "PSYCHOSOCIAL": {
+            "label": "Facteurs psychosociaux",
+            "subcategories": [
+                "Santé mentale",
+                "Stress chronique",
+                "Anxiété",
+                "Dépression",
+                "Soutien social",
+                "Isolement",
+                "Socio-économique",
+                "Adhésion"
+            ]
+        },
+        "GENETICS": {
+            "label": "Génétique et hérédité",
+            "subcategories": [
+                "Prédisposition",
+                "Transmission",
+                "Syndromes",
+                "Polymorphismes",
+                "Tests",
+                "Expression"
+            ]
+        },
+        "DIAGNOSIS": {
+            "label": "Diagnostic et évaluation",
+            "subcategories": [
+                "Différentiel",
+                "Biologie",
+                "Imagerie",
+                "Fonctionnel",
+                "Scores",
+                "Critères",
+                "Biomarqueurs Dx",
+                "Biomarqueurs Px"
+            ]
+        },
+        "EVOLUTION_PROGNOSIS": {
+            "label": "Évolution et pronostic",
+            "subcategories": [
+                "Histoire naturelle",
+                "Rechute",
+                "Complications",
+                "Chronicité",
+                "Réversibilité",
+                "Qualité de vie",
+                "Survie"
+            ]
+        },
+        "PREVENTION": {
+            "label": "Prévention",
+            "subcategories": [
+                "Primaire",
+                "Secondaire",
+                "Tertiaire",
+                "Dépistage",
+                "Éducation thérapeutique"
+            ]
+        },
+        "RESEARCH_INNOVATION": {
+            "label": "Recherche et innovation",
+            "subcategories": [
+                "Essais cliniques",
+                "Expérimental",
+                "Nouvelles cibles",
+                "Médecine personnalisée",
+                "Précision",
+                "IA médicale"
+            ]
+        },
+        "REGULATION_ETHICS": {
+            "label": "Éthique et réglementation",
+            "subcategories": [
+                "Guidelines",
+                "AMM",
+                "Réglementaire",
+                "Accès aux soins",
+                "Coûts",
+                "Consentement"
+            ]
+        },
+        "SYSTEMIC_INTERACTIONS": {
+            "label": "Interactions systémiques",
+            "subcategories": [
+                "Organe-organe",
+                "Drug-drug",
+                "Drug-disease",
+                "Drug-lifestyle",
+                "Gène-environnement",
+                "Domino",
+                "Paradoxal"
+            ]
+        },
+        "THERAPEUTIC_GOALS": {
+            "label": "Objectifs thérapeutiques",
+            "subcategories": [
+                "Guérison",
+                "Rémission",
+                "Stabilisation",
+                "Contrôle symptomatique",
+                "Prévention complications",
+                "QoL",
+                "Autonomie"
+            ]
+        }
+    },
+    "layers": {
+        "clinical": [
+            "PATHOLOGY",
+            "SYMPTOM",
+            "COMPLICATION",
+            "LAB"
+        ],
+        "therapeutic": [
+            "DRUG",
+            "CONDITION",
+            "GUIDELINE"
+        ],
+        "contextual": [
+            "LIFESTYLE",
+            "ENVIRONMENT",
+            "GENETICS",
+            "PSYCHOSOCIAL"
+        ]
+    }
+}

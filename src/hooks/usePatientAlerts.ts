@@ -173,11 +173,61 @@ export const parseExtendedLabResults = (json: Json | null): ExtendedLabResults =
   return result;
 };
 
+// Medical history condition to organ mapping
+const CONDITION_ORGAN_MAP: Record<string, { organ: string; level: AlertLevel; title: string; description: string }> = {
+  // Heart conditions
+  'infarctus': { organ: 'heart', level: 'CRITICAL', title: 'Antécédent d\'Infarctus du Myocarde', description: 'Haut risque cardiovasculaire. Surveillance cardiaque renforcée requise.' },
+  'infarctus du myocarde': { organ: 'heart', level: 'CRITICAL', title: 'Antécédent d\'Infarctus du Myocarde', description: 'Haut risque cardiovasculaire. Surveillance cardiaque renforcée requise.' },
+  'idm': { organ: 'heart', level: 'CRITICAL', title: 'Antécédent d\'Infarctus du Myocarde', description: 'Haut risque cardiovasculaire. Surveillance cardiaque renforcée requise.' },
+  'crise cardiaque': { organ: 'heart', level: 'CRITICAL', title: 'Antécédent de Crise Cardiaque', description: 'Haut risque cardiovasculaire. Surveillance cardiaque renforcée requise.' },
+  'insuffisance cardiaque': { organ: 'heart', level: 'CRITICAL', title: 'Insuffisance Cardiaque', description: 'Fonction cardiaque altérée. Surveiller signes de décompensation.' },
+  'arythmie': { organ: 'heart', level: 'WARNING', title: 'Arythmie Cardiaque', description: 'Trouble du rythme cardiaque. ECG régulier recommandé.' },
+  'fibrillation': { organ: 'heart', level: 'WARNING', title: 'Fibrillation', description: 'Trouble du rythme. Anticoagulation à évaluer.' },
+
+  // Liver conditions
+  'hepatite': { organ: 'liver', level: 'WARNING', title: 'Antécédent d\'Hépatite', description: 'Surveiller fonction hépatique. Attention aux médicaments hépatotoxiques.' },
+  'hépatite': { organ: 'liver', level: 'WARNING', title: 'Antécédent d\'Hépatite', description: 'Surveiller fonction hépatique. Attention aux médicaments hépatotoxiques.' },
+  'hepatite b': { organ: 'liver', level: 'CRITICAL', title: 'Hépatite B', description: 'Infection virale chronique. Risque de cirrhose et carcinome hépatique. Dépistage régulier.' },
+  'hépatite b': { organ: 'liver', level: 'CRITICAL', title: 'Hépatite B', description: 'Infection virale chronique. Risque de cirrhose et carcinome hépatique. Dépistage régulier.' },
+  'hepatite c': { organ: 'liver', level: 'CRITICAL', title: 'Hépatite C', description: 'Infection virale. Risque de cirrhose. Traitement antiviral à évaluer.' },
+  'cirrhose': { organ: 'liver', level: 'CRITICAL', title: 'Cirrhose Hépatique', description: 'Insuffisance hépatique chronique. Surveillance accrue.' },
+  'steatose': { organ: 'liver', level: 'WARNING', title: 'Stéatose Hépatique', description: 'Maladie du foie gras. Mesures hygiéno-diététiques.' },
+
+  // Kidney conditions
+  'insuffisance renale': { organ: 'kidneys', level: 'CRITICAL', title: 'Insuffisance Rénale', description: 'Adapter les posologies. Éviter néphrotoxiques.' },
+  'insuffisance rénale': { organ: 'kidneys', level: 'CRITICAL', title: 'Insuffisance Rénale', description: 'Adapter les posologies. Éviter néphrotoxiques.' },
+  'dialyse': { organ: 'kidneys', level: 'CRITICAL', title: 'Patient Dialysé', description: 'Fonction rénale terminale. Ajustement médicamenteux majeur requis.' },
+
+  // Lung conditions
+  'bpco': { organ: 'lungs', level: 'WARNING', title: 'BPCO', description: 'Bronchopneumopathie chronique. Éviter dépresseurs respiratoires.' },
+  'asthme': { organ: 'lungs', level: 'WARNING', title: 'Asthme', description: 'Éviter bêta-bloquants non cardiosélectifs et AINS si sensible.' },
+  'embolie pulmonaire': { organ: 'lungs', level: 'CRITICAL', title: 'Antécédent d\'Embolie Pulmonaire', description: 'Risque thromboembolique. Anticoagulation prophylactique.' },
+
+  // Brain/Neurological
+  'avc': { organ: 'brain', level: 'CRITICAL', title: 'Antécédent d\'AVC', description: 'Haut risque vasculaire. Prévention secondaire essentielle.' },
+  'epilepsie': { organ: 'brain', level: 'WARNING', title: 'Épilepsie', description: 'Éviter médicaments abaissant le seuil épileptogène.' },
+
+  // Metabolic
+  'diabete': { organ: 'pancreas', level: 'WARNING', title: 'Diabète', description: 'Surveillance glycémique. Attention hypoglycémies.' },
+  'diabète': { organ: 'pancreas', level: 'WARNING', title: 'Diabète', description: 'Surveillance glycémique. Attention hypoglycémies.' },
+
+  // Cancer
+  'cancer': { organ: 'other', level: 'CRITICAL', title: 'Antécédent de Cancer', description: 'Surveillance oncologique. Interactions médicamenteuses à vérifier.' },
+};
+
+export interface MedicalHistoryItem {
+  condition_name: string;
+  condition_type?: string;
+  severity?: string;
+  is_chronic?: boolean;
+}
+
 export const usePatientAlerts = (
   labResults: ExtendedLabResults,
   treatment: string,
   medicalNotes: string,
-  pathologyName?: string
+  pathologyName?: string,
+  medicalHistory?: MedicalHistoryItem[]
 ): PatientAlert[] => {
   return useMemo(() => {
     const alerts: PatientAlert[] = [];
@@ -189,7 +239,7 @@ export const usePatientAlerts = (
     DRUG_INTERACTIONS.forEach((interaction, index) => {
       const hasDrug1 = interaction.drug1.some(d => combinedText.includes(d));
       const hasDrug2 = interaction.drug2.some(d => combinedText.includes(d));
-      
+
       if (hasDrug1 && hasDrug2) {
         alerts.push({
           id: `interaction-${index}`,
@@ -206,7 +256,7 @@ export const usePatientAlerts = (
     ALLERGY_CONTRAINDICATIONS.forEach((allergyRule, index) => {
       const hasAllergy = allergyRule.allergen.some(a => notesLower.includes(`allergie ${a}`) || notesLower.includes(`allergique ${a}`));
       const hasDrug = allergyRule.drugs.some(d => treatmentLower.includes(d));
-      
+
       if (hasAllergy && hasDrug) {
         alerts.push({
           id: `allergy-${index}`,
@@ -220,7 +270,7 @@ export const usePatientAlerts = (
     });
 
     // Check abnormal lab values
-    const { 
+    const {
       glucose_mg_dl, blood_pressure_sys, blood_pressure_dia, temperature_c,
       hemoglobin_g_dl, creatinine_mg_dl, gfr_ml_min, potassium_meq_l,
       sodium_meq_l, alt_u_l, ast_u_l, tsh_miu_l, spo2_percent,
@@ -449,10 +499,51 @@ export const usePatientAlerts = (
       });
     }
 
+    // Check medical history for chronic conditions
+    if (medicalHistory && medicalHistory.length > 0) {
+      const addedConditions = new Set<string>();
+
+      medicalHistory.forEach((item, index) => {
+        const conditionLower = item.condition_name.toLowerCase().trim();
+
+        // Check for exact matches first
+        if (CONDITION_ORGAN_MAP[conditionLower] && !addedConditions.has(conditionLower)) {
+          const config = CONDITION_ORGAN_MAP[conditionLower];
+          addedConditions.add(conditionLower);
+          alerts.push({
+            id: `history-${index}-${conditionLower.replace(/\s+/g, '-')}`,
+            level: config.level,
+            type: 'COMPLICATION',
+            title: config.title,
+            description: config.description,
+            organ: config.organ,
+            action: item.is_chronic ? 'Suivi au long cours requis.' : 'Surveiller évolution.'
+          });
+        } else {
+          // Check for partial matches
+          for (const [keyword, config] of Object.entries(CONDITION_ORGAN_MAP)) {
+            if (conditionLower.includes(keyword) && !addedConditions.has(keyword)) {
+              addedConditions.add(keyword);
+              alerts.push({
+                id: `history-${index}-${keyword.replace(/\s+/g, '-')}`,
+                level: config.level,
+                type: 'COMPLICATION',
+                title: config.title,
+                description: config.description,
+                organ: config.organ,
+                action: item.is_chronic ? 'Suivi au long cours requis.' : 'Surveiller évolution.'
+              });
+              break; // Only match one condition per history item
+            }
+          }
+        }
+      });
+    }
+
     // Sort by severity
     const severityOrder: Record<AlertLevel, number> = { CRITICAL: 0, WARNING: 1, INFO: 2 };
     alerts.sort((a, b) => severityOrder[a.level] - severityOrder[b.level]);
 
     return alerts;
-  }, [labResults, treatment, medicalNotes, pathologyName]);
+  }, [labResults, treatment, medicalNotes, pathologyName, medicalHistory]);
 };

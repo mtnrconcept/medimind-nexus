@@ -1,0 +1,4 @@
+﻿2200:                         const isCollapsed = collapsedCategories.has(type);
+2208:                                             if (isCollapsed) newSet.delete(type); else newSet.add(type);
+2213:                                         <svg className={`w-4 h-4 transition-transform duration-200 ${isCollapsed ? '-rotate-90' : 'rotate-0'}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+2235:                                 {!isCollapsed && (

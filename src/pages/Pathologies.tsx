@@ -147,20 +147,20 @@ const Pathologies = () => {
 
   return (
     <AppLayout>
-      <div className="space-y-6">
+      <div className="space-y-4 sm:space-y-6 px-2 sm:px-0">
         <div>
-          <h1 className="text-3xl font-bold flex items-center gap-2">
-            <BookOpen className="h-8 w-8" />
-            Index des Pathologies
+          <h1 className="text-xl sm:text-2xl md:text-3xl font-bold flex items-center gap-2">
+            <BookOpen className="h-5 w-5 sm:h-6 sm:w-6 md:h-8 md:w-8" />
+            <span className="hidden xs:inline">Index des</span> Pathologies
           </h1>
-          <p className="text-muted-foreground mt-1">
-            Consultez et recherchez dans notre base de données médicales ({totalCount} entrées)
+          <p className="text-sm sm:text-base text-muted-foreground mt-1">
+            <span className="hidden sm:inline">Consultez et recherchez dans notre base de données médicales</span> ({totalCount} entrées)
           </p>
         </div>
 
         {/* Filters */}
         <Card>
-          <CardContent className="pt-6">
+          <CardContent className="pt-4 sm:pt-6">
             <div className="flex flex-col md:flex-row gap-4">
               <div className="relative flex-1">
                 <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
@@ -259,10 +259,9 @@ const Pathologies = () => {
 
         {/* Pagination Controls */}
         {totalCount > 0 && (
-          <div className="flex items-center justify-between py-4">
-            <p className="text-sm text-muted-foreground">
-              Affichage de {(page - 1) * ITEMS_PER_PAGE + 1} à {Math.min(page * ITEMS_PER_PAGE, totalCount)} sur{" "}
-              {totalCount} résultats
+          <div className="flex flex-col sm:flex-row items-center justify-between gap-2 sm:gap-0 py-4">
+            <p className="text-xs sm:text-sm text-muted-foreground text-center sm:text-left">
+              <span className="hidden sm:inline">Affichage de {(page - 1) * ITEMS_PER_PAGE + 1} à {Math.min(page * ITEMS_PER_PAGE, totalCount)} sur</span> {totalCount} résultats
             </p>
             <div className="flex gap-2">
               <Button

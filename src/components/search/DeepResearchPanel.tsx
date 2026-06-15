@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -7,11 +7,11 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion';
 import { supabase } from '@/integrations/supabase/client';
-import { 
-  Brain, 
-  Loader2, 
-  AlertTriangle, 
-  ChevronRight, 
+import {
+  Brain,
+  Loader2,
+  AlertTriangle,
+  ChevronRight,
   ExternalLink,
   Stethoscope,
   TestTube,
@@ -19,8 +19,10 @@ import {
   BookOpen,
   Database,
   Globe,
-  CheckCircle2
+  CheckCircle2,
+  Filter
 } from 'lucide-react';
+import { useAI } from '@/contexts/AIContext';
 import { toast } from 'sonner';
 
 interface WebSource {
@@ -57,9 +59,31 @@ interface DeepResearchPanelProps {
 }
 
 const DeepResearchPanel = ({ selectedSymptomIds, selectedSymptomNames }: DeepResearchPanelProps) => {
+  const { invokeAI } = useAI();
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<DeepResearchResult | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  // Filter states
+  const [severityFilter, setSeverityFilter] = useState<string>('all');
+  const [confidenceFilter, setConfidenceFilter] = useState<string>('all');
+
+  // Filtered pathologies
+  const filteredPathologies = useMemo(() => {
+    if (!result?.pathologies) return [];
+
+    return result.pathologies.filter(pathology => {
+      // Filter by severity
+      if (severityFilter !== 'all' && pathology.severity !== severityFilter) {
+        return false;
+      }
+      // Filter by confidence
+      if (confidenceFilter !== 'all' && pathology.confidence !== confidenceFilter) {
+        return false;
+      }
+      return true;
+    });
+  }, [result?.pathologies, severityFilter, confidenceFilter]);
 
   const runDeepResearch = async () => {
     if (selectedSymptomNames.length === 0) {
@@ -72,16 +96,15 @@ const DeepResearchPanel = ({ selectedSymptomIds, selectedSymptomNames }: DeepRes
     setResult(null);
 
     try {
-      const { data, error: fnError } = await supabase.functions.invoke('deep-research', {
-        body: {
-          symptomIds: selectedSymptomIds,
-          symptomNames: selectedSymptomNames
-        }
+      const { data, error: fnError } = await invokeAI('deep-research', {
+        symptomIds: selectedSymptomIds,
+        symptomNames: selectedSymptomNames,
+        stream: false
       });
 
       if (fnError) throw fnError;
 
-      if (data.error) {
+      if (data?.error) {
         if (data.error.includes('Crédits') || data.error.includes('402')) {
           setError('Crédits IA insuffisants. Rechargez votre compte dans Paramètres → Workspace → Usage.');
         } else if (data.error.includes('Limite') || data.error.includes('429')) {
@@ -92,8 +115,16 @@ const DeepResearchPanel = ({ selectedSymptomIds, selectedSymptomNames }: DeepRes
         return;
       }
 
-      setResult(data.result);
-      toast.success(`Deep Research terminée : ${data.result.pathologies?.length || 0} pathologies identifiées`);
+      // Handle both cloud (data.result) and local (data directly) formats
+      const researchResult = data?.result || data;
+
+      if (!researchResult || (!researchResult.pathologies && !researchResult.summary)) {
+        setError('Résultat de recherche invalide. Veuillez réessayer.');
+        return;
+      }
+
+      setResult(researchResult);
+      toast.success(`Deep Research terminée : ${researchResult.pathologies?.length || 0} pathologies identifiées`);
     } catch (err) {
       console.error('Erreur Deep Research:', err);
       setError('Erreur lors de la recherche. Veuillez réessayer.');
@@ -155,8 +186,8 @@ const DeepResearchPanel = ({ selectedSymptomIds, selectedSymptomNames }: DeepRes
         )}
 
         {/* Bouton de recherche */}
-        <Button 
-          onClick={runDeepResearch} 
+        <Button
+          onClick={runDeepResearch}
           disabled={loading || selectedSymptomNames.length === 0}
           className="w-full"
         >
@@ -213,105 +244,155 @@ const DeepResearchPanel = ({ selectedSymptomIds, selectedSymptomNames }: DeepRes
 
             {/* Pathologies identifiées */}
             {result.pathologies && result.pathologies.length > 0 && (
-              <div className="space-y-3">
-                <h4 className="font-medium flex items-center gap-2">
-                  <BookOpen className="h-4 w-4" />
-                  Pathologies identifiées ({result.pathologies.length})
-                </h4>
-                <ScrollArea className="max-h-[500px]">
-                  <Accordion type="single" collapsible className="space-y-2">
-                    {result.pathologies.map((pathology, index) => (
-                      <AccordionItem key={index} value={`pathology-${index}`} className="border rounded-lg px-4">
-                        <AccordionTrigger className="hover:no-underline py-3">
-                          <div className="flex items-center gap-3 flex-1 text-left">
-                            <div className="flex items-center justify-center w-8 h-8 rounded-full bg-primary/10 text-primary font-bold text-sm flex-shrink-0">
-                              {index + 1}
-                            </div>
-                            <div className="flex-1 min-w-0">
-                              <div className="flex items-center gap-2 flex-wrap">
-                                <span className="font-medium">{pathology.name}</span>
-                                {pathology.icdCode && (
-                                  <Badge variant="outline" className="font-mono text-xs">
-                                    {pathology.icdCode}
-                                  </Badge>
-                                )}
-                                {getConfidenceBadge(pathology.confidence)}
-                                {getSeverityBadge(pathology.severity)}
-                                {pathology.isInDatabase && (
-                                  <Badge variant="secondary" className="text-xs">
-                                    <Database className="h-3 w-3 mr-1" />
-                                    Base locale
-                                  </Badge>
-                                )}
-                              </div>
-                            </div>
-                          </div>
-                        </AccordionTrigger>
-                        <AccordionContent className="pb-4 space-y-3">
-                          <p className="text-sm text-muted-foreground">{pathology.description}</p>
-                          
-                          {/* Symptômes correspondants */}
-                          {pathology.matchedSymptoms && pathology.matchedSymptoms.length > 0 && (
-                            <div>
-                              <span className="text-xs font-medium text-muted-foreground">Symptômes correspondants :</span>
-                              <div className="flex flex-wrap gap-1 mt-1">
-                                {pathology.matchedSymptoms.map((symptom, sIndex) => (
-                                  <Badge key={sIndex} variant="secondary" className="text-xs">
-                                    <CheckCircle2 className="h-3 w-3 mr-1" />
-                                    {symptom}
-                                  </Badge>
-                                ))}
-                              </div>
-                            </div>
-                          )}
+              <div className="space-y-3 relative z-10">
+                <div className="flex items-center justify-between flex-wrap gap-2">
+                  <h4 className="font-medium flex items-center gap-2">
+                    <BookOpen className="h-4 w-4" />
+                    Pathologies identifiées ({filteredPathologies.length}/{result.pathologies.length})
+                  </h4>
+                </div>
 
-                          {/* Suggestions de traitement */}
-                          {pathology.treatmentSuggestions && pathology.treatmentSuggestions.length > 0 && (
-                            <div>
-                              <span className="text-xs font-medium text-muted-foreground">Pistes thérapeutiques :</span>
-                              <ul className="mt-1 space-y-1">
-                                {pathology.treatmentSuggestions.map((treatment, tIndex) => (
-                                  <li key={tIndex} className="text-sm text-muted-foreground">• {treatment}</li>
-                                ))}
-                              </ul>
-                            </div>
-                          )}
+                {/* Filtres */}
+                <div className="flex flex-wrap gap-4 p-3 bg-muted/50 rounded-lg">
+                  <div className="flex items-center gap-2">
+                    <Filter className="h-4 w-4 text-muted-foreground" />
+                    <span className="text-sm font-medium">Plausibilité:</span>
+                    <div className="flex gap-1">
+                      {['all', 'high', 'medium', 'low'].map((conf) => (
+                        <Badge
+                          key={conf}
+                          variant={confidenceFilter === conf ? 'default' : 'outline'}
+                          className="cursor-pointer text-xs"
+                          onClick={() => setConfidenceFilter(conf)}
+                        >
+                          {conf === 'all' ? 'Toutes' : conf === 'high' ? 'Haute' : conf === 'medium' ? 'Moyenne' : 'Faible'}
+                        </Badge>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-medium">Sévérité:</span>
+                    <div className="flex gap-1">
+                      {['all', 'mild', 'moderate', 'severe', 'critical'].map((sev) => (
+                        <Badge
+                          key={sev}
+                          variant={severityFilter === sev ? 'default' : 'outline'}
+                          className={`cursor-pointer text-xs ${severityFilter === sev ? '' :
+                            sev === 'mild' ? 'border-green-500 text-green-600' :
+                              sev === 'moderate' ? 'border-yellow-500 text-yellow-600' :
+                                sev === 'severe' ? 'border-orange-500 text-orange-600' :
+                                  sev === 'critical' ? 'border-red-500 text-red-600' : ''}`}
+                          onClick={() => setSeverityFilter(sev)}
+                        >
+                          {sev === 'all' ? 'Toutes' : sev === 'mild' ? 'Bénin' : sev === 'moderate' ? 'Modéré' : sev === 'severe' ? 'Sévère' : 'Critique'}
+                        </Badge>
+                      ))}
+                    </div>
+                  </div>
+                </div>
 
-                          {/* Sources */}
-                          {pathology.sources && pathology.sources.length > 0 && (
-                            <div>
-                              <span className="text-xs font-medium text-muted-foreground">Sources :</span>
-                              <div className="flex flex-wrap gap-2 mt-1">
-                                {pathology.sources.map((source, srcIndex) => (
-                                  <a 
-                                    key={srcIndex}
-                                    href={source.url}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                    className="inline-flex items-center gap-1 text-xs text-primary hover:underline"
-                                  >
-                                    <ExternalLink className="h-3 w-3" />
-                                    {source.title.slice(0, 40)}...
-                                  </a>
-                                ))}
+                <ScrollArea className="h-[400px] pr-4">
+                  <div className="space-y-2">
+                    {filteredPathologies.length === 0 ? (
+                      <p className="text-sm text-muted-foreground text-center py-4">
+                        Aucune pathologie ne correspond aux filtres sélectionnés
+                      </p>
+                    ) : (
+                      <Accordion type="single" collapsible className="space-y-2">
+                        {filteredPathologies.map((pathology, index) => (
+                          <AccordionItem key={index} value={`pathology-${index}`} className="border rounded-lg px-4 bg-card">
+                            <AccordionTrigger className="hover:no-underline py-3">
+                              <div className="flex items-center gap-3 flex-1 text-left">
+                                <div className="flex items-center justify-center w-8 h-8 rounded-full bg-primary/10 text-primary font-bold text-sm flex-shrink-0">
+                                  {index + 1}
+                                </div>
+                                <div className="flex-1 min-w-0">
+                                  <div className="flex items-center gap-2 flex-wrap">
+                                    <span className="font-medium">{pathology.name}</span>
+                                    {pathology.icdCode && (
+                                      <Badge variant="outline" className="font-mono text-xs">
+                                        {pathology.icdCode}
+                                      </Badge>
+                                    )}
+                                    {getConfidenceBadge(pathology.confidence)}
+                                    {getSeverityBadge(pathology.severity)}
+                                    {pathology.isInDatabase && (
+                                      <Badge variant="secondary" className="text-xs">
+                                        <Database className="h-3 w-3 mr-1" />
+                                        Base locale
+                                      </Badge>
+                                    )}
+                                  </div>
+                                </div>
                               </div>
-                            </div>
-                          )}
+                            </AccordionTrigger>
+                            <AccordionContent className="pb-4 space-y-3">
+                              <p className="text-sm text-muted-foreground">{pathology.description}</p>
 
-                          {/* Lien vers fiche si dans la base */}
-                          {pathology.isInDatabase && pathology.databaseId && (
-                            <Link 
-                              to={`/pathologies/${pathology.databaseId}`}
-                              className="inline-flex items-center gap-2 text-sm text-primary hover:underline mt-2"
-                            >
-                              Voir la fiche complète
-                              <ChevronRight className="h-4 w-4" />
-                            </Link>
-                          )}
-                        </AccordionContent>
-                      </AccordionItem>
-                    ))}
-                  </Accordion>
+                              {/* Symptômes correspondants */}
+                              {pathology.matchedSymptoms && pathology.matchedSymptoms.length > 0 && (
+                                <div>
+                                  <span className="text-xs font-medium text-muted-foreground">Symptômes correspondants :</span>
+                                  <div className="flex flex-wrap gap-1 mt-1">
+                                    {pathology.matchedSymptoms.map((symptom, sIndex) => (
+                                      <Badge key={sIndex} variant="secondary" className="text-xs">
+                                        <CheckCircle2 className="h-3 w-3 mr-1" />
+                                        {symptom}
+                                      </Badge>
+                                    ))}
+                                  </div>
+                                </div>
+                              )}
+
+                              {/* Suggestions de traitement */}
+                              {pathology.treatmentSuggestions && pathology.treatmentSuggestions.length > 0 && (
+                                <div>
+                                  <span className="text-xs font-medium text-muted-foreground">Pistes thérapeutiques :</span>
+                                  <ul className="mt-1 space-y-1">
+                                    {pathology.treatmentSuggestions.map((treatment, tIndex) => (
+                                      <li key={tIndex} className="text-sm text-muted-foreground">• {treatment}</li>
+                                    ))}
+                                  </ul>
+                                </div>
+                              )}
+
+                              {/* Sources */}
+                              {pathology.sources && pathology.sources.length > 0 && (
+                                <div>
+                                  <span className="text-xs font-medium text-muted-foreground">Sources :</span>
+                                  <div className="flex flex-wrap gap-2 mt-1">
+                                    {pathology.sources.map((source, srcIndex) => (
+                                      <a
+                                        key={srcIndex}
+                                        href={source.url}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="inline-flex items-center gap-1 text-xs text-primary hover:underline"
+                                      >
+                                        <ExternalLink className="h-3 w-3" />
+                                        {source.title.slice(0, 40)}...
+                                      </a>
+                                    ))}
+                                  </div>
+                                </div>
+                              )}
+
+                              {/* Lien vers fiche si dans la base */}
+                              {pathology.isInDatabase && pathology.databaseId && (
+                                <Link
+                                  to={`/pathologies/${pathology.databaseId}`}
+                                  className="inline-flex items-center gap-2 text-sm text-primary hover:underline mt-2"
+                                >
+                                  Voir la fiche complète
+                                  <ChevronRight className="h-4 w-4" />
+                                </Link>
+                              )}
+                            </AccordionContent>
+                          </AccordionItem>
+                        ))}
+                      </Accordion>
+                    )}
+                  </div>
                 </ScrollArea>
               </div>
             )}

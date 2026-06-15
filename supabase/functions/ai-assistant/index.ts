@@ -1,4 +1,5 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import { streamAI } from "../_shared/ai-client.ts";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -12,14 +13,15 @@ interface PatientContext {
   nationality: string;
   treatment: string;
   medical_notes_nlp: string;
-  lab_results_json: {
-    glucose_mg_dl: number;
-    blood_pressure_sys: number;
-    blood_pressure_dia: number;
-    temperature_c: number;
-  };
+  lab_results_json: any;
   outcome: string;
   pathology_name?: string;
+  medications?: any[];
+  medical_history?: any[];
+  allergies?: any[];
+  vaccinations?: any[];
+  consultations?: any[];
+  clinical_data?: any[];
 }
 
 serve(async (req) => {
@@ -29,11 +31,6 @@ serve(async (req) => {
 
   try {
     const { message, patient, conversationHistory } = await req.json();
-    const OPENAI_API_KEY = Deno.env.get("OPENAI_API_KEY");
-
-    if (!OPENAI_API_KEY) {
-      throw new Error("OPENAI_API_KEY is not configured");
-    }
 
     const patientContext = patient as PatientContext;
     const labResults = patientContext?.lab_results_json;
@@ -41,93 +38,131 @@ serve(async (req) => {
     // Build patient context string
     let patientContextStr = "";
     if (patientContext) {
+      const meds = patientContext.medications?.map((m: any) => `- ${m.medication_name} (${m.dosage}, ${m.frequency})`).join('\n') || 'Aucun';
+      const history = patientContext.medical_history?.map((h: any) => `- ${h.condition_name} (${h.diagnosis_date}): ${h.status}`).join('\n') || 'Aucun';
+      const allergies = patientContext.allergies?.map((a: any) => `- ${a.allergen} (${a.reaction}) - ${a.severity}`).join('\n') || 'Aucune';
+      const consults = patientContext.consultations?.map((c: any) => `- ${c.consultation_date}: ${c.reason} (${c.physician_name})`).join('\n') || 'Aucune';
+      const vaccines = patientContext.vaccinations?.map((v: any) => `- ${v.vaccine_name} (${v.vaccination_date})`).join('\n') || 'Aucun';
+
+      // New Sections
+      const mental = (patientContext as any).mental_health?.map((m: any) => `- ${m.condition_name}: ${m.notes}`).join('\n') || 'Aucune donnée';
+      const repro = (patientContext as any).reproductive_health?.map((r: any) => `- ${r.condition_name}: ${r.notes}`).join('\n') || 'Aucune donnée';
+      const clinical = (patientContext as any).clinical_data?.map((d: any) => `- ${d.data_name}: ${d.data_value} ${d.unit || ''}`).join('\n') || 'Aucune donnée';
+      const labList = (patientContext as any).lab_results_data?.map((l: any) => `- ${l.test_name}: ${l.test_value} ${l.unit} (${l.status})`).join('\n') || 'Aucune donnée';
+
       patientContextStr = `
-## Données Patient Actuel (ID: ${patientContext.patient_id})
-- Âge: ${patientContext.age} ans
-- Genre: ${patientContext.gender === 'M' ? 'Homme' : 'Femme'}
-- Nationalité: ${patientContext.nationality}
-- Pathologie: ${patientContext.pathology_name || 'Non spécifiée'}
-- Traitement actuel: ${patientContext.treatment}
+## 👤 PROFIL PATIENT (ID: ${patientContext.patient_id})
+- Âge: ${patientContext.age} ans | Genre: ${patientContext.gender === 'M' ? 'Homme' : 'Femme'} | Nationalité: ${patientContext.nationality}
 - Statut: ${patientContext.outcome}
+- Note Globale: ${patientContext.medical_notes_nlp}
 
-## Résultats Biologiques
-- Glycémie: ${labResults?.glucose_mg_dl} mg/dL ${labResults?.glucose_mg_dl > 120 ? '⚠️ ÉLEVÉE' : labResults?.glucose_mg_dl < 70 ? '⚠️ BASSE' : '✓ Normal'}
-- Tension artérielle: ${labResults?.blood_pressure_sys}/${labResults?.blood_pressure_dia} mmHg ${labResults?.blood_pressure_sys > 140 || labResults?.blood_pressure_dia > 90 ? '⚠️ ÉLEVÉE' : '✓ Normal'}
-- Température: ${labResults?.temperature_c}°C ${labResults?.temperature_c > 37.5 ? '⚠️ FIÈVRE' : '✓ Normal'}
+## 💊 TRAITEMENTS ACTUELS
+${meds}
 
-## Notes Médicales (NLP)
-${patientContext.medical_notes_nlp}
+## 🏥 ANTÉCÉDENTS & PATHOLOGIES
+${history}
+
+## ⚠️ ALLERGIES
+${allergies}
+
+## 🔬 RÉSULTATS BIOLOGIQUES (LISTE)
+${labList}
+
+## 🧬 DONNÉES CLINIQUES & CONSTANTES
+${clinical}
+
+## 💉 VACCINATIONS
+${vaccines}
+
+## 📅 CONSULTATIONS RÉCENTES
+${consults}
+
+## 🧠 SANTÉ MENTALE
+${mental}
+
+## 🤰 SANTÉ REPRODUCTIVE
+${repro}
+
+## 🔬 SYNTHÈSE BIOLOGIQUE
+- Glycémie: ${labResults?.glucose_mg_dl || 'N/A'} mg/dL
+- Tension: ${labResults?.blood_pressure_sys || 'N/A'}/${labResults?.blood_pressure_dia || 'N/A'} mmHg
+- Température: ${labResults?.temperature_c || 'N/A'}°C
+- SpO2: ${labResults?.spo2_percent || 'N/A'}%
 `;
     }
 
     const systemPrompt = `Tu es l'Assistant MediCore, un système d'intelligence artificielle médicale de pointe intégré à la plateforme MediCore Global.
+    
+    Tu partages le même moteur analytique ("Cognitive Core") que l'outil de Synthèse de Santé et de Calcul de Risque de la plateforme. Ton analyse doit être tout aussi rigoureuse, profonde et holistique.
 
-## Tes capacités
-1. **Analyse Cross-Check** : Tu peux comparer les résultats biologiques avec les traitements prescrits et détecter les incohérences.
-2. **Lecture NLP** : Tu analyses les notes médicales en texte libre pour extraire symptômes cachés et informations cliniques.
-3. **Intelligence Collective** : Tu as accès à une base de données mondiale de patients pour comparaisons statistiques.
-4. **Pharmacovigilance** : Tu détectes les effets secondaires potentiels des médicaments.
+    ## TA MISSION COGNITIVE
+    Tu ne te contentes pas de répondre aux questions. À chaque interaction, tu dois effectuer en toile de fond (sans forcément tout expliciter sauf si pertinent) :
+    1.  **Calcul de Risque Dynamique** : Évalue le niveau de risque global (Low/Moderate/High/Critical) et le "Score de Santé" (0-100) du patient en fonction des nouvelles données.
+    2.  **Détection de Signaux Faibles** : Identifie les corrélations subtiles entre symptômes mineurs, constantes et historique qui pourraient annoncer une pathologie émergente.
+    3.  **Analyse "Cross-Check"** : Croise systématiquement chaque symptôme ou plainte avec :
+        - Les traitements en cours (Effets secondaires ? Interactions ?)
+        - Les pathologies existantes (Complication ? Aggravation ?)
+        - Le mode de vie (Facteur aggravant ?)
+    
+    ## TES CAPACITÉS D'ANALYSE (Identiques au module Synthèse)
+    - **Interactions Médicamenteuses** : Analyse experte des conflits pharmaco-cinétiques et dynamiques.
+    - **Facteurs de Risque Combinés** : Évalue l'effet cumulatif de multiples facteurs de risque modérés.
+    - **Contradictions** : Repère les traitements contre-indiqués pour certaines pathologies présentes.
+    - **Lacunes de Soins** : Identifie les dépistages ou suivis manquants/en retard.
 
-## Règles de réponse
-- Sois précis et factuel, cite les données du patient.
-- Utilise des emojis pour les alertes (⚠️ pour danger, ✓ pour normal, 📊 pour statistiques).
-- Structure tes réponses avec des titres clairs.
-- Mentionne toujours les pourcentages et données statistiques quand pertinent.
-- Si tu suggères un changement de traitement, explique pourquoi avec des données.
+    ## RÈGLES DE RÉPONSE ET TON
+    - **Posture** : Expert médical bienveillant, précis, factuel mais empathique.
+    - **Preuve par la donnée** : Cite toujours les valeurs spécifiques (labo, constantes) pour justifier tes dires.
+    - **Structure** : Utilise des titres clairs, des listes à puces et des indicateurs visuels (⚠️, 📊, 💡).
+    - **Transparence du Risque** : Si tu détectes un risque élevé, mentionne-le clairement en début de réponse.
 
-## Base de connaissances médicales
-- Glycémie normale: 70-120 mg/dL
-- Tension normale: <140/90 mmHg
-- Effets secondaires connus:
-  * Lisinopril (IEC): Toux sèche (10-15% des patients)
-  * Metformine: Troubles digestifs
-  * Bêtamimétiques: Résistance possible chez certains profils ethniques
+    ## BASE DE CONNAISSANCES DE RÉFÉRENCE
+    - Glycémie normale: 70-120 mg/dL
+    - Tension normale: <140/90 mmHg (adapter selon âge/comorbidités)
+    - Effets secondaires fréquents à surveiller :
+      * Lisinopril/IEC: Toux sèche, angioedème
+      * Metformine: Troubles digestifs, acidose lactique (rare)
+      * Statines: Douleurs musculaires, rhabdomyolyse
+      * Bêtabloquants: Bradycardie, fatigue, bronchoconstriction
 
-${patientContextStr}
+    ${patientContextStr}
 
-Réponds en français de manière professionnelle et médicale.`;
+    Réponds en français de manière professionnelle, clinique et structurée.`;
 
-    const messages = [
-      { role: "system", content: systemPrompt },
-      ...(conversationHistory || []),
-      { role: "user", content: message }
-    ];
+    // Filtrer les messages pour exclure les rôles système et s'assurer que c'est user/assistant
+    const validMessages = (conversationHistory || [])
+      .filter((m: any) => m.role === 'user' || m.role === 'assistant')
+      .map((m: any) => ({ role: m.role, content: m.content }));
 
-    const response = await fetch("https://api.openai.com/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${OPENAI_API_KEY}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: Deno.env.get("OPENAI_MODEL") || "gpt-5.5",
-        messages,
-        stream: true,
-      }),
+    const encoder = new TextEncoder();
+
+    const stream = new ReadableStream({
+      async start(controller) {
+        try {
+          await streamAI(
+            systemPrompt,
+            [...validMessages, { role: "user", content: message }],
+            (text) => {
+              const openaiChunk = {
+                choices: [{ delta: { content: text } }]
+              };
+              controller.enqueue(encoder.encode(`data: ${JSON.stringify(openaiChunk)}\n\n`));
+            },
+            {
+              model: "claude-3-5-sonnet-20240620",
+              maxTokens: 4096,
+            }
+          );
+          controller.enqueue(encoder.encode('data: [DONE]\n\n'));
+          controller.close();
+        } catch (e) {
+          console.error("Stream error:", e);
+          controller.error(e);
+        }
+      }
     });
 
-    if (!response.ok) {
-      if (response.status === 429) {
-        return new Response(JSON.stringify({ error: "Limite de requêtes atteinte. Veuillez réessayer dans quelques instants." }), {
-          status: 429,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
-      }
-      if (response.status === 402) {
-        return new Response(JSON.stringify({ error: "Crédits insuffisants. Veuillez recharger votre compte." }), {
-          status: 402,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
-      }
-      const errorText = await response.text();
-      console.error("OpenAI error:", response.status, errorText);
-      return new Response(JSON.stringify({ error: "Erreur du service IA" }), {
-        status: 500,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
-
-    return new Response(response.body, {
+    return new Response(stream, {
       headers: { ...corsHeaders, "Content-Type": "text/event-stream" },
     });
   } catch (error) {

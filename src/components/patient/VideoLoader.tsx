@@ -16,16 +16,16 @@ export const VideoLoader: React.FC = () => {
     }, []);
 
     return (
-        <div className="absolute inset-0 z-50 flex items-center justify-center bg-background/60 backdrop-blur-md transition-all duration-700 overflow-hidden">
-            {/* Holographic Container */}
-            <div className="relative w-full max-w-3xl aspect-video flex items-center justify-center isolate group">
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-background/80 backdrop-blur-xl transition-all duration-700 overflow-hidden">
+            {/* Holographic Container - Full screen centered */}
+            <div className="relative w-[90vw] h-[80vh] max-w-6xl flex items-center justify-center isolate group">
 
                 {/* Holographic Glow/Border */}
-                <div className="absolute inset-0 rounded-xl border border-cyan-500/30 shadow-[0_0_30px_rgba(0,255,255,0.15),inset_0_0_20px_rgba(0,255,255,0.1)] z-20 pointer-events-none"></div>
+                <div className="absolute inset-0 rounded-2xl border-2 border-cyan-500/40 shadow-[0_0_60px_rgba(0,255,255,0.25),inset_0_0_40px_rgba(0,255,255,0.15)] z-20 pointer-events-none"></div>
 
                 {/* Scanlines Overlay */}
                 <div
-                    className="absolute inset-0 rounded-xl z-20 pointer-events-none opacity-30"
+                    className="absolute inset-0 rounded-2xl z-20 pointer-events-none opacity-30"
                     style={{
                         backgroundImage:
                             'repeating-linear-gradient(transparent 0px, transparent 2px, rgba(0, 255, 255, 0.2) 3px)',
@@ -33,13 +33,13 @@ export const VideoLoader: React.FC = () => {
                 />
 
                 {/* Vertical Scanner Bar */}
-                <div className="absolute left-0 w-full h-1 bg-cyan-400/50 shadow-[0_0_10px_rgba(0,255,255,0.8)] z-30 animate-scan" />
+                <div className="absolute left-0 w-full h-1.5 bg-cyan-400/60 shadow-[0_0_20px_rgba(0,255,255,0.9)] z-30 animate-scan" />
 
                 {/* Glitch Effect Layers (Red/Cyan Offset) */}
-                <div className="absolute inset-0 rounded-xl overflow-hidden z-10 mix-blend-screen opacity-0 animate-glitch-1">
+                <div className="absolute inset-0 rounded-2xl overflow-hidden z-10 mix-blend-screen opacity-0 animate-glitch-1">
                     <div className="w-full h-full bg-red-500/20 translate-x-1" />
                 </div>
-                <div className="absolute inset-0 rounded-xl overflow-hidden z-10 mix-blend-screen opacity-0 animate-glitch-2">
+                <div className="absolute inset-0 rounded-2xl overflow-hidden z-10 mix-blend-screen opacity-0 animate-glitch-2">
                     <div className="w-full h-full bg-blue-500/20 -translate-x-1" />
                 </div>
 
@@ -51,27 +51,30 @@ export const VideoLoader: React.FC = () => {
                     playsInline
                     autoPlay
                     loop
-                    className="w-full h-full object-cover rounded-xl opacity-90 transition-transform duration-700"
+                    className="w-full h-full object-cover rounded-2xl opacity-95 transition-transform duration-700"
                     style={{
-                        maskImage: 'radial-gradient(circle at center, black 50%, transparent 95%)',
-                        WebkitMaskImage: 'radial-gradient(circle at center, black 50%, transparent 95%)',
+                        maskImage: 'radial-gradient(circle at center, black 60%, transparent 95%)',
+                        WebkitMaskImage: 'radial-gradient(circle at center, black 60%, transparent 95%)',
                         willChange: 'transform, opacity',
                         transform: 'translateZ(0)',
                         filter:
-                            'contrast(1.2) brightness(1.1) drop-shadow(0 0 10px rgba(0,255,255,0.3))',
+                            'contrast(1.2) brightness(1.1) drop-shadow(0 0 20px rgba(0,255,255,0.4))',
                     }}
                 />
 
                 {/* Tech UI Corners */}
-                <div className="absolute top-0 left-0 w-4 h-4 border-t-2 border-l-2 border-cyan-500 z-30" />
-                <div className="absolute top-0 right-0 w-4 h-4 border-t-2 border-r-2 border-cyan-500 z-30" />
-                <div className="absolute bottom-0 left-0 w-4 h-4 border-b-2 border-l-2 border-cyan-500 z-30" />
-                <div className="absolute bottom-0 right-0 w-4 h-4 border-b-2 border-r-2 border-cyan-500 z-30" />
+                <div className="absolute top-0 left-0 w-8 h-8 border-t-2 border-l-2 border-cyan-500 z-30" />
+                <div className="absolute top-0 right-0 w-8 h-8 border-t-2 border-r-2 border-cyan-500 z-30" />
+                <div className="absolute bottom-0 left-0 w-8 h-8 border-b-2 border-l-2 border-cyan-500 z-30" />
+                <div className="absolute bottom-0 right-0 w-8 h-8 border-b-2 border-r-2 border-cyan-500 z-30" />
 
                 {/* Status Text */}
-                <div className="absolute bottom-6 left-1/2 -translate-x-1/2 text-center space-y-1 z-30">
-                    <div className="text-cyan-400 font-mono text-xs tracking-[0.3em] uppercase animate-pulse drop-shadow-[0_0_5px_rgba(0,255,255,0.8)]">
+                <div className="absolute bottom-8 left-1/2 -translate-x-1/2 text-center space-y-2 z-30">
+                    <div className="text-cyan-400 font-mono text-sm tracking-[0.3em] uppercase animate-pulse drop-shadow-[0_0_10px_rgba(0,255,255,0.9)]">
                         Initialisation Holographique
+                    </div>
+                    <div className="text-cyan-300/70 font-mono text-xs">
+                        Chargement des données médicales...
                     </div>
                 </div>
             </div>

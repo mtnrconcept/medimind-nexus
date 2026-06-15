@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { Slider } from '@/components/ui/slider';
 import { Button } from '@/components/ui/button';
-import { Layers, Eye, EyeOff } from 'lucide-react';
+import { Layers, Eye, EyeOff, AlertCircle, ShieldAlert } from 'lucide-react';
 import type { PatientAlert } from '@/hooks/usePatientAlerts';
 import { cn } from '@/lib/utils';
 
@@ -32,6 +32,20 @@ const DigitalTwin3D = ({ alerts, pathologyName }: DigitalTwin3DProps) => {
     { id: 'organs', name: 'Organs', nameFr: 'Organes', opacity: 100, visible: true, color: 'rgba(180, 80, 80, 0.7)' },
     { id: 'bones', name: 'Bones', nameFr: 'Os', opacity: 100, visible: true, color: 'rgba(240, 240, 220, 0.8)' },
   ]);
+  const [showSevereAlert, setShowSevereAlert] = useState(false);
+
+  // Check for severe conditions
+  const criticalAlerts = alerts.filter(a => a.level === 'CRITICAL');
+  const hasCritical = criticalAlerts.length > 0;
+
+  useEffect(() => {
+    if (hasCritical) {
+      const timer = setTimeout(() => setShowSevereAlert(true), 1000);
+      return () => clearTimeout(timer);
+    } else {
+      setShowSevereAlert(false);
+    }
+  }, [hasCritical]);
 
   // Scan animation on load
   useEffect(() => {
@@ -49,13 +63,13 @@ const DigitalTwin3D = ({ alerts, pathologyName }: DigitalTwin3DProps) => {
   }, []);
 
   const toggleLayer = (layerId: LayerType) => {
-    setLayers(prev => prev.map(l => 
+    setLayers(prev => prev.map(l =>
       l.id === layerId ? { ...l, visible: !l.visible } : l
     ));
   };
 
   const setLayerOpacity = (layerId: LayerType, opacity: number) => {
-    setLayers(prev => prev.map(l => 
+    setLayers(prev => prev.map(l =>
       l.id === layerId ? { ...l, opacity } : l
     ));
   };
@@ -81,14 +95,14 @@ const DigitalTwin3D = ({ alerts, pathologyName }: DigitalTwin3DProps) => {
 
   // Find connections between affected organs
   const connections: { from: string; to: string; level: 'warning' | 'critical' }[] = [];
-  
+
   if (pathologyName?.toLowerCase().includes('diabète') || pathologyName?.toLowerCase().includes('diabetes')) {
     connections.push(
       { from: 'pancreas', to: 'kidney', level: 'warning' },
       { from: 'pancreas', to: 'heart', level: 'warning' }
     );
   }
-  
+
   if (alerts.some(a => a.title.toLowerCase().includes('hypertension'))) {
     connections.push(
       { from: 'heart', to: 'kidney', level: 'critical' },
@@ -107,12 +121,33 @@ const DigitalTwin3D = ({ alerts, pathologyName }: DigitalTwin3DProps) => {
   };
 
   return (
-    <div className="relative bg-slate-950/80 rounded-xl border border-cyan-500/30 p-4 backdrop-blur-sm overflow-hidden">
+    <div className={cn(
+      "relative bg-slate-950/80 rounded-xl border border-cyan-500/30 p-4 backdrop-blur-sm overflow-hidden transition-colors duration-500",
+      hasCritical && !isLoading && "border-red-500/50 bg-red-950/20"
+    )}>
+      {/* Severe Alert Banner */}
+      {showSevereAlert && (
+        <div className="absolute top-4 left-4 right-4 z-40 animate-in fade-in slide-in-from-top-4 duration-500">
+          <div className="bg-red-500/90 text-white px-4 py-2 rounded-lg flex items-center justify-between shadow-[0_0_20px_rgba(239,68,68,0.5)] border border-red-400">
+            <div className="flex items-center gap-2">
+              <ShieldAlert className="w-5 h-5 animate-pulse" />
+              <div className="flex flex-col">
+                <span className="text-xs font-bold uppercase tracking-wider">Alerte Critique</span>
+                <span className="text-sm font-medium leading-tight">
+                  {criticalAlerts[0]?.title || pathologyName || "Condition sévère détectée"}
+                </span>
+              </div>
+            </div>
+            <AlertCircle className="w-5 h-5 opacity-50" />
+          </div>
+        </div>
+      )}
+
       {/* Scan effect overlay */}
       {isLoading && (
         <div className="absolute inset-0 z-20 bg-slate-950/90 flex flex-col items-center justify-center">
           <div className="relative w-32 h-32 mb-4">
-            <div 
+            <div
               className="absolute inset-0 rounded-full border-2 border-cyan-500/50"
               style={{
                 background: `conic-gradient(from 0deg, transparent, hsl(var(--primary)) ${scanProgress}%, transparent ${scanProgress}%)`
@@ -126,7 +161,7 @@ const DigitalTwin3D = ({ alerts, pathologyName }: DigitalTwin3DProps) => {
             SCANNING PATIENT DATA...
           </p>
           <div className="w-48 h-1 bg-slate-800 rounded-full mt-3 overflow-hidden">
-            <div 
+            <div
               className="h-full bg-gradient-to-r from-cyan-500 to-primary transition-all duration-100"
               style={{ width: `${scanProgress}%` }}
             />
@@ -136,9 +171,9 @@ const DigitalTwin3D = ({ alerts, pathologyName }: DigitalTwin3DProps) => {
 
       {/* Horizontal scan line */}
       {isLoading && (
-        <div 
+        <div
           className="absolute left-0 right-0 h-1 bg-gradient-to-r from-transparent via-cyan-400 to-transparent z-30 opacity-80"
-          style={{ 
+          style={{
             top: `${scanProgress}%`,
             boxShadow: '0 0 20px 5px rgba(34, 211, 238, 0.5)'
           }}
@@ -205,19 +240,19 @@ const DigitalTwin3D = ({ alerts, pathologyName }: DigitalTwin3DProps) => {
               <stop offset="100%" stopColor="#e8e8d0" stopOpacity="0.7" />
             </linearGradient>
             <filter id="glow3d">
-              <feGaussianBlur stdDeviation="3" result="coloredBlur"/>
+              <feGaussianBlur stdDeviation="3" result="coloredBlur" />
               <feMerge>
-                <feMergeNode in="coloredBlur"/>
-                <feMergeNode in="SourceGraphic"/>
+                <feMergeNode in="coloredBlur" />
+                <feMergeNode in="SourceGraphic" />
               </feMerge>
             </filter>
             <filter id="scanGlow">
-              <feGaussianBlur stdDeviation="2" result="blur"/>
-              <feFlood floodColor="#22d3ee" floodOpacity="0.5"/>
-              <feComposite in2="blur" operator="in"/>
+              <feGaussianBlur stdDeviation="2" result="blur" />
+              <feFlood floodColor="#22d3ee" floodOpacity="0.5" />
+              <feComposite in2="blur" operator="in" />
               <feMerge>
-                <feMergeNode/>
-                <feMergeNode in="SourceGraphic"/>
+                <feMergeNode />
+                <feMergeNode in="SourceGraphic" />
               </feMerge>
             </filter>
           </defs>
@@ -273,10 +308,10 @@ const DigitalTwin3D = ({ alerts, pathologyName }: DigitalTwin3DProps) => {
           <g style={{ opacity: getLayerOpacity('tissue') }} className="transition-opacity duration-300">
             <ellipse cx="100" cy="35" rx="22" ry="26" fill="url(#tissueGradient)" stroke="#c96060" strokeWidth="0.5" />
             <rect x="88" y="58" width="24" height="16" rx="4" fill="url(#tissueGradient)" stroke="#c96060" strokeWidth="0.5" />
-            <path 
-              d="M62 75 L62 198 L82 228 L118 228 L138 198 L138 75 L120 70 L80 70 Z" 
-              fill="url(#tissueGradient)" 
-              stroke="#c96060" 
+            <path
+              d="M62 75 L62 198 L82 228 L118 228 L138 198 L138 75 L120 70 L80 70 Z"
+              fill="url(#tissueGradient)"
+              stroke="#c96060"
               strokeWidth="0.5"
             />
             <path d="M62 80 L42 85 L32 148 L42 152 L57 100" fill="url(#tissueGradient)" stroke="#c96060" strokeWidth="0.5" />
@@ -287,18 +322,67 @@ const DigitalTwin3D = ({ alerts, pathologyName }: DigitalTwin3DProps) => {
 
           {/* Layer 1: Skin (topmost) */}
           <g style={{ opacity: getLayerOpacity('skin') }} className="transition-opacity duration-300">
-            <ellipse cx="100" cy="35" rx="25" ry="30" fill="url(#skinGradient)" stroke="#deb887" strokeWidth="1" />
-            <rect x="90" y="60" width="20" height="15" fill="url(#skinGradient)" stroke="#deb887" strokeWidth="1" />
-            <path 
-              d="M60 75 L60 200 L80 230 L120 230 L140 200 L140 75 L120 70 L80 70 Z" 
-              fill="url(#skinGradient)" 
-              stroke="#deb887" 
+            <ellipse
+              cx="100"
+              cy="35"
+              rx="25"
+              ry="30"
+              fill={hasCritical ? "rgba(239, 68, 68, 0.2)" : "url(#skinGradient)"}
+              stroke={hasCritical ? "#ef4444" : "#deb887"}
               strokeWidth="1"
             />
-            <path d="M60 80 L40 85 L30 150 L40 155 L55 100" fill="url(#skinGradient)" stroke="#deb887" strokeWidth="1" />
-            <path d="M140 80 L160 85 L170 150 L160 155 L145 100" fill="url(#skinGradient)" stroke="#deb887" strokeWidth="1" />
-            <path d="M80 230 L75 280 L90 280 L100 235" fill="url(#skinGradient)" stroke="#deb887" strokeWidth="1" />
-            <path d="M120 230 L125 280 L110 280 L100 235" fill="url(#skinGradient)" stroke="#deb887" strokeWidth="1" />
+            <rect
+              x="90"
+              y="60"
+              width="20"
+              height="15"
+              fill={hasCritical ? "rgba(239, 68, 68, 0.2)" : "url(#skinGradient)"}
+              stroke={hasCritical ? "#ef4444" : "#deb887"}
+              strokeWidth="1"
+            />
+            <path
+              d="M60 75 L60 200 L80 230 L120 230 L140 200 L140 75 L120 70 L80 70 Z"
+              fill={hasCritical ? "rgba(239, 68, 68, 0.1)" : "url(#skinGradient)"}
+              stroke={hasCritical ? "#ef4444" : "#deb887"}
+              strokeWidth="1"
+            />
+            {/* Severe Pulsing Glow under skin */}
+            {hasCritical && (
+              <path
+                d="M60 75 L60 200 L80 230 L120 230 L140 200 L140 75 L120 70 L80 70 Z"
+                fill="none"
+                stroke="#ef4444"
+                strokeWidth="2"
+                filter="url(#glow3d)"
+              >
+                <animate attributeName="opacity" values="0.2;0.8;0.2" dur="2s" repeatCount="indefinite" />
+                <animate attributeName="stroke-width" values="1;4;1" dur="2s" repeatCount="indefinite" />
+              </path>
+            )}
+            <path
+              d="M60 80 L40 85 L30 150 L40 155 L55 100"
+              fill={hasCritical ? "rgba(239, 68, 68, 0.1)" : "url(#skinGradient)"}
+              stroke={hasCritical ? "#ef4444" : "#deb887"}
+              strokeWidth="1"
+            />
+            <path
+              d="M140 80 L160 85 L170 150 L160 155 L145 100"
+              fill={hasCritical ? "rgba(239, 68, 68, 0.1)" : "url(#skinGradient)"}
+              stroke={hasCritical ? "#ef4444" : "#deb887"}
+              strokeWidth="1"
+            />
+            <path
+              d="M80 230 L75 280 L90 280 L100 235"
+              fill={hasCritical ? "rgba(239, 68, 68, 0.1)" : "url(#skinGradient)"}
+              stroke={hasCritical ? "#ef4444" : "#deb887"}
+              strokeWidth="1"
+            />
+            <path
+              d="M120 230 L125 280 L110 280 L100 235"
+              fill={hasCritical ? "rgba(239, 68, 68, 0.1)" : "url(#skinGradient)"}
+              stroke={hasCritical ? "#ef4444" : "#deb887"}
+              strokeWidth="1"
+            />
           </g>
 
           {/* Connection lines between affected organs */}
@@ -317,12 +401,12 @@ const DigitalTwin3D = ({ alerts, pathologyName }: DigitalTwin3DProps) => {
                 strokeDasharray="4 2"
                 filter="url(#glow3d)"
               >
-                <animate 
-                  attributeName="stroke-dashoffset" 
-                  from="0" 
-                  to="12" 
-                  dur="1s" 
-                  repeatCount="indefinite" 
+                <animate
+                  attributeName="stroke-dashoffset"
+                  from="0"
+                  to="12"
+                  dur="1s"
+                  repeatCount="indefinite"
                 />
               </line>
             );
@@ -348,17 +432,17 @@ const DigitalTwin3D = ({ alerts, pathologyName }: DigitalTwin3DProps) => {
                         strokeWidth="2"
                         filter="url(#glow3d)"
                       >
-                        <animate 
-                          attributeName="r" 
-                          values={hoveredOrgan === organ.id ? "14;16;14" : "12;14;12"} 
-                          dur="1.5s" 
-                          repeatCount="indefinite" 
+                        <animate
+                          attributeName="r"
+                          values={hoveredOrgan === organ.id ? "14;16;14" : "12;14;12"}
+                          dur="1.5s"
+                          repeatCount="indefinite"
                         />
-                        <animate 
-                          attributeName="opacity" 
-                          values="1;0.5;1" 
-                          dur="1.5s" 
-                          repeatCount="indefinite" 
+                        <animate
+                          attributeName="opacity"
+                          values="1;0.5;1"
+                          dur="1.5s"
+                          repeatCount="indefinite"
                         />
                       </circle>
                       <circle

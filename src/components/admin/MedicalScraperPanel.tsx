@@ -25,10 +25,12 @@ import {
   CheckCircle2,
   XCircle,
 } from "lucide-react";
+import { Slider } from "@/components/ui/slider"; // Assurez-vous que ce composant existe
+import { MatrixLoader } from "@/components/ui/MatrixLoader"; // Import du nouveau loader
 
 // --- CONFIGURATION ---
 
-type ScraperMode = "pathologies" | "medications";
+type ScraperMode = "pathologies" | "medications" | "molecules";
 type RateLimitMode = "slow" | "normal" | "fast";
 
 const RATE_LIMIT_DELAYS: Record<RateLimitMode, number> = {
@@ -333,9 +335,336 @@ export const MedicalScraperPanel = () => {
               </TabsTrigger>
             </TabsList>
 
-            <TabsContent value="scraper">
-              <div className="text-center py-8 text-muted-foreground border rounded bg-muted/10">
-                <p>Fonctionnalité de scraping (code non affiché pour clarté).</p>
+            <TabsContent value="scraper" className="space-y-6">
+              {/* Sélection du mode */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">Mode de scraping</label>
+                  <Select value={scraperMode} onValueChange={(v: ScraperMode) => setScraperMode(v)}>
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="pathologies">
+                        <div className="flex items-center gap-2">
+                          <Stethoscope className="h-4 w-4" />
+                          Pathologies & Symptômes
+                        </div>
+                      </SelectItem>
+                      <SelectItem value="medications">
+                        <div className="flex items-center gap-2">
+                          <Tablets className="h-4 w-4" />
+                          Médicaments (Compendium)
+                        </div>
+                      </SelectItem>
+                      <SelectItem value="molecules">
+                        <div className="flex items-center gap-2">
+                          <Database className="h-4 w-4" />
+                          Molécules (Creapharma)
+                        </div>
+                      </SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">Vitesse (délai entre requêtes)</label>
+                  <Select value={rateLimitMode} onValueChange={(v: RateLimitMode) => setRateLimitMode(v)}>
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="slow">Lent (45s) - Sécuritaire</SelectItem>
+                      <SelectItem value="normal">Normal (25s)</SelectItem>
+                      <SelectItem value="fast">Rapide (12s) - Risqué</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+
+              {/* Limite de pages */}
+              <div className="space-y-4 border p-4 rounded-md bg-muted/20">
+                <div className="flex justify-between items-center">
+                  <label className="text-sm font-medium">Limite de pages à scraper</label>
+                  <span className="text-sm font-bold bg-primary/10 px-2 py-1 rounded text-primary">
+                    {pageLimit[0]} pages
+                  </span>
+                </div>
+                <Slider
+                  defaultValue={[10]}
+                  max={500}
+                  step={10}
+                  min={10}
+                  value={pageLimit}
+                  onValueChange={setPageLimit}
+                  className="w-full"
+                />
+                <p className="text-xs text-muted-foreground">
+                  Définit le nombre maximum d'URLs à récupérer lors du mapping.
+                </p>
+              </div>
+
+              {/* URL Input */}
+              <div className="space-y-2">
+                <label className="text-sm font-medium">
+                  {scraperMode === "medications"
+                    ? "URL Compendium.ch ou laisser vide pour https://compendium.ch/fr/product"
+                    : scraperMode === "molecules"
+                      ? "URL Creapharma ou laisser vide pour https://www.creapharma.ch/medicaments-en-suisse/molecules-en-suisse"
+                      : "URL du site médical à scraper (ex: https://www.webmd.com/)"
+                  }
+                </label>
+                <div className="flex gap-2">
+                  <Input
+                    placeholder={scraperMode === "medications"
+                      ? "https://compendium.ch/fr/product"
+                      : scraperMode === "molecules"
+                        ? "https://www.creapharma.ch/medicaments-en-suisse/molecules-en-suisse"
+                        : "https://www.mayoclinic.org/diseases-conditions"
+                    }
+                    value={url}
+                    onChange={(e) => setUrl(e.target.value)}
+                    disabled={isMapping || isScraping}
+                  />
+                  <Button
+                    onClick={async () => {
+                      setIsMapping(true);
+                      setScraperLogs([]);
+                      setMappedUrls([]);
+
+                      try {
+                        const action = scraperMode === "medications" ? "map-compendium" : "map";
+                        const targetUrl = url || (scraperMode === "medications"
+                          ? "https://compendium.ch/fr/product"
+                          : scraperMode === "molecules"
+                            ? "https://www.creapharma.ch/medicaments-en-suisse/molecules-en-suisse"
+                            : "https://www.webmd.com/"
+                        );
+
+                        setScraperLogs(prev => [...prev, {
+                          type: "info",
+                          message: `🔍 Mapping des URLs de ${targetUrl}...`
+                        }]);
+
+                        const { data, error } = await supabase.functions.invoke("medical-scraper", {
+                          body: { action, url: targetUrl, options: { limit: pageLimit[0] } }
+                        });
+
+                        if (error) throw error;
+
+                        if (data.success) {
+                          const urls = data.urls || [];
+                          setMappedUrls(urls);
+                          setScraperLogs(prev => [...prev, {
+                            type: "success",
+                            message: `✅ ${urls.length} URLs trouvées (sur ${data.totalUrls || 0} totales)`
+                          }]);
+                        } else {
+                          throw new Error(data.error || "Mapping échoué");
+                        }
+                      } catch (err: any) {
+                        setScraperLogs(prev => [...prev, {
+                          type: "error",
+                          message: `❌ Erreur: ${err.message}`
+                        }]);
+                        toast({ title: "Erreur", description: err.message, variant: "destructive" });
+                      } finally {
+                        setIsMapping(false);
+                      }
+                    }}
+                    disabled={isMapping || isScraping}
+                  >
+                    {isMapping ? <Loader2 className="animate-spin" /> : <MapPin className="mr-2 h-4 w-4" />}
+                    Mapper
+                  </Button>
+                </div>
+              </div>
+
+              {/* URLs mappées */}
+              {mappedUrls.length > 0 && (
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm font-medium">{mappedUrls.length} URLs prêtes</span>
+                    <Button
+                      onClick={async () => {
+                        setIsScraping(true);
+                        setScraperProgress(0);
+                        const delay = RATE_LIMIT_DELAYS[rateLimitMode];
+                        const PARALLEL_BATCH_SIZE = 3; // Traiter 3 URLs en parallèle
+
+                        setScraperLogs(prev => [...prev, {
+                          type: "info",
+                          message: `🚀 Scraping parallèle: ${mappedUrls.length} URLs (${PARALLEL_BATCH_SIZE} en parallèle, délai: ${delay / 1000}s entre lots)...`
+                        }]);
+
+                        let processed = 0;
+                        let errors = 0;
+                        const stats = {
+                          medicationsAdded: 0,
+                          sideEffectsAdded: 0,
+                          interactionsAdded: 0,
+                          contraindicationsAdded: 0,
+                          pathologiesAdded: 0,
+                          symptomsAdded: 0,
+                          treatmentsAdded: 0,
+                          linksCreated: 0,
+                          moleculesAdded: 0,
+                          moleculesUpdated: 0
+                        };
+
+                        // Découper en chunks de PARALLEL_BATCH_SIZE
+                        const chunks: string[][] = [];
+                        for (let i = 0; i < mappedUrls.length; i += PARALLEL_BATCH_SIZE) {
+                          chunks.push(mappedUrls.slice(i, i + PARALLEL_BATCH_SIZE));
+                        }
+
+                        for (let chunkIndex = 0; chunkIndex < chunks.length; chunkIndex++) {
+                          const chunk = chunks[chunkIndex];
+                          const startIdx = chunkIndex * PARALLEL_BATCH_SIZE;
+
+                          setScraperLogs(prev => {
+                            const newLogs = [...prev];
+                            if (newLogs.length > 10) return [...newLogs.slice(-9), { type: "info", message: `⚡ Lot ${chunkIndex + 1}/${chunks.length}: ${chunk.length} URLs en parallèle...` }];
+                            return [...newLogs, { type: "info", message: `⚡ Lot ${chunkIndex + 1}/${chunks.length}: ${chunk.length} URLs en parallèle...` }];
+                          });
+
+                          // Traiter le chunk en parallèle
+                          const singleAction = scraperMode === "medications"
+                            ? "scrape-medication"
+                            : scraperMode === "molecules"
+                              ? "scrape-molecule"
+                              : "scrape";
+                          const results = await Promise.allSettled(
+                            chunk.map(async (currentUrl) => {
+                              const { data, error } = await supabase.functions.invoke("medical-scraper", {
+                                body: { action: singleAction, url: currentUrl }
+                              });
+                              if (error) throw error;
+                              if (!data.success) throw new Error(data.error || "Erreur inconnue");
+                              return { url: currentUrl, data };
+                            })
+                          );
+
+                          // Traiter les résultats du chunk
+                          results.forEach((result, idx) => {
+                            if (result.status === 'fulfilled') {
+                              const { data } = result.value;
+                              if (data.stats) {
+                                stats.medicationsAdded += data.stats.medicationsAdded || 0;
+                                stats.sideEffectsAdded += data.stats.sideEffectsAdded || 0;
+                                stats.interactionsAdded += data.stats.interactionsAdded || 0;
+                                stats.contraindicationsAdded += data.stats.contraindicationsAdded || 0;
+                                stats.pathologiesAdded += data.stats.pathologiesAdded || 0;
+                                stats.symptomsAdded += data.stats.symptomsAdded || 0;
+                                stats.treatmentsAdded += data.stats.treatmentsAdded || 0;
+                                stats.linksCreated += data.stats.linksCreated || 0;
+                                stats.moleculesAdded += data.stats.moleculesAdded || 0;
+                                stats.moleculesUpdated += data.stats.moleculesUpdated || 0;
+                              }
+                              processed++;
+                            } else {
+                              errors++;
+                              console.error(`Erreur:`, result.reason);
+                              setScraperLogs(prev => [...prev, { type: "error", message: `❌ ${chunk[idx].split('/').pop()}: ${result.reason?.message || 'Erreur'}` }]);
+                            }
+                          });
+
+                          // Update progress
+                          setScraperProgress(Math.round(((startIdx + chunk.length) / mappedUrls.length) * 100));
+
+                          // Pause entre les chunks (sauf dernier)
+                          if (chunkIndex < chunks.length - 1) {
+                            await new Promise(resolve => setTimeout(resolve, delay));
+                          }
+                        }
+
+                        // Final Recap
+                        setScraperLogs(prev => [...prev, {
+                          type: "success",
+                          message: `✅ Terminé! ${processed}/${mappedUrls.length} réussies, ${errors} erreurs.`
+                        }]);
+
+                        if (scraperMode === "medications") {
+                          setScraperLogs(prev => [...prev, { type: "info", message: `📊 Total: ${stats.medicationsAdded} méd, ${stats.sideEffectsAdded} effets, ${stats.interactionsAdded} interactions.` }]);
+                        } else if (scraperMode === "molecules") {
+                          setScraperLogs(prev => [...prev, { type: "info", message: `📊 Total: ${stats.moleculesAdded} Molécules ajoutées, ${stats.moleculesUpdated} mises à jour.` }]);
+                        } else {
+                          setScraperLogs(prev => [...prev, { type: "info", message: `📊 Total: ${stats.pathologiesAdded} path, ${stats.symptomsAdded} sympt, ${stats.treatmentsAdded} traits.` }]);
+                        }
+
+                        setIsScraping(false);
+                      }}
+                      disabled={isScraping}
+                      className="bg-green-600 hover:bg-green-700"
+                    >
+                      {isScraping ? <Loader2 className="animate-spin mr-2" /> : <Play className="mr-2 h-4 w-4" />}
+                      Lancer le scraping
+                    </Button>
+                  </div>
+                  <ScrollArea className="h-[100px] border rounded p-2 bg-muted/20 text-xs font-mono">
+                    {mappedUrls.slice(0, 20).map((u, i) => (
+                      <div key={i} className="truncate text-muted-foreground">{u}</div>
+                    ))}
+                    {mappedUrls.length > 20 && (
+                      <div className="text-primary">... et {mappedUrls.length - 20} autres</div>
+                    )}
+                  </ScrollArea>
+                </div>
+              )}
+
+              {/* Animation Matrix Loader pendant le scraping */}
+              {isScraping && (
+                <div className="space-y-4 animate-in fade-in zoom-in duration-300">
+                  <div className="flex justify-between items-center">
+                    <h3 className="text-lg font-semibold text-green-500 flex items-center gap-2">
+                      <Database className="h-5 w-5 animate-pulse" />
+                      Extraction des données en cours...
+                    </h3>
+                    <Badge variant="outline" className="border-green-500 text-green-500 bg-green-500/10">
+                      IA Powered
+                    </Badge>
+                  </div>
+
+                  <MatrixLoader
+                    isActive={isScraping}
+                    progress={scraperProgress}
+                    status={`Traitement: ${scraperLogs[scraperLogs.length - 1]?.message || "Initialisation..."}`}
+                  />
+
+                  <p className="text-xs text-center text-muted-foreground font-mono">
+                    NE FERMEZ PAS CETTE PAGE. Le scraping continue en arrière-plan.
+                  </p>
+                </div>
+              )}
+
+              {/* Logs */}
+              {scraperLogs.length > 0 && (
+                <div className="space-y-2">
+                  <h3 className="text-sm font-medium">Journal d'activité</h3>
+                  <ScrollArea className="h-[200px] bg-slate-950 text-slate-50 rounded p-3 border font-mono text-xs">
+                    {scraperLogs.map((log, i) => (
+                      <div
+                        key={i}
+                        className={`mb-1 ${log.type === "error" ? "text-red-400" :
+                          log.type === "success" ? "text-green-400" :
+                            "text-slate-300"
+                          }`}
+                      >
+                        {log.message}
+                      </div>
+                    ))}
+                  </ScrollArea>
+                </div>
+              )}
+
+              {/* Guide rapide */}
+              <div className="bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-900 rounded-lg p-4 space-y-2">
+                <h4 className="font-medium text-blue-900 dark:text-blue-100">Guide rapide</h4>
+                <ul className="text-sm text-blue-800 dark:text-blue-200 space-y-1 list-disc list-inside">
+                  <li><strong>Pathologies</strong>: Scrape les descriptions de maladies, symptômes associés et traitements</li>
+                  <li><strong>Médicaments</strong>: Scrape les notices Compendium (composition, effets secondaires, interactions)</li>
+                  <li><strong>Molécules</strong>: Scrape les informations détaillées sur Creapharma (IUPAC, SMILES, indications)</li>
+                  <li>Utilisez le mode "Lent" pour éviter le rate-limiting de Firecrawl</li>
+                </ul>
               </div>
             </TabsContent>
 
@@ -445,13 +774,12 @@ export const MedicalScraperPanel = () => {
                     {importLogs.map((log, i) => (
                       <div
                         key={i}
-                        className={`mb-1.5 flex items-start gap-2 ${
-                          log.status === "error"
-                            ? "text-red-400"
-                            : log.status === "success"
-                              ? "text-green-400"
-                              : "text-slate-400"
-                        }`}
+                        className={`mb-1.5 flex items-start gap-2 ${log.status === "error"
+                          ? "text-red-400"
+                          : log.status === "success"
+                            ? "text-green-400"
+                            : "text-slate-400"
+                          }`}
                       >
                         <span className="mt-0.5">
                           {log.status === "success" ? (

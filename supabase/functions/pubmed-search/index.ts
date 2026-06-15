@@ -31,13 +31,17 @@ serve(async (req) => {
     }
 
     // Step 1: Search for article IDs
-    const searchUrl = `https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=pubmed&term=${encodeURIComponent(query)}&retmax=${maxResults}&retmode=json&sort=relevance`;
-    
+    let searchUrl = `https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=pubmed&term=${encodeURIComponent(query)}&retmax=${maxResults}&retmode=json&sort=relevance`;
+    const searchApiKey = Deno.env.get("NCBI_API_KEY");
+    if (searchApiKey) {
+      searchUrl += `&api_key=${searchApiKey}`;
+    }
+
     const searchResponse = await fetch(searchUrl);
     const searchData = await searchResponse.json();
-    
+
     const ids = searchData?.esearchresult?.idlist || [];
-    
+
     if (ids.length === 0) {
       return new Response(
         JSON.stringify({ articles: [] }),
@@ -45,27 +49,56 @@ serve(async (req) => {
       );
     }
 
-    // Step 2: Fetch article details
-    const fetchUrl = `https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi?db=pubmed&id=${ids.join(",")}&retmode=json`;
-    
+    // Step 2: Fetch article details using efetch (XML) for full abstracts
+    let fetchUrl = `https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=pubmed&id=${ids.join(",")}&retmode=xml`;
+
+    // Add API Key if available (though explicit check usually better, here we assume public or inject if env exists)
+    // Actually, let's try to get it from env if possible, but Deno.env might not be fully typed here without declaration.
+    // Just in case, checking env.
+    const apiKey = Deno.env.get("NCBI_API_KEY");
+    if (apiKey) {
+      fetchUrl += `&api_key=${apiKey}`;
+    }
+
     const fetchResponse = await fetch(fetchUrl);
-    const fetchData = await fetchResponse.json();
-    
+    const xmlText = await fetchResponse.text();
+
     const articles: PubMedArticle[] = [];
-    
-    for (const id of ids) {
-      const article = fetchData?.result?.[id];
-      if (article) {
-        articles.push({
-          pmid: id,
-          title: article.title || "Sans titre",
-          authors: article.authors?.map((a: { name: string }) => a.name) || [],
-          journal: article.fulljournalname || article.source || "",
-          pubDate: article.pubdate || "",
-          abstract: article.elocationid || "",
-          url: `https://pubmed.ncbi.nlm.nih.gov/${id}/`,
-        });
-      }
+
+    // Simple XML split
+    const xmlArticles = xmlText.split('</PubmedArticle>');
+
+    for (const articleXml of xmlArticles) {
+      if (!articleXml.includes('<PubmedArticle>')) continue;
+
+      const idMatch = articleXml.match(/<PMID[^>]*>(.*?)<\/PMID>/);
+      const id = idMatch ? idMatch[1] : '';
+      if (!id) continue;
+
+      const titleMatch = articleXml.match(/<ArticleTitle>(.*?)<\/ArticleTitle>/);
+      const title = titleMatch ? titleMatch[1] : "Sans titre";
+
+      const abstractMatches = [...articleXml.matchAll(/<AbstractText[^>]*>(.*?)<\/AbstractText>/g)];
+      const abstract = abstractMatches.map(m => m[1]).join(" ");
+
+      const journalMatch = articleXml.match(/<Title>(.*?)<\/Title>/);
+      const journal = journalMatch ? journalMatch[1] : "";
+
+      const yearMatch = articleXml.match(/<Year>(.*?)<\/Year>/);
+      const year = yearMatch ? yearMatch[1] : "";
+
+      const authorMatches = [...articleXml.matchAll(/<LastName>(.*?)<\/LastName>.*?<Initials>(.*?)<\/Initials>/gs)];
+      const authors = authorMatches.map(m => `${m[1]} ${m[2]}`);
+
+      articles.push({
+        pmid: id,
+        title: title,
+        authors: authors,
+        journal: journal,
+        pubDate: year,
+        abstract: abstract || "Résumé non disponible.",
+        url: `https://pubmed.ncbi.nlm.nih.gov/${id}/`,
+      });
     }
 
     return new Response(
