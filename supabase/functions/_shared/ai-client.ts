@@ -29,6 +29,21 @@ export interface AIResponse {
   clinicalRoute?: AIClinicalRouteMetadata;
 }
 
+export interface AIBackgroundResponse {
+  id: string;
+  status: string;
+  provider: 'openai';
+  model: string;
+  reasoningEffort?: ClinicalReasoningEffort;
+  clinicalSafety?: ClinicalRiskAssessment;
+  clinicalRoute?: AIClinicalRouteMetadata;
+}
+
+export interface AIBackgroundPollResult extends AIBackgroundResponse {
+  text?: string;
+  errorMessage?: string;
+}
+
 export interface AIClinicalRouteMetadata {
   task: ClinicalTask;
   riskLevel: ClinicalRiskAssessment['riskLevel'];
@@ -109,6 +124,7 @@ const OPENAI_CHAT_COMPLETIONS_URL = 'https://api.openai.com/v1/chat/completions'
 const OPENAI_RESPONSES_URL = 'https://api.openai.com/v1/responses';
 const OPENAI_EMBEDDINGS_URL = 'https://api.openai.com/v1/embeddings';
 const DEFAULT_OPENAI_TIMEOUT_MS = 90_000;
+const OPENAI_BACKGROUND_REQUEST_TIMEOUT_MS = 15_000;
 const MAX_CLINICAL_ROUTING_TEXT_CHARS = 20_000;
 const CLINICAL_CONTRACT_MARKER = 'CONTRAT CLINIQUE VERIFIABLE';
 
@@ -343,6 +359,36 @@ async function fetchOpenAI(
   }
 }
 
+async function fetchOpenAIGet(
+  url: string,
+  apiKey: string,
+  timeoutMs: number,
+): Promise<Response> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  const startedAt = Date.now();
+
+  try {
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      signal: controller.signal,
+    });
+    console.log(`[AI] OpenAI GET ${response.status} in ${Date.now() - startedAt}ms`);
+    return response;
+  } catch (error) {
+    if (error instanceof Error && error.name === 'AbortError') {
+      throw new Error(`OpenAI GET request timed out after ${timeoutMs}ms`);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 function hasReasoningEffort(options: AICallOptions): boolean {
   return Boolean(options.reasoningEffort && options.reasoningEffort !== 'none');
 }
@@ -570,6 +616,22 @@ function extractResponsesText(data: Record<string, unknown>): string {
   return chunks.join('');
 }
 
+function extractResponsesError(data: Record<string, unknown>): string | undefined {
+  const error = data.error;
+  if (error && typeof error === 'object') {
+    const message = (error as { message?: unknown }).message;
+    if (typeof message === 'string') return message;
+    return JSON.stringify(error);
+  }
+
+  const incompleteDetails = data.incomplete_details;
+  if (incompleteDetails && typeof incompleteDetails === 'object') {
+    return JSON.stringify(incompleteDetails);
+  }
+
+  return undefined;
+}
+
 function extractResponsesStreamDelta(event: Record<string, unknown>): string {
   if (typeof event.delta === 'string') {
     return event.delta;
@@ -641,6 +703,93 @@ export async function callAI(
     reasoningEffort: prepared.options.reasoningEffort,
     clinicalSafety: prepared.clinicalSafety,
     clinicalRoute: prepared.clinicalRoute,
+  };
+}
+
+/**
+ * Start a long-running Responses API request in OpenAI background mode.
+ * The caller should persist the returned response id and poll it later.
+ */
+export async function startBackgroundAI(
+  systemPrompt: string,
+  userPrompt: string | AIMessage[],
+  options: AICallOptions = {},
+): Promise<AIBackgroundResponse> {
+  const prepared = prepareClinicalAICall(systemPrompt, userPrompt, options);
+  const { apiKey, model } = getOpenAIConfig(prepared.options);
+  const body = {
+    ...buildResponsesBody(model, prepared.options),
+    input: buildResponsesInput(prepared.systemPrompt, userPrompt),
+    background: true,
+    store: true,
+  };
+
+  const response = await fetchOpenAI(
+    OPENAI_RESPONSES_URL,
+    apiKey,
+    body,
+    Math.min(resolveTimeoutMs(prepared.options), OPENAI_BACKGROUND_REQUEST_TIMEOUT_MS),
+  );
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`OpenAI background request failed (${response.status}): ${errorText}`);
+  }
+
+  const data = await response.json() as Record<string, unknown>;
+  const id = typeof data.id === 'string' ? data.id : '';
+  const status = typeof data.status === 'string' ? data.status : 'unknown';
+
+  if (!id) {
+    throw new Error('OpenAI background response did not include an id');
+  }
+
+  return {
+    id,
+    status,
+    provider: 'openai',
+    model,
+    reasoningEffort: prepared.options.reasoningEffort,
+    clinicalSafety: prepared.clinicalSafety,
+    clinicalRoute: prepared.clinicalRoute,
+  };
+}
+
+export async function retrieveBackgroundAI(
+  responseId: string,
+  options: AICallOptions = {},
+): Promise<AIBackgroundPollResult> {
+  const apiKey = Deno.env.get('OPENAI_API_KEY');
+  if (!apiKey) {
+    throw new Error('OPENAI_API_KEY not configured');
+  }
+
+  const response = await fetchOpenAIGet(
+    `${OPENAI_RESPONSES_URL}/${encodeURIComponent(responseId)}`,
+    apiKey,
+    Math.min(resolveTimeoutMs(options), OPENAI_BACKGROUND_REQUEST_TIMEOUT_MS),
+  );
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`OpenAI background retrieve failed (${response.status}): ${errorText}`);
+  }
+
+  const data = await response.json() as Record<string, unknown>;
+  const status = typeof data.status === 'string' ? data.status : 'unknown';
+  const model = typeof data.model === 'string'
+    ? data.model
+    : (options.model || Deno.env.get('OPENAI_MODEL') || DEFAULT_OPENAI_MODEL);
+  const text = status === 'completed' ? extractResponsesText(data) : undefined;
+
+  return {
+    id: responseId,
+    status,
+    provider: 'openai',
+    model,
+    reasoningEffort: options.reasoningEffort,
+    text,
+    errorMessage: extractResponsesError(data),
   };
 }
 

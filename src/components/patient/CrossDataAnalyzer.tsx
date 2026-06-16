@@ -38,6 +38,7 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { useAI } from '@/contexts/AIContext';
+import { resolveAIJob, type AIJobProgress } from '@/lib/aiJobs';
 import { VideoLoader } from './VideoLoader';
 import { RelationshipMatrix } from './RelationshipMatrix';
 import { RiskNetworkGraph } from './RiskNetworkGraph';
@@ -212,6 +213,7 @@ const CrossDataAnalyzer = ({ patientData }: CrossDataAnalyzerProps) => {
   const [fadeOut, setFadeOut] = useState(false);
   const [analyzing, setAnalyzing] = useState(false);
   const [generatingTreatmentSchemas, setGeneratingTreatmentSchemas] = useState(false);
+  const [analysisProgress, setAnalysisProgress] = useState<AIJobProgress | null>(null);
   const [isAutoSelecting, setIsAutoSelecting] = useState(false);
   const [result, setResult] = useState<AnalysisResult | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -837,11 +839,15 @@ const CrossDataAnalyzer = ({ patientData }: CrossDataAnalyzerProps) => {
     }
 
     setAnalyzing(true);
+    setAnalysisProgress(null);
     setError(null);
     setResult(null);
 
     try {
-      const { data, error: fnError } = await invokeAI('cross-data-analyzer', buildAnalysisRequestBody());
+      const { data, error: fnError } = await invokeAI('cross-data-analyzer', {
+        ...buildAnalysisRequestBody(),
+        async: true,
+      });
 
       if (fnError) throw fnError;
 
@@ -856,13 +862,21 @@ const CrossDataAnalyzer = ({ patientData }: CrossDataAnalyzerProps) => {
         return;
       }
 
-      setResult(data.analysis);
-      toast.success(`Analyse terminée : ${data.context.pubmedSearches || 0} recherches PubMed effectuées`);
+      const resolvedData = await resolveAIJob<{
+        analysis: AnalysisResult;
+        context?: { pubmedSearches?: number };
+      }>(invokeAI, 'cross-data-analyzer', data, {
+        onProgress: setAnalysisProgress,
+      });
+
+      setResult(resolvedData.analysis);
+      toast.success(`Analyse terminée : ${resolvedData.context?.pubmedSearches || 0} recherches PubMed effectuées`);
     } catch (err) {
       console.error('Erreur d\'analyse:', err);
-      setError('Erreur lors de l\'analyse. Veuillez réessayer.');
+      setError(err instanceof Error ? err.message : 'Erreur lors de l\'analyse. Veuillez réessayer.');
     } finally {
       setAnalyzing(false);
+      setAnalysisProgress(null);
     }
   };
 
@@ -873,6 +887,7 @@ const CrossDataAnalyzer = ({ patientData }: CrossDataAnalyzerProps) => {
     }
 
     setGeneratingTreatmentSchemas(true);
+    setAnalysisProgress(null);
     setError(null);
 
     try {
@@ -880,23 +895,32 @@ const CrossDataAnalyzer = ({ patientData }: CrossDataAnalyzerProps) => {
         ...buildAnalysisRequestBody(),
         analysisMode: 'treatment_schemas',
         currentAnalysis: result,
+        async: true,
       });
 
       if (fnError) throw fnError;
       if (data.error) throw new Error(data.error);
 
-      const treatmentSchemas = data.treatmentSchemas || data.analysis?.treatmentSchemas || [];
+      const resolvedData = await resolveAIJob<{
+        treatmentSchemas?: TreatmentSchema[];
+        analysis?: AnalysisResult;
+      }>(invokeAI, 'cross-data-analyzer', data, {
+        onProgress: setAnalysisProgress,
+      });
+
+      const treatmentSchemas = resolvedData.treatmentSchemas || resolvedData.analysis?.treatmentSchemas || [];
       setResult(prev => prev ? {
         ...prev,
         treatmentSchemas,
-        schemaComparison: data.analysis?.schemaComparison || prev.schemaComparison,
+        schemaComparison: resolvedData.analysis?.schemaComparison || prev.schemaComparison,
       } : prev);
       toast.success(`${treatmentSchemas.length} schéma(s) thérapeutique(s) alternatif(s) généré(s)`);
     } catch (err) {
       console.error('Erreur génération schémas alternatifs:', err);
-      setError('Erreur lors de la génération des schémas thérapeutiques alternatifs.');
+      setError(err instanceof Error ? err.message : 'Erreur lors de la génération des schémas thérapeutiques alternatifs.');
     } finally {
       setGeneratingTreatmentSchemas(false);
+      setAnalysisProgress(null);
     }
   };
 
@@ -1642,6 +1666,21 @@ const CrossDataAnalyzer = ({ patientData }: CrossDataAnalyzerProps) => {
                   )}
                 </Button>
               </div >
+
+              {analysisProgress && (
+                <div className="rounded-md border bg-muted/30 p-3 text-sm text-muted-foreground">
+                  <div className="flex items-center justify-between gap-3">
+                    <span>{analysisProgress.message || 'Analyse IA en cours...'}</span>
+                    <span className="font-medium text-foreground">{analysisProgress.progress}%</span>
+                  </div>
+                  <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-muted">
+                    <div
+                      className="h-full rounded-full bg-primary transition-all"
+                      style={{ width: `${Math.max(5, Math.min(100, analysisProgress.progress))}%` }}
+                    />
+                  </div>
+                </div>
+              )}
 
               {/* Erreur */}
               {

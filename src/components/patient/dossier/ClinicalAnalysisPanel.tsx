@@ -30,6 +30,7 @@ import {
     Sparkles
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { resolveAIJob } from '@/lib/aiJobs';
 import { toast } from 'sonner';
 
 interface ClinicalAnalysisPanelProps {
@@ -74,21 +75,22 @@ const ClinicalAnalysisPanel = ({ patientId, refreshTrigger }: ClinicalAnalysisPa
         try {
             // Call the cross-data-analyzer function
             const { data, error } = await invokeAI('cross-data-analyzer', {
-                patientId, forceRefresh
+                patientId, forceRefresh, async: true
             });
 
             if (error) throw error;
+            const resolvedData = await resolveAIJob<any>(invokeAI, 'cross-data-analyzer', data);
 
-            if (data?.synthesis) {
+            if (resolvedData?.synthesis) {
                 setAnalysis({
-                    summary: data.synthesis.global_synthesis || 'Analyse en cours...',
-                    health_score: data.synthesis.health_score || 0,
-                    risk_level: data.synthesis.risk_level || 'low',
-                    key_findings: data.synthesis.vigilance_points || [],
-                    recommendations: data.synthesis.recommendations?.map((r: any) => r.recommendation) || [],
-                    alerts: data.synthesis.alerts || [],
-                    trends: data.synthesis.trends || [],
-                    drug_interactions: data.synthesis.drug_interactions || [],
+                    summary: resolvedData.synthesis.global_synthesis || 'Analyse en cours...',
+                    health_score: resolvedData.synthesis.health_score || 0,
+                    risk_level: resolvedData.synthesis.risk_level || 'low',
+                    key_findings: resolvedData.synthesis.vigilance_points || [],
+                    recommendations: resolvedData.synthesis.recommendations?.map((r: any) => r.recommendation) || [],
+                    alerts: resolvedData.synthesis.alerts || [],
+                    trends: resolvedData.synthesis.trends || [],
+                    drug_interactions: resolvedData.synthesis.drug_interactions || [],
                     last_updated: new Date().toISOString()
                 });
             }
@@ -110,7 +112,7 @@ const ClinicalAnalysisPanel = ({ patientId, refreshTrigger }: ClinicalAnalysisPa
             setLoading(false);
             setAnalyzing(false);
         }
-    }, [patientId]);
+    }, [invokeAI, patientId]);
 
     // Fetch on mount
     useEffect(() => {
