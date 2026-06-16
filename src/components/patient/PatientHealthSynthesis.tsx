@@ -11,9 +11,9 @@
  * - Drug interactions
  */
 
-import { useState, useEffect } from 'react';
-import { supabase } from '@/integrations/supabase/client';
+import { useState } from 'react';
 import { useAI } from '@/contexts/AIContext';
+import { resolveAIJob, type AIJobProgress } from '@/lib/aiJobs';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -113,25 +113,39 @@ const PatientHealthSynthesis = ({ patientId }: PatientHealthSynthesisProps) => {
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
+    const [jobProgress, setJobProgress] = useState<AIJobProgress | null>(null);
 
     const fetchSynthesis = async () => {
         setLoading(true);
         setError(null);
+        setJobProgress(null);
 
         try {
             const { data, error: fnError } = await invokeAI('patient-health-synthesis', {
-                patient_id: patientId
+                patient_id: patientId,
+                async: true,
             });
 
             if (fnError) throw fnError;
 
-            setSynthesis(data);
+            const resolvedData = await resolveAIJob<HealthSynthesis>(
+                invokeAI,
+                'patient-health-synthesis',
+                data,
+                {
+                    maxWaitMs: 1_200_000,
+                    onProgress: setJobProgress,
+                },
+            );
+
+            setSynthesis(resolvedData);
             setLastUpdated(new Date());
         } catch (err) {
             console.error('Error fetching synthesis:', err);
             setError('Erreur lors de l\'analyse. Veuillez réessayer.');
         } finally {
             setLoading(false);
+            setJobProgress(null);
         }
     };
 
@@ -248,8 +262,12 @@ const PatientHealthSynthesis = ({ patientId }: PatientHealthSynthesisProps) => {
 
                 {loading && (
                     <div className="py-8">
-                        <HolographicLoader text="Analyse cognitive du dossier en cours..." />
-                        <p className="text-center text-xs text-muted-foreground mt-2 opacity-70">Extraction des patterns cliniques & interactions</p>
+                        <HolographicLoader text={jobProgress?.message || "Analyse cognitive du dossier en cours..."} />
+                        <p className="text-center text-xs text-muted-foreground mt-2 opacity-70">
+                            {jobProgress
+                                ? `Progression: ${Math.round(jobProgress.progress || 0)}%`
+                                : 'Extraction des patterns cliniques & interactions'}
+                        </p>
                     </div>
                 )}
 
