@@ -1,21 +1,16 @@
 -- Restore high-value indexes used by the current app and Edge Functions.
--- This migration is intentionally non-destructive: no duplicate cleanup or
--- constraint tightening is done without production measurements first.
+-- This migration avoids data cleanup and constraint tightening. The only
+-- cleanup below drops a duplicate standalone index when the equivalent index
+-- already exists and the duplicate is not bound to a constraint.
 
 CREATE EXTENSION IF NOT EXISTS pg_trgm;
 
 -- Cross-data analyzer cache lookups.
-CREATE INDEX IF NOT EXISTS idx_causal_links_cache_pair_hash
-  ON public.causal_links_cache(pair_hash);
-
 CREATE INDEX IF NOT EXISTS idx_causal_links_cache_from_lookup
   ON public.causal_links_cache(from_type, from_element);
 
 CREATE INDEX IF NOT EXISTS idx_causal_links_cache_to_lookup
   ON public.causal_links_cache(to_type, to_element);
-
-CREATE INDEX IF NOT EXISTS idx_analysis_cache_request_hash
-  ON public.analysis_cache(request_hash);
 
 -- Medical search/typeahead paths that use ILIKE in frontend and functions.
 CREATE INDEX IF NOT EXISTS idx_pathologies_name_trgm
@@ -32,6 +27,20 @@ CREATE INDEX IF NOT EXISTS idx_medications_name_trgm
 
 CREATE INDEX IF NOT EXISTS idx_medications_substance_trgm
   ON public.medications USING gin (substance gin_trgm_ops);
+
+DO $$
+BEGIN
+  IF to_regclass('public.idx_symptoms_name_lower_unique') IS NOT NULL
+    AND to_regclass('public.idx_symptoms_name_unique') IS NOT NULL
+    AND NOT EXISTS (
+      SELECT 1
+      FROM pg_constraint
+      WHERE conindid = 'public.idx_symptoms_name_lower_unique'::regclass
+    )
+  THEN
+    DROP INDEX public.idx_symptoms_name_lower_unique;
+  END IF;
+END $$;
 
 -- Patient dossier cards all filter by patient_id and most order by a date.
 CREATE INDEX IF NOT EXISTS idx_patients_pathology_created
@@ -152,3 +161,70 @@ CREATE INDEX IF NOT EXISTS idx_lbd_reasoning_traces_created
 
 CREATE INDEX IF NOT EXISTS idx_lbd_contradictions_created
   ON public.lbd_contradictions(created_at DESC);
+
+-- Advisor-confirmed foreign key indexes from project kparxcfspgoonqttduyk.
+CREATE INDEX IF NOT EXISTS idx_alert_subscriptions_user_id
+  ON public.alert_subscriptions(user_id);
+
+CREATE INDEX IF NOT EXISTS idx_cde_node_categories_parent_id
+  ON public.cde_node_categories(parent_id);
+
+CREATE INDEX IF NOT EXISTS idx_cde_nodes_category_id
+  ON public.cde_nodes(category_id);
+
+CREATE INDEX IF NOT EXISTS idx_discovery_alerts_user_id
+  ON public.discovery_alerts(user_id);
+
+CREATE INDEX IF NOT EXISTS idx_discovery_feedback_discovery_id
+  ON public.discovery_feedback(discovery_id);
+
+CREATE INDEX IF NOT EXISTS idx_discovery_feedback_user_id
+  ON public.discovery_feedback(user_id);
+
+CREATE INDEX IF NOT EXISTS idx_discovery_subscriptions_user_id
+  ON public.discovery_subscriptions(user_id);
+
+CREATE INDEX IF NOT EXISTS idx_discovery_validation_logs_discovery_id
+  ON public.discovery_validation_logs(discovery_id);
+
+CREATE INDEX IF NOT EXISTS idx_drug_compositions_molecule_id
+  ON public.drug_compositions(molecule_id);
+
+CREATE INDEX IF NOT EXISTS idx_focused_research_sessions_user_id
+  ON public.focused_research_sessions(user_id);
+
+CREATE INDEX IF NOT EXISTS idx_food_drug_interactions_food_id
+  ON public.food_drug_interactions(food_id);
+
+CREATE INDEX IF NOT EXISTS idx_food_drug_interactions_medication_id
+  ON public.food_drug_interactions(medication_id);
+
+CREATE INDEX IF NOT EXISTS idx_kg_enzyme_medication_medication_id
+  ON public.kg_enzyme_medication(medication_id);
+
+CREATE INDEX IF NOT EXISTS idx_ml_recommendations_user_id
+  ON public.ml_recommendations(user_id);
+
+CREATE INDEX IF NOT EXISTS idx_patient_alerts_patient_id
+  ON public.patient_alerts(patient_id);
+
+CREATE INDEX IF NOT EXISTS idx_patient_medications_medication_id
+  ON public.patient_medications(medication_id);
+
+CREATE INDEX IF NOT EXISTS idx_patient_medications_patient_id
+  ON public.patient_medications(patient_id);
+
+CREATE INDEX IF NOT EXISTS idx_patient_medications_source_document_id
+  ON public.patient_medications(source_document_id);
+
+CREATE INDEX IF NOT EXISTS idx_recommendation_actions_action_by
+  ON public.recommendation_actions(action_by);
+
+CREATE INDEX IF NOT EXISTS idx_recommendation_actions_recommendation_id
+  ON public.recommendation_actions(recommendation_id);
+
+CREATE INDEX IF NOT EXISTS idx_recommendations_log_patient_id
+  ON public.recommendations_log(patient_id);
+
+CREATE INDEX IF NOT EXISTS idx_semantic_edges_target_node_id
+  ON public.semantic_edges(target_node_id);
