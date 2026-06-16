@@ -1,4 +1,6 @@
 import {
+  buildPairCandidates,
+  buildPairHash,
   buildEvidenceLinks,
   buildSelectedElements,
   computeSchemaStats,
@@ -7,8 +9,10 @@ import {
   mergeAndValidateLinks,
   normalizeCausalLink,
   scoreFromStats,
+  typedElementKey,
   type AnalysisResult,
   type CausalLink,
+  type SelectedElement,
 } from './analysis-utils.ts';
 
 function assert(condition: unknown, message: string): asserts condition {
@@ -128,6 +132,59 @@ Deno.test('deduplicates drug-drug interactions independent of direction', () => 
   ]);
   assert(links.length === 1, 'drug-drug interaction should be deduplicated');
   assert(links[0].dangerLevel === 'critical', 'stronger evidence should win');
+});
+
+Deno.test('computes only incremental pair work when elements are added', () => {
+  const initialElements: SelectedElement[] = [
+    { name: 'Syndrome nephrotique', type: 'pathology' },
+    { name: 'prednisolone', type: 'medication' },
+    { name: 'ciclosporine', type: 'medication' },
+    { name: 'irfen', type: 'medication' },
+  ];
+  const addedElements: SelectedElement[] = [
+    { name: 'varicelle', type: 'pathology' },
+    { name: 'aciclovir', type: 'medication' },
+  ];
+  const expandedElements = [...initialElements, ...addedElements];
+
+  const initialPairs = buildPairCandidates(initialElements);
+  const expandedPairs = buildPairCandidates(expandedElements);
+  const initialPairHashes = new Set(initialPairs.map((pair) => pair.pairHash));
+  const initialElementKeys = new Set(initialElements.map(typedElementKey));
+  const addedElementKeys = new Set(addedElements.map(typedElementKey));
+  const pairsToAudit = expandedPairs.filter((pair) => !initialPairHashes.has(pair.pairHash));
+
+  assert(initialPairs.length === 6, 'four initial elements should produce six cached pairs');
+  assert(expandedPairs.length === 15, 'six expanded elements should produce fifteen total pairs');
+  assert(pairsToAudit.length === 9, 'second search should audit only nine new pairs');
+  assert(
+    buildPairHash('Syndrome nephrotique', 'pathology', 'prednisolone', 'medication') ===
+      'prednisolone|medication|syndrome nephrotique|pathology',
+    'pair hash format must remain compatible with existing causal_links_cache rows',
+  );
+  assert(
+    pairsToAudit.every((pair) => {
+      const leftKey = typedElementKey(pair.left);
+      const rightKey = typedElementKey(pair.right);
+      return !(initialElementKeys.has(leftKey) && initialElementKeys.has(rightKey));
+    }),
+    'old-old pairs must stay covered by cache',
+  );
+  assert(
+    pairsToAudit.some((pair) => {
+      const leftKey = typedElementKey(pair.left);
+      const rightKey = typedElementKey(pair.right);
+      return (
+        (initialElementKeys.has(leftKey) && addedElementKeys.has(rightKey)) ||
+        (addedElementKeys.has(leftKey) && initialElementKeys.has(rightKey))
+      );
+    }),
+    'old-new pairs should be audited',
+  );
+  assert(
+    pairsToAudit.some((pair) => addedElementKeys.has(typedElementKey(pair.left)) && addedElementKeys.has(typedElementKey(pair.right))),
+    'new-new pairs should be audited',
+  );
 });
 
 Deno.test('computes schema risk score from dangerous and beneficial links', () => {
