@@ -666,12 +666,12 @@ export async function createEmbeddings(
     throw new Error(`OpenAI Embeddings request failed (${response.status}): ${errorText}`);
   }
 
-  const data = await response.json();
+  const data = await response.json() as { data?: Array<{ index?: number | string; embedding?: unknown }> };
   const rows = Array.isArray(data.data) ? data.data : [];
   return rows
     .sort((left, right) => Number(left.index || 0) - Number(right.index || 0))
     .map((row) => row.embedding)
-    .filter((embedding) => Array.isArray(embedding));
+    .filter((embedding): embedding is number[] => Array.isArray(embedding));
 }
 
 /**

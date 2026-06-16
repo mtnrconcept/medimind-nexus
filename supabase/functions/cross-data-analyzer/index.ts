@@ -19,6 +19,7 @@ import {
   ensureTreatmentSchemasShape,
   mergeAndValidateLinks,
   normalizeMedicalName,
+  type SelectedElement,
   type TreatmentSchema,
 } from "./analysis-utils.ts";
 
@@ -26,6 +27,10 @@ const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
+
+const PUBMED_FETCH_TIMEOUT_MS = 6_000;
+const MAX_PUBMED_QUERIES = 4;
+const INTERACTIVE_AI_TIMEOUT_MS = 45_000;
 
 interface CausalLink {
   from: string;
@@ -103,15 +108,43 @@ interface AnalysisResult {
   }[];
 }
 
+type PubMedArticle = { title: string; url: string; abstract: string };
+
+type WebResearchResult = {
+  query: string;
+  articles: PubMedArticle[];
+};
+
+function getErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+async function fetchWithTimeout(url: string, timeoutMs: number): Promise<Response> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    return await fetch(url, { signal: controller.signal });
+  } catch (error) {
+    if (error instanceof Error && error.name === 'AbortError') {
+      throw new Error(`PubMed request timed out after ${timeoutMs}ms`);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 
 // Fonction pour rechercher sur PubMed
 // Fonction pour rechercher sur PubMed avec API Key et Abstracts complets
-async function searchPubMed(query: string, maxResults: number = 5, apiKey?: string): Promise<{ title: string; url: string; abstract: string }[]> {
+async function searchPubMed(query: string, maxResults: number = 5, apiKey?: string): Promise<PubMedArticle[]> {
   try {
     let searchUrl = `https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=pubmed&term=${encodeURIComponent(query)}&retmax=${maxResults}&retmode=json&sort=relevance`;
     if (apiKey) searchUrl += `&api_key=${apiKey}`;
 
-    const searchResponse = await fetch(searchUrl);
+    const searchResponse = await fetchWithTimeout(searchUrl, PUBMED_FETCH_TIMEOUT_MS);
+    if (!searchResponse.ok) throw new Error(`PubMed search failed with ${searchResponse.status}`);
     const searchData = await searchResponse.json();
     const ids = searchData?.esearchresult?.idlist || [];
 
@@ -120,10 +153,11 @@ async function searchPubMed(query: string, maxResults: number = 5, apiKey?: stri
     let fetchUrl = `https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=pubmed&id=${ids.join(",")}&retmode=xml`;
     if (apiKey) fetchUrl += `&api_key=${apiKey}`;
 
-    const fetchResponse = await fetch(fetchUrl);
+    const fetchResponse = await fetchWithTimeout(fetchUrl, PUBMED_FETCH_TIMEOUT_MS);
+    if (!fetchResponse.ok) throw new Error(`PubMed fetch failed with ${fetchResponse.status}`);
     const xmlText = await fetchResponse.text();
 
-    const articles: { title: string; url: string; abstract: string }[] = [];
+    const articles: PubMedArticle[] = [];
     const xmlArticles = xmlText.split('</PubmedArticle>');
 
     for (const articleXml of xmlArticles) {
@@ -150,6 +184,52 @@ async function searchPubMed(query: string, maxResults: number = 5, apiKey?: stri
     console.error('PubMed search error:', error);
     return [];
   }
+}
+
+function buildDeterministicAnalysis(
+  selectedElements: SelectedElement[],
+  evidenceLinks: CausalLink[],
+  cachedLinks: CausalLink[],
+  webResearchResults: WebResearchResult[],
+  riskAssessment: ClinicalRiskAssessment,
+  reason: string,
+): AnalysisResult {
+  const causalLinks = mergeAndValidateLinks(selectedElements, evidenceLinks, cachedLinks);
+  const sourceCount = webResearchResults.reduce((sum, result) => sum + result.articles.length, 0);
+  const selectedNames = selectedElements.map((element) => element.name).join(', ');
+
+  let analysis = ensureAnalysisShape({
+    causalLinks,
+    summary: causalLinks.length > 0
+      ? `Analyse terminee en mode degrade: ${causalLinks.length} lien(s) clinique(s) valide(s) ont ete conserves a partir de la base, du cache et des sources recuperees. La synthese IA complete n'a pas abouti dans le delai interactif (${reason}). Elements analyses: ${selectedNames}.`
+      : `Analyse terminee en mode degrade: aucun lien causal direct n'a ete confirme par la base, le cache ou les sources recuperees dans le delai interactif (${reason}). Elements analyses: ${selectedNames}.`,
+    warnings: [
+      'Synthese IA complete indisponible dans le delai interactif; les resultats affiches reposent sur les donnees structurees, le cache et les sources PubMed recuperees.',
+      causalLinks.length === 0
+        ? "L'absence de lien affiche ne signifie pas absence d'interaction clinique; elle signifie absence de preuve directe recuperee par cette requete."
+        : 'Les liens affiches doivent etre interpretes comme des signaux cliniques a verifier, pas comme une prescription.',
+    ],
+    recommendations: [
+      'Verifier les sources officielles, les contre-indications et les interactions connues avant toute decision therapeutique.',
+      'Relancer une analyse complete si une synthese narrative plus detaillee est necessaire.',
+      'Faire valider les conclusions par un professionnel de sante habilite.',
+    ],
+    alternatives: [],
+    webResearch: webResearchResults.map((result) => ({
+      query: result.query,
+      findings: result.articles.map((article) => article.abstract).filter(Boolean).slice(0, 3),
+      sources: result.articles.map((article) => ({ title: article.title, url: article.url })),
+    })),
+  });
+
+  analysis.schemaComparison = ensureSchemaComparison(analysis);
+  analysis = applyClinicalSafetyContract(analysis, riskAssessment);
+
+  if (sourceCount > 0 && !analysis.recommendations.some((item) => item.includes('PubMed'))) {
+    analysis.recommendations.push(`Revoir les ${sourceCount} source(s) PubMed recuperee(s) avant validation clinique.`);
+  }
+
+  return analysis;
 }
 
 // Fonction pour générer un hash de requête (pour le cache)
@@ -528,8 +608,8 @@ serve(async (req) => {
       for (const m of medications) webSearchQueries.push(`${m.name} indications contre-indications effets secondaires`);
     }
 
-    // Limiter à 5 recherches maximum
-    const limitedQueries = webSearchQueries.slice(0, 5);
+    // Limiter les recherches externes pour garder la fonction dans le budget interactif.
+    const limitedQueries = webSearchQueries.slice(0, MAX_PUBMED_QUERIES);
 
     console.log('Exécution des recherches PubMed:', limitedQueries);
 
@@ -721,21 +801,41 @@ ${webResearchContext || 'Aucune recherche effectuée'}
 
 Génère uniquement le JSON des schémas thérapeutiques alternatifs.`;
 
-      const schemaAIResult = await callAI(schemaPromptWithClinicalContract, schemaUserPrompt, {
-        model: schemaRoute.model || OPENAI_CROSS_DATA_MODEL,
-        forceModel: true,
-        reasoningEffort: schemaRoute.reasoningEffort || OPENAI_CROSS_DATA_REASONING_EFFORT,
-        responseFormat: { type: 'json_object' },
-        maxTokens: 6000,
-        timeoutMs: schemaRoute.timeoutMs,
-      });
-
+      let schemaAIResult: Awaited<ReturnType<typeof callAI>> | null = null;
+      let schemaDegradedReason: string | undefined;
       let treatmentSchemas: TreatmentSchema[] = [];
+
       try {
-        const parsed = JSON.parse(cleanJsonString(schemaAIResult.text));
-        treatmentSchemas = ensureTreatmentSchemasShape(parsed.treatmentSchemas || parsed.schemas || parsed);
-      } catch (parseError) {
-        console.error('Erreur parsing schémas thérapeutiques:', parseError, 'Contenu:', schemaAIResult.text);
+        schemaAIResult = await callAI(schemaPromptWithClinicalContract, schemaUserPrompt, {
+          model: schemaRoute.model || OPENAI_CROSS_DATA_MODEL,
+          forceModel: true,
+          reasoningEffort: schemaRoute.reasoningEffort || OPENAI_CROSS_DATA_REASONING_EFFORT,
+          responseFormat: { type: 'json_object' },
+          maxTokens: 6000,
+          timeoutMs: Math.min(schemaRoute.timeoutMs, INTERACTIVE_AI_TIMEOUT_MS),
+        });
+
+        try {
+          const parsed = JSON.parse(cleanJsonString(schemaAIResult.text));
+          treatmentSchemas = ensureTreatmentSchemasShape(parsed.treatmentSchemas || parsed.schemas || parsed);
+        } catch (parseError) {
+          schemaDegradedReason = `schema JSON parse failed: ${getErrorMessage(parseError)}`;
+          console.error('[CrossDataAnalyzer] Schema parse fallback:', parseError);
+        }
+      } catch (schemaError) {
+        schemaDegradedReason = getErrorMessage(schemaError);
+        console.error('[CrossDataAnalyzer] Schema AI fallback:', schemaError);
+      }
+
+      if (schemaDegradedReason) {
+        baseAnalysis.warnings = [
+          ...(baseAnalysis.warnings || []),
+          `Generation IA des schemas therapeutiques indisponible dans le delai interactif: ${schemaDegradedReason}.`,
+        ];
+        baseAnalysis.recommendations = [
+          ...(baseAnalysis.recommendations || []),
+          'Utiliser les liens valides affiches comme base de revue clinique et relancer la generation des schemas si necessaire.',
+        ];
       }
 
       return new Response(
@@ -746,7 +846,7 @@ Génère uniquement le JSON des schémas thérapeutiques alternatifs.`;
             treatmentSchemas,
           },
           context: {
-            model: schemaAIResult.model,
+            model: schemaAIResult?.model || 'deterministic-fallback',
             reasoningEffort: schemaRoute.reasoningEffort,
             clinicalRiskLevel: riskAssessment.riskLevel,
             clinicalRiskFlags: riskAssessment.flags,
@@ -754,6 +854,8 @@ Génère uniquement le JSON des schémas thérapeutiques alternatifs.`;
             routeReason: schemaRoute.routeReason,
             validatedLinks: baseAnalysis.causalLinks.length,
             pubmedSearches: webResearchResults.length,
+            degraded: Boolean(schemaDegradedReason),
+            degradedReason: schemaDegradedReason,
           },
         }),
         { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
@@ -1014,30 +1116,28 @@ Réponds UNIQUEMENT en français avec le JSON demandé. Génère uniquement les 
         reasoningEffort: fullRoute.reasoningEffort || OPENAI_CROSS_DATA_REASONING_EFFORT,
         responseFormat: { type: 'json_object' },
         maxTokens: 8000,
-        timeoutMs: fullRoute.timeoutMs,
+        timeoutMs: Math.min(fullRoute.timeoutMs, INTERACTIVE_AI_TIMEOUT_MS),
       }
-    );
+    ).catch((aiError) => {
+      console.error('[CrossDataAnalyzer] AI fallback:', aiError);
+      return null;
+    });
 
-    const content = aiResult.text;
+    const content = aiResult?.text;
 
-    if (!content) {
-      throw new Error('Aucun contenu dans la réponse OpenAI');
-    }
+    let degradedReason = content ? undefined : 'OpenAI response empty or timed out';
+    let analysis: AnalysisResult = degradedReason
+      ? buildDeterministicAnalysis(selectedElements, evidenceLinks, cachedLinks, webResearchResults, riskAssessment, degradedReason)
+      : ensureAnalysisShape(undefined);
 
-    // Parser le JSON de la réponse
-    let analysis: AnalysisResult;
-    try {
-      analysis = ensureAnalysisShape(JSON.parse(cleanJsonString(content)));
-    } catch (parseError) {
-      console.error('Erreur de parsing JSON:', parseError, 'Contenu:', content);
-      analysis = ensureAnalysisShape({
-        causalLinks: [],
-        summary: "L'analyse n'a pas pu être complétée correctement.",
-        warnings: ["Erreur de parsing de la réponse IA"],
-        recommendations: ["Veuillez réessayer l'analyse"],
-        alternatives: [],
-        webResearch: []
-      });
+    if (content) {
+      try {
+        analysis = ensureAnalysisShape(JSON.parse(cleanJsonString(content)));
+      } catch (parseError) {
+        degradedReason = `OpenAI JSON parse failed: ${getErrorMessage(parseError)}`;
+        console.error('[CrossDataAnalyzer] AI parse fallback:', parseError);
+        analysis = buildDeterministicAnalysis(selectedElements, evidenceLinks, cachedLinks, webResearchResults, riskAssessment, degradedReason);
+      }
     }
 
     analysis.causalLinks = mergeAndValidateLinks(
@@ -1058,10 +1158,10 @@ Réponds UNIQUEMENT en français avec le JSON demandé. Génère uniquement les 
       }));
     }
 
-    console.log('Analyse terminée avec succès');
+    console.log(degradedReason ? 'Analyse terminée en mode dégradé' : 'Analyse terminée avec succès');
 
     // Sauvegarder les nouveaux liens en cache
-    const aiModel = aiResult.model;
+    const aiModel = aiResult?.model || 'deterministic-fallback';
     console.log(`[CrossDataAnalyzer] Sauvegarde de ${analysis.causalLinks?.length || 0} liens en cache...`);
 
     for (const link of (analysis.causalLinks || [])) {
@@ -1081,12 +1181,14 @@ Réponds UNIQUEMENT en français avec le JSON demandé. Génère uniquement les 
           pubmedSearches: webResearchResults.length,
           cacheHits: cachedLinks.length,
           newLinksGenerated: analysis.causalLinks?.length || 0,
-          model: aiResult.model,
+          model: aiResult?.model || 'deterministic-fallback',
           reasoningEffort: fullRoute.reasoningEffort,
           clinicalRiskLevel: riskAssessment.riskLevel,
           clinicalRiskFlags: riskAssessment.flags,
           finalReviewRequired: fullRoute.finalReviewRequired,
-          routeReason: fullRoute.routeReason
+          routeReason: fullRoute.routeReason,
+          degraded: Boolean(degradedReason),
+          degradedReason
         }
       }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
