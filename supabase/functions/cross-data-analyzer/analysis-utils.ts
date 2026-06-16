@@ -131,8 +131,58 @@ export function normalizeMedicalName(value: unknown): string {
     .toLowerCase();
 }
 
+export function typedElementKey(element: Pick<SelectedElement, 'name' | 'type'>): string {
+  return `${element.type}:${normalizeMedicalName(element.name)}`;
+}
+
 function typedKey(name: string, type: string): string {
   return `${type}:${normalizeMedicalName(name)}`;
+}
+
+function uniqueSelectedElements(elements: SelectedElement[]): SelectedElement[] {
+  const seen = new Set<string>();
+  const unique: SelectedElement[] = [];
+
+  for (const element of elements) {
+    const key = typedElementKey(element);
+    if (!element.name || !key || seen.has(key)) continue;
+    seen.add(key);
+    unique.push(element);
+  }
+
+  return unique;
+}
+
+export function buildPairHash(fromName: string, fromType: string, toName: string, toType: string): string {
+  return [
+    `${normalizeMedicalName(fromName)}|${fromType}`,
+    `${normalizeMedicalName(toName)}|${toType}`,
+  ].sort().join('|');
+}
+
+export type PairCandidate = {
+  left: SelectedElement;
+  right: SelectedElement;
+  pairHash: string;
+};
+
+export function buildPairCandidates(elements: SelectedElement[]): PairCandidate[] {
+  const candidates = uniqueSelectedElements(elements);
+  const pairs: PairCandidate[] = [];
+
+  for (let i = 0; i < candidates.length; i++) {
+    for (let j = i + 1; j < candidates.length; j++) {
+      const left = candidates[i];
+      const right = candidates[j];
+      pairs.push({
+        left,
+        right,
+        pairHash: buildPairHash(left.name, left.type, right.name, right.type),
+      });
+    }
+  }
+
+  return pairs;
 }
 
 export function directionalLinkKey(link: Pick<CausalLink, 'from' | 'fromType' | 'to' | 'toType'>): string {

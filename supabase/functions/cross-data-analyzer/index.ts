@@ -13,12 +13,16 @@ import {
   OPENAI_CROSS_DATA_MODEL,
   OPENAI_CROSS_DATA_REASONING_EFFORT,
   buildEvidenceLinks,
+  buildPairCandidates,
+  buildPairHash,
   buildSelectedElements,
   ensureAnalysisShape,
   ensureSchemaComparison,
   ensureTreatmentSchemasShape,
   mergeAndValidateLinks,
   normalizeMedicalName,
+  typedElementKey,
+  type PairCandidate,
   type SelectedElement,
   type TreatmentSchema,
 } from "./analysis-utils.ts";
@@ -136,6 +140,21 @@ type AnalysisJobPayload = {
   externalMedications?: any[];
   analysisMode?: string;
   currentAnalysis?: Partial<AnalysisResult> | null;
+};
+
+type CachedCausalLink = CausalLink & {
+  cacheId?: string;
+  pairHash?: string;
+  cacheHitCount?: number;
+};
+
+type CachedPairAnalysis = {
+  pair_hash: string;
+  has_direct_relation: boolean;
+  causal_link_id?: string | null;
+  relationship?: string | null;
+  evidence_status?: string | null;
+  hit_count?: number | null;
 };
 
 function getErrorMessage(error: unknown): string {
@@ -352,28 +371,66 @@ function buildDeterministicAnalysis(
 }
 
 // Fonction pour générer un hash de requête (pour le cache)
-function generateRequestHash(pathologyIds: string[], symptomIds: string[], treatmentIds: string[], medicationIds: string[]): string {
-  const sorted = [
-    ...[...pathologyIds].sort(),
-    ...[...symptomIds].sort(),
-    ...[...treatmentIds].sort(),
-    ...[...medicationIds].sort()
-  ].join('|');
-  // Simple hash
-  let hash = 0;
-  for (let i = 0; i < sorted.length; i++) {
-    const char = sorted.charCodeAt(i);
-    hash = ((hash << 5) - hash) + char;
-    hash = hash & hash;
+function uniqueSelectedElements(elements: SelectedElement[]): SelectedElement[] {
+  const seen = new Set<string>();
+  const unique: SelectedElement[] = [];
+
+  for (const element of elements) {
+    const key = typedElementKey(element);
+    if (!element.name || !key || seen.has(key)) continue;
+    seen.add(key);
+    unique.push(element);
   }
-  return hash.toString(36);
+
+  return unique;
 }
 
-function buildPairHash(fromName: string, fromType: string, toName: string, toType: string): string {
-  return [
-    `${normalizeMedicalName(fromName)}|${fromType}`,
-    `${normalizeMedicalName(toName)}|${toType}`,
-  ].sort().join('|');
+async function sha256Hex(value: string): Promise<string> {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value));
+  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
+async function buildAnalysisRequestHash(
+  elements: SelectedElement[],
+  analysisMode: string,
+): Promise<{ requestHash: string; elementKeys: string[] }> {
+  const elementKeys = [...new Set(elements.map(typedElementKey).filter(Boolean))].sort();
+  const digest = await sha256Hex(`${analysisMode}|${elementKeys.join('|')}`);
+  return {
+    requestHash: `cross-data:${analysisMode}:${digest}`,
+    elementKeys,
+  };
+}
+
+function pairHashFromLink(link: Pick<CausalLink, 'from' | 'fromType' | 'to' | 'toType'>): string {
+  return buildPairHash(link.from, link.fromType, link.to, link.toType);
+}
+
+function buildPairSearchQuery(pair: PairCandidate): string {
+  const left = pair.left;
+  const right = pair.right;
+
+  if (left.type === 'medication' && right.type === 'medication') {
+    return `${left.name} ${right.name} interaction contre-indication`;
+  }
+
+  if (left.type === 'pathology' && right.type === 'medication') {
+    return `${left.name} ${right.name} indication contre-indication traitement`;
+  }
+
+  if (left.type === 'medication' && right.type === 'pathology') {
+    return `${right.name} ${left.name} indication contre-indication traitement`;
+  }
+
+  if (left.type === 'pathology' && right.type === 'symptom') {
+    return `${left.name} ${right.name} symptome causalite`;
+  }
+
+  if (left.type === 'symptom' && right.type === 'pathology') {
+    return `${right.name} ${left.name} symptome causalite`;
+  }
+
+  return `${left.name} ${right.name} relation clinique interaction`;
 }
 
 function uniqueElements(elements: { name: string; type: string }[]): { name: string; type: string }[] {
@@ -386,8 +443,11 @@ function uniqueElements(elements: { name: string; type: string }[]): { name: str
   });
 }
 
-function toCausalLink(link: any): CausalLink {
+function toCausalLink(link: any): CachedCausalLink {
   return {
+    cacheId: link.id,
+    pairHash: link.pair_hash,
+    cacheHitCount: link.hit_count,
     from: link.from_element,
     fromType: link.from_type,
     to: link.to_element,
@@ -410,7 +470,7 @@ function toCausalLink(link: any): CausalLink {
 async function findCachedLinksBatched(
   supabase: any,
   elements: { name: string; type: string }[]
-): Promise<CausalLink[]> {
+): Promise<CachedCausalLink[]> {
   const candidates = uniqueElements(elements);
   const pairHashes: string[] = [];
 
@@ -431,7 +491,7 @@ async function findCachedLinksBatched(
     const chunk = uniquePairHashes.slice(i, i + 100);
     const { data, error } = await supabase
       .from('causal_links_cache')
-      .select('id, from_element, from_type, to_element, to_type, relationship, probability, evidence, is_appropriate, effect_type, therapeutic_details, adverse_details, danger_level, interaction_type, symptom_frequency, hit_count')
+      .select('id, from_element, from_type, to_element, to_type, pair_hash, relationship, probability, evidence, is_appropriate, effect_type, therapeutic_details, adverse_details, danger_level, interaction_type, symptom_frequency, hit_count')
       .in('pair_hash', chunk);
 
     if (error) {
@@ -455,6 +515,190 @@ async function findCachedLinksBatched(
   }
 
   return cachedRows.map(toCausalLink);
+}
+
+async function findCachedPairAnalysesBatched(
+  supabase: any,
+  pairHashes: string[],
+): Promise<Map<string, CachedPairAnalysis>> {
+  const cachedPairs = new Map<string, CachedPairAnalysis>();
+  const uniquePairHashes = [...new Set(pairHashes)].filter(Boolean);
+  if (uniquePairHashes.length === 0) return cachedPairs;
+
+  for (let i = 0; i < uniquePairHashes.length; i += 100) {
+    const chunk = uniquePairHashes.slice(i, i + 100);
+    const { data, error } = await supabase
+      .from('medical_pair_analysis_cache')
+      .select('pair_hash, has_direct_relation, causal_link_id, relationship, evidence_status, hit_count')
+      .in('pair_hash', chunk);
+
+    if (error) {
+      console.warn('[PairCache] Lecture batch impossible:', error.message || error);
+      continue;
+    }
+
+    for (const row of data || []) {
+      cachedPairs.set(row.pair_hash, row);
+    }
+  }
+
+  const reusedAt = new Date().toISOString();
+  await Promise.allSettled(
+    [...cachedPairs.values()].slice(0, 100).map((row) =>
+      supabase
+        .from('medical_pair_analysis_cache')
+        .update({
+          hit_count: (row.hit_count || 0) + 1,
+          last_reused_at: reusedAt,
+          updated_at: reusedAt,
+        })
+        .eq('pair_hash', row.pair_hash)
+    )
+  );
+
+  return cachedPairs;
+}
+
+async function findExactAnalysisCache(
+  supabase: any,
+  requestHash: string,
+): Promise<Record<string, any> | null> {
+  const { data, error } = await supabase
+    .from('analysis_cache')
+    .select('id, result_payload, hit_count, degraded')
+    .eq('request_hash', requestHash)
+    .maybeSingle();
+
+  if (error) {
+    console.warn('[AnalysisCache] Lecture exacte impossible:', error.message || error);
+    return null;
+  }
+
+  if (data?.degraded === true) {
+    return null;
+  }
+
+  const payload = data?.result_payload;
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload) || Object.keys(payload).length === 0) {
+    return null;
+  }
+
+  await supabase
+    .from('analysis_cache')
+    .update({
+      hit_count: (data.hit_count || 0) + 1,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', data.id);
+
+  return payload;
+}
+
+async function saveAnalysisResultCache(
+  supabase: any,
+  params: {
+    requestHash: string;
+    analysisMode: string;
+    elementKeys: string[];
+    pairHashes: string[];
+    coveredPairHashes: string[];
+    missingPairHashes: string[];
+    pathologyIds: string[];
+    symptomIds: string[];
+    treatmentIds: string[];
+    medicationIds: string[];
+    responsePayload: Record<string, any>;
+    causalLinkIds: string[];
+    aiModel: string;
+    degraded: boolean;
+    degradedReason?: string;
+  },
+): Promise<void> {
+  const analysis = params.responsePayload?.analysis || {};
+  const now = new Date().toISOString();
+  const { error } = await supabase
+    .from('analysis_cache')
+    .upsert({
+      request_hash: params.requestHash,
+      analysis_mode: params.analysisMode,
+      normalized_element_keys: params.elementKeys,
+      element_count: params.elementKeys.length,
+      result_payload: params.responsePayload,
+      pair_hashes: params.pairHashes,
+      covered_pair_hashes: params.coveredPairHashes,
+      missing_pair_hashes: params.missingPairHashes,
+      pathology_ids: params.pathologyIds || [],
+      symptom_ids: params.symptomIds || [],
+      treatment_ids: params.treatmentIds || [],
+      medication_ids: params.medicationIds || [],
+      summary: typeof analysis.summary === 'string' ? analysis.summary : null,
+      warnings: Array.isArray(analysis.warnings) ? analysis.warnings : [],
+      recommendations: Array.isArray(analysis.recommendations) ? analysis.recommendations : [],
+      causal_link_ids: params.causalLinkIds,
+      ai_model: params.aiModel,
+      degraded: params.degraded,
+      degraded_reason: params.degradedReason || null,
+      updated_at: now,
+    }, {
+      onConflict: 'request_hash',
+      ignoreDuplicates: false,
+    });
+
+  if (error) {
+    console.warn('[AnalysisCache] Sauvegarde impossible:', error.message || error);
+  }
+}
+
+async function savePairAnalysisCacheBatch(
+  supabase: any,
+  rows: Array<{
+    pairHash: string;
+    from: Pick<SelectedElement, 'name' | 'type'>;
+    to: Pick<SelectedElement, 'name' | 'type'>;
+    hasDirectRelation: boolean;
+    causalLinkId?: string | null;
+    relationship?: string | null;
+    evidenceStatus: 'confirmed' | 'theoretical' | 'no_data' | 'contradictory';
+    analysisPayload: Record<string, any>;
+    aiModel?: string | null;
+  }>,
+): Promise<void> {
+  if (rows.length === 0) return;
+
+  const now = new Date().toISOString();
+  const payload = rows.map((row) => ({
+    pair_hash: row.pairHash,
+    from_element: row.from.name,
+    from_type: row.from.type,
+    to_element: row.to.name,
+    to_type: row.to.type,
+    from_key: typedElementKey(row.from),
+    to_key: typedElementKey(row.to),
+    element_keys: [typedElementKey(row.from), typedElementKey(row.to)].sort(),
+    has_direct_relation: row.hasDirectRelation,
+    causal_link_id: row.causalLinkId || null,
+    relationship: row.relationship || null,
+    evidence_status: row.evidenceStatus,
+    analysis_payload: row.analysisPayload || {},
+    ai_model: row.aiModel || null,
+    source: 'cross-data-analyzer',
+    last_reused_at: now,
+    updated_at: now,
+  }));
+
+  for (let i = 0; i < payload.length; i += 100) {
+    const chunk = payload.slice(i, i + 100);
+    const { error } = await supabase
+      .from('medical_pair_analysis_cache')
+      .upsert(chunk, {
+        onConflict: 'pair_hash',
+        ignoreDuplicates: false,
+      });
+
+    if (error) {
+      console.warn('[PairCache] Sauvegarde batch impossible:', error.message || error);
+    }
+  }
 }
 
 // Fonction pour chercher les liens en cache
@@ -518,12 +762,16 @@ async function findCachedLinks(
 }
 
 // Fonction pour sauvegarder les liens en cache
-async function saveLinkToCache(supabase: any, link: CausalLink, aiModel: string): Promise<void> {
+async function saveLinkToCache(
+  supabase: any,
+  link: CausalLink,
+  aiModel: string,
+): Promise<{ id: string; pairHash: string } | null> {
   try {
     // Générer le hash de la paire
     const pairHash = buildPairHash(link.from, link.fromType, link.to, link.toType);
 
-    await supabase.from('causal_links_cache').upsert({
+    const { data, error } = await supabase.from('causal_links_cache').upsert({
       from_element: link.from,
       from_type: link.fromType,
       to_element: link.to,
@@ -544,10 +792,136 @@ async function saveLinkToCache(supabase: any, link: CausalLink, aiModel: string)
     }, {
       onConflict: 'pair_hash',
       ignoreDuplicates: false
-    });
+    }).select('id, pair_hash').single();
+
+    if (error) {
+      console.error('[Cache] Erreur sauvegarde lien:', error);
+      return null;
+    }
+
+    return {
+      id: data.id,
+      pairHash: data.pair_hash || pairHash,
+    };
   } catch (error) {
     console.error('[Cache] Erreur sauvegarde lien:', error);
+    return null;
   }
+}
+
+async function persistCrossDataAnalysisCaches(
+  supabase: any,
+  params: {
+    analysis: AnalysisResult;
+    responsePayload: Record<string, any>;
+    requestHash: string;
+    analysisMode: string;
+    elementKeys: string[];
+    allPairHashes: string[];
+    coveredPairHashes: string[];
+    missingPairHashes: string[];
+    pairsToAudit: PairCandidate[];
+    evidencePairHashSet: Set<string>;
+    pathologyIds: string[];
+    symptomIds: string[];
+    treatmentIds: string[];
+    medicationIds: string[];
+    aiModel: string;
+    degraded: boolean;
+    degradedReason?: string;
+    recordNoRelationPairs: boolean;
+  },
+): Promise<{ causalLinkIds: string[]; newDirectLinkCount: number }> {
+  const causalLinkIds: string[] = [];
+  const finalDirectPairHashes = new Set<string>();
+  const pairRows: Parameters<typeof savePairAnalysisCacheBatch>[1] = [];
+
+  for (const link of params.analysis.causalLinks || []) {
+    const saved = await saveLinkToCache(supabase, link, params.aiModel);
+    const pairHash = saved?.pairHash || pairHashFromLink(link);
+    finalDirectPairHashes.add(pairHash);
+
+    if (saved?.id) {
+      causalLinkIds.push(saved.id);
+    }
+
+    pairRows.push({
+      pairHash,
+      from: { name: link.from, type: link.fromType },
+      to: { name: link.to, type: link.toType },
+      hasDirectRelation: true,
+      causalLinkId: saved?.id || null,
+      relationship: link.relationship,
+      evidenceStatus: params.evidencePairHashSet.has(pairHash) ? 'confirmed' : 'theoretical',
+      analysisPayload: {
+        causalLink: link,
+        requestHash: params.requestHash,
+        analysisMode: params.analysisMode,
+      },
+      aiModel: params.aiModel,
+    });
+  }
+
+  if (params.recordNoRelationPairs) {
+    for (const pair of params.pairsToAudit) {
+      if (finalDirectPairHashes.has(pair.pairHash)) continue;
+      pairRows.push({
+        pairHash: pair.pairHash,
+        from: pair.left,
+        to: pair.right,
+        hasDirectRelation: false,
+        causalLinkId: null,
+        relationship: null,
+        evidenceStatus: 'no_data',
+        analysisPayload: {
+          status: 'no_direct_relation_retained',
+          requestHash: params.requestHash,
+          analysisMode: params.analysisMode,
+        },
+        aiModel: params.aiModel,
+      });
+    }
+  }
+
+  await savePairAnalysisCacheBatch(supabase, pairRows);
+  const persistedCoveredPairHashSet = new Set(params.coveredPairHashes);
+  for (const pairHash of finalDirectPairHashes) {
+    persistedCoveredPairHashSet.add(pairHash);
+  }
+  if (params.recordNoRelationPairs) {
+    for (const pair of params.pairsToAudit) {
+      persistedCoveredPairHashSet.add(pair.pairHash);
+    }
+  }
+  const persistedCoveredPairHashes = params.allPairHashes.filter((pairHash) =>
+    persistedCoveredPairHashSet.has(pairHash)
+  );
+  const persistedMissingPairHashes = params.allPairHashes.filter((pairHash) =>
+    !persistedCoveredPairHashSet.has(pairHash)
+  );
+
+  await saveAnalysisResultCache(supabase, {
+    requestHash: params.requestHash,
+    analysisMode: params.analysisMode,
+    elementKeys: params.elementKeys,
+    pairHashes: params.allPairHashes,
+    coveredPairHashes: persistedCoveredPairHashes,
+    missingPairHashes: persistedMissingPairHashes,
+    pathologyIds: params.pathologyIds,
+    symptomIds: params.symptomIds,
+    treatmentIds: params.treatmentIds,
+    medicationIds: params.medicationIds,
+    responsePayload: params.responsePayload,
+    causalLinkIds,
+    aiModel: params.aiModel,
+    degraded: params.degraded,
+    degradedReason: params.degradedReason,
+  });
+
+  return {
+    causalLinkIds,
+    newDirectLinkCount: [...finalDirectPairHashes].filter((pairHash) => params.missingPairHashes.includes(pairHash)).length,
+  };
 }
 
 
@@ -781,7 +1155,37 @@ serve(async (req) => {
       ...treatments.map((t: any) => ({ name: t.name, type: 'treatment' })),
       ...medications.map((m: any) => ({ name: m.name, type: 'medication' })),
     ];
-    const selectedElements = buildSelectedElements(pathologies, symptoms, treatments, medications);
+    const selectedElements = uniqueSelectedElements(buildSelectedElements(pathologies, symptoms, treatments, medications));
+    const {
+      requestHash: analysisRequestHash,
+      elementKeys: normalizedElementKeys,
+    } = await buildAnalysisRequestHash(selectedElements, analysisMode);
+    const canUseFullAnalysisCache = analysisMode === 'full_analysis';
+
+    if (canUseFullAnalysisCache) {
+      const exactCachedPayload = await findExactAnalysisCache(supabase, analysisRequestHash);
+      if (exactCachedPayload) {
+        const responsePayload = {
+          ...exactCachedPayload,
+          context: {
+            ...(exactCachedPayload.context || {}),
+            exactAnalysisCacheHit: true,
+            async: Boolean(runJob),
+          },
+        };
+
+        await updateAnalysisJob(supabase, runJob ? jobId : undefined, {
+          status: 'completed' satisfies AnalysisJobStatus,
+          progress_percentage: 100,
+          progress_message: 'Analyse servie depuis le cache exact.',
+          result_payload: responsePayload,
+          degraded: false,
+          completed_at: new Date().toISOString(),
+        });
+
+        return jsonResponse(responsePayload);
+      }
+    }
 
     if (selectedElements.length < 2) {
       const summary = selectedElements.length === 0
@@ -841,9 +1245,24 @@ serve(async (req) => {
     });
 
     // Si on a trouvé des liens en cache pour TOUTES les paires, on peut les retourner directement
-    const expectedPairs = (allElements.length * (allElements.length - 1)) / 2;
-    const cacheHitRatio = cachedLinks.length / Math.max(expectedPairs, 1);
-    console.log(`[CrossDataAnalyzer] Ratio cache: ${(cacheHitRatio * 100).toFixed(1)}%`);
+    const allPairCandidates = buildPairCandidates(selectedElements);
+    const allPairHashes = [...new Set(allPairCandidates.map((pair) => pair.pairHash))];
+    const cachedLinkHashSet = new Set(
+      cachedLinks.map((link) => link.pairHash || pairHashFromLink(link)),
+    );
+    const cachedPairAnalyses = await findCachedPairAnalysesBatched(supabase, allPairHashes);
+    const cachedNoDirectPairHashSet = new Set(
+      [...cachedPairAnalyses.values()]
+        .filter((pair) => pair.has_direct_relation === false)
+        .map((pair) => pair.pair_hash),
+    );
+    const expectedPairs = allPairCandidates.length;
+    const preEvidenceCoveredPairHashes = new Set<string>([
+      ...cachedLinkHashSet,
+      ...cachedNoDirectPairHashSet,
+    ]);
+    const cacheHitRatio = preEvidenceCoveredPairHashes.size / Math.max(expectedPairs, 1);
+    console.log(`[CrossDataAnalyzer] Ratio cache paires: ${(cacheHitRatio * 100).toFixed(1)}%`);
 
     // Récupérer les liens symptômes pour les pathologies sélectionnées
     let symptomLinks: any[] = [];
@@ -864,47 +1283,25 @@ serve(async (req) => {
     });
 
     // Construire les requêtes de recherche web
-    const webSearchQueries: string[] = [];
+    const evidencePairHashSet = new Set(evidenceLinks.map(pairHashFromLink));
+    const coveredPairHashSet = new Set<string>([
+      ...cachedLinkHashSet,
+      ...cachedNoDirectPairHashSet,
+      ...evidencePairHashSet,
+    ]);
+    const pairsToAudit = allPairCandidates.filter((pair) => !coveredPairHashSet.has(pair.pairHash));
+    const coveredPairHashes = allPairHashes.filter((pairHash) => coveredPairHashSet.has(pairHash));
+    const missingPairHashes = pairsToAudit.map((pair) => pair.pairHash);
+    console.log(
+      `[CrossDataAnalyzer] ${coveredPairHashes.length}/${allPairHashes.length} paires couvertes; ${pairsToAudit.length} paires nouvelles a auditer.`,
+    );
 
-    // Rechercher les interactions entre éléments sélectionnés
-    for (const pathology of pathologies) {
-      for (const treatment of treatments) {
-        webSearchQueries.push(`${pathology.name} ${treatment.name} traitement adapté efficacité`);
-      }
-      for (const medication of medications) {
-        webSearchQueries.push(`${pathology.name} ${medication.name} indication traitement`);
-      }
-      for (const symptom of symptoms) {
-        webSearchQueries.push(`${pathology.name} ${symptom.name} corrélation causalité`);
-      }
-    }
+    const webSearchQueries = [...new Set(pairsToAudit.map(buildPairSearchQuery))];
+    console.log(
+      `[CrossDataAnalyzer] Recherche externe limitee au delta: ${webSearchQueries.length} requete(s).`,
+    );
 
-    // Interactions médicaments-traitements
-    for (const medication of medications) {
-      for (const treatment of treatments) {
-        webSearchQueries.push(`${medication.name} ${treatment.name} interaction combinaison`);
-      }
-      for (const symptom of symptoms) {
-        webSearchQueries.push(`${medication.name} ${symptom.name} effet secondaire indésirable`);
-      }
-    }
-
-    for (const treatment of treatments) {
-      for (const symptom of symptoms) {
-        webSearchQueries.push(`${treatment.name} ${symptom.name} effet secondaire`);
-      }
-    }
-
-    // DÉSACTIVÉ: Retour cache rapide - on veut toujours générer la synthèse
-    // Le cache sera utilisé pour enrichir les liens, mais on appelle toujours l'IA pour la synthèse
-    // if (cacheHitRatio >= 0.8 && cachedLinks.length >= 2) {
-    //   console.log('[CrossDataAnalyzer] Cache suffisant, retour direct sans appel API');
-    //   ...
-    // }
-    console.log(`[CrossDataAnalyzer] ${cachedLinks.length} liens en cache, mais appel IA pour synthèse complète`);
-
-    // Si pas assez de requêtes spécifiques, rechercher chaque élément individuellement
-    if (webSearchQueries.length === 0) {
+    if (webSearchQueries.length === 0 && pairsToAudit.length > 0) {
       for (const p of pathologies) webSearchQueries.push(`${p.name} causes symptômes traitements`);
       for (const s of symptoms) webSearchQueries.push(`${s.name} causes pathologies associées`);
       for (const t of treatments) webSearchQueries.push(`${t.name} effets secondaires interactions indications`);
@@ -983,11 +1380,23 @@ serve(async (req) => {
       ).join('\n')
       : 'Aucun lien deterministe trouve dans la base.';
 
-    const pairAuditContext = selectedElements.flatMap((left, leftIndex) =>
-      selectedElements.slice(leftIndex + 1).map((right) =>
-        `- ${left.type}:${left.name} <> ${right.type}:${right.name}`
-      )
-    ).slice(0, 120).join('\n') || 'Pas assez de paires a auditer.';
+    const cachedLinksContext = cachedLinks.length > 0
+      ? cachedLinks.slice(0, 80).map((link) =>
+        `- ${link.fromType}:${link.from} -> ${link.toType}:${link.to} | ${link.relationship} | risque=${link.dangerLevel || 'none'} | effet=${link.effectType || 'none'} | preuve=${link.evidence}`
+      ).join('\n')
+      : 'Aucun lien positif deja present en cache.';
+
+    const pairAuditList = pairsToAudit.length > 0
+      ? pairsToAudit.slice(0, 120).map((pair) =>
+        `- ${pair.left.type}:${pair.left.name} <> ${pair.right.type}:${pair.right.name}`
+      ).join('\n')
+      : `Toutes les ${allPairHashes.length} paires de cette recherche sont deja couvertes par le cache ou les preuves deterministes.`;
+    const pairAuditContext = `${pairAuditList}
+
+IMPORTANT CACHE:
+- Les liens de la section "LIENS DEJA REUTILISES DEPUIS LE CACHE" font deja partie de l'analyse globale.
+- N'audite pas a nouveau ces paires; concentre le raisonnement couteux uniquement sur la matrice ci-dessus.
+- La synthese finale doit combiner les liens caches, les preuves deterministes et les nouveaux liens eventuels.`;
 
     const riskAssessment = detectHighRiskContext({
       pathologies,
@@ -1013,6 +1422,75 @@ serve(async (req) => {
       flags: riskAssessment.flags,
       requiresSecondPass: riskAssessment.requiresSecondPass,
     });
+
+    if (canUseFullAnalysisCache && pairsToAudit.length === 0) {
+      const cacheReason = 'toutes les paires de la recherche sont deja couvertes par le cache ou les preuves deterministes';
+      const analysis = buildDeterministicAnalysis(
+        selectedElements,
+        evidenceLinks,
+        cachedLinks,
+        webResearchResults,
+        riskAssessment,
+        cacheReason,
+      );
+
+      const responsePayload = {
+        analysis,
+        context: {
+          pathologiesCount: pathologies.length,
+          symptomsCount: symptoms.length,
+          treatmentsCount: treatments.length,
+          medicationsCount: medications.length,
+          patientsAnalyzed: relevantPatients.length,
+          pubmedSearches: webResearchResults.length,
+          cacheHits: cachedLinks.length,
+          pairCacheHits: cachedPairAnalyses.size,
+          noDirectPairCacheHits: cachedNoDirectPairHashSet.size,
+          coveredPairs: coveredPairHashes.length,
+          pairsToAudit: 0,
+          exactAnalysisCacheHit: false,
+          incrementalCacheComplete: true,
+          newLinksGenerated: 0,
+          model: 'deterministic-cache',
+          clinicalRiskLevel: riskAssessment.riskLevel,
+          clinicalRiskFlags: riskAssessment.flags,
+          degraded: false,
+          async: Boolean(runJob),
+        },
+      };
+
+      await persistCrossDataAnalysisCaches(supabase, {
+        analysis,
+        responsePayload,
+        requestHash: analysisRequestHash,
+        analysisMode,
+        elementKeys: normalizedElementKeys,
+        allPairHashes,
+        coveredPairHashes,
+        missingPairHashes,
+        pairsToAudit,
+        evidencePairHashSet,
+        pathologyIds,
+        symptomIds,
+        treatmentIds,
+        medicationIds,
+        aiModel: 'deterministic-cache',
+        degraded: false,
+        recordNoRelationPairs: false,
+      });
+
+      await updateAnalysisJob(supabase, runJob ? jobId : undefined, {
+        status: 'completed' satisfies AnalysisJobStatus,
+        progress_percentage: 100,
+        progress_message: 'Analyse composee depuis le cache incremental.',
+        result_payload: responsePayload,
+        model: 'deterministic-cache',
+        degraded: false,
+        completed_at: new Date().toISOString(),
+      });
+
+      return jsonResponse(responsePayload);
+    }
 
     if (analysisMode === 'treatment_schemas') {
       const baseAnalysis = applyClinicalSafetyContract(
@@ -1433,6 +1911,9 @@ ${webResearchContext || 'Aucune recherche effectuée'}
 ## PREUVES DETERMINISTES DEJA DETECTEES
 ${evidenceLinksContext}
 
+## LIENS DEJA REUTILISES DEPUIS LE CACHE
+${cachedLinksContext}
+
 ## MATRICE DES PAIRES A AUDITER
 ${pairAuditContext}
 
@@ -1577,13 +2058,9 @@ Réponds UNIQUEMENT en français avec le JSON demandé. Génère uniquement les 
 
     // Sauvegarder les nouveaux liens en cache
     const aiModel = aiResult?.model || 'deterministic-fallback';
-    console.log(`[CrossDataAnalyzer] Sauvegarde de ${analysis.causalLinks?.length || 0} liens en cache...`);
-
-    for (const link of (analysis.causalLinks || [])) {
-      await saveLinkToCache(supabase, link, aiModel);
-    }
-    console.log('[CrossDataAnalyzer] Liens sauvegardés en cache');
-
+    const newDirectLinkCount = (analysis.causalLinks || [])
+      .filter((link) => missingPairHashes.includes(pairHashFromLink(link)))
+      .length;
     const responsePayload = {
       analysis,
       context: {
@@ -1594,7 +2071,13 @@ Réponds UNIQUEMENT en français avec le JSON demandé. Génère uniquement les 
         patientsAnalyzed: relevantPatients.length,
         pubmedSearches: webResearchResults.length,
         cacheHits: cachedLinks.length,
-        newLinksGenerated: analysis.causalLinks?.length || 0,
+        pairCacheHits: cachedPairAnalyses.size,
+        noDirectPairCacheHits: cachedNoDirectPairHashSet.size,
+        coveredPairs: coveredPairHashes.length,
+        pairsToAudit: pairsToAudit.length,
+        exactAnalysisCacheHit: false,
+        incrementalCacheComplete: false,
+        newLinksGenerated: newDirectLinkCount,
         model: aiResult?.model || 'deterministic-fallback',
         reasoningEffort: fullRoute.reasoningEffort,
         clinicalRiskLevel: riskAssessment.riskLevel,
@@ -1606,6 +2089,29 @@ Réponds UNIQUEMENT en français avec le JSON demandé. Génère uniquement les 
         async: Boolean(runJob),
       },
     };
+
+    console.log(`[CrossDataAnalyzer] Sauvegarde cache incremental: ${analysis.causalLinks?.length || 0} lien(s), ${pairsToAudit.length} paire(s) auditee(s).`);
+    await persistCrossDataAnalysisCaches(supabase, {
+      analysis,
+      responsePayload,
+      requestHash: analysisRequestHash,
+      analysisMode,
+      elementKeys: normalizedElementKeys,
+      allPairHashes,
+      coveredPairHashes,
+      missingPairHashes,
+      pairsToAudit,
+      evidencePairHashSet,
+      pathologyIds,
+      symptomIds,
+      treatmentIds,
+      medicationIds,
+      aiModel,
+      degraded: Boolean(degradedReason),
+      degradedReason,
+      recordNoRelationPairs: Boolean(content && !degradedReason),
+    });
+    console.log('[CrossDataAnalyzer] Cache incremental sauvegarde');
 
     await updateAnalysisJob(supabase, runJob ? jobId : undefined, {
       status: 'completed' satisfies AnalysisJobStatus,
