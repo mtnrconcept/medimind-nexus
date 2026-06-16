@@ -1,6 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { callAI, cleanJsonString } from "../_shared/ai-client.ts";
+import { callAI, cleanJsonString, retrieveBackgroundAI, startBackgroundAI } from "../_shared/ai-client.ts";
 import {
   applyClinicalSafetyContract,
   buildClinicalSystemPrompt,
@@ -31,6 +31,8 @@ const corsHeaders = {
 const PUBMED_FETCH_TIMEOUT_MS = 6_000;
 const MAX_PUBMED_QUERIES = 4;
 const INTERACTIVE_AI_TIMEOUT_MS = 45_000;
+const BACKGROUND_AI_TIMEOUT_MS = 110_000;
+const FUNCTION_NAME = 'cross-data-analyzer';
 
 interface CausalLink {
   from: string;
@@ -115,8 +117,125 @@ type WebResearchResult = {
   articles: PubMedArticle[];
 };
 
+type AnalysisJobStatus = 'queued' | 'processing' | 'completed' | 'failed';
+
+type AnalysisJobPayload = {
+  action?: string;
+  async?: boolean;
+  runJob?: boolean;
+  jobId?: string;
+  jobToken?: string;
+  providerResponseId?: string;
+  pathologyIds?: string[];
+  symptomIds?: string[];
+  treatmentIds?: string[];
+  medicationIds?: string[];
+  externalPathologies?: any[];
+  externalSymptoms?: any[];
+  externalTreatments?: any[];
+  externalMedications?: any[];
+  analysisMode?: string;
+  currentAnalysis?: Partial<AnalysisResult> | null;
+};
+
 function getErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function jsonResponse(payload: unknown, status = 200): Response {
+  return new Response(JSON.stringify(payload), {
+    status,
+    headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+  });
+}
+
+function sanitizeJobPayload(payload: AnalysisJobPayload): AnalysisJobPayload {
+  const {
+    action: _action,
+    async: _async,
+    runJob: _runJob,
+    jobId: _jobId,
+    jobToken: _jobToken,
+    providerResponseId: _providerResponseId,
+    ...requestPayload
+  } = payload;
+  return requestPayload;
+}
+
+function isOpenAIBackgroundPending(status: string | undefined | null): boolean {
+  return status === 'queued' || status === 'in_progress';
+}
+
+async function updateAnalysisJob(
+  supabase: any,
+  jobId: string | undefined,
+  patch: Record<string, unknown>,
+): Promise<void> {
+  if (!jobId) return;
+  const { error } = await supabase
+    .from('ai_analysis_jobs')
+    .update({
+      ...patch,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', jobId);
+
+  if (error) {
+    console.error('[CrossDataAnalyzer] Job update failed:', error);
+  }
+}
+
+function startBackgroundJob(
+  supabase: any,
+  supabaseUrl: string,
+  serviceRoleKey: string,
+  jobId: string,
+  publicToken: string,
+  payload: AnalysisJobPayload,
+): void {
+  const processorPayload: AnalysisJobPayload = {
+    ...sanitizeJobPayload(payload),
+    ...(payload.providerResponseId ? { providerResponseId: payload.providerResponseId } : {}),
+    runJob: true,
+    jobId,
+    jobToken: publicToken,
+  };
+
+  const processor = fetch(`${supabaseUrl}/functions/v1/${FUNCTION_NAME}`, {
+    method: 'POST',
+    headers: {
+      apikey: serviceRoleKey,
+      Authorization: `Bearer ${serviceRoleKey}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(processorPayload),
+  }).then(async (response) => {
+    if (!response.ok) {
+      const errorText = await response.text().catch(() => '');
+      await updateAnalysisJob(supabase, jobId, {
+        status: 'failed',
+        progress_percentage: 100,
+        progress_message: 'Echec du worker cross-data.',
+        error_message: `Worker returned ${response.status}: ${errorText}`,
+        completed_at: new Date().toISOString(),
+      });
+    }
+  }).catch(async (error) => {
+    await updateAnalysisJob(supabase, jobId, {
+      status: 'failed',
+      progress_percentage: 100,
+      progress_message: 'Echec du lancement du worker cross-data.',
+      error_message: getErrorMessage(error),
+      completed_at: new Date().toISOString(),
+    });
+  });
+
+  const edgeRuntime = (globalThis as any).EdgeRuntime;
+  if (edgeRuntime?.waitUntil) {
+    edgeRuntime.waitUntil(processor);
+  } else {
+    processor.catch((error) => console.error('[CrossDataAnalyzer] Background job error:', error));
+  }
 }
 
 async function fetchWithTimeout(url: string, timeoutMs: number): Promise<Response> {
@@ -439,13 +558,12 @@ serve(async (req) => {
     return new Response(null, { headers: corsHeaders });
   }
 
+  let activeSupabase: any;
+  let activeJobId: string | undefined;
+  let activeRunJob = false;
+
   try {
-    const {
-      pathologyIds, symptomIds, treatmentIds, medicationIds,
-      externalPathologies = [], externalSymptoms = [], externalTreatments = [], externalMedications = [],
-      analysisMode = 'full_analysis',
-      currentAnalysis = null
-    } = await req.json();
+    const payload = await req.json().catch(() => ({})) as AnalysisJobPayload;
 
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
     const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
@@ -453,6 +571,178 @@ serve(async (req) => {
       throw new Error('Supabase function environment is incomplete: SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY are required');
     }
     const supabase = createClient(supabaseUrl, supabaseKey);
+    activeSupabase = supabase;
+    const {
+      action,
+      jobId,
+      jobToken,
+      providerResponseId,
+      async: requestedAsync = false,
+      runJob = false,
+      pathologyIds = [],
+      symptomIds = [],
+      treatmentIds = [],
+      medicationIds = [],
+      externalPathologies = [],
+      externalSymptoms = [],
+      externalTreatments = [],
+      externalMedications = [],
+      analysisMode = 'full_analysis',
+      currentAnalysis = null,
+    } = payload;
+    const isServiceInvocation = req.headers.get('authorization') === `Bearer ${supabaseKey}`;
+    activeJobId = jobId;
+    activeRunJob = Boolean(runJob && jobId);
+
+    if (runJob && !isServiceInvocation) {
+      return jsonResponse({ error: 'Worker execution requires service authorization' }, 403);
+    }
+
+    if (action === 'status') {
+      if (!jobId || !jobToken) {
+        return jsonResponse({ error: 'jobId and jobToken are required' }, 400);
+      }
+
+      const { data: job, error: jobError } = await supabase
+        .from('ai_analysis_jobs')
+        .select('id, status, progress_percentage, progress_message, request_payload, result_payload, error_message, model, reasoning_effort, degraded, degraded_reason, provider_name, provider_response_id, provider_status, provider_started_at, provider_completed_at, created_at, started_at, completed_at, updated_at')
+        .eq('id', jobId)
+        .eq('public_token', jobToken)
+        .maybeSingle();
+
+      if (jobError) {
+        return jsonResponse({ error: jobError.message }, 500);
+      }
+
+      if (!job) {
+        return jsonResponse({ error: 'Job not found' }, 404);
+      }
+
+      if (
+        job.status === 'processing' &&
+        job.provider_name === 'openai' &&
+        job.provider_response_id &&
+        job.provider_status !== 'finalizing'
+      ) {
+        const providerResult = await retrieveBackgroundAI(job.provider_response_id, {
+          model: typeof job.model === 'string' ? job.model : undefined,
+          reasoningEffort: job.reasoning_effort,
+          timeoutMs: 15_000,
+        });
+
+        if (isOpenAIBackgroundPending(providerResult.status)) {
+          const nextProgress = Math.max(Number(job.progress_percentage || 0), 80);
+          const nextMessage = 'Modele OpenAI en cours de raisonnement.';
+          await updateAnalysisJob(supabase, job.id, {
+            provider_status: providerResult.status,
+            progress_percentage: nextProgress,
+            progress_message: nextMessage,
+          });
+
+          return jsonResponse({
+            job: {
+              ...job,
+              provider_status: providerResult.status,
+              progress_percentage: nextProgress,
+              progress_message: nextMessage,
+            },
+          });
+        }
+
+        if (providerResult.status === 'completed' && providerResult.text?.trim()) {
+          const nextMessage = 'Reponse OpenAI recue. Finalisation clinique.';
+          await updateAnalysisJob(supabase, job.id, {
+            provider_status: 'finalizing',
+            provider_completed_at: new Date().toISOString(),
+            progress_percentage: 90,
+            progress_message: nextMessage,
+          });
+
+          startBackgroundJob(supabase, supabaseUrl, supabaseKey, job.id, jobToken, {
+            ...(job.request_payload || {}),
+            providerResponseId: job.provider_response_id,
+          });
+
+          return jsonResponse({
+            job: {
+              ...job,
+              provider_status: 'finalizing',
+              progress_percentage: 90,
+              progress_message: nextMessage,
+            },
+          });
+        }
+
+        const errorMessage = providerResult.errorMessage || `OpenAI background response ended with status ${providerResult.status}`;
+        await updateAnalysisJob(supabase, job.id, {
+          status: 'failed' satisfies AnalysisJobStatus,
+          provider_status: providerResult.status,
+          progress_percentage: 100,
+          progress_message: 'Analyse OpenAI echouee.',
+          error_message: errorMessage,
+          completed_at: new Date().toISOString(),
+        });
+
+        return jsonResponse({
+          job: {
+            ...job,
+            status: 'failed',
+            provider_status: providerResult.status,
+            progress_percentage: 100,
+            progress_message: 'Analyse OpenAI echouee.',
+            error_message: errorMessage,
+          },
+        });
+      }
+
+      return jsonResponse({ job });
+    }
+
+    if (requestedAsync && !runJob) {
+      const { data: job, error: createJobError } = await supabase
+        .from('ai_analysis_jobs')
+        .insert({
+          function_name: FUNCTION_NAME,
+          analysis_mode: analysisMode,
+          status: 'queued' satisfies AnalysisJobStatus,
+          progress_percentage: 0,
+          progress_message: 'Analyse cross-data en file d attente.',
+          request_payload: sanitizeJobPayload(payload),
+        })
+        .select('id, public_token, status, progress_percentage, progress_message, created_at')
+        .single();
+
+      if (createJobError) {
+        return jsonResponse({ error: createJobError.message }, 500);
+      }
+
+      startBackgroundJob(supabase, supabaseUrl, supabaseKey, job.id, job.public_token, payload);
+
+      return jsonResponse({
+        job: {
+          id: job.id,
+          token: job.public_token,
+          status: job.status,
+          progress: job.progress_percentage,
+          message: job.progress_message,
+          createdAt: job.created_at,
+        },
+        context: {
+          async: true,
+          functionName: FUNCTION_NAME,
+          analysisMode,
+        },
+      }, 202);
+    }
+
+    if (runJob && jobId) {
+      await updateAnalysisJob(supabase, jobId, {
+        status: 'processing' satisfies AnalysisJobStatus,
+        progress_percentage: 10,
+        progress_message: 'Chargement des donnees medicales.',
+        started_at: new Date().toISOString(),
+      });
+    }
 
     // Récupérer les données sélectionnées (incluant les médicaments) depuis la DB
     const [pathologiesRes, symptomsRes, treatmentsRes, medicationsRes, patientsRes] = await Promise.all([
@@ -514,28 +804,41 @@ serve(async (req) => {
       });
       analysis.schemaComparison = ensureSchemaComparison(analysis);
 
-      return new Response(
-        JSON.stringify({
-          analysis,
-          context: {
-            pathologiesCount: pathologies.length,
-            symptomsCount: symptoms.length,
-            treatmentsCount: treatments.length,
-            medicationsCount: medications.length,
-            patientsAnalyzed: 0,
-            pubmedSearches: 0,
-            cacheHits: 0,
-            newLinksGenerated: 0
-          }
-        }),
-        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
+      const responsePayload = {
+        analysis,
+        context: {
+          pathologiesCount: pathologies.length,
+          symptomsCount: symptoms.length,
+          treatmentsCount: treatments.length,
+          medicationsCount: medications.length,
+          patientsAnalyzed: 0,
+          pubmedSearches: 0,
+          cacheHits: 0,
+          newLinksGenerated: 0,
+          async: Boolean(runJob),
+        },
+      };
+
+      await updateAnalysisJob(supabase, runJob ? jobId : undefined, {
+        status: 'completed' satisfies AnalysisJobStatus,
+        progress_percentage: 100,
+        progress_message: 'Analyse terminee.',
+        result_payload: responsePayload,
+        degraded: false,
+        completed_at: new Date().toISOString(),
+      });
+
+      return jsonResponse(responsePayload);
     }
 
     // Rechercher les liens existants en cache
     console.log('[CrossDataAnalyzer] Recherche dans le cache...');
     const cachedLinks = await findCachedLinksBatched(supabase, allElements);
     console.log(`[CrossDataAnalyzer] ${cachedLinks.length} liens trouvés en cache`);
+    await updateAnalysisJob(supabase, runJob ? jobId : undefined, {
+      progress_percentage: 25,
+      progress_message: 'Cache clinique et donnees structurees charges.',
+    });
 
     // Si on a trouvé des liens en cache pour TOUTES les paires, on peut les retourner directement
     const expectedPairs = (allElements.length * (allElements.length - 1)) / 2;
@@ -624,6 +927,10 @@ serve(async (req) => {
         };
       })
     );
+    await updateAnalysisJob(supabase, runJob ? jobId : undefined, {
+      progress_percentage: 45,
+      progress_message: 'Recherche PubMed et preuves externes recuperees.',
+    });
 
     // Construire le contexte pour l'IA
     const selectedPathologiesContext = pathologies.map((p: any) =>
@@ -770,6 +1077,9 @@ FORMAT JSON STRICT:
         hasExternalEvidence,
       }, clinicalModelEnv);
       const schemaPromptWithClinicalContract = buildClinicalSystemPrompt(schemaPrompt, riskAssessment);
+      const schemaTimeoutMs = runJob
+        ? Math.min(schemaRoute.timeoutMs, BACKGROUND_AI_TIMEOUT_MS)
+        : Math.min(schemaRoute.timeoutMs, INTERACTIVE_AI_TIMEOUT_MS);
 
       const schemaUserPrompt = `## PATHOLOGIES
 ${selectedPathologiesContext || 'Aucune'}
@@ -806,14 +1116,58 @@ Génère uniquement le JSON des schémas thérapeutiques alternatifs.`;
       let treatmentSchemas: TreatmentSchema[] = [];
 
       try {
-        schemaAIResult = await callAI(schemaPromptWithClinicalContract, schemaUserPrompt, {
+        const schemaCallOptions = {
           model: schemaRoute.model || OPENAI_CROSS_DATA_MODEL,
           forceModel: true,
           reasoningEffort: schemaRoute.reasoningEffort || OPENAI_CROSS_DATA_REASONING_EFFORT,
           responseFormat: { type: 'json_object' },
           maxTokens: 6000,
-          timeoutMs: Math.min(schemaRoute.timeoutMs, INTERACTIVE_AI_TIMEOUT_MS),
-        });
+          timeoutMs: schemaTimeoutMs,
+        };
+
+        if (runJob && providerResponseId) {
+          const providerResult = await retrieveBackgroundAI(providerResponseId, schemaCallOptions);
+          if (providerResult.status !== 'completed') {
+            await updateAnalysisJob(supabase, jobId, {
+              provider_status: providerResult.status,
+              progress_percentage: 85,
+              progress_message: 'Modele OpenAI encore en cours.',
+            });
+            return jsonResponse({ status: 'processing', providerStatus: providerResult.status }, 202);
+          }
+
+          schemaAIResult = {
+            text: providerResult.text || '',
+            provider: 'openai',
+            model: providerResult.model,
+            reasoningEffort: schemaRoute.reasoningEffort,
+          };
+        } else if (runJob) {
+          const backgroundResponse = await startBackgroundAI(
+            schemaPromptWithClinicalContract,
+            schemaUserPrompt,
+            schemaCallOptions,
+          );
+          await updateAnalysisJob(supabase, jobId, {
+            provider_name: 'openai',
+            provider_response_id: backgroundResponse.id,
+            provider_status: backgroundResponse.status,
+            provider_started_at: new Date().toISOString(),
+            progress_percentage: 80,
+            progress_message: 'Modele OpenAI en cours de raisonnement.',
+            model: backgroundResponse.model,
+            reasoning_effort: backgroundResponse.reasoningEffort,
+          });
+
+          return jsonResponse({
+            status: 'processing',
+            provider: 'openai',
+            providerResponseId: backgroundResponse.id,
+            providerStatus: backgroundResponse.status,
+          }, 202);
+        } else {
+          schemaAIResult = await callAI(schemaPromptWithClinicalContract, schemaUserPrompt, schemaCallOptions);
+        }
 
         try {
           const parsed = JSON.parse(cleanJsonString(schemaAIResult.text));
@@ -838,28 +1192,42 @@ Génère uniquement le JSON des schémas thérapeutiques alternatifs.`;
         ];
       }
 
-      return new Response(
-        JSON.stringify({
+      const responsePayload = {
+        treatmentSchemas,
+        analysis: {
+          ...baseAnalysis,
           treatmentSchemas,
-          analysis: {
-            ...baseAnalysis,
-            treatmentSchemas,
-          },
-          context: {
-            model: schemaAIResult?.model || 'deterministic-fallback',
-            reasoningEffort: schemaRoute.reasoningEffort,
-            clinicalRiskLevel: riskAssessment.riskLevel,
-            clinicalRiskFlags: riskAssessment.flags,
-            finalReviewRequired: schemaRoute.finalReviewRequired,
-            routeReason: schemaRoute.routeReason,
-            validatedLinks: baseAnalysis.causalLinks.length,
-            pubmedSearches: webResearchResults.length,
-            degraded: Boolean(schemaDegradedReason),
-            degradedReason: schemaDegradedReason,
-          },
-        }),
-        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
+        },
+        context: {
+          model: schemaAIResult?.model || 'deterministic-fallback',
+          reasoningEffort: schemaRoute.reasoningEffort,
+          clinicalRiskLevel: riskAssessment.riskLevel,
+          clinicalRiskFlags: riskAssessment.flags,
+          finalReviewRequired: schemaRoute.finalReviewRequired,
+          routeReason: schemaRoute.routeReason,
+          validatedLinks: baseAnalysis.causalLinks.length,
+          pubmedSearches: webResearchResults.length,
+          degraded: Boolean(schemaDegradedReason),
+          degradedReason: schemaDegradedReason,
+          async: Boolean(runJob),
+        },
+      };
+
+      await updateAnalysisJob(supabase, runJob ? jobId : undefined, {
+        status: 'completed' satisfies AnalysisJobStatus,
+        progress_percentage: 100,
+        progress_message: 'Schemas therapeutiques generes.',
+        result_payload: responsePayload,
+        model: schemaAIResult?.model || 'deterministic-fallback',
+        reasoning_effort: schemaRoute.reasoningEffort,
+        degraded: Boolean(schemaDegradedReason),
+        degraded_reason: schemaDegradedReason,
+        provider_status: providerResponseId ? 'completed' : undefined,
+        provider_completed_at: providerResponseId ? new Date().toISOString() : undefined,
+        completed_at: new Date().toISOString(),
+      });
+
+      return jsonResponse(responsePayload);
     }
 
     const systemPrompt = `Tu es un MÉDECIN EXPERT francophone spécialisé dans l'analyse cross-data et l'évaluation thérapeutique.
@@ -1106,22 +1474,69 @@ Base tes analyses sur les indications officielles, les contre-indications, la li
 Réponds UNIQUEMENT en français avec le JSON demandé. Génère uniquement les liens pertinents, justifiés et actionnables.`;
 
     console.log('Appel de l\'IA pour l\'analyse cross-data...');
-
-    const aiResult = await callAI(
-      buildClinicalSystemPrompt(systemPrompt, riskAssessment),
-      userPrompt + "\n\nGénère maintenant le JSON final. Raisonne sur chaque paire, conserve seulement les liens directement justifiés, puis produis une synthèse clinique exploitable.",
-      {
-        model: fullRoute.model || OPENAI_CROSS_DATA_MODEL,
-        forceModel: true,
-        reasoningEffort: fullRoute.reasoningEffort || OPENAI_CROSS_DATA_REASONING_EFFORT,
-        responseFormat: { type: 'json_object' },
-        maxTokens: 8000,
-        timeoutMs: Math.min(fullRoute.timeoutMs, INTERACTIVE_AI_TIMEOUT_MS),
-      }
-    ).catch((aiError) => {
-      console.error('[CrossDataAnalyzer] AI fallback:', aiError);
-      return null;
+    await updateAnalysisJob(supabase, runJob ? jobId : undefined, {
+      progress_percentage: 65,
+      progress_message: 'Synthese clinique par le modele IA.',
     });
+    const analysisTimeoutMs = runJob
+      ? Math.min(fullRoute.timeoutMs, BACKGROUND_AI_TIMEOUT_MS)
+      : Math.min(fullRoute.timeoutMs, INTERACTIVE_AI_TIMEOUT_MS);
+
+    const fullSystemPrompt = buildClinicalSystemPrompt(systemPrompt, riskAssessment);
+    const fullUserPrompt = userPrompt + "\n\nGénère maintenant le JSON final. Raisonne sur chaque paire, conserve seulement les liens directement justifiés, puis produis une synthèse clinique exploitable.";
+    const fullCallOptions = {
+      model: fullRoute.model || OPENAI_CROSS_DATA_MODEL,
+      forceModel: true,
+      reasoningEffort: fullRoute.reasoningEffort || OPENAI_CROSS_DATA_REASONING_EFFORT,
+      responseFormat: { type: 'json_object' },
+      maxTokens: 8000,
+      timeoutMs: analysisTimeoutMs,
+    };
+
+    let aiResult: Awaited<ReturnType<typeof callAI>> | null = null;
+
+    if (runJob && providerResponseId) {
+      const providerResult = await retrieveBackgroundAI(providerResponseId, fullCallOptions);
+      if (providerResult.status !== 'completed') {
+        await updateAnalysisJob(supabase, jobId, {
+          provider_status: providerResult.status,
+          progress_percentage: 85,
+          progress_message: 'Modele OpenAI encore en cours.',
+        });
+        return jsonResponse({ status: 'processing', providerStatus: providerResult.status }, 202);
+      }
+
+      aiResult = {
+        text: providerResult.text || '',
+        provider: 'openai',
+        model: providerResult.model,
+        reasoningEffort: fullRoute.reasoningEffort,
+      };
+    } else if (runJob) {
+      const backgroundResponse = await startBackgroundAI(fullSystemPrompt, fullUserPrompt, fullCallOptions);
+      await updateAnalysisJob(supabase, jobId, {
+        provider_name: 'openai',
+        provider_response_id: backgroundResponse.id,
+        provider_status: backgroundResponse.status,
+        provider_started_at: new Date().toISOString(),
+        progress_percentage: 80,
+        progress_message: 'Modele OpenAI en cours de raisonnement.',
+        model: backgroundResponse.model,
+        reasoning_effort: backgroundResponse.reasoningEffort,
+      });
+
+      return jsonResponse({
+        status: 'processing',
+        provider: 'openai',
+        providerResponseId: backgroundResponse.id,
+        providerStatus: backgroundResponse.status,
+      }, 202);
+    } else {
+      aiResult = await callAI(fullSystemPrompt, fullUserPrompt, fullCallOptions).catch((aiError) => {
+        console.error('[CrossDataAnalyzer] AI fallback:', aiError);
+        return null;
+      });
+    }
 
     const content = aiResult?.text;
 
@@ -1169,36 +1584,59 @@ Réponds UNIQUEMENT en français avec le JSON demandé. Génère uniquement les 
     }
     console.log('[CrossDataAnalyzer] Liens sauvegardés en cache');
 
-    return new Response(
-      JSON.stringify({
-        analysis,
-        context: {
-          pathologiesCount: pathologies.length,
-          symptomsCount: symptoms.length,
-          treatmentsCount: treatments.length,
-          medicationsCount: medications.length,
-          patientsAnalyzed: relevantPatients.length,
-          pubmedSearches: webResearchResults.length,
-          cacheHits: cachedLinks.length,
-          newLinksGenerated: analysis.causalLinks?.length || 0,
-          model: aiResult?.model || 'deterministic-fallback',
-          reasoningEffort: fullRoute.reasoningEffort,
-          clinicalRiskLevel: riskAssessment.riskLevel,
-          clinicalRiskFlags: riskAssessment.flags,
-          finalReviewRequired: fullRoute.finalReviewRequired,
-          routeReason: fullRoute.routeReason,
-          degraded: Boolean(degradedReason),
-          degradedReason
-        }
-      }),
-      { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    );
+    const responsePayload = {
+      analysis,
+      context: {
+        pathologiesCount: pathologies.length,
+        symptomsCount: symptoms.length,
+        treatmentsCount: treatments.length,
+        medicationsCount: medications.length,
+        patientsAnalyzed: relevantPatients.length,
+        pubmedSearches: webResearchResults.length,
+        cacheHits: cachedLinks.length,
+        newLinksGenerated: analysis.causalLinks?.length || 0,
+        model: aiResult?.model || 'deterministic-fallback',
+        reasoningEffort: fullRoute.reasoningEffort,
+        clinicalRiskLevel: riskAssessment.riskLevel,
+        clinicalRiskFlags: riskAssessment.flags,
+        finalReviewRequired: fullRoute.finalReviewRequired,
+        routeReason: fullRoute.routeReason,
+        degraded: Boolean(degradedReason),
+        degradedReason,
+        async: Boolean(runJob),
+      },
+    };
+
+    await updateAnalysisJob(supabase, runJob ? jobId : undefined, {
+      status: 'completed' satisfies AnalysisJobStatus,
+      progress_percentage: 100,
+      progress_message: 'Analyse cross-data terminee.',
+      result_payload: responsePayload,
+      model: aiResult?.model || 'deterministic-fallback',
+      reasoning_effort: fullRoute.reasoningEffort,
+      degraded: Boolean(degradedReason),
+      degraded_reason: degradedReason,
+      provider_status: providerResponseId ? 'completed' : undefined,
+      provider_completed_at: providerResponseId ? new Date().toISOString() : undefined,
+      completed_at: new Date().toISOString(),
+    });
+
+    return jsonResponse(responsePayload);
 
   } catch (error) {
     console.error('Erreur analyseur cross-data:', error);
-    return new Response(
-      JSON.stringify({ error: error instanceof Error ? error.message : 'Erreur inconnue' }),
-      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    );
+    const errorMessage = getErrorMessage(error);
+
+    if (activeSupabase && activeRunJob) {
+      await updateAnalysisJob(activeSupabase, activeJobId, {
+        status: 'failed' satisfies AnalysisJobStatus,
+        progress_percentage: 100,
+        progress_message: 'Analyse cross-data echouee.',
+        error_message: errorMessage,
+        completed_at: new Date().toISOString(),
+      });
+    }
+
+    return jsonResponse({ error: errorMessage }, 500);
   }
 });

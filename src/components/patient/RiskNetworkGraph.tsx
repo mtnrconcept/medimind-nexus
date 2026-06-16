@@ -63,6 +63,7 @@ import {
 } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { useAI } from '@/contexts/AIContext';
+import { resolveAIJob } from '@/lib/aiJobs';
 import { toast } from 'sonner';
 import {
     getAppropriatenessBadgeLabel,
@@ -976,7 +977,7 @@ export function RiskNetworkGraph({
 
             // Appeler l'API
             const { data, error } = await invokeAI('cross-data-analyzer', {
-                pathologyIds, symptomIds, treatmentIds, medicationIds
+                pathologyIds, symptomIds, treatmentIds, medicationIds, async: true
             });
 
             if (data?.error) {
@@ -991,10 +992,12 @@ export function RiskNetworkGraph({
                 throw error;
             }
 
-            console.log('[RiskNetworkGraph] Réponse API:', data);
+            const resolvedData = await resolveAIJob<any>(invokeAI, 'cross-data-analyzer', data);
+
+            console.log('[RiskNetworkGraph] Réponse API:', resolvedData);
 
             // Extract the actual analysis object from the response
-            const actualAnalysis = data?.analysis || data;
+            const actualAnalysis = resolvedData?.analysis || resolvedData;
             setAnalysisResult(actualAnalysis);
 
             // Sync with parent if callback provided
@@ -1193,7 +1196,7 @@ export function RiskNetworkGraph({
             setIsAnalyzing(false);
             setIsLoadingLinks(false);
         }
-    }, [nodes, setNodes, setEdges, hiddenNodes, onAnalysisResultChange, normalizeForComparison]);
+    }, [nodes, setNodes, setEdges, hiddenNodes, invokeAI, onAnalysisResultChange, normalizeForComparison]);
 
     // Analyser les connexions entre groupes
     const analyzeGroupConnections = useCallback(async () => {
