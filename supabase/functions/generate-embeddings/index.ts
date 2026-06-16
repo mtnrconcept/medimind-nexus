@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { createEmbeddings } from "../_shared/ai-client.ts";
 
 const corsHeaders = {
     "Access-Control-Allow-Origin": "*",
@@ -19,11 +20,6 @@ serve(async (req) => {
     try {
         const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
         const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-        const openaiKey = Deno.env.get("OPENAI_API_KEY");
-
-        if (!openaiKey) {
-            throw new Error("OPENAI_API_KEY not configured");
-        }
 
         const supabase = createClient(supabaseUrl, supabaseKey);
 
@@ -73,27 +69,13 @@ serve(async (req) => {
             return `${node.name}. Type: ${category}. ${description}`.trim();
         });
 
-        // Call OpenAI embeddings API
-        const embeddingResponse = await fetch("https://api.openai.com/v1/embeddings", {
-            method: "POST",
-            headers: {
-                "Authorization": `Bearer ${openaiKey}`,
-                "Content-Type": "application/json",
-            },
-            body: JSON.stringify({
-                model: "text-embedding-3-small",
-                input: texts,
-                dimensions: 1536
-            }),
+        const embeddings = await createEmbeddings(texts, {
+            model: "text-embedding-3-small",
+            dimensions: 1536,
         });
-
-        if (!embeddingResponse.ok) {
-            const error = await embeddingResponse.text();
-            throw new Error(`OpenAI API error: ${error}`);
+        if (embeddings.length !== nodes.length) {
+            console.warn(`Embedding count mismatch: expected ${nodes.length}, got ${embeddings.length}`);
         }
-
-        const embeddingData = await embeddingResponse.json();
-        const embeddings = embeddingData.data;
 
         // Update each node with its embedding
         let successCount = 0;
@@ -101,7 +83,12 @@ serve(async (req) => {
 
         for (let i = 0; i < nodes.length; i++) {
             const node = nodes[i];
-            const embedding = embeddings[i].embedding;
+            const embedding = embeddings[i];
+            if (!embedding) {
+                console.error(`Missing embedding for node ${node.id}`);
+                errorCount++;
+                continue;
+            }
 
             // Convert to pgvector format
             const vectorString = `[${embedding.join(",")}]`;

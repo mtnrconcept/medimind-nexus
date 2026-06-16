@@ -2,6 +2,14 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { callAI, cleanJsonString } from "../_shared/ai-client.ts";
 import {
+  applyClinicalSafetyContract,
+  buildClinicalSystemPrompt,
+  detectHighRiskContext,
+  getClinicalModelEnv,
+  selectClinicalModel,
+  type ClinicalRiskAssessment,
+} from "../_shared/clinical-brain.ts";
+import {
   OPENAI_CROSS_DATA_MODEL,
   OPENAI_CROSS_DATA_REASONING_EFFORT,
   buildEvidenceLinks,
@@ -87,6 +95,7 @@ interface AnalysisResult {
   alternatives: Alternative[];
   schemaComparison?: SchemaComparison;
   treatmentSchemas?: TreatmentSchema[];
+  clinicalSafety?: ClinicalRiskAssessment;
   webResearch: {
     query: string;
     findings: string[];
@@ -593,8 +602,36 @@ serve(async (req) => {
       )
     ).slice(0, 120).join('\n') || 'Pas assez de paires a auditer.';
 
+    const riskAssessment = detectHighRiskContext({
+      pathologies,
+      symptoms,
+      treatments,
+      medications,
+      patientCount: relevantPatients.length,
+      selectedElementCount: selectedElements.length,
+    });
+    const clinicalModelEnv = getClinicalModelEnv((key) => Deno.env.get(key));
+    const hasExternalEvidence = webResearchResults.some((result) => result.articles.length > 0);
+    const defaultClinicalTask = medications.length >= 3 || selectedElements.length >= 6
+      ? 'polypharmacy'
+      : 'suspected_interaction';
+    const fullRoute = selectClinicalModel({
+      task: defaultClinicalTask,
+      riskAssessment,
+      elementCount: selectedElements.length,
+      hasExternalEvidence,
+    }, clinicalModelEnv);
+    console.log('[CrossDataAnalyzer] Risque clinique:', {
+      riskLevel: riskAssessment.riskLevel,
+      flags: riskAssessment.flags,
+      requiresSecondPass: riskAssessment.requiresSecondPass,
+    });
+
     if (analysisMode === 'treatment_schemas') {
-      const baseAnalysis = ensureAnalysisShape(currentAnalysis);
+      const baseAnalysis = applyClinicalSafetyContract(
+        ensureAnalysisShape(currentAnalysis) as AnalysisResult,
+        riskAssessment,
+      );
       baseAnalysis.causalLinks = mergeAndValidateLinks(
         selectedElements,
         evidenceLinks,
@@ -646,6 +683,14 @@ FORMAT JSON STRICT:
   ]
 }`;
 
+      const schemaRoute = selectClinicalModel({
+        task: 'treatment_complex',
+        riskAssessment,
+        elementCount: selectedElements.length,
+        hasExternalEvidence,
+      }, clinicalModelEnv);
+      const schemaPromptWithClinicalContract = buildClinicalSystemPrompt(schemaPrompt, riskAssessment);
+
       const schemaUserPrompt = `## PATHOLOGIES
 ${selectedPathologiesContext || 'Aucune'}
 
@@ -676,12 +721,13 @@ ${webResearchContext || 'Aucune recherche effectuée'}
 
 Génère uniquement le JSON des schémas thérapeutiques alternatifs.`;
 
-      const schemaAIResult = await callAI(schemaPrompt, schemaUserPrompt, {
-        model: OPENAI_CROSS_DATA_MODEL,
+      const schemaAIResult = await callAI(schemaPromptWithClinicalContract, schemaUserPrompt, {
+        model: schemaRoute.model || OPENAI_CROSS_DATA_MODEL,
         forceModel: true,
-        reasoningEffort: OPENAI_CROSS_DATA_REASONING_EFFORT,
+        reasoningEffort: schemaRoute.reasoningEffort || OPENAI_CROSS_DATA_REASONING_EFFORT,
         responseFormat: { type: 'json_object' },
         maxTokens: 6000,
+        timeoutMs: schemaRoute.timeoutMs,
       });
 
       let treatmentSchemas: TreatmentSchema[] = [];
@@ -701,7 +747,11 @@ Génère uniquement le JSON des schémas thérapeutiques alternatifs.`;
           },
           context: {
             model: schemaAIResult.model,
-            reasoningEffort: OPENAI_CROSS_DATA_REASONING_EFFORT,
+            reasoningEffort: schemaRoute.reasoningEffort,
+            clinicalRiskLevel: riskAssessment.riskLevel,
+            clinicalRiskFlags: riskAssessment.flags,
+            finalReviewRequired: schemaRoute.finalReviewRequired,
+            routeReason: schemaRoute.routeReason,
             validatedLinks: baseAnalysis.causalLinks.length,
             pubmedSearches: webResearchResults.length,
           },
@@ -956,14 +1006,15 @@ Réponds UNIQUEMENT en français avec le JSON demandé. Génère uniquement les 
     console.log('Appel de l\'IA pour l\'analyse cross-data...');
 
     const aiResult = await callAI(
-      systemPrompt,
+      buildClinicalSystemPrompt(systemPrompt, riskAssessment),
       userPrompt + "\n\nGénère maintenant le JSON final. Raisonne sur chaque paire, conserve seulement les liens directement justifiés, puis produis une synthèse clinique exploitable.",
       {
-        model: OPENAI_CROSS_DATA_MODEL,
+        model: fullRoute.model || OPENAI_CROSS_DATA_MODEL,
         forceModel: true,
-        reasoningEffort: OPENAI_CROSS_DATA_REASONING_EFFORT,
+        reasoningEffort: fullRoute.reasoningEffort || OPENAI_CROSS_DATA_REASONING_EFFORT,
         responseFormat: { type: 'json_object' },
         maxTokens: 8000,
+        timeoutMs: fullRoute.timeoutMs,
       }
     );
 
@@ -996,6 +1047,7 @@ Réponds UNIQUEMENT en français avec le JSON demandé. Génère uniquement les 
       cachedLinks,
     );
     analysis.schemaComparison = ensureSchemaComparison(analysis);
+    analysis = applyClinicalSafetyContract(analysis, riskAssessment);
 
     // Ajouter les sources web si non présentes
     if (!analysis.webResearch || analysis.webResearch.length === 0) {
@@ -1028,7 +1080,13 @@ Réponds UNIQUEMENT en français avec le JSON demandé. Génère uniquement les 
           patientsAnalyzed: relevantPatients.length,
           pubmedSearches: webResearchResults.length,
           cacheHits: cachedLinks.length,
-          newLinksGenerated: analysis.causalLinks?.length || 0
+          newLinksGenerated: analysis.causalLinks?.length || 0,
+          model: aiResult.model,
+          reasoningEffort: fullRoute.reasoningEffort,
+          clinicalRiskLevel: riskAssessment.riskLevel,
+          clinicalRiskFlags: riskAssessment.flags,
+          finalReviewRequired: fullRoute.finalReviewRequired,
+          routeReason: fullRoute.routeReason
         }
       }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }

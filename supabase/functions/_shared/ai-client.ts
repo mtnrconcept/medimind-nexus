@@ -67,9 +67,16 @@ export interface AICallOptions {
   timeoutMs?: number;
 }
 
+export interface AIEmbeddingOptions {
+  model?: string;
+  dimensions?: number;
+  timeoutMs?: number;
+}
+
 const DEFAULT_OPENAI_MODEL = 'gpt-5.5';
 const OPENAI_CHAT_COMPLETIONS_URL = 'https://api.openai.com/v1/chat/completions';
 const OPENAI_RESPONSES_URL = 'https://api.openai.com/v1/responses';
+const OPENAI_EMBEDDINGS_URL = 'https://api.openai.com/v1/embeddings';
 const DEFAULT_OPENAI_TIMEOUT_MS = 90_000;
 
 function isKnownNonOpenAIModel(model: string): boolean {
@@ -457,6 +464,36 @@ export async function callAI(
     provider: 'openai',
     model,
   };
+}
+
+export async function createEmbeddings(
+  input: string | string[],
+  options: AIEmbeddingOptions = {},
+): Promise<number[][]> {
+  const apiKey = Deno.env.get('OPENAI_API_KEY');
+  if (!apiKey) {
+    throw new Error('OPENAI_API_KEY not configured');
+  }
+
+  const model = options.model || 'text-embedding-3-small';
+  const timeoutMs = resolveTimeoutMs({ timeoutMs: options.timeoutMs });
+  const body: Record<string, unknown> = { model, input };
+  if (options.dimensions) {
+    body.dimensions = options.dimensions;
+  }
+
+  const response = await fetchOpenAI(OPENAI_EMBEDDINGS_URL, apiKey, body, timeoutMs);
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`OpenAI Embeddings request failed (${response.status}): ${errorText}`);
+  }
+
+  const data = await response.json();
+  const rows = Array.isArray(data.data) ? data.data : [];
+  return rows
+    .sort((left, right) => Number(left.index || 0) - Number(right.index || 0))
+    .map((row) => row.embedding)
+    .filter((embedding) => Array.isArray(embedding));
 }
 
 /**
