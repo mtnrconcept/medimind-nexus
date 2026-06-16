@@ -12,6 +12,24 @@ const corsHeaders = {
     "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
+const EXTERNAL_FETCH_TIMEOUT_MS = 6_000;
+
+async function fetchWithTimeout(url: string, timeoutMs = EXTERNAL_FETCH_TIMEOUT_MS): Promise<Response> {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
+
+    try {
+        return await fetch(url, { signal: controller.signal });
+    } catch (error) {
+        if (error instanceof Error && error.name === 'AbortError') {
+            throw new Error(`External request timed out after ${timeoutMs}ms`);
+        }
+        throw error;
+    } finally {
+        clearTimeout(timeout);
+    }
+}
+
 // ============================================
 // TYPES
 // ============================================
@@ -52,7 +70,7 @@ async function fetchPubMedData(topic: string): Promise<any[]> {
     try {
         // Search for recent articles
         const searchUrl = `https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=pubmed&term=${encodeURIComponent(topic)}&retmax=10&retmode=json&sort=relevance`;
-        const searchRes = await fetch(searchUrl);
+        const searchRes = await fetchWithTimeout(searchUrl);
         const searchData = await searchRes.json();
 
         const ids = searchData.esearchresult?.idlist || [];
@@ -60,7 +78,7 @@ async function fetchPubMedData(topic: string): Promise<any[]> {
 
         // Fetch article details
         const fetchUrl = `https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi?db=pubmed&id=${ids.join(',')}&retmode=json`;
-        const fetchRes = await fetch(fetchUrl);
+        const fetchRes = await fetchWithTimeout(fetchUrl);
         const fetchData = await fetchRes.json();
 
         return Object.values(fetchData.result || {}).filter((item: any) => item.uid);
@@ -73,7 +91,7 @@ async function fetchPubMedData(topic: string): Promise<any[]> {
 async function fetchOpenFDAData(drugName: string): Promise<any[]> {
     try {
         const url = `https://api.fda.gov/drug/event.json?search=patient.drug.medicinalproduct:"${encodeURIComponent(drugName)}"&limit=20`;
-        const res = await fetch(url);
+        const res = await fetchWithTimeout(url);
         if (!res.ok) return [];
         const data = await res.json();
         return data.results || [];
@@ -125,6 +143,81 @@ async function fetchLocalData(supabase: any, topic: string): Promise<{
         treatments: treatments.data || [],
         medications: medications.data || [],
         interactions: interactions.data || []
+    };
+}
+
+function buildFallbackResearchResult(topic: string, localData: any, reason: string): ResearchResult {
+    console.warn(`[DEEP-RESEARCH] Using fallback graph: ${reason}`);
+    const fallbackNodes: any[] = [];
+    const fallbackEdges: any[] = [];
+    let nodeIdCounter = 0;
+
+    fallbackNodes.push({
+        id: `c0`,
+        node_type: 'PATHOLOGY',
+        label: topic,
+        description: localData.pathologies?.[0]?.description || 'Pathologie centrale',
+        weight: 1.0,
+        source: 'local',
+        ring: 0
+    });
+
+    localData.symptoms?.slice(0, 5).forEach((s: any) => {
+        const id = `s${nodeIdCounter++}`;
+        fallbackNodes.push({
+            id, node_type: 'SYMPTOM', label: s.name, description: s.description || '', weight: 0.7, source: 'local', ring: 1
+        });
+        fallbackEdges.push({
+            source_id: 'c0', target_id: id, edge_type: 'SYMPTOM_OF', weight: 0.8, rationale: 'Symptome associe (Local DB)'
+        });
+    });
+
+    localData.treatments?.slice(0, 5).forEach((t: any) => {
+        const id = `t${nodeIdCounter++}`;
+        fallbackNodes.push({
+            id, node_type: 'TREATMENT', label: t.name, description: t.description || '', weight: 0.8, source: 'local', ring: 1
+        });
+        fallbackEdges.push({
+            source_id: id, target_id: 'c0', edge_type: 'TREATS', weight: 0.9, rationale: 'Traitement associe (Local DB)'
+        });
+    });
+
+    localData.medications?.slice(0, 5).forEach((m: any) => {
+        const id = `m${nodeIdCounter++}`;
+        fallbackNodes.push({
+            id, node_type: 'DRUG', label: m.name, description: m.description || '', weight: 0.8, source: 'local', ring: 1
+        });
+        fallbackEdges.push({
+            source_id: id, target_id: 'c0', edge_type: 'TREATS', weight: 0.85, rationale: 'Medicament associe (Local DB)'
+        });
+    });
+
+    if (fallbackNodes.length === 1) {
+        fallbackNodes.push({
+            id: 'evidence_gap',
+            node_type: 'EVIDENCE',
+            label: 'Donnees insuffisantes',
+            description: `Aucune donnee locale exploitable n'a ete trouvee pour "${topic}" pendant que l'IA etait indisponible.`,
+            weight: 0.2,
+            source: 'fallback',
+            ring: 1
+        });
+        fallbackEdges.push({
+            source_id: 'c0',
+            target_id: 'evidence_gap',
+            edge_type: 'EVIDENCE_GAP',
+            weight: 0.2,
+            rationale: 'Fallback sans affirmation clinique generee'
+        });
+    }
+
+    return {
+        nodes: fallbackNodes,
+        edges: fallbackEdges,
+        sources_consulted: ['local (fallback)'],
+        research_summary: `Recherche sur ${topic} (fallback local: ${reason})`,
+        ai_provider: 'none',
+        ai_model: 'fallback'
     };
 }
 
@@ -273,8 +366,16 @@ Génère un graphe RICHE avec ${allPathologies.length > 1 ? 'au moins 60-100 nœ
             model: "gpt-5.5",
             reasoningEffort: "medium",
             maxTokens: 8000,
+            timeoutMs: 45_000,
         }
-    );
+    ).catch((error) => {
+        console.error('[DEEP-RESEARCH] OpenAI synthesis failed:', error);
+        return null;
+    });
+
+    if (!aiResult?.text) {
+        return buildFallbackResearchResult(topic, localData, 'OpenAI indisponible ou timeout');
+    }
 
     const content = aiResult.text || "{}";
 
@@ -304,6 +405,7 @@ Génère un graphe RICHE avec ${allPathologies.length > 1 ? 'au moins 60-100 nœ
         };
     } catch (e) {
         console.error('[DEEP-RESEARCH] JSON parse/validation error:', e);
+        return buildFallbackResearchResult(topic, localData, 'JSON OpenAI invalide ou incomplet');
         // Return minimal fallback
         // Enhanced Fallback using Local Data
         const fallbackNodes: any[] = [];
