@@ -223,7 +223,7 @@ const DiscoveryEnginePanel = () => {
                                 {t('Moteur de Découverte IA')}
                             </span>
                             <p className="text-sm text-muted-foreground font-normal mt-1">
-                                {t('Génération d\'hypothèses thérapeutiques innovantes avec Claude')}
+                                {t('Génération d\'hypothèses thérapeutiques innovantes avec OpenAI GPT-5.5')}
                             </p>
                             <div className="flex gap-2 mt-2">
                                 <Badge variant="outline" className="text-xs">

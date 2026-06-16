@@ -50,7 +50,7 @@ async function testAnalysis() {
     // Note: To bypass Auth in Edge Function call via anon key, checking if user token checks are enforced.
     // The deployed function uses `serve` and checks RLS usually via context, but our code allows anon?
     // Line 6 of index.ts: CORS allowed. 
-    // Line 123 `analyzeWithClaude` uses `CLAUDE_API_KEY`.
+    // Document analysis now routes through the shared OpenAI client and `OPENAI_API_KEY`.
     // The function doesn't seem to enforce `Authorization` header check for user presence explicitly for *analysis*, 
     // BUT `autoIntegrateData` uses `patientId`.
     // If we pass `patientId`, it attempts to insert into tables.

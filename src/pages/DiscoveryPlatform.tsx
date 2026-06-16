@@ -314,16 +314,16 @@ const MOCK_HYPOTHESES: Hypothesis[] = [
 ];
 
 // ============================================
-// COMPONENT: Claude Streaming Modal
+// COMPONENT: OpenAI Streaming Modal
 // ============================================
 
-interface ClaudeStreamingModalProps {
+interface OpenAIStreamingModalProps {
     isOpen: boolean;
     streamingContent: string;
     onClose?: () => void;
 }
 
-function ClaudeStreamingModal({ isOpen, streamingContent, onClose }: ClaudeStreamingModalProps) {
+function OpenAIStreamingModal({ isOpen, streamingContent, onClose }: OpenAIStreamingModalProps) {
     const scrollRef = useRef<HTMLDivElement>(null);
     const [dots, setDots] = useState('');
 
@@ -398,7 +398,7 @@ function ClaudeStreamingModal({ isOpen, streamingContent, onClose }: ClaudeStrea
                         </div>
                         <div>
                             <h2 className="text-lg font-bold bg-gradient-to-r from-blue-400 to-purple-400 bg-clip-text text-transparent">
-                                Claude Opus 4 analyse{dots}
+                                OpenAI GPT-5.5 analyse{dots}
                             </h2>
                             <p className="text-xs text-slate-400">
                                 Génération d'hypothèse en cours • Streaming actif
@@ -438,7 +438,7 @@ function ClaudeStreamingModal({ isOpen, streamingContent, onClose }: ClaudeStrea
                                 Initialisation de l'analyse approfondie{dots}
                                 <br />
                                 <span className="text-xs text-slate-500">
-                                    Claude examine les preuves scientifiques
+                                    OpenAI examine les preuves scientifiques
                                 </span>
                             </p>
                         </div>
@@ -530,7 +530,7 @@ function StatsHeader({ stats }: { stats: { articles: number; hypotheses: number;
                     </div>
                     <div>
                         <h1 className="text-xl font-bold">Plateforme de Découverte Médicale</h1>
-                        <p className="text-blue-200 text-sm">Recherche continue alimentée par Claude Opus 4.5</p>
+                        <p className="text-blue-200 text-sm">Recherche continue alimentée par OpenAI GPT-5.5</p>
                     </div>
                 </div>
                 <div className="flex items-center gap-2">
@@ -1007,7 +1007,7 @@ function KnowledgeExtractionPanel({
                         disabled={isLoading}
                     >
                         {isLoading ? <Loader2 className="h-3 w-3 animate-spin" /> : <Sparkles className="h-3 w-3" />}
-                        {isLoading ? 'Extraction...' : 'Avec Claude'}
+                        {isLoading ? 'Extraction...' : 'Avec OpenAI'}
                     </Button>
                 </div>
             </CardHeader>
@@ -2784,7 +2784,7 @@ const DiscoveryPlatform = () => {
     // Hypothesis Comparison State
     const [comparedHypothesisIds, setComparedHypothesisIds] = useState<string[]>([]);
 
-    // Claude Streaming Modal State
+    // OpenAI Streaming Modal State
     const [streamingContent, setStreamingContent] = useState<string>('');
 
     // Evidence Pack State (enriched data from hypothesis generation)
@@ -3863,8 +3863,8 @@ const DiscoveryPlatform = () => {
                     </div>
                 </div>
 
-                {/* Claude Streaming Modal */}
-                <ClaudeStreamingModal
+                {/* OpenAI Streaming Modal */}
+                <OpenAIStreamingModal
                     isOpen={isGeneratingHypotheses}
                     streamingContent={streamingContent}
                     onClose={() => setIsGeneratingHypotheses(false)}

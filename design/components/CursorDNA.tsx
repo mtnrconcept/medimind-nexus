@@ -112,7 +112,7 @@ const QuantumProbe = () => {
 const CursorDNA: React.FC = () => {
   return (
     <div className="fixed inset-0 pointer-events-none z-[60]">
-      <Canvas camera={{ position: [0, 0, 5], fov: 50 }} alpha={true} gl={{ antialias: true, alpha: true }}>
+      <Canvas camera={{ position: [0, 0, 5], fov: 50 }} gl={{ antialias: true, alpha: true }}>
         <ambientLight intensity={0.8} />
         <pointLight position={[5, 5, 5]} intensity={2} />
         <QuantumProbe />

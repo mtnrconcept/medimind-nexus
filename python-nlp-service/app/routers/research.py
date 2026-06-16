@@ -106,7 +106,7 @@ async def perform_deep_research(input: ResearchInput):
     """
     Perform deep research on symptoms.
     1. Search PubMed
-    2. Analyze with Claude (Anthropic)
+    2. Analyze with OpenAI through the shared clinical route
     3. Return structured differential diagnosis
     """
     try:
@@ -133,7 +133,7 @@ async def perform_deep_research(input: ResearchInput):
         # Format sources for Context
         web_context = "\n".join([f"- \"{s.title}\" ({s.url})\n  Snippet: {s.snippet}" for s in sources])
         
-        # 2. AI Analysis with automatic fallback (Anthropic -> Gemini)
+        # 2. AI analysis through OpenAI with clinical routing and safety contract
         system_prompt = """You are a medical expert specializing in differential diagnosis. Perform "Deep Research" analyzing the provided symptoms to identify ALL possible pathologies.
         
 IMPORTANT: Answer ONLY in FRENCH.
@@ -182,11 +182,11 @@ Analyze these symptoms and identify pathologies. Include:
 Reply in JSON only.
 """
 
-        print("Calling AI API with fallback (Anthropic -> Gemini)...")
+        print("Calling OpenAI clinical route...")
         ai_response = await call_ai(
             system_prompt=system_prompt,
             user_prompt=user_prompt,
-            model="claude-3-opus-20240229",
+            model=os.getenv("OPENAI_MODEL", "gpt-5.5"),
             max_tokens=4096,
             temperature=0.3
         )

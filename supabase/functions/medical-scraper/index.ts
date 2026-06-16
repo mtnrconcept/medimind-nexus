@@ -1361,7 +1361,7 @@ serve(async (req) => {
       const markdown = scrapeResult.markdown || '';
       console.log('Contenu extraction équivalence, longueur:', markdown.length);
 
-      // Extract equivalence data using AI with fallback (OpenAI -> Gemini)
+      // Extract equivalence data using the shared OpenAI client
       const equivalencePrompt = `Tu es un pharmacologue expert. Extrais les données d'équivalence de cette page.
 
 Catégorie: ${category}

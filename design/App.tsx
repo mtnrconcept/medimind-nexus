@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { ResearchPaper, MedicalSynthesis, ViewMode } from './types';
 import { MOCK_PAPERS, Icons } from './constants';
-import { geminiService } from './services/geminiService';
+import { researchSynthesisService } from './services/researchSynthesisService';
 import DNAVisualizer from './components/DNAVisualizer';
 import ResearchGrid from './components/ResearchGrid';
 import AISynthesisPanel from './components/AISynthesisPanel';
@@ -43,7 +43,7 @@ const App: React.FC = () => {
 
     setLoading(true);
     try {
-      const result = await geminiService.synthesizeResearch(query, papers);
+      const result = await researchSynthesisService.synthesizeResearch(query, papers);
       setSynthesis(result);
     } catch (error) {
       console.error("Search failed", error);

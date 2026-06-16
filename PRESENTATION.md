@@ -53,7 +53,7 @@ Conçu pour répondre aux exigences les plus strictes des établissements de san
 *   **Stack Moderne & Robuste** :
     *   **Frontend** : React / TypeScript / Vite pour une interface ultra-réactive.
     *   **Backend** : Supabase (PostgreSQL) pour la fiabilité et la scalabilité.
-    *   **IA Hybride** : Utilisation de modèles de pointe (Claude 3.5 Sonnet/Opus) couplés à des bases de données vérifiées (Knowledge Graph).
+    *   **IA Hybride** : Utilisation d'OpenAI GPT-5.5/GPT-5.4-mini couplés à des bases de données vérifiées (Knowledge Graph).
 *   **Interopérabilité** : Architecture prête pour s'interfacer avec les SIH existants (HL7/FHIR ready).
 
 ---

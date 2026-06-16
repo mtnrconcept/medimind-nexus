@@ -339,7 +339,7 @@ const AppLayout = ({ children }: AppLayoutProps) => {
                   : "text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-100"
               )}
               onClick={() => setLLMMode(llmMode === 'cloud' ? 'local' : 'cloud')}
-              title={llmMode === 'cloud' ? "Mode IA: Cloud (Gemini/Claude)" : "Mode IA: Local (Meditron)"}
+              title={llmMode === 'cloud' ? "Mode IA: Cloud OpenAI" : "Mode IA: Local (Meditron)"}
             >
               {llmMode === 'cloud' ? <Cloud className="h-4 w-4" /> : <Cpu className="h-4 w-4" />}
               <span className="hidden lg:inline text-xs font-semibold uppercase tracking-wider">

@@ -1,12 +1,15 @@
 # MediMind NLP Service
 
-Python FastAPI microservice for biomedical NLP using scispaCy.
+Python FastAPI microservice for biomedical NLP using scispaCy and
+server-side OpenAI clinical synthesis.
 
 ## Features
 
 - **Entity Extraction**: Biomedical NER with UMLS linking
 - **Relation Extraction**: Drug-disease-gene relations
 - **Embeddings**: Sentence-transformers for semantic search
+- **Deep Research**: PubMed retrieval plus OpenAI clinical analysis using
+  `OPENAI_API_KEY`
 
 ## Endpoints
 
@@ -37,6 +40,18 @@ python -m spacy download en_core_sci_lg
 # Run server
 uvicorn app.main:app --reload --port 8000
 ```
+
+Required AI environment variables:
+
+```bash
+OPENAI_API_KEY=...
+OPENAI_MODEL=gpt-5.5
+OPENAI_SIMPLE_MODEL=gpt-5.4-mini
+OPENAI_CRITICAL_MODEL=gpt-5.5
+```
+
+The OpenAI key must stay server-side. Browser prototypes must not read or embed
+`OPENAI_API_KEY`.
 
 ## Docker
 

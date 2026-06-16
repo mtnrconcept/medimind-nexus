@@ -129,7 +129,7 @@ async function fetchLocalData(supabase: any, topic: string): Promise<{
 }
 
 // ============================================
-// CLAUDE OPUS SYNTHESIS
+// OPENAI GPT-5.5 SYNTHESIS
 // ============================================
 
 async function synthesizeWithOpenAI(
