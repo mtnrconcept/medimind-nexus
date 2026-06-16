@@ -414,7 +414,6 @@ const Timeline3DViewer = ({
 
             <CardContent className="p-0">
                 {/* 3D Canvas */}
-            </div>
 
             <div className="h-[400px] w-full bg-gradient-to-b from-slate-900 to-slate-800 relative">
                 <Canvas

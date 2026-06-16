@@ -43,6 +43,7 @@ interface TProps {
  */
 export const T = memo(function T({ children, as: Tag = 'span', className }: TProps) {
     const { i18n } = useTranslation();
+    const { invokeAI } = useAI();
     const lang = i18n.language;
     const [translated, setTranslated] = useState(children);
 
@@ -60,7 +61,6 @@ export const T = memo(function T({ children, as: Tag = 'span', className }: TPro
         }
 
         // Traduire
-        const { invokeAI } = useAI();
         const translateText = async () => {
             try {
                 const { data, error } = await invokeAI('translate', {
@@ -83,7 +83,7 @@ export const T = memo(function T({ children, as: Tag = 'span', className }: TPro
         };
 
         translateText();
-    }, [children, lang]);
+    }, [children, invokeAI, lang]);
 
     return <Tag className={className}>{translated}</Tag>;
 });
@@ -93,6 +93,7 @@ export const T = memo(function T({ children, as: Tag = 'span', className }: TPro
  */
 export function useT(text: string): string {
     const { i18n } = useTranslation();
+    const { invokeAI } = useAI();
     const lang = i18n.language;
     const [translated, setTranslated] = useState(text);
 
@@ -107,7 +108,6 @@ export function useT(text: string): string {
             return;
         }
 
-        const { invokeAI } = useAI();
         invokeAI('translate', {
             texts: [text], targetLang: lang, sourceLang: 'fr'
         }).then(({ data, error }) => {
@@ -118,7 +118,7 @@ export function useT(text: string): string {
                 setTranslated(data.translations[0]);
             }
         }).catch(() => { });
-    }, [text, lang]);
+    }, [text, invokeAI, lang]);
 
     return translated;
 }
@@ -149,12 +149,13 @@ export async function translateBatch(
         return results.map((r, i) => r || texts[i]);
     }
 
-    const { invokeAI } = useAI();
     try {
-        const { data, error } = await invokeAI('translate', {
-            texts: toTranslate.map(t => t.text),
-            targetLang,
-            sourceLang
+        const { data, error } = await supabase.functions.invoke('translate', {
+            body: {
+                texts: toTranslate.map(t => t.text),
+                targetLang,
+                sourceLang
+            }
         });
 
         if (!error && data?.translations) {

@@ -2,6 +2,14 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { callAI, cleanJsonString } from "../_shared/ai-client.ts";
 import {
+  applyClinicalSafetyContract,
+  buildClinicalSystemPrompt,
+  detectHighRiskContext,
+  getClinicalModelEnv,
+  selectClinicalModel,
+  type ClinicalRiskAssessment,
+} from "../_shared/clinical-brain.ts";
+import {
   OPENAI_CROSS_DATA_MODEL,
   OPENAI_CROSS_DATA_REASONING_EFFORT,
   buildEvidenceLinks,
@@ -10,6 +18,7 @@ import {
   ensureSchemaComparison,
   ensureTreatmentSchemasShape,
   mergeAndValidateLinks,
+  normalizeMedicalName,
   type TreatmentSchema,
 } from "./analysis-utils.ts";
 
@@ -86,6 +95,7 @@ interface AnalysisResult {
   alternatives: Alternative[];
   schemaComparison?: SchemaComparison;
   treatmentSchemas?: TreatmentSchema[];
+  clinicalSafety?: ClinicalRiskAssessment;
   webResearch: {
     query: string;
     findings: string[];
@@ -145,10 +155,10 @@ async function searchPubMed(query: string, maxResults: number = 5, apiKey?: stri
 // Fonction pour générer un hash de requête (pour le cache)
 function generateRequestHash(pathologyIds: string[], symptomIds: string[], treatmentIds: string[], medicationIds: string[]): string {
   const sorted = [
-    ...pathologyIds.sort(),
-    ...symptomIds.sort(),
-    ...treatmentIds.sort(),
-    ...medicationIds.sort()
+    ...[...pathologyIds].sort(),
+    ...[...symptomIds].sort(),
+    ...[...treatmentIds].sort(),
+    ...[...medicationIds].sort()
   ].join('|');
   // Simple hash
   let hash = 0;
@@ -158,6 +168,94 @@ function generateRequestHash(pathologyIds: string[], symptomIds: string[], treat
     hash = hash & hash;
   }
   return hash.toString(36);
+}
+
+function buildPairHash(fromName: string, fromType: string, toName: string, toType: string): string {
+  return [
+    `${normalizeMedicalName(fromName)}|${fromType}`,
+    `${normalizeMedicalName(toName)}|${toType}`,
+  ].sort().join('|');
+}
+
+function uniqueElements(elements: { name: string; type: string }[]): { name: string; type: string }[] {
+  const seen = new Set<string>();
+  return elements.filter((element) => {
+    const key = `${element.type}:${normalizeMedicalName(element.name)}`;
+    if (!element.name || !element.type || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function toCausalLink(link: any): CausalLink {
+  return {
+    from: link.from_element,
+    fromType: link.from_type,
+    to: link.to_element,
+    toType: link.to_type,
+    relationship: link.relationship,
+    probability: link.probability || 'medium',
+    evidence: link.evidence || '',
+    patientCount: 0,
+    webSources: [],
+    isAppropriate: link.is_appropriate,
+    effectType: link.effect_type,
+    therapeuticDetails: link.therapeutic_details,
+    adverseDetails: link.adverse_details,
+    dangerLevel: link.danger_level,
+    interactionType: link.interaction_type,
+    symptomFrequency: link.symptom_frequency,
+  };
+}
+
+async function findCachedLinksBatched(
+  supabase: any,
+  elements: { name: string; type: string }[]
+): Promise<CausalLink[]> {
+  const candidates = uniqueElements(elements);
+  const pairHashes: string[] = [];
+
+  for (let i = 0; i < candidates.length; i++) {
+    for (let j = i + 1; j < candidates.length; j++) {
+      const elem1 = candidates[i];
+      const elem2 = candidates[j];
+      pairHashes.push(buildPairHash(elem1.name, elem1.type, elem2.name, elem2.type));
+    }
+  }
+
+  if (pairHashes.length === 0) return [];
+
+  const cachedRows: any[] = [];
+  const uniquePairHashes = [...new Set(pairHashes)];
+
+  for (let i = 0; i < uniquePairHashes.length; i += 100) {
+    const chunk = uniquePairHashes.slice(i, i + 100);
+    const { data, error } = await supabase
+      .from('causal_links_cache')
+      .select('id, from_element, from_type, to_element, to_type, relationship, probability, evidence, is_appropriate, effect_type, therapeutic_details, adverse_details, danger_level, interaction_type, symptom_frequency, hit_count')
+      .in('pair_hash', chunk);
+
+    if (error) {
+      console.warn('[Cache] Lecture batch impossible:', error.message || error);
+      continue;
+    }
+
+    cachedRows.push(...(data || []));
+  }
+
+  if (cachedRows.length > 0) {
+    const updatedAt = new Date().toISOString();
+    await Promise.allSettled(
+      cachedRows.slice(0, 100).map((link) =>
+        supabase
+          .from('causal_links_cache')
+          .update({ hit_count: (link.hit_count || 0) + 1, updated_at: updatedAt })
+          .eq('id', link.id)
+      )
+    );
+  }
+
+  return cachedRows.map(toCausalLink);
 }
 
 // Fonction pour chercher les liens en cache
@@ -224,10 +322,7 @@ async function findCachedLinks(
 async function saveLinkToCache(supabase: any, link: CausalLink, aiModel: string): Promise<void> {
   try {
     // Générer le hash de la paire
-    const pairHash = [link.from, link.fromType, link.to, link.toType]
-      .map(s => s.toLowerCase())
-      .sort()
-      .join('|');
+    const pairHash = buildPairHash(link.from, link.fromType, link.to, link.toType);
 
     await supabase.from('causal_links_cache').upsert({
       from_element: link.from,
@@ -274,23 +369,32 @@ serve(async (req) => {
 
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
     const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+    if (!supabaseUrl || !supabaseKey) {
+      throw new Error('Supabase function environment is incomplete: SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY are required');
+    }
     const supabase = createClient(supabaseUrl, supabaseKey);
 
     // Récupérer les données sélectionnées (incluant les médicaments) depuis la DB
     const [pathologiesRes, symptomsRes, treatmentsRes, medicationsRes, patientsRes] = await Promise.all([
       pathologyIds?.length > 0
-        ? supabase.from('pathologies').select('*').in('id', pathologyIds)
+        ? supabase.from('pathologies').select('id, name, icd_code, severity, description').in('id', pathologyIds)
         : Promise.resolve({ data: [] }),
       symptomIds?.length > 0
-        ? supabase.from('symptoms').select('*').in('id', symptomIds)
+        ? supabase.from('symptoms').select('id, name, body_system, description').in('id', symptomIds)
         : Promise.resolve({ data: [] }),
       treatmentIds?.length > 0
-        ? supabase.from('treatments').select('*, pathologies(name)').in('id', treatmentIds)
+        ? supabase.from('treatments').select('id, name, type, pathology_id, description, contraindications, pathologies(name)').in('id', treatmentIds)
         : Promise.resolve({ data: [] }),
       medicationIds?.length > 0
-        ? supabase.from('medications').select('*, side_effects(*), contraindications(*), drug_interactions(*)').in('id', medicationIds)
+        ? supabase.from('medications').select('id, name, atc_code, substance, indications, posology, side_effects(name, severity, frequency, description), contraindications(condition, severity, description), drug_interactions(interacting_drug, severity, description)').in('id', medicationIds)
         : Promise.resolve({ data: [] }),
-      supabase.from('patients').select('*, pathologies(name)')
+      pathologyIds?.length > 0
+        ? supabase
+          .from('patients')
+          .select('id, patient_id, age, gender, treatment, outcome, pathology_id, pathologies(name)')
+          .in('pathology_id', pathologyIds)
+          .limit(100)
+        : Promise.resolve({ data: [] })
     ]);
 
     // Fusionner données DB et données externes (NCBI)
@@ -350,7 +454,7 @@ serve(async (req) => {
 
     // Rechercher les liens existants en cache
     console.log('[CrossDataAnalyzer] Recherche dans le cache...');
-    const cachedLinks = await findCachedLinks(supabase, allElements);
+    const cachedLinks = await findCachedLinksBatched(supabase, allElements);
     console.log(`[CrossDataAnalyzer] ${cachedLinks.length} liens trouvés en cache`);
 
     // Si on a trouvé des liens en cache pour TOUTES les paires, on peut les retourner directement
@@ -498,8 +602,36 @@ serve(async (req) => {
       )
     ).slice(0, 120).join('\n') || 'Pas assez de paires a auditer.';
 
+    const riskAssessment = detectHighRiskContext({
+      pathologies,
+      symptoms,
+      treatments,
+      medications,
+      patientCount: relevantPatients.length,
+      selectedElementCount: selectedElements.length,
+    });
+    const clinicalModelEnv = getClinicalModelEnv((key) => Deno.env.get(key));
+    const hasExternalEvidence = webResearchResults.some((result) => result.articles.length > 0);
+    const defaultClinicalTask = medications.length >= 3 || selectedElements.length >= 6
+      ? 'polypharmacy'
+      : 'suspected_interaction';
+    const fullRoute = selectClinicalModel({
+      task: defaultClinicalTask,
+      riskAssessment,
+      elementCount: selectedElements.length,
+      hasExternalEvidence,
+    }, clinicalModelEnv);
+    console.log('[CrossDataAnalyzer] Risque clinique:', {
+      riskLevel: riskAssessment.riskLevel,
+      flags: riskAssessment.flags,
+      requiresSecondPass: riskAssessment.requiresSecondPass,
+    });
+
     if (analysisMode === 'treatment_schemas') {
-      const baseAnalysis = ensureAnalysisShape(currentAnalysis);
+      const baseAnalysis = applyClinicalSafetyContract(
+        ensureAnalysisShape(currentAnalysis) as AnalysisResult,
+        riskAssessment,
+      );
       baseAnalysis.causalLinks = mergeAndValidateLinks(
         selectedElements,
         evidenceLinks,
@@ -551,6 +683,14 @@ FORMAT JSON STRICT:
   ]
 }`;
 
+      const schemaRoute = selectClinicalModel({
+        task: 'treatment_complex',
+        riskAssessment,
+        elementCount: selectedElements.length,
+        hasExternalEvidence,
+      }, clinicalModelEnv);
+      const schemaPromptWithClinicalContract = buildClinicalSystemPrompt(schemaPrompt, riskAssessment);
+
       const schemaUserPrompt = `## PATHOLOGIES
 ${selectedPathologiesContext || 'Aucune'}
 
@@ -581,12 +721,13 @@ ${webResearchContext || 'Aucune recherche effectuée'}
 
 Génère uniquement le JSON des schémas thérapeutiques alternatifs.`;
 
-      const schemaAIResult = await callAI(schemaPrompt, schemaUserPrompt, {
-        model: OPENAI_CROSS_DATA_MODEL,
+      const schemaAIResult = await callAI(schemaPromptWithClinicalContract, schemaUserPrompt, {
+        model: schemaRoute.model || OPENAI_CROSS_DATA_MODEL,
         forceModel: true,
-        reasoningEffort: OPENAI_CROSS_DATA_REASONING_EFFORT,
+        reasoningEffort: schemaRoute.reasoningEffort || OPENAI_CROSS_DATA_REASONING_EFFORT,
         responseFormat: { type: 'json_object' },
         maxTokens: 6000,
+        timeoutMs: schemaRoute.timeoutMs,
       });
 
       let treatmentSchemas: TreatmentSchema[] = [];
@@ -606,7 +747,11 @@ Génère uniquement le JSON des schémas thérapeutiques alternatifs.`;
           },
           context: {
             model: schemaAIResult.model,
-            reasoningEffort: OPENAI_CROSS_DATA_REASONING_EFFORT,
+            reasoningEffort: schemaRoute.reasoningEffort,
+            clinicalRiskLevel: riskAssessment.riskLevel,
+            clinicalRiskFlags: riskAssessment.flags,
+            finalReviewRequired: schemaRoute.finalReviewRequired,
+            routeReason: schemaRoute.routeReason,
             validatedLinks: baseAnalysis.causalLinks.length,
             pubmedSearches: webResearchResults.length,
           },
@@ -861,14 +1006,15 @@ Réponds UNIQUEMENT en français avec le JSON demandé. Génère uniquement les 
     console.log('Appel de l\'IA pour l\'analyse cross-data...');
 
     const aiResult = await callAI(
-      systemPrompt,
+      buildClinicalSystemPrompt(systemPrompt, riskAssessment),
       userPrompt + "\n\nGénère maintenant le JSON final. Raisonne sur chaque paire, conserve seulement les liens directement justifiés, puis produis une synthèse clinique exploitable.",
       {
-        model: OPENAI_CROSS_DATA_MODEL,
+        model: fullRoute.model || OPENAI_CROSS_DATA_MODEL,
         forceModel: true,
-        reasoningEffort: OPENAI_CROSS_DATA_REASONING_EFFORT,
+        reasoningEffort: fullRoute.reasoningEffort || OPENAI_CROSS_DATA_REASONING_EFFORT,
         responseFormat: { type: 'json_object' },
         maxTokens: 8000,
+        timeoutMs: fullRoute.timeoutMs,
       }
     );
 
@@ -901,6 +1047,7 @@ Réponds UNIQUEMENT en français avec le JSON demandé. Génère uniquement les 
       cachedLinks,
     );
     analysis.schemaComparison = ensureSchemaComparison(analysis);
+    analysis = applyClinicalSafetyContract(analysis, riskAssessment);
 
     // Ajouter les sources web si non présentes
     if (!analysis.webResearch || analysis.webResearch.length === 0) {
@@ -933,7 +1080,13 @@ Réponds UNIQUEMENT en français avec le JSON demandé. Génère uniquement les 
           patientsAnalyzed: relevantPatients.length,
           pubmedSearches: webResearchResults.length,
           cacheHits: cachedLinks.length,
-          newLinksGenerated: analysis.causalLinks?.length || 0
+          newLinksGenerated: analysis.causalLinks?.length || 0,
+          model: aiResult.model,
+          reasoningEffort: fullRoute.reasoningEffort,
+          clinicalRiskLevel: riskAssessment.riskLevel,
+          clinicalRiskFlags: riskAssessment.flags,
+          finalReviewRequired: fullRoute.finalReviewRequired,
+          routeReason: fullRoute.routeReason
         }
       }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }

@@ -9,7 +9,8 @@
     "build:dev": "vite build --mode development",
     "lint": "eslint .",
     "preview": "vite preview",
-    "import:data": "npx tsx scripts/import-local-data.ts"
+    "import:data": "npx tsx scripts/import-local-data.ts",
+    "clinical-brain:audit": "tsx scripts/clinical-brain-eval.ts"
   },
   "dependencies": {
     "@faker-js/faker": "^10.2.0",

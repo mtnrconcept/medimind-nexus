@@ -1,6 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { callAI } from "../_shared/ai-client.ts";
+import { callAI, createEmbeddings } from "../_shared/ai-client.ts";
 
 /**
  * NEURAL KNOWLEDGE GRAPH - Embedding & Network Initialization
@@ -19,29 +19,13 @@ const corsHeaders = {
 };
 
 // Generate embeddings using OpenAI or local model
-async function generateEmbedding(text: string, apiKey?: string): Promise<number[] | null> {
+async function generateEmbedding(text: string): Promise<number[] | null> {
     try {
-        // Use OpenAI embeddings API (or substitute with local model)
-        const response = await fetch("https://api.openai.com/v1/embeddings", {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/json",
-                "Authorization": `Bearer ${apiKey}`
-            },
-            body: JSON.stringify({
-                input: text,
-                model: "text-embedding-3-small", // 1536D, will need to truncate/project to 384D
-                dimensions: 384 // OpenAI supports dimension reduction
-            })
+        const embeddings = await createEmbeddings(text, {
+            model: "text-embedding-3-small",
+            dimensions: 384,
         });
-
-        if (!response.ok) {
-            console.error("Embedding error:", await response.text());
-            return null;
-        }
-
-        const data = await response.json();
-        return data.data?.[0]?.embedding || null;
+        return embeddings[0] || null;
     } catch (e) {
         console.error("Embedding generation failed:", e);
         return null;
@@ -79,7 +63,6 @@ serve(async (req) => {
 
         const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
         const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-        const openaiKey = Deno.env.get("OPENAI_API_KEY");
         const supabase = createClient(supabaseUrl, supabaseKey);
 
         let result: any = {};
@@ -117,7 +100,7 @@ serve(async (req) => {
                     // Create text for embedding
                     const text = `${node.name} (${node.node_type}): ${JSON.stringify(node.properties || {})}`;
 
-                    const embedding = await generateEmbedding(text, openaiKey);
+                    const embedding = await generateEmbedding(text);
 
                     if (embedding) {
                         await supabase

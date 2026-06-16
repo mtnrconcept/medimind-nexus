@@ -157,8 +157,6 @@ serve(async (req) => {
             let inferredPredicate = 'ASSOCIATED_WITH';
             if (path.ab_predicate === 'TREATS' || path.bc_predicate === 'TREATS') {
                 inferredPredicate = 'POTENTIAL_TREATMENT';
-            } else if (path.ab_predicate === 'CAUSES' && path.bc_predicate === 'TREATS') {
-                inferredPredicate = 'POTENTIAL_TREATMENT';
             } else if (path.ab_predicate === 'TARGETS' || path.bc_predicate === 'TARGETS') {
                 inferredPredicate = 'TARGETS_VIA';
             }

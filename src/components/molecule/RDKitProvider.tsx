@@ -37,7 +37,7 @@ export function RDKitProvider({ children }: RDKitProviderProps) {
             try {
                 const rdkitLoader = await import('@rdkit/rdkit');
 
-                // @ts-ignore - Bypass TS check for RDKit loader signature
+                // @ts-expect-error - RDKit loader signature is not typed by the package.
                 const module = await (rdkitLoader.default || rdkitLoader)({
                     locateFile: (path: string, prefix: string) => {
                         // Force the loading of WASM from the public directory

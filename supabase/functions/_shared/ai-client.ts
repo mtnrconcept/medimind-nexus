@@ -64,11 +64,20 @@ export interface AICallOptions {
   temperature?: number;
   reasoningEffort?: 'none' | 'low' | 'medium' | 'high' | 'xhigh';
   responseFormat?: Record<string, unknown>;
+  timeoutMs?: number;
+}
+
+export interface AIEmbeddingOptions {
+  model?: string;
+  dimensions?: number;
+  timeoutMs?: number;
 }
 
 const DEFAULT_OPENAI_MODEL = 'gpt-5.5';
 const OPENAI_CHAT_COMPLETIONS_URL = 'https://api.openai.com/v1/chat/completions';
 const OPENAI_RESPONSES_URL = 'https://api.openai.com/v1/responses';
+const OPENAI_EMBEDDINGS_URL = 'https://api.openai.com/v1/embeddings';
+const DEFAULT_OPENAI_TIMEOUT_MS = 90_000;
 
 function isKnownNonOpenAIModel(model: string): boolean {
   const normalized = model.trim().toLowerCase();
@@ -118,6 +127,46 @@ function getOpenAIConfig(options: AICallOptions) {
   }
 
   return { apiKey, model };
+}
+
+function resolveTimeoutMs(options: AICallOptions): number {
+  const envValue = Number(Deno.env.get('OPENAI_TIMEOUT_MS'));
+  const configured = options.timeoutMs ?? envValue;
+  return Number.isFinite(configured) && configured > 0
+    ? configured
+    : DEFAULT_OPENAI_TIMEOUT_MS;
+}
+
+async function fetchOpenAI(
+  url: string,
+  apiKey: string,
+  body: Record<string, unknown>,
+  timeoutMs: number,
+): Promise<Response> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  const startedAt = Date.now();
+
+  try {
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    });
+    console.log(`[AI] OpenAI ${response.status} in ${Date.now() - startedAt}ms`);
+    return response;
+  } catch (error) {
+    if (error instanceof Error && error.name === 'AbortError') {
+      throw new Error(`OpenAI request timed out after ${timeoutMs}ms`);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 function hasReasoningEffort(options: AICallOptions): boolean {
@@ -372,6 +421,7 @@ export async function callAI(
   options: AICallOptions = {},
 ): Promise<AIResponse> {
   const { apiKey, model } = getOpenAIConfig(options);
+  const timeoutMs = resolveTimeoutMs(options);
   const useResponsesAPI = shouldUseResponsesAPI(model, options);
   const body = useResponsesAPI
     ? {
@@ -383,14 +433,12 @@ export async function callAI(
         messages: buildMessages(systemPrompt, userPrompt),
       };
 
-  const response = await fetch(useResponsesAPI ? OPENAI_RESPONSES_URL : OPENAI_CHAT_COMPLETIONS_URL, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify(body),
-  });
+  const response = await fetchOpenAI(
+    useResponsesAPI ? OPENAI_RESPONSES_URL : OPENAI_CHAT_COMPLETIONS_URL,
+    apiKey,
+    body,
+    timeoutMs,
+  );
 
   if (!response.ok) {
     const errorText = await response.text();
@@ -403,11 +451,49 @@ export async function callAI(
     ? extractResponsesText(data)
     : data.choices?.[0]?.message?.content || '';
 
+  if (!text.trim()) {
+    const status = typeof data.status === 'string' ? data.status : 'unknown';
+    const reason = typeof data.incomplete_details === 'object'
+      ? JSON.stringify(data.incomplete_details)
+      : 'no text output';
+    throw new Error(`OpenAI returned an empty response (status: ${status}, reason: ${reason})`);
+  }
+
   return {
     text,
     provider: 'openai',
     model,
   };
+}
+
+export async function createEmbeddings(
+  input: string | string[],
+  options: AIEmbeddingOptions = {},
+): Promise<number[][]> {
+  const apiKey = Deno.env.get('OPENAI_API_KEY');
+  if (!apiKey) {
+    throw new Error('OPENAI_API_KEY not configured');
+  }
+
+  const model = options.model || 'text-embedding-3-small';
+  const timeoutMs = resolveTimeoutMs({ timeoutMs: options.timeoutMs });
+  const body: Record<string, unknown> = { model, input };
+  if (options.dimensions) {
+    body.dimensions = options.dimensions;
+  }
+
+  const response = await fetchOpenAI(OPENAI_EMBEDDINGS_URL, apiKey, body, timeoutMs);
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`OpenAI Embeddings request failed (${response.status}): ${errorText}`);
+  }
+
+  const data = await response.json();
+  const rows = Array.isArray(data.data) ? data.data : [];
+  return rows
+    .sort((left, right) => Number(left.index || 0) - Number(right.index || 0))
+    .map((row) => row.embedding)
+    .filter((embedding) => Array.isArray(embedding));
 }
 
 /**
@@ -436,6 +522,7 @@ export async function streamAI(
   options: AICallOptions = {},
 ): Promise<AIResponse> {
   const { apiKey, model } = getOpenAIConfig(options);
+  const timeoutMs = resolveTimeoutMs(options);
   const useResponsesAPI = shouldUseResponsesAPI(model, options);
   const body = useResponsesAPI
     ? {
@@ -449,14 +536,12 @@ export async function streamAI(
         stream: true,
       };
 
-  const response = await fetch(useResponsesAPI ? OPENAI_RESPONSES_URL : OPENAI_CHAT_COMPLETIONS_URL, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify(body),
-  });
+  const response = await fetchOpenAI(
+    useResponsesAPI ? OPENAI_RESPONSES_URL : OPENAI_CHAT_COMPLETIONS_URL,
+    apiKey,
+    body,
+    timeoutMs,
+  );
 
   if (!response.ok || !response.body) {
     const errorText = await response.text();
