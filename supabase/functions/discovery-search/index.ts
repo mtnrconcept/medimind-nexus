@@ -392,7 +392,7 @@ serve(async (req) => {
                     });
 
                     // ============================================
-                    // PHASE 7: CLAUDE SONNET ANALYSIS
+                    // PHASE 7: OPENAI CLINICAL ANALYSIS
                     // ============================================
 
                     sendEvent({ type: 'step_update', step: { id: 7, status: 'running', details: '🧠 Analyse OpenAI (evidence-based)...', source: 'OpenAI' } });

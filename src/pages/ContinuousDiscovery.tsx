@@ -340,7 +340,7 @@ const ContinuousDiscovery = () => {
                                         {t('Continuous Discovery Engine')}
                                     </h1>
                                     <p className="text-xs sm:text-sm text-slate-600 dark:text-slate-400 hidden sm:block">
-                                        {t('Analyse IA en continu avec Claude Opus 4.5')}
+                                        {t('Analyse IA en continu avec OpenAI GPT-5.5')}
                                     </p>
                                 </div>
                             </div>
@@ -578,7 +578,7 @@ const ContinuousDiscovery = () => {
                                 <div className="flex items-center justify-between">
                                     <CardTitle className="flex items-center gap-2">
                                         <Sparkles className="h-5 w-5 text-violet-600" />
-                                        {t('Analyse en continu avec Claude Opus 4.5')}
+                                        {t('Analyse en continu avec OpenAI GPT-5.5')}
                                     </CardTitle>
                                     <Button
                                         onClick={handleStartAnalysis}
@@ -790,7 +790,7 @@ const ContinuousDiscovery = () => {
 
                                                             // Log: Prompt envoyé
                                                             if (analyzeData.prompt_used) {
-                                                                addLog('🤖 Envoi à Claude', `Prompt de ${analyzeData.prompt_used.length} caractères envoyé au modèle IA`, 'ai');
+                                                                addLog('🤖 Envoi à OpenAI', `Prompt de ${analyzeData.prompt_used.length} caractères envoyé au modèle IA`, 'ai');
                                                                 setCurrentPrompt(analyzeData.prompt_used);
                                                             }
 

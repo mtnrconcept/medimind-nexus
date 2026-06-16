@@ -131,7 +131,7 @@ serve(async (req: Request) => {
             .eq('id', job.id);
 
         try {
-            // Generate hypothesis using Gemini 3 Flash for high-fidelity
+            // Generate hypothesis using the shared OpenAI clinical route
             const systemPrompt = `Tu es l'IA de DÉCOUVERTE SCIENTIFIQUE "ULTRA V3", configurée pour une rigueur académique absolue.
 Ta mission est de produire une hypothèse de recherche hautement structurée selon le format JSON ULTRA V3.
 

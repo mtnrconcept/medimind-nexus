@@ -28,7 +28,7 @@
 |------------|------|
 | **Supabase** | BaaS (PostgreSQL + Auth + Storage) |
 | **Deno Edge Functions** | Serverless functions |
-| **Claude API** | IA (Anthropic) |
+| **OpenAI API** | IA clinique via `OPENAI_API_KEY` |
 | **Firecrawl API** | Web scraping |
 
 ---
@@ -86,7 +86,7 @@ medimind-nexus/
 | Fonction | Description |
 |----------|-------------|
 | `ai-assistant` | Chat RAG avec contexte patient |
-| `cde-analyze` | Analyse Knowledge Graph + Claude streaming |
+| `cde-analyze` | Analyse Knowledge Graph + OpenAI streaming |
 | `cde-systematic-analyze` | Analyse combinatoire par paires |
 | `cross-data-analyzer` | Analyse croisée multi-patients |
 | `pathology-analyzer` | Analyse de pathologies |
@@ -155,7 +155,7 @@ cde_pair_analyses     # Résultats par paire
 │                  Frontend (React)                   │
 │  ┌───────────────────────────────────────────────┐  │
 │  │ ContinuousDiscovery.tsx                       │  │
-│  │ - Tab Analyse Live (streaming Claude)         │  │
+│  │ - Tab Analyse Live (streaming OpenAI)         │  │
 │  │ - Tab Découvertes (cards sauvegardées)        │  │
 │  │ - Tab Knowledge Graph (visualisation)         │  │
 │  │ - Tab Analyse Systématique (paires)           │  │
@@ -173,8 +173,8 @@ cde_pair_analyses     # Résultats par paire
                          │
                          ▼
 ┌─────────────────────────────────────────────────────┐
-│                    Claude API                       │
-│             (Opus 4.5 / Sonnet 4)                   │
+│                    OpenAI API                       │
+│             (GPT-5.5 / GPT-5.4-mini)                │
 └─────────────────────────────────────────────────────┘
 ```
 
@@ -236,7 +236,7 @@ VITE_SUPABASE_URL=https://xxx.supabase.co
 VITE_SUPABASE_ANON_KEY=eyJhbGci...
 
 # Dans Supabase Dashboard (secrets)
-CLAUDE_API_KEY=sk-ant-...
+OPENAI_API_KEY=sk-...
 FIRECRAWL_API_KEY=fc-...
 SUPABASE_SERVICE_ROLE_KEY=eyJhbGci...
 ```

@@ -4,10 +4,10 @@
     "name": "MediMind Research Engine",
     "description": "Configuration du moteur de recherche médicale IA multi-modal",
     "model": {
-        "provider": "anthropic",
-        "primary": "claude-opus-4-5-20250514",
-        "fallback": "claude-sonnet-4-20250514",
-        "fast": "claude-3-haiku-20240307",
+        "provider": "openai",
+        "primary": "gpt-5.5",
+        "fallback": "gpt-5.5",
+        "fast": "gpt-5.4-mini",
         "parameters": {
             "targeted": {
                 "temperature": 0.3,

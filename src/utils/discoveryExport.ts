@@ -1202,7 +1202,7 @@ export function generateCongressReportPDF(data: CongressReportData): void {
     doc.setFont('helvetica', 'normal');
     doc.setFontSize(9);
     doc.setTextColor(31, 41, 55);
-    const modelInfo = `Claude Opus 4 (Anthropic) analyse les preuves pour identifier patterns mecanistiques et generer hypotheses testables. Evaluation sur 5 criteres: Nouveaute, Plausibilite, Force de Preuve, Faisabilite, Impact.`;
+    const modelInfo = `OpenAI GPT-5.5 analyse les preuves pour identifier patterns mecanistiques et generer hypotheses testables. Evaluation sur 5 criteres: Nouveaute, Plausibilite, Force de Preuve, Faisabilite, Impact.`;
     const modelLines = doc.splitTextToSize(modelInfo, contentWidth - 10);
     doc.text(modelLines, leftMargin + 5, y);
     y += modelLines.length * 4 + 10;

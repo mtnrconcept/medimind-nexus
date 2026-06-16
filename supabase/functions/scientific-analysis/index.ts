@@ -11,7 +11,7 @@ const corsHeaders = {
 };
 
 /**
- * SCIENTIFIC ANALYSIS ENGINE — CLAUDE OPUS POWERED
+ * SCIENTIFIC ANALYSIS ENGINE - OPENAI GPT-5.5 POWERED
  *
  * Unified AI analysis engine that:
  * 1. Aggregates data from ALL medical APIs (PubMed, OpenFDA, ClinicalTrials, RxNorm)

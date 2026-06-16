@@ -159,7 +159,7 @@ function MatrixBackground() {
 // [SECTION:LOADING]
 // [SUB:LOADING.STEPS]
 const LOADING_STEPS = [
-    { label: "Connexion à l'API Claude", icon: "🔌", duration: 1500 },
+    { label: "Connexion à l'API OpenAI", icon: "🔌", duration: 1500 },
     { label: "Analyse sémantique de la pathologie", icon: "🧠", duration: 2000 },
     { label: "Extraction des entités médicales", icon: "🔬", duration: 2500 },
     { label: "Identification des médicaments associés", icon: "💊", duration: 2000 },
@@ -6577,4 +6577,3 @@ IMPORTANT: Retourne UNIQUEMENT les IDs des nœuds qui forment le schéma thérap
 }
 
 // [SECTION:EXPORTS]
-

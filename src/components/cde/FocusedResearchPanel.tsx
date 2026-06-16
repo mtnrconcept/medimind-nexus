@@ -69,7 +69,7 @@ const FocusedResearchPanel = () => {
     const [isLoadingOptions, setIsLoadingOptions] = useState(false);
     const [comboboxOpen, setComboboxOpen] = useState(false);
     const [customPrompt, setCustomPrompt] = useState('');
-    const [useWebSearch, setUseWebSearch] = useState(true); // Claude web_search mode
+    const [useWebSearch, setUseWebSearch] = useState(true); // OpenAI clinical research mode
 
     // Research state
     const [isResearching, setIsResearching] = useState(false);
@@ -223,7 +223,7 @@ const FocusedResearchPanel = () => {
         const initialSteps: ResearchStep[] = [
             { id: 1, title: t('Exploration du Knowledge Graph'), description: t('Analyse des nœuds et arêtes liés à la cible'), status: 'pending' },
             { id: 2, title: t('Recherche PubMed'), description: t('Recherche d\'articles scientifiques récents'), status: 'pending' },
-            { id: 3, title: t('Analyse IA approfondie'), description: t('Génération d\'hypothèses par Claude'), status: 'pending' },
+            { id: 3, title: t('Analyse IA approfondie'), description: t('Génération d\'hypothèses par OpenAI GPT-5.5'), status: 'pending' },
             { id: 4, title: t('Synthèse et découvertes'), description: t('Compilation des résultats'), status: 'pending' },
             { id: 5, title: t('Explication simplifiée'), description: t('Génération de l\'explication pour enfant'), status: 'pending' },
         ];
@@ -501,7 +501,7 @@ const FocusedResearchPanel = () => {
                             rows={3}
                         />
                         <p className="text-xs text-slate-500">
-                            {t('Orientez la recherche avec une question précise. Le modèle Claude Opus 4.5 analysera selon vos critères.')}
+                            {t('Orientez la recherche avec une question précise. Le routage OpenAI GPT-5.5 analysera selon vos critères.')}
                         </p>
                     </div>
 
@@ -511,7 +511,7 @@ const FocusedResearchPanel = () => {
                             <Globe className="h-5 w-5 text-blue-500" />
                             <div>
                                 <Label htmlFor="web-search" className="text-sm font-medium cursor-pointer">
-                                    {t('Claude Web Search (Beta)')}
+                                    {t('Recherche clinique OpenAI (Beta)')}
                                 </Label>
                                 <p className="text-xs text-muted-foreground">
                                     {t('Recherche live PubMed + scoring de plausibilité (0-100)')}
