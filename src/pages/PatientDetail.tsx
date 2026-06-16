@@ -5,6 +5,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { supabase } from '@/integrations/supabase/client';
 import { useAI } from '@/contexts/AIContext';
+import { resolveAIJob } from '@/lib/aiJobs';
 import { ArrowLeft, Lock, Shield, Loader2 } from 'lucide-react';
 import AIAssistant from '@/components/patient/AIAssistant';
 import SafetyAlertBanner from '@/components/patient/SafetyAlertBanner';
@@ -176,10 +177,17 @@ const PatientDetail = () => {
     setFetchingSynthesis(true);
     try {
       const { data, error } = await invokeAI('patient-health-synthesis', {
-        patient_id: id
+        patient_id: id,
+        async: true,
       });
       if (!error) {
-        setAiSynthesis(data);
+        const resolvedData = await resolveAIJob<any>(
+          invokeAI,
+          'patient-health-synthesis',
+          data,
+          { maxWaitMs: 1_200_000 },
+        );
+        setAiSynthesis(resolvedData);
       }
     } catch (err) {
       console.error('Error fetching AI synthesis:', err);
