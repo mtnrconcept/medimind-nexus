@@ -23,6 +23,7 @@ import {
   Filter
 } from 'lucide-react';
 import { useAI } from '@/contexts/AIContext';
+import { resolveAIJob, type AIJobProgress } from '@/lib/aiJobs';
 import { toast } from 'sonner';
 
 interface WebSource {
@@ -63,6 +64,7 @@ const DeepResearchPanel = ({ selectedSymptomIds, selectedSymptomNames }: DeepRes
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<DeepResearchResult | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [jobProgress, setJobProgress] = useState<AIJobProgress | null>(null);
 
   // Filter states
   const [severityFilter, setSeverityFilter] = useState<string>('all');
@@ -94,11 +96,13 @@ const DeepResearchPanel = ({ selectedSymptomIds, selectedSymptomNames }: DeepRes
     setLoading(true);
     setError(null);
     setResult(null);
+    setJobProgress(null);
 
     try {
       const { data, error: fnError } = await invokeAI('deep-research', {
         symptomIds: selectedSymptomIds,
         symptomNames: selectedSymptomNames,
+        async: true,
         stream: false
       });
 
@@ -115,8 +119,15 @@ const DeepResearchPanel = ({ selectedSymptomIds, selectedSymptomNames }: DeepRes
         return;
       }
 
-      // Handle both cloud (data.result) and local (data directly) formats
-      const researchResult = data?.result || data;
+      const resolvedData = await resolveAIJob<{ result?: DeepResearchResult } | DeepResearchResult>(
+        invokeAI,
+        'deep-research',
+        data,
+        { onProgress: setJobProgress }
+      );
+
+      // Handle both async job (data.result) and direct/local (data directly) formats
+      const researchResult = 'result' in resolvedData ? resolvedData.result : resolvedData;
 
       if (!researchResult || (!researchResult.pathologies && !researchResult.summary)) {
         setError('Résultat de recherche invalide. Veuillez réessayer.');
@@ -130,6 +141,7 @@ const DeepResearchPanel = ({ selectedSymptomIds, selectedSymptomNames }: DeepRes
       setError('Erreur lors de la recherche. Veuillez réessayer.');
     } finally {
       setLoading(false);
+      setJobProgress(null);
     }
   };
 
@@ -194,7 +206,7 @@ const DeepResearchPanel = ({ selectedSymptomIds, selectedSymptomNames }: DeepRes
           {loading ? (
             <>
               <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-              Recherche approfondie en cours...
+              {jobProgress?.message || 'Recherche approfondie en cours...'}
             </>
           ) : (
             <>
