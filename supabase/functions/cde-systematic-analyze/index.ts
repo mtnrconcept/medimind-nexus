@@ -9,6 +9,10 @@ const corsHeaders = {
     "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
+const MAX_SYSTEMATIC_ENTITIES = 120;
+const MAX_PAIRS_PER_ANALYZE_STEP = 4;
+const SYSTEMATIC_AI_TIMEOUT_MS = 60_000;
+
 interface Substance {
     id: string;
     name: string;
@@ -75,6 +79,8 @@ serve(async (req) => {
                 pathologyContext = filterResult.pathologyContext;
                 console.log(`🎯 Pathology targeting: "${target_pathology}" → ${pathologyContext?.name || 'custom'}`);
             }
+
+            entities = entities.slice(0, MAX_SYSTEMATIC_ENTITIES);
 
             if (entities.length < 2) {
                 return new Response(JSON.stringify({
@@ -169,6 +175,8 @@ serve(async (req) => {
                 console.log(`🎯 Continuing with pathology: "${runPathology}"`);
             }
 
+            sortedEntities = sortedEntities.slice(0, MAX_SYSTEMATIC_ENTITIES);
+
             const entityA = sortedEntities[substance_index];
             if (!entityA) {
                 // Analysis complete
@@ -186,6 +194,8 @@ serve(async (req) => {
 
             // Get remaining entities to test (avoid duplicates)
             let remainingEntities = sortedEntities.slice(substance_index + 1);
+            const remainingBeforeWindow = remainingEntities.length;
+            remainingEntities = remainingEntities.slice(0, MAX_PAIRS_PER_ANALYZE_STEP);
 
             // ============================================
             // FILTER: Remove already-analyzed pairs
@@ -269,22 +279,39 @@ Types d'analyses:
 
 Réponds UNIQUEMENT en JSON valide.`;
 
+            void baseSystemPrompt;
+            const conciseSystemPrompt = `Tu es un pharmacologue computationnel. Analyse uniquement les quelques paires fournies.
+Ne prescris pas. Ne confirme pas une interaction sans evidence; marque les hypotheses comme theoriques.
+Reponds UNIQUEMENT en JSON valide, sans markdown, sans raisonnement long.`;
+
             // Apply pathology-aware prompt enhancement
-            const systemPrompt = buildPathologyPrompt(pathologyContext, baseSystemPrompt);
+            const systemPrompt = buildPathologyPrompt(pathologyContext, conciseSystemPrompt);
             const userPrompt = buildPathologyUserPrompt(entityA, remainingEntities, pathologyContext);
 
-            // Call OpenAI (non-streaming for structured response)
-            const aiResult = await callAI(
-                systemPrompt,
-                userPrompt,
-                {
-                    model: "gpt-5.5",
-                    reasoningEffort: "high",
-                    maxTokens: 4000
-                }
-            );
-
-            const content = aiResult.text || "{}";
+            // Call OpenAI (non-streaming for structured response) with a strict
+            // interactive budget. If the model is too slow, the step returns a
+            // controlled empty analysis instead of a 500/timeout.
+            let content = "{}";
+            let aiErrorMessage: string | null = null;
+            try {
+                const aiResult = await callAI(
+                    systemPrompt,
+                    userPrompt,
+                    {
+                        model: "gpt-5.5",
+                        reasoningEffort: "medium",
+                        maxTokens: 1600,
+                        timeoutMs: SYSTEMATIC_AI_TIMEOUT_MS,
+                        enforceClinicalContract: true,
+                        elementCount: remainingEntities.length + 1,
+                        hasExternalEvidence: true,
+                    }
+                );
+                content = aiResult.text || "{}";
+            } catch (aiError) {
+                aiErrorMessage = aiError instanceof Error ? aiError.message : String(aiError);
+                console.error("CDE systematic OpenAI error:", aiError);
+            }
 
             // Parse JSON response
             let analysisResult;
@@ -293,7 +320,16 @@ Réponds UNIQUEMENT en JSON valide.`;
                 analysisResult = jsonMatch ? JSON.parse(jsonMatch[0]) : { pairs: [] };
             } catch (e) {
                 console.error("JSON parse error:", e);
-                analysisResult = { pairs: [] };
+                analysisResult = {
+                    pairs: [],
+                    synthesis: aiErrorMessage
+                        ? `Analyse IA indisponible pour cette fenetre: ${aiErrorMessage}`
+                        : "Aucune paire exploitable dans la reponse IA."
+                };
+            }
+
+            if (aiErrorMessage && !analysisResult.synthesis) {
+                analysisResult.synthesis = `Analyse IA indisponible pour cette fenetre: ${aiErrorMessage}`;
             }
 
             // Get existing discoveries to prevent duplicates
@@ -436,6 +472,8 @@ Réponds UNIQUEMENT en JSON valide.`;
                 synthesis: analysisResult.synthesis || "",
                 next_index: substance_index + 1,
                 remaining: allEntities.length - substance_index - 1,
+                candidate_window_size: remainingEntities.length,
+                candidate_window_total: remainingBeforeWindow,
                 // NEW: Research workflow details for UI
                 research_steps: researchSteps,
                 prompt_used: userPrompt,
