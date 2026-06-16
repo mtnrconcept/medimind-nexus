@@ -14,6 +14,53 @@ export interface MedicationCatalogItem {
     properties?: Record<string, any>; // For compatibility
 }
 
+const OPENFDA_FETCH_TIMEOUT_MS = 5_000;
+const DRUGBANK_FETCH_TIMEOUT_MS = 8_000;
+const OPENFDA_LIMIT_PER_TERM = 120;
+const DRUGBANK_LIMIT = 500;
+const MAX_CATALOG_SIZE = 300;
+
+async function fetchWithTimeout(url: string, init: RequestInit = {}, timeoutMs = OPENFDA_FETCH_TIMEOUT_MS): Promise<Response> {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
+
+    try {
+        return await fetch(url, {
+            ...init,
+            signal: controller.signal,
+        });
+    } catch (error) {
+        if (error instanceof Error && error.name === 'AbortError') {
+            throw new Error(`External catalog request timed out after ${timeoutMs}ms`);
+        }
+        throw error;
+    } finally {
+        clearTimeout(timeout);
+    }
+}
+
+function isUsefulMedicationName(name: unknown): name is string {
+    if (typeof name !== 'string') return false;
+
+    const trimmed = name.trim();
+    if (trimmed.length < 3 || trimmed.length > 80) return false;
+    if (!/[a-zA-Z]/.test(trimmed)) return false;
+    if (/^[^a-zA-Z0-9]+/.test(trimmed)) return false;
+
+    const lower = trimmed.toLowerCase();
+    const noisyFragments = [
+        'produced in eggs',
+        'protective dose',
+        'inactivated bluetongue',
+        'strain used',
+        'like strain',
+        'cells',
+        'zellen',
+    ];
+
+    return !noisyFragments.some((fragment) => lower.includes(fragment));
+}
+
 /**
  * Build comprehensive medication catalog from multiple sources
  * @param localSub
@@ -31,6 +78,8 @@ export async function buildMedicationCatalog(
 
     // 1. Add local substances
     for (const sub of localSubstances) {
+        if (!isUsefulMedicationName(sub.name)) continue;
+
         const normalizedName = sub.name.toLowerCase().trim();
         if (!seenNames.has(normalizedName)) {
             catalog.push({
@@ -53,15 +102,14 @@ export async function buildMedicationCatalog(
         // Search for common drug categories to get broader coverage
         const fdaSearchTerms = [
             'analgesic', 'antibiotic', 'antihypertensive', 'antidiabetic',
-            'antidepressant', 'anticoagulant', 'antihistamine', 'steroid',
-            'vaccine', 'vitamin', 'supplement'
+            'antidepressant', 'anticoagulant'
         ];
 
         for (const term of fdaSearchTerms) {
-            const url = `https://api.fda.gov/drug/label.json?search=openfda.pharm_class_epc:"${encodeURIComponent(term)}"&limit=1000`;
+            const url = `https://api.fda.gov/drug/label.json?search=openfda.pharm_class_epc:"${encodeURIComponent(term)}"&limit=${OPENFDA_LIMIT_PER_TERM}`;
 
             try {
-                const response = await fetch(url);
+                const response = await fetchWithTimeout(url);
                 if (!response.ok) continue;
 
                 const data = await response.json();
@@ -72,7 +120,7 @@ export async function buildMedicationCatalog(
                     const brandNames = openfda.brand_name || [];
 
                     // Add generic name
-                    if (genericName) {
+                    if (isUsefulMedicationName(genericName)) {
                         const normalized = genericName.toLowerCase().trim();
                         if (!seenNames.has(normalized)) {
                             catalog.push({
@@ -89,6 +137,8 @@ export async function buildMedicationCatalog(
 
                     // Add brand names
                     for (const brandName of brandNames.slice(0, 3)) { // Limit to avoid explosion
+                        if (!isUsefulMedicationName(brandName)) continue;
+
                         const normalized = brandName.toLowerCase().trim();
                         if (!seenNames.has(normalized)) {
                             catalog.push({
@@ -106,8 +156,7 @@ export async function buildMedicationCatalog(
 
                 console.log(`OpenFDA term "${term}": ${catalog.length} total meds`);
 
-                // Rate limit protection: wait 200ms between requests
-                await new Promise(resolve => setTimeout(resolve, 200));
+                if (catalog.length >= MAX_CATALOG_SIZE) break;
             } catch (err) {
                 console.error(`OpenFDA search error for "${term}":`, err);
             }
@@ -120,19 +169,19 @@ export async function buildMedicationCatalog(
     if (drugbankApiKey) {
         try {
             // DrugBank has a comprehensive drugs list endpoint
-            const response = await fetch('https://api.drugbankplus.com/v1/drugs?limit=10000', {
+            const response = await fetchWithTimeout(`https://api.drugbankplus.com/v1/drugs?limit=${DRUGBANK_LIMIT}`, {
                 headers: {
                     'Authorization': drugbankApiKey,
                     'Accept': 'application/json'
                 }
-            });
+            }, DRUGBANK_FETCH_TIMEOUT_MS);
 
             if (response.ok) {
                 const data = await response.json();
 
                 for (const drug of data.results || data || []) {
                     const name = drug.name;
-                    if (!name) continue;
+                    if (!isUsefulMedicationName(name)) continue;
 
                     const normalized = name.toLowerCase().trim();
                     if (!seenNames.has(normalized)) {
@@ -157,7 +206,7 @@ export async function buildMedicationCatalog(
     }
 
     console.log(`✅ Final medication catalog: ${catalog.length} unique medications`);
-    return catalog;
+    return catalog.slice(0, MAX_CATALOG_SIZE);
 }
 
 /**

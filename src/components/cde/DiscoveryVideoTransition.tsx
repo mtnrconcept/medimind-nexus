@@ -12,6 +12,7 @@ interface DiscoveryVideoTransitionProps {
 const DiscoveryVideoTransition = ({ isOpen, fromRect, onClose, onVideoEnd }: DiscoveryVideoTransitionProps) => {
     const [isAnimating, setIsAnimating] = useState(false);
     const [isExpanded, setIsExpanded] = useState(false);
+    const [videoUnavailable, setVideoUnavailable] = useState(false);
     const videoRef = useRef<HTMLVideoElement>(null);
     const containerRef = useRef<HTMLDivElement>(null);
 
@@ -20,6 +21,7 @@ const DiscoveryVideoTransition = ({ isOpen, fromRect, onClose, onVideoEnd }: Dis
             // Initial state: positioned at button
             setIsAnimating(true);
             setIsExpanded(false);
+            setVideoUnavailable(false);
 
             // Force reflow
             requestAnimationFrame(() => {
@@ -29,7 +31,9 @@ const DiscoveryVideoTransition = ({ isOpen, fromRect, onClose, onVideoEnd }: Dis
                 // Play video
                 if (videoRef.current) {
                     videoRef.current.currentTime = 0;
-                    videoRef.current.play().catch(console.error);
+                    videoRef.current.play().catch(() => {
+                        setVideoUnavailable(true);
+                    });
                 }
 
                 // Finish animation state after transition
@@ -64,21 +68,38 @@ const DiscoveryVideoTransition = ({ isOpen, fromRect, onClose, onVideoEnd }: Dis
                         : 'w-full h-full rounded-md bg-transparent'
                     }`}
             >
-                <video
-                    ref={videoRef}
-                    className="w-full h-full object-cover"
-                    src="/video/discovery.mp4"
-                    autoPlay
-                    muted={false} // User interaction might be required for unmuted
-                    playsInline
-                    onEnded={onVideoEnd}
-                />
+                {videoUnavailable ? (
+                    <div className="flex h-full w-full items-center justify-center bg-gradient-to-br from-violet-950 via-slate-950 to-cyan-950">
+                        <div className="absolute inset-0 opacity-40">
+                            <div className="absolute left-1/4 top-1/4 h-32 w-32 rounded-full border border-cyan-300/40" />
+                            <div className="absolute right-1/4 bottom-1/4 h-48 w-48 rounded-full border border-violet-300/30" />
+                            <div className="absolute left-1/2 top-1/2 h-64 w-64 -translate-x-1/2 -translate-y-1/2 rounded-full border border-white/10" />
+                        </div>
+                        <div className="relative text-center text-white">
+                            <p className="text-sm uppercase tracking-[0.35em] text-cyan-200">Discovery Engine</p>
+                            <p className="mt-3 text-3xl font-semibold">Analyse en cours</p>
+                        </div>
+                    </div>
+                ) : (
+                    <video
+                        ref={videoRef}
+                        className="w-full h-full object-cover"
+                        src="/video/discovery.mp4"
+                        autoPlay
+                        muted
+                        playsInline
+                        onError={() => setVideoUnavailable(true)}
+                        onEnded={onVideoEnd}
+                    />
+                )}
 
                 {isExpanded && (
                     <Button
                         size="icon"
                         variant="ghost"
                         className="absolute top-4 right-4 text-white hover:bg-white/20 rounded-full"
+                        aria-label="Fermer la transition"
+                        title="Fermer"
                         onClick={(e) => {
                             e.stopPropagation();
                             onClose();

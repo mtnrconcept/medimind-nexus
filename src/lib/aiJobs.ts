@@ -11,9 +11,33 @@ type ResolveAIJobOptions = {
   initialDelayMs?: number;
   maxDelayMs?: number;
   onProgress?: (progress: AIJobProgress) => void;
+  signal?: AbortSignal;
 };
 
-const sleep = (ms: number) => new Promise((resolve) => window.setTimeout(resolve, ms));
+function createAbortError(): Error {
+  const error = new Error('AI job polling aborted');
+  error.name = 'AbortError';
+  return error;
+}
+
+const sleep = (ms: number, signal?: AbortSignal) => new Promise<void>((resolve, reject) => {
+  if (signal?.aborted) {
+    reject(createAbortError());
+    return;
+  }
+
+  const timeout = window.setTimeout(() => {
+    signal?.removeEventListener('abort', onAbort);
+    resolve();
+  }, ms);
+
+  const onAbort = () => {
+    window.clearTimeout(timeout);
+    reject(createAbortError());
+  };
+
+  signal?.addEventListener('abort', onAbort, { once: true });
+});
 
 export async function resolveAIJob<T>(
   invokeAI: InvokeAI,
@@ -40,7 +64,11 @@ export async function resolveAIJob<T>(
   });
 
   while (Date.now() - startedAt < maxWaitMs) {
-    await sleep(delayMs);
+    if (options.signal?.aborted) {
+      throw createAbortError();
+    }
+
+    await sleep(delayMs, options.signal);
 
     const { data, error } = await invokeAI(functionName, {
       action: 'status',

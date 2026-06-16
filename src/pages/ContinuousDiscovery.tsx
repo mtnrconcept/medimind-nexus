@@ -26,6 +26,8 @@ import NeuralNetworkGraph from '@/components/cde/NeuralNetworkGraph';
 import RadialRingsModal from '@/components/cde/RadialRingsModal';
 import useMedicalStats from '@/hooks/useMedicalStats';
 import DiscoveryVideoTransition from '@/components/cde/DiscoveryVideoTransition';
+import { useAI } from '@/contexts/AIContext';
+import { resolveAIJob, type AIJobProgress } from '@/lib/aiJobs';
 
 // Types
 interface DiscoveryCardData {
@@ -52,8 +54,18 @@ interface KGStats {
     edge_types: Record<string, number>;
 }
 
+interface CDEAnalyzeResult {
+    output?: string;
+    discoveries?: unknown[];
+    savedCount?: number;
+    skippedDuplicateCount?: number;
+    degraded?: boolean;
+    degradedReason?: string | null;
+}
+
 const ContinuousDiscovery = () => {
     const { t } = useAutoTranslation();
+    const { invokeAI } = useAI();
     const [searchParams] = useSearchParams();
     const urlTab = searchParams.get('tab');
 
@@ -72,6 +84,7 @@ const ContinuousDiscovery = () => {
     const [typeFilter, setTypeFilter] = useState<string>('all');
     const [activeTab, setActiveTab] = useState(urlTab || 'analyze');
     const [analysisOutput, setAnalysisOutput] = useState<string>('');
+    const [analysisJobProgress, setAnalysisJobProgress] = useState<AIJobProgress | null>(null);
     const abortControllerRef = useRef<AbortController | null>(null);
     const outputRef = useRef<HTMLDivElement>(null);
 
@@ -279,6 +292,67 @@ const ContinuousDiscovery = () => {
             }
         } finally {
             setIsAnalyzing(false);
+        }
+    };
+
+    const handleStartAsyncAnalysis = async () => {
+        if (isAnalyzing) {
+            abortControllerRef.current?.abort();
+            setIsAnalyzing(false);
+            setAnalysisJobProgress(null);
+            setAnalysisOutput(prev => `${prev}\n\n${t('Suivi interrompu dans l\'interface. Le job peut continuer cote serveur.')}`);
+            return;
+        }
+
+        setIsAnalyzing(true);
+        setAnalysisJobProgress(null);
+        setAnalysisOutput(t('Initialisation de l\'analyse CDE en arriere-plan...'));
+        abortControllerRef.current = new AbortController();
+
+        try {
+            const { data, error: fnError } = await invokeAI('cde-analyze', {
+                async: true,
+                stream: false,
+            });
+
+            if (fnError) throw fnError;
+
+            const result = await resolveAIJob<CDEAnalyzeResult>(
+                invokeAI,
+                'cde-analyze',
+                data,
+                {
+                    signal: abortControllerRef.current.signal,
+                    onProgress: (progress) => {
+                        setAnalysisJobProgress(progress);
+                        setAnalysisOutput([
+                            t('Analyse CDE en arriere-plan.'),
+                            `${t('Statut')}: ${progress.status}`,
+                            `${t('Progression')}: ${progress.progress}%`,
+                            progress.message || '',
+                        ].filter(Boolean).join('\n'));
+                        if (outputRef.current) {
+                            outputRef.current.scrollTop = outputRef.current.scrollHeight;
+                        }
+                    },
+                },
+            );
+
+            setAnalysisOutput(result.output || JSON.stringify(result, null, 2));
+            setAnalysisJobProgress(null);
+            await loadData();
+
+            toast.success(t('Analyse terminee'));
+        } catch (err: any) {
+            if (err.name === 'AbortError') {
+                toast.info(t('Suivi interrompu'));
+            } else {
+                console.error('Analysis error:', err);
+                toast.error(err.message || t('Erreur lors de l\'analyse'));
+            }
+        } finally {
+            setIsAnalyzing(false);
+            abortControllerRef.current = null;
         }
     };
 
@@ -581,7 +655,7 @@ const ContinuousDiscovery = () => {
                                         {t('Analyse en continu avec OpenAI GPT-5.5')}
                                     </CardTitle>
                                     <Button
-                                        onClick={handleStartAnalysis}
+                                        onClick={handleStartAsyncAnalysis}
                                         className={`gap-2 ${isAnalyzing
                                             ? 'bg-red-500 hover:bg-red-600'
                                             : 'bg-gradient-to-r from-violet-500 to-purple-600 hover:from-violet-600 hover:to-purple-700'
@@ -590,6 +664,7 @@ const ContinuousDiscovery = () => {
                                         {isAnalyzing ? (
                                             <>
                                                 <Square className="h-4 w-4" />
+                                                {analysisJobProgress && <span>{analysisJobProgress.progress}%</span>}
                                                 {t('Arrêter')}
                                             </>
                                         ) : (
