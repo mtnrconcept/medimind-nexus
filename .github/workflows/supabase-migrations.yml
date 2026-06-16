@@ -5,39 +5,60 @@ on:
     branches:
       - main
     paths:
-      - 'supabase/migrations/**'
-  workflow_dispatch:  # Permet de déclencher manuellement
+      - "supabase/migrations/**"
+      - ".github/workflows/supabase-migrations.yml"
+  workflow_dispatch:
 
 env:
   SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
   SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
-  SUPABASE_PROJECT_ID: ${{ secrets.SUPABASE_PROJECT_ID }}
+  SUPABASE_PROJECT_REF: ${{ secrets.SUPABASE_PROJECT_REF || secrets.SUPABASE_PROJECT_ID || 'kparxcfspgoonqttduyk' }}
 
 jobs:
   deploy-migrations:
     runs-on: ubuntu-latest
-    
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Check Supabase credentials
+        id: supabase-credentials
+        shell: bash
+        run: |
+          if [ -z "$SUPABASE_ACCESS_TOKEN" ]; then
+            echo "::warning::SUPABASE_ACCESS_TOKEN is not configured; skipping migration push."
+            echo "can_deploy=false" >> "$GITHUB_OUTPUT"
+          elif [ -z "$SUPABASE_DB_PASSWORD" ]; then
+            echo "::warning::SUPABASE_DB_PASSWORD is not configured; skipping migration push."
+            echo "can_deploy=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "can_deploy=true" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Setup Supabase CLI
+        if: steps.supabase-credentials.outputs.can_deploy == 'true'
         uses: supabase/setup-cli@v1
         with:
           version: 2.95.2
 
       - name: Link Supabase Project
+        if: steps.supabase-credentials.outputs.can_deploy == 'true'
         run: |
-          supabase link --project-ref ${{ secrets.SUPABASE_PROJECT_ID }}
+          supabase link --project-ref "$SUPABASE_PROJECT_REF" --password "$SUPABASE_DB_PASSWORD"
 
       - name: Push Migrations
+        if: steps.supabase-credentials.outputs.can_deploy == 'true'
         run: |
-          supabase db push
-        env:
-          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
-          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+          supabase db push --password "$SUPABASE_DB_PASSWORD"
 
       - name: Migration Success
+        if: steps.supabase-credentials.outputs.can_deploy == 'true'
         run: |
-          echo "✅ Migrations déployées avec succès sur Supabase!"
-          echo "Project ID: ${{ secrets.SUPABASE_PROJECT_ID }}"
+          echo "Migrations deployed successfully on Supabase."
+          echo "Project ref: $SUPABASE_PROJECT_REF"
+
+      - name: Migration skipped
+        if: steps.supabase-credentials.outputs.can_deploy != 'true'
+        run: |
+          echo "Supabase migration push skipped because required GitHub secrets are missing."
