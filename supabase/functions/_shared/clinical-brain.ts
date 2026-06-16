@@ -61,6 +61,13 @@ export interface ClinicalModelRoute {
   routeReason: string;
 }
 
+export interface ClinicalPromptProfile {
+  isClinical: boolean;
+  task: ClinicalTask;
+  elementCount: number;
+  hasExternalEvidence: boolean;
+}
+
 export const CLINICAL_RESPONSE_CONTRACT = `## CONTRAT CLINIQUE VERIFIABLE
 - La base de donnees interne, les notices officielles et les sources citees sont la source de verite; le modele ne doit pas inventer.
 - Distinguer explicitement: preuve confirmee, interaction theorique, absence de donnee, donnees contradictoires.
@@ -171,6 +178,46 @@ const CRITICAL_CONTEXT_TERMS = [
   'agranulocytose',
 ];
 
+const CLINICAL_PROMPT_TERMS = [
+  'medical',
+  'clinical',
+  'clinique',
+  'patient',
+  'patients',
+  'pathologie',
+  'pathology',
+  'disease',
+  'symptome',
+  'symptom',
+  'traitement',
+  'treatment',
+  'medicament',
+  'medication',
+  'drug',
+  'molecule',
+  'substance',
+  'interaction',
+  'contre indication',
+  'contraindication',
+  'effet indesirable',
+  'side effect',
+  'diagnostic',
+  'therapeutic',
+  'pharmacologie',
+  'pharmacology',
+  'pubmed',
+  'swissmedic',
+  'openfda',
+  'ansm',
+  'knowledge graph',
+  'cde',
+  'lbd',
+  'hypothese',
+  'hypothesis',
+  'evidence',
+  'preuve',
+];
+
 function normalizeClinicalText(value: unknown): string {
   return String(value || '')
     .normalize('NFD')
@@ -206,9 +253,48 @@ function uniq(values: string[]): string[] {
   return [...new Set(values.filter(Boolean))];
 }
 
+function countDistinctClinicalTerms(text: string): number {
+  return matchTerms(text, CLINICAL_PROMPT_TERMS).length;
+}
+
 function maxRisk(left: ClinicalRiskLevel, right: ClinicalRiskLevel): ClinicalRiskLevel {
   const order: ClinicalRiskLevel[] = ['low', 'medium', 'high', 'critical'];
   return order.indexOf(right) > order.indexOf(left) ? right : left;
+}
+
+export function profileClinicalPrompt(
+  freeText: string,
+  explicitTask?: ClinicalTask,
+  elementCount = 0,
+): ClinicalPromptProfile {
+  const text = normalizeClinicalText(freeText);
+  const isClinical = countDistinctClinicalTerms(text) >= 2;
+  const hasExternalEvidence = /\b(pubmed|doi|pmid|source|sources|evidence|preuve|swissmedic|openfda|ansm|drugbank)\b/.test(text);
+  const denseGraph = elementCount >= 6 || /\b(polypharmacie|polypharmacy|multi drug|multi medication|graphe dense|dense graph)\b/.test(text);
+  let task: ClinicalTask = explicitTask || 'suspected_interaction';
+
+  if (!explicitTask) {
+    if (/\b(final review|seconde verification|validation finale|safety review)\b/.test(text)) {
+      task = 'final_safety_review';
+    } else if (denseGraph) {
+      task = 'polypharmacy';
+    } else if (/\b(schema therapeutique|treatment schema|therapeutic plan|plan therapeutique)\b/.test(text)) {
+      task = 'treatment_complex';
+    } else if (/\b(notice officielle|official label|monographie|label summary)\b/.test(text)) {
+      task = 'official_label_summary';
+    } else if (/\b(interaction connue|known interaction|contre indication|contraindication)\b/.test(text)) {
+      task = 'known_interaction';
+    } else if (/\b(questionnaire|simple lookup|recherche simple|lookup)\b/.test(text)) {
+      task = 'simple_lookup';
+    }
+  }
+
+  return {
+    isClinical,
+    task,
+    elementCount,
+    hasExternalEvidence,
+  };
 }
 
 export function detectHighRiskContext(input: ClinicalRiskInput): ClinicalRiskAssessment {
@@ -282,7 +368,7 @@ export function selectClinicalModel(
   input: ClinicalModelRouteInput,
   env: ClinicalModelEnv = {},
 ): ClinicalModelRoute {
-  const simpleModel = env.OPENAI_CLINICAL_SIMPLE_MODEL || 'gpt-4o';
+  const simpleModel = env.OPENAI_CLINICAL_SIMPLE_MODEL || 'gpt-5.4-mini';
   const standardModel = env.OPENAI_CLINICAL_STANDARD_MODEL || env.OPENAI_MODEL || 'gpt-5.5';
   const criticalModel = env.OPENAI_CLINICAL_CRITICAL_MODEL || standardModel;
   const finalReviewModel = env.OPENAI_CLINICAL_FINAL_REVIEW_MODEL || criticalModel;

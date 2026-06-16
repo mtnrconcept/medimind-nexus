@@ -15,14 +15,19 @@ The LLM is not the source of truth. It synthesizes evidence that must first come
 
 ## Model routing
 
-The shared module is `supabase/functions/_shared/clinical-brain.ts`.
+The shared modules are:
+
+- `supabase/functions/_shared/clinical-brain.ts`: risk detection, task profiling, model routing and safety contract.
+- `supabase/functions/_shared/ai-client.ts`: automatic clinical-brain application for `callAI` and `streamAI`.
 
 Default routing:
 
-- `simple_lookup`, low risk: `gpt-4o`, low reasoning, short timeout.
+- `simple_lookup`, low risk: `gpt-5.4-mini`, low reasoning, short timeout.
 - `official_label_summary`, `known_interaction`, `treatment_general`: standard clinical model, medium/high reasoning.
 - `suspected_interaction`: standard clinical model, medium/high reasoning based on evidence and risk.
 - `polypharmacy`, `treatment_complex`, `final_safety_review`, critical risk or dense graph: strongest configured clinical model, high/xhigh reasoning and longer timeout.
+
+Any clinical prompt routed through the shared AI client receives the clinical safety contract unless the caller passes `skipClinicalBrain: true`. Callers can improve routing with `clinicalTask`, `clinicalInput`, `clinicalRiskAssessment`, `elementCount`, `hasExternalEvidence` and `enforceClinicalContract`.
 
 Environment overrides:
 

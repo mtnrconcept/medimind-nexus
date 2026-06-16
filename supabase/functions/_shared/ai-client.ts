@@ -2,6 +2,18 @@
  * Shared OpenAI client for Supabase Edge Functions.
  */
 
+import {
+  buildClinicalSystemPrompt,
+  detectHighRiskContext,
+  getClinicalModelEnv,
+  profileClinicalPrompt,
+  selectClinicalModel,
+  type ClinicalReasoningEffort,
+  type ClinicalRiskAssessment,
+  type ClinicalRiskInput,
+  type ClinicalTask,
+} from './clinical-brain.ts';
+
 declare const Deno: {
   env: {
     get(key: string): string | undefined;
@@ -12,6 +24,17 @@ export interface AIResponse {
   text: string;
   provider: 'openai' | 'none';
   model: string;
+  reasoningEffort?: ClinicalReasoningEffort;
+  clinicalSafety?: ClinicalRiskAssessment;
+  clinicalRoute?: AIClinicalRouteMetadata;
+}
+
+export interface AIClinicalRouteMetadata {
+  task: ClinicalTask;
+  riskLevel: ClinicalRiskAssessment['riskLevel'];
+  flags: string[];
+  finalReviewRequired: boolean;
+  routeReason: string;
 }
 
 export interface AIContentBlock {
@@ -62,9 +85,17 @@ export interface AICallOptions {
   forceModel?: boolean;
   maxTokens?: number;
   temperature?: number;
-  reasoningEffort?: 'none' | 'low' | 'medium' | 'high' | 'xhigh';
+  reasoningEffort?: ClinicalReasoningEffort;
   responseFormat?: Record<string, unknown>;
   timeoutMs?: number;
+  clinicalTask?: ClinicalTask;
+  clinicalInput?: ClinicalRiskInput;
+  clinicalRiskAssessment?: ClinicalRiskAssessment;
+  clinicalContextText?: string;
+  elementCount?: number;
+  hasExternalEvidence?: boolean;
+  enforceClinicalContract?: boolean;
+  skipClinicalBrain?: boolean;
 }
 
 export interface AIEmbeddingOptions {
@@ -78,6 +109,8 @@ const OPENAI_CHAT_COMPLETIONS_URL = 'https://api.openai.com/v1/chat/completions'
 const OPENAI_RESPONSES_URL = 'https://api.openai.com/v1/responses';
 const OPENAI_EMBEDDINGS_URL = 'https://api.openai.com/v1/embeddings';
 const DEFAULT_OPENAI_TIMEOUT_MS = 90_000;
+const MAX_CLINICAL_ROUTING_TEXT_CHARS = 20_000;
+const CLINICAL_CONTRACT_MARKER = 'CONTRAT CLINIQUE VERIFIABLE';
 
 function isKnownNonOpenAIModel(model: string): boolean {
   const normalized = model.trim().toLowerCase();
@@ -135,6 +168,147 @@ function resolveTimeoutMs(options: AICallOptions): number {
   return Number.isFinite(configured) && configured > 0
     ? configured
     : DEFAULT_OPENAI_TIMEOUT_MS;
+}
+
+function strongerReasoningEffort(
+  requested: ClinicalReasoningEffort | undefined,
+  routed: ClinicalReasoningEffort,
+): ClinicalReasoningEffort {
+  if (!requested) {
+    return routed;
+  }
+
+  const order: ClinicalReasoningEffort[] = ['none', 'low', 'medium', 'high', 'xhigh'];
+  return order.indexOf(requested) >= order.indexOf(routed) ? requested : routed;
+}
+
+function contentToPlainText(content: string | AIContentBlock[]): string {
+  if (typeof content === 'string') {
+    return content;
+  }
+
+  return content
+    .map((block) => {
+      if (block.text) return block.text;
+      if (block.type === 'image') return '[image]';
+      if (block.type === 'document') return '[document]';
+      return '';
+    })
+    .filter(Boolean)
+    .join('\n');
+}
+
+function userPromptToPlainText(userPrompt: string | AIMessage[]): string {
+  if (typeof userPrompt === 'string') {
+    return userPrompt;
+  }
+
+  return userPrompt
+    .map((message) => `${message.role}: ${contentToPlainText(message.content)}`)
+    .join('\n');
+}
+
+function buildClinicalRoutingText(
+  systemPrompt: string,
+  userPrompt: string | AIMessage[],
+  options: AICallOptions,
+): string {
+  return [
+    options.clinicalContextText,
+    systemPrompt,
+    userPromptToPlainText(userPrompt),
+  ]
+    .filter(Boolean)
+    .join('\n\n')
+    .slice(0, MAX_CLINICAL_ROUTING_TEXT_CHARS);
+}
+
+function shouldUseClinicalBrain(
+  systemPrompt: string,
+  userPrompt: string | AIMessage[],
+  options: AICallOptions,
+): boolean {
+  if (options.skipClinicalBrain) {
+    return false;
+  }
+
+  if (
+    options.enforceClinicalContract ||
+    options.clinicalTask ||
+    options.clinicalInput ||
+    options.clinicalRiskAssessment
+  ) {
+    return true;
+  }
+
+  if (options.model?.trim().toLowerCase().startsWith('gpt-5')) {
+    return true;
+  }
+
+  return profileClinicalPrompt(buildClinicalRoutingText(systemPrompt, userPrompt, options)).isClinical;
+}
+
+export function prepareClinicalAICall(
+  systemPrompt: string,
+  userPrompt: string | AIMessage[],
+  options: AICallOptions,
+  getEnv: (key: string) => string | undefined = (key) => Deno.env.get(key),
+): {
+  systemPrompt: string;
+  options: AICallOptions;
+  clinicalSafety?: ClinicalRiskAssessment;
+  clinicalRoute?: AIClinicalRouteMetadata;
+} {
+  if (!shouldUseClinicalBrain(systemPrompt, userPrompt, options)) {
+    return { systemPrompt, options };
+  }
+
+  const routingText = buildClinicalRoutingText(systemPrompt, userPrompt, options);
+  const profile = profileClinicalPrompt(
+    routingText,
+    options.clinicalTask,
+    options.elementCount || options.clinicalInput?.selectedElementCount || 0,
+  );
+  const clinicalSafety = options.clinicalRiskAssessment || detectHighRiskContext({
+    ...options.clinicalInput,
+    selectedElementCount: options.elementCount || options.clinicalInput?.selectedElementCount || profile.elementCount,
+    freeText: [
+      options.clinicalInput?.freeText,
+      routingText,
+    ].filter(Boolean).join('\n\n'),
+  });
+  const route = selectClinicalModel({
+    task: profile.task,
+    riskAssessment: clinicalSafety,
+    elementCount: profile.elementCount,
+    hasExternalEvidence: options.hasExternalEvidence ?? profile.hasExternalEvidence,
+  }, getClinicalModelEnv(getEnv));
+  const routedOptions: AICallOptions = {
+    ...options,
+    model: options.forceModel ? options.model : route.model,
+    reasoningEffort: strongerReasoningEffort(options.reasoningEffort, route.reasoningEffort),
+    timeoutMs: options.timeoutMs ?? route.timeoutMs,
+  };
+  const routedSystemPrompt = systemPrompt.includes(CLINICAL_CONTRACT_MARKER)
+    ? systemPrompt
+    : buildClinicalSystemPrompt(systemPrompt, clinicalSafety);
+
+  console.log(
+    `[AI] Clinical brain route task=${profile.task} risk=${clinicalSafety.riskLevel} model=${routedOptions.model} effort=${routedOptions.reasoningEffort}`,
+  );
+
+  return {
+    systemPrompt: routedSystemPrompt,
+    options: routedOptions,
+    clinicalSafety,
+    clinicalRoute: {
+      task: profile.task,
+      riskLevel: clinicalSafety.riskLevel,
+      flags: clinicalSafety.flags,
+      finalReviewRequired: route.finalReviewRequired,
+      routeReason: route.routeReason,
+    },
+  };
 }
 
 async function fetchOpenAI(
@@ -420,17 +594,18 @@ export async function callAI(
   userPrompt: string | AIMessage[],
   options: AICallOptions = {},
 ): Promise<AIResponse> {
-  const { apiKey, model } = getOpenAIConfig(options);
-  const timeoutMs = resolveTimeoutMs(options);
-  const useResponsesAPI = shouldUseResponsesAPI(model, options);
+  const prepared = prepareClinicalAICall(systemPrompt, userPrompt, options);
+  const { apiKey, model } = getOpenAIConfig(prepared.options);
+  const timeoutMs = resolveTimeoutMs(prepared.options);
+  const useResponsesAPI = shouldUseResponsesAPI(model, prepared.options);
   const body = useResponsesAPI
     ? {
-        ...buildResponsesBody(model, options),
-        input: buildResponsesInput(systemPrompt, userPrompt),
+        ...buildResponsesBody(model, prepared.options),
+        input: buildResponsesInput(prepared.systemPrompt, userPrompt),
       }
     : {
-        ...buildChatCompletionsBody(model, options),
-        messages: buildMessages(systemPrompt, userPrompt),
+        ...buildChatCompletionsBody(model, prepared.options),
+        messages: buildMessages(prepared.systemPrompt, userPrompt),
       };
 
   const response = await fetchOpenAI(
@@ -463,6 +638,9 @@ export async function callAI(
     text,
     provider: 'openai',
     model,
+    reasoningEffort: prepared.options.reasoningEffort,
+    clinicalSafety: prepared.clinicalSafety,
+    clinicalRoute: prepared.clinicalRoute,
   };
 }
 
@@ -521,18 +699,19 @@ export async function streamAI(
   onChunk: (text: string) => void | Promise<void>,
   options: AICallOptions = {},
 ): Promise<AIResponse> {
-  const { apiKey, model } = getOpenAIConfig(options);
-  const timeoutMs = resolveTimeoutMs(options);
-  const useResponsesAPI = shouldUseResponsesAPI(model, options);
+  const prepared = prepareClinicalAICall(systemPrompt, userPrompt, options);
+  const { apiKey, model } = getOpenAIConfig(prepared.options);
+  const timeoutMs = resolveTimeoutMs(prepared.options);
+  const useResponsesAPI = shouldUseResponsesAPI(model, prepared.options);
   const body = useResponsesAPI
     ? {
-        ...buildResponsesBody(model, options),
-        input: buildResponsesInput(systemPrompt, userPrompt),
+        ...buildResponsesBody(model, prepared.options),
+        input: buildResponsesInput(prepared.systemPrompt, userPrompt),
         stream: true,
       }
     : {
-        ...buildChatCompletionsBody(model, options),
-        messages: buildMessages(systemPrompt, userPrompt),
+        ...buildChatCompletionsBody(model, prepared.options),
+        messages: buildMessages(prepared.systemPrompt, userPrompt),
         stream: true,
       };
 
@@ -588,5 +767,8 @@ export async function streamAI(
     text: fullText,
     provider: 'openai',
     model,
+    reasoningEffort: prepared.options.reasoningEffort,
+    clinicalSafety: prepared.clinicalSafety,
+    clinicalRoute: prepared.clinicalRoute,
   };
 }
