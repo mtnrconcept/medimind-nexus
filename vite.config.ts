@@ -28,16 +28,27 @@ export default defineConfig(({ mode }) => ({
     rollupOptions: {
       output: {
         manualChunks(id) {
-          if (!id.includes("node_modules")) return undefined;
-          if (id.includes("react-dom") || id.includes("react-router-dom") || id.includes("react/")) return "react-vendor";
-          if (id.includes("@supabase")) return "supabase-vendor";
-          if (id.includes("@radix-ui") || id.includes("lucide-react") || id.includes("cmdk") || id.includes("vaul")) return "ui-vendor";
-          if (id.includes("@xyflow") || id.includes("react-grid-layout") || id.includes("react-resizable")) return "graph-vendor";
-          if (id.includes("three") || id.includes("@react-three")) return "three-vendor";
-          if (id.includes("recharts")) return "charts-vendor";
-          if (id.includes("jspdf") || id.includes("xlsx")) return "export-vendor";
-          if (id.includes("@rdkit")) return "chem-vendor";
-          if (id.includes("react-markdown") || id.includes("purify")) return "content-vendor";
+          const modulePath = id.replace(/\\/g, "/");
+          if (!modulePath.includes("node_modules")) return undefined;
+          if (
+            modulePath.includes("node_modules/react/") ||
+            modulePath.includes("node_modules/react-dom/") ||
+            modulePath.includes("node_modules/react-router/") ||
+            modulePath.includes("node_modules/react-router-dom/") ||
+            modulePath.includes("node_modules/@remix-run/router/") ||
+            modulePath.includes("node_modules/scheduler/") ||
+            modulePath.includes("node_modules/use-sync-external-store/")
+          ) {
+            return "react-vendor";
+          }
+          if (modulePath.includes("@supabase")) return "supabase-vendor";
+          if (modulePath.includes("@radix-ui") || modulePath.includes("lucide-react") || modulePath.includes("cmdk") || modulePath.includes("vaul")) return "ui-vendor";
+          if (modulePath.includes("@xyflow") || modulePath.includes("react-grid-layout") || modulePath.includes("react-resizable")) return "graph-vendor";
+          if (modulePath.includes("three") || modulePath.includes("@react-three")) return "three-vendor";
+          if (modulePath.includes("recharts")) return "charts-vendor";
+          if (modulePath.includes("jspdf") || modulePath.includes("xlsx")) return "export-vendor";
+          if (modulePath.includes("@rdkit")) return "chem-vendor";
+          if (modulePath.includes("react-markdown") || modulePath.includes("purify")) return "content-vendor";
           return "vendor";
         },
       },
