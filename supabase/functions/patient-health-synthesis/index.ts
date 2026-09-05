@@ -448,18 +448,28 @@ function buildSynthesis(context: PatientContext, modelValue: any = {}, degradedR
   })));
 
   const deterministicWeakSignals: HealthSynthesis["weak_signals"] = labTrends
-    .filter((item) => item.abnormal || item.trend !== "indeterminate")
+    .filter((item) => item.abnormal || item.direction !== "indeterminate")
     .slice(0, 8)
-    .map((item) => ({
-      indicator: item.test,
-      trend: item.trend,
-      observation: item.trend === "indeterminate"
-        ? `Resultat anormal isole${item.latestValue !== null ? `: ${item.latestValue} ${item.unit || ""}` : ""}. Une seule mesure comparable est disponible.`
-        : `Evolution de ${item.previousValue ?? "?"} vers ${item.latestValue ?? "?"} ${item.unit || ""} entre ${item.previousDate || "date inconnue"} et ${item.latestDate || "date inconnue"}.`,
-      recommendation: item.trend === "indeterminate"
-        ? "Comparer avec une mesure anterieure ou repeter le dosage avant de conclure a une tendance."
-        : "Interpreter cette tendance avec le contexte clinique et les valeurs de reference.",
-    }));
+    .map((item) => {
+      const valueSummary = `${item.previousValue ?? "?"} vers ${item.latestValue ?? "?"} ${item.unit || ""}`.trim();
+      const dateSummary = `entre ${item.previousDate || "date inconnue"} et ${item.latestDate || "date inconnue"}`;
+      const observation = item.direction === "indeterminate"
+        ? `Resultat${item.abnormal ? " anormal" : ""} isole${item.latestValue !== null ? `: ${item.latestValue} ${item.unit || ""}` : ""}. Une seule mesure comparable est disponible.`
+        : item.direction === "stable"
+          ? `Valeurs comparables stables (${valueSummary}) ${dateSummary}.`
+          : `Valeur en ${item.direction === "rising" ? "hausse" : "baisse"} (${valueSummary}) ${dateSummary}. Cette direction n'indique pas, a elle seule, une amelioration ou une aggravation clinique.`;
+      const recommendation = item.direction === "indeterminate"
+        ? "Comparer avec une mesure anterieure ou repeter le dosage avant de conclure a une evolution."
+        : item.direction === "stable"
+          ? "Interpreter la stabilite avec le contexte clinique et les valeurs de reference."
+          : "Interpreter la hausse ou la baisse selon le biomarqueur, les valeurs de reference et le contexte clinique.";
+      return {
+        indicator: item.test,
+        trend: item.trend,
+        observation,
+        recommendation,
+      };
+    });
 
   const preventionAlerts: HealthSynthesis["prevention_alerts"] = context.prevention.slice(0, 12).map((row) => {
     const screening = shortText(row.screening_type || row.screening_name, 180) || "Prevention";
