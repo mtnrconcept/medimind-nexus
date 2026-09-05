@@ -1,0 +1,169 @@
+name: Patch cross-data job security
+
+on:
+  push:
+    branches:
+      - codex/fix-ai-job-ownership-20260905
+    paths:
+      - .github/workflows/patch-cross-data-job-security.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout dedicated branch
+        uses: actions/checkout@v4
+        with:
+          ref: codex/fix-ai-job-ownership-20260905
+          fetch-depth: 0
+
+      - name: Apply deterministic handler patch
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('supabase/functions/cross-data-analyzer/index.ts')
+          text = path.read_text(encoding='utf-8')
+
+          def replace_once(source: str, old: str, new: str, label: str) -> str:
+              count = source.count(old)
+              if count != 1:
+                  raise SystemExit(f'{label}: expected one exact match, found {count}')
+              return source.replace(old, new, 1)
+
+          text = replace_once(
+              text,
+              '''} from "./analysis-utils.ts";
+
+          const corsHeaders = {''',
+              '''} from "./analysis-utils.ts";
+          import {
+            buildAnalysisJobSecurityFields,
+            canAccessAnalysisJob,
+            type AnalysisRequestActor,
+          } from "./job-security.ts";
+
+          const corsHeaders = {''',
+              'security helper import',
+          )
+
+          text = replace_once(
+              text,
+              '''function isOpenAIBackgroundPending(status: string | undefined | null): boolean {
+            return status === 'queued' || status === 'in_progress';
+          }
+
+          async function updateAnalysisJob(''',
+              '''function isOpenAIBackgroundPending(status: string | undefined | null): boolean {
+            return status === 'queued' || status === 'in_progress';
+          }
+
+          async function authenticateRequest(
+            req: Request,
+            supabase: any,
+            serviceRoleKey: string,
+          ): Promise<AnalysisRequestActor> {
+            const authorization = req.headers.get('authorization') || '';
+            if (authorization === `Bearer ${serviceRoleKey}`) {
+              return { service: true, userId: null };
+            }
+
+            const token = authorization.replace(/^Bearer\\s+/i, '').trim();
+            if (!token) throw new Error('AUTH_REQUIRED');
+
+            const { data, error } = await supabase.auth.getUser(token);
+            if (error || !data?.user?.id) throw new Error('AUTH_INVALID');
+            return { service: false, userId: data.user.id };
+          }
+
+          async function updateAnalysisJob(''',
+              'request authentication helper',
+          )
+
+          text = replace_once(
+              text,
+              '''    const supabase = createClient(supabaseUrl, supabaseKey);
+              activeSupabase = supabase;
+              const {''',
+              '''    const supabase = createClient(supabaseUrl, supabaseKey);
+              activeSupabase = supabase;
+
+              let actor: AnalysisRequestActor;
+              try {
+                actor = await authenticateRequest(req, supabase, supabaseKey);
+              } catch (error) {
+                const message = getErrorMessage(error);
+                return jsonResponse({
+                  error: message === 'AUTH_INVALID' ? 'Invalid session' : 'Authentication required',
+                }, 401);
+              }
+
+              const {''',
+              'handler authentication',
+          )
+
+          text = replace_once(
+              text,
+              "    const isServiceInvocation = req.headers.get('authorization') === `Bearer ${supabaseKey}`;",
+              "    const isServiceInvocation = actor.service;",
+              'service actor reuse',
+          )
+
+          text = replace_once(
+              text,
+              ".select('id, status, progress_percentage, progress_message, request_payload, result_payload, error_message, model, reasoning_effort, degraded, degraded_reason, provider_name, provider_response_id, provider_status, provider_started_at, provider_completed_at, created_at, started_at, completed_at, updated_at')",
+              ".select('id, status, progress_percentage, progress_message, request_payload, result_payload, error_message, model, reasoning_effort, degraded, degraded_reason, provider_name, provider_response_id, provider_status, provider_started_at, provider_completed_at, created_at, started_at, completed_at, updated_at, requested_by, expires_at')",
+              'status ownership fields',
+          )
+
+          text = replace_once(
+              text,
+              '''      if (!job) {
+                return jsonResponse({ error: 'Job not found' }, 404);
+              }
+
+              if (''',
+              '''      if (!job || !canAccessAnalysisJob(actor, job)) {
+                return jsonResponse({ error: 'Job not found or expired' }, 404);
+              }
+
+              if (''',
+              'status ownership enforcement',
+          )
+
+          text = replace_once(
+              text,
+              '''          progress_message: 'Analyse cross-data en file d attente.',
+                    request_payload: sanitizeJobPayload(payload),''',
+              '''          progress_message: 'Analyse cross-data en file d attente.',
+                    ...buildAnalysisJobSecurityFields(actor),
+                    request_payload: sanitizeJobPayload(payload),''',
+              'job ownership fields',
+          )
+
+          text = replace_once(
+              text,
+              ".select('id, public_token, status, progress_percentage, progress_message, created_at')",
+              ".select('id, public_token, status, progress_percentage, progress_message, created_at, expires_at')",
+              'created job expiry response',
+          )
+
+          path.write_text(text, encoding='utf-8')
+          PY
+
+      - name: Commit handler patch
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add supabase/functions/cross-data-analyzer/index.ts
+          git diff --cached --check
+          git commit -m "security: bind cross-data jobs to requesters"
+          git push origin HEAD:codex/fix-ai-job-ownership-20260905
