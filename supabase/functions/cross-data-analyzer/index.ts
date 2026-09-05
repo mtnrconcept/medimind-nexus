@@ -26,6 +26,11 @@ import {
   type SelectedElement,
   type TreatmentSchema,
 } from "./analysis-utils.ts";
+import {
+  buildAnalysisJobSecurityFields,
+  canAccessAnalysisJob,
+  type AnalysisRequestActor,
+} from "./job-security.ts";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -183,6 +188,24 @@ function sanitizeJobPayload(payload: AnalysisJobPayload): AnalysisJobPayload {
 
 function isOpenAIBackgroundPending(status: string | undefined | null): boolean {
   return status === 'queued' || status === 'in_progress';
+}
+
+async function authenticateRequest(
+  req: Request,
+  supabase: any,
+  serviceRoleKey: string,
+): Promise<AnalysisRequestActor> {
+  const authorization = req.headers.get('authorization') || '';
+  if (authorization === `Bearer ${serviceRoleKey}`) {
+    return { service: true, userId: null };
+  }
+
+  const token = authorization.replace(/^Bearer\s+/i, '').trim();
+  if (!token) throw new Error('AUTH_REQUIRED');
+
+  const { data, error } = await supabase.auth.getUser(token);
+  if (error || !data?.user?.id) throw new Error('AUTH_INVALID');
+  return { service: false, userId: data.user.id };
 }
 
 async function updateAnalysisJob(
@@ -946,6 +969,17 @@ serve(async (req) => {
     }
     const supabase = createClient(supabaseUrl, supabaseKey);
     activeSupabase = supabase;
+
+    let actor: AnalysisRequestActor;
+    try {
+      actor = await authenticateRequest(req, supabase, supabaseKey);
+    } catch (error) {
+      const message = getErrorMessage(error);
+      return jsonResponse({
+        error: message === 'AUTH_INVALID' ? 'Invalid session' : 'Authentication required',
+      }, 401);
+    }
+
     const {
       action,
       jobId,
@@ -964,7 +998,7 @@ serve(async (req) => {
       analysisMode = 'full_analysis',
       currentAnalysis = null,
     } = payload;
-    const isServiceInvocation = req.headers.get('authorization') === `Bearer ${supabaseKey}`;
+    const isServiceInvocation = actor.service;
     activeJobId = jobId;
     activeRunJob = Boolean(runJob && jobId);
 
@@ -979,7 +1013,7 @@ serve(async (req) => {
 
       const { data: job, error: jobError } = await supabase
         .from('ai_analysis_jobs')
-        .select('id, status, progress_percentage, progress_message, request_payload, result_payload, error_message, model, reasoning_effort, degraded, degraded_reason, provider_name, provider_response_id, provider_status, provider_started_at, provider_completed_at, created_at, started_at, completed_at, updated_at')
+        .select('id, status, progress_percentage, progress_message, request_payload, result_payload, error_message, model, reasoning_effort, degraded, degraded_reason, provider_name, provider_response_id, provider_status, provider_started_at, provider_completed_at, created_at, started_at, completed_at, updated_at, requested_by, expires_at')
         .eq('id', jobId)
         .eq('public_token', jobToken)
         .maybeSingle();
@@ -988,11 +1022,11 @@ serve(async (req) => {
         return jsonResponse({ error: jobError.message }, 500);
       }
 
-      if (!job) {
-        return jsonResponse({ error: 'Job not found' }, 404);
-      }
+      if (!job || !canAccessAnalysisJob(actor, job)) {
+      return jsonResponse({ error: 'Job not found or expired' }, 404);
+    }
 
-      if (
+    if (
         job.status === 'processing' &&
         job.provider_name === 'openai' &&
         job.provider_response_id &&
@@ -1081,9 +1115,10 @@ serve(async (req) => {
           status: 'queued' satisfies AnalysisJobStatus,
           progress_percentage: 0,
           progress_message: 'Analyse cross-data en file d attente.',
+          ...buildAnalysisJobSecurityFields(actor),
           request_payload: sanitizeJobPayload(payload),
         })
-        .select('id, public_token, status, progress_percentage, progress_message, created_at')
+        .select('id, public_token, status, progress_percentage, progress_message, created_at, expires_at')
         .single();
 
       if (createJobError) {
