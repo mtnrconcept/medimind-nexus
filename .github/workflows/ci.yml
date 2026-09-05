@@ -41,7 +41,7 @@ jobs:
         run: npm run build
 
       - name: Production dependency audit
-        run: npm audit --omit=dev --audit-level=critical
+        run: node scripts/audit-production.mjs
 
   security-migration:
     name: PostgreSQL 17 security migration
