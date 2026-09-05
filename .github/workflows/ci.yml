@@ -40,7 +40,7 @@ jobs:
       - name: Build
         run: npm run build
 
-      - name: Production dependency audit
+      - name: Production dependency audit (critical gate)
         run: node scripts/audit-production.mjs
 
   security-migration:
