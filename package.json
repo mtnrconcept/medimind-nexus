@@ -9,7 +9,7 @@
     "build:dev": "vite build --mode development",
     "lint": "eslint .",
     "test": "tsx --test tests/*.test.ts",
-    "typecheck": "tsc --noEmit --pretty false --skipLibCheck --allowImportingTsExtensions --moduleResolution bundler --module esnext --target es2022 --types node tests/clinical-trials-mapper.test.ts tests/drug-interaction-logic.test.ts tests/patient-health-synthesis-logic.test.ts supabase/functions/clinical-trials-sync/mapper.ts supabase/functions/drug-interaction-checker/logic.ts supabase/functions/patient-health-synthesis/logic.ts",
+    "typecheck": "tsc --noEmit --pretty false --skipLibCheck --allowImportingTsExtensions --moduleResolution bundler --module esnext --target es2022 --types node tests/clinical-trials-mapper.test.ts tests/cross-data-job-security.test.ts tests/drug-interaction-logic.test.ts tests/patient-health-synthesis-logic.test.ts supabase/functions/clinical-trials-sync/mapper.ts supabase/functions/cross-data-analyzer/job-security.ts supabase/functions/drug-interaction-checker/logic.ts supabase/functions/patient-health-synthesis/logic.ts",
     "typecheck:full": "tsc -b --pretty false",
     "check": "npm run test && npm run typecheck && npm run lint && npm run build",
     "preview": "vite preview",
