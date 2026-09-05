@@ -28,6 +28,7 @@ jobs:
         run: |
           python - <<'PY'
           from pathlib import Path
+          import re
 
           path = Path('supabase/functions/cross-data-analyzer/index.ts')
           text = path.read_text(encoding='utf-8')
@@ -123,20 +124,23 @@ jobs:
               'status ownership fields',
           )
 
-          text = replace_once(
-              text,
-              '''      if (!job) {
-                return jsonResponse({ error: 'Job not found' }, 404);
-              }
-
-              if (''',
-              '''      if (!job || !canAccessAnalysisJob(actor, job)) {
+          status_pattern = re.compile(
+              r"      if \(!job\) \{\r?\n"
+              r"        return jsonResponse\(\{ error: 'Job not found' \}, 404\);\r?\n"
+              r"      \}\r?\n(?:[ \t]*\r?\n)+"
+              r"      if \("
+          )
+          text, status_count = status_pattern.subn(
+              """      if (!job || !canAccessAnalysisJob(actor, job)) {
                 return jsonResponse({ error: 'Job not found or expired' }, 404);
               }
 
-              if (''',
-              'status ownership enforcement',
+              if (""",
+              text,
+              count=1,
           )
+          if status_count != 1:
+              raise SystemExit(f'status ownership enforcement: expected one regex match, found {status_count}')
 
           text = replace_once(
               text,
