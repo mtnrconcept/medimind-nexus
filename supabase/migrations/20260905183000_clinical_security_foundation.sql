@@ -237,7 +237,20 @@ create policy patient_documents_storage_delete
     and public.has_patient_access(public.patient_id_from_storage_path(name), true)
   );
 
--- AI background jobs are a backend implementation detail. Status is exposed via Edge Functions.
+-- AI background jobs are owned server-side, bound to a requester, and expire.
+alter table public.ai_analysis_jobs
+  add column if not exists requested_by uuid references auth.users(id) on delete set null,
+  add column if not exists expires_at timestamptz;
+
+update public.ai_analysis_jobs
+set expires_at = coalesce(expires_at, coalesce(created_at, now()) + interval '24 hours')
+where expires_at is null;
+
+create index if not exists ai_analysis_jobs_requested_by_idx
+  on public.ai_analysis_jobs(requested_by);
+create index if not exists ai_analysis_jobs_expires_at_idx
+  on public.ai_analysis_jobs(expires_at);
+
 revoke all on table public.ai_analysis_jobs from public, anon, authenticated;
 grant all on table public.ai_analysis_jobs to service_role;
 
