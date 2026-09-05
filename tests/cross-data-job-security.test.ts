@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 
 import {
   ANALYSIS_JOB_TTL_MS,
@@ -48,4 +49,16 @@ test('rejects expired or ownerless jobs for users while preserving service acces
   assert.equal(canAccessAnalysisJob(owner, ownerless, NOW_MS), false);
   assert.equal(canAccessAnalysisJob(service, expired, NOW_MS), true);
   assert.equal(canAccessAnalysisJob(service, ownerless, NOW_MS), true);
+});
+
+test('wires ownership and expiry enforcement into the cross-data handler', () => {
+  const source = readFileSync(
+    new URL('../supabase/functions/cross-data-analyzer/index.ts', import.meta.url),
+    'utf8',
+  );
+
+  assert.match(source, /from ["']\.\/job-security\.ts["']/);
+  assert.match(source, /authenticateRequest\(req, supabase, supabaseKey\)/);
+  assert.match(source, /canAccessAnalysisJob\(actor, job\)/);
+  assert.match(source, /buildAnalysisJobSecurityFields\(actor\)/);
 });
