@@ -1,5 +1,6 @@
 export type PreventionStatus = 'up_to_date' | 'due_soon' | 'overdue' | 'never_done';
-export type LabTrend = 'stable' | 'improving' | 'worsening' | 'indeterminate';
+export type LabTrend = 'stable' | 'indeterminate';
+export type LabDirection = 'rising' | 'falling' | 'stable' | 'indeterminate';
 
 export interface HealthScoreInput {
   activePathologyCount: number;
@@ -27,6 +28,7 @@ export interface DerivedLabTrend {
   latestDate: string | null;
   previousDate: string | null;
   abnormal: boolean;
+  direction: LabDirection;
   trend: LabTrend;
 }
 
@@ -102,13 +104,17 @@ export function deriveLabTrends(rows: LabMeasurement[]): DerivedLabTrend[] {
     });
     const previousNumeric = previous ? numeric(previous.value) : null;
 
+    let direction: LabDirection = 'indeterminate';
     let trend: LabTrend = 'indeterminate';
     if (latestNumeric !== null && previousNumeric !== null) {
       const tolerance = Math.max(Math.abs(previousNumeric) * 0.03, 1e-9);
       const delta = latestNumeric - previousNumeric;
-      if (Math.abs(delta) <= tolerance) trend = 'stable';
-      else if (delta > 0) trend = 'worsening';
-      else trend = 'improving';
+      if (Math.abs(delta) <= tolerance) {
+        direction = 'stable';
+        trend = 'stable';
+      } else {
+        direction = delta > 0 ? 'rising' : 'falling';
+      }
     }
 
     result.push({
@@ -119,6 +125,7 @@ export function deriveLabTrends(rows: LabMeasurement[]): DerivedLabTrend[] {
       latestDate: text(latest.date),
       previousDate: previous ? text(previous.date) : null,
       abnormal: latest.is_abnormal === true,
+      direction,
       trend,
     });
   }
