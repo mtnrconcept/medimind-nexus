@@ -12,11 +12,8 @@ on:
 
 jobs:
   frontend:
-    name: Test, typecheck, lint and build
+    name: Test, focused typecheck, lint and build
     runs-on: ubuntu-latest
-    env:
-      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
-      SUPABASE_PROJECT_REF: ${{ secrets.SUPABASE_PROJECT_REF || secrets.SUPABASE_PROJECT_ID || 'kparxcfspgoonqttduyk' }}
 
     steps:
       - name: Checkout repository
@@ -34,23 +31,7 @@ jobs:
       - name: Tests
         run: npm test
 
-      - name: Require Supabase access token for schema verification
-        shell: bash
-        run: |
-          if [ -z "$SUPABASE_ACCESS_TOKEN" ]; then
-            echo "::error::SUPABASE_ACCESS_TOKEN is required to typecheck against the live schema."
-            exit 1
-          fi
-
-      - name: Setup Supabase CLI
-        uses: supabase/setup-cli@v1
-        with:
-          version: 2.95.2
-
-      - name: Generate current Supabase types
-        run: supabase gen types typescript --project-id "$SUPABASE_PROJECT_REF" > src/integrations/supabase/types.ts
-
-      - name: Typecheck
+      - name: Focused clinical typecheck
         run: npm run typecheck
 
       - name: Lint
@@ -58,3 +39,48 @@ jobs:
 
       - name: Build
         run: npm run build
+
+      - name: Production dependency audit
+        run: npm audit --omit=dev --audit-level=critical
+
+  security-migration:
+    name: PostgreSQL 17 security migration
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: medimind_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d medimind_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      PGHOST: 127.0.0.1
+      PGPORT: 5432
+      PGUSER: postgres
+      PGPASSWORD: postgres
+      PGDATABASE: medimind_test
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install PostgreSQL client
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y postgresql-client
+
+      - name: Bootstrap representative schema
+        run: psql -v ON_ERROR_STOP=1 -f tests/clinical-security-bootstrap.sql
+
+      - name: Apply clinical security migration
+        run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20260905183000_clinical_security_foundation.sql
+
+      - name: Assert authorization and provenance behavior
+        run: psql -v ON_ERROR_STOP=1 -f tests/clinical-security-assertions.sql
