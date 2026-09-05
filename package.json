@@ -8,6 +8,9 @@
     "build": "vite build",
     "build:dev": "vite build --mode development",
     "lint": "eslint .",
+    "test": "tsx --test tests/*.test.ts",
+    "typecheck": "tsc -b --pretty false",
+    "check": "npm run test && npm run typecheck && npm run lint && npm run build",
     "preview": "vite preview",
     "import:data": "npx tsx scripts/import-local-data.ts",
     "clinical-brain:audit": "tsx scripts/clinical-brain-eval.ts"
