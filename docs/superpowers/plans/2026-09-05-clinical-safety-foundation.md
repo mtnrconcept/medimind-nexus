@@ -84,7 +84,7 @@ Expected failure: module-not-found for `logic.ts` and/or `mapper.ts`.
 ### Task 2: Add explicit patient authorization and database guardrails
 
 **Files:**
-- Create: `supabase/migrations/20260905183000_clinical_security_foundation.sql`
+- Create: `supabase/migrations/20260905180144_20260905183000_clinical_security_foundation.sql`
 
 **Interfaces:**
 - Produces: `patient_access_grants`, `has_patient_access(uuid, boolean)`, tightened RLS/Storage, owned `ai_analysis_jobs`, protected `clinical_trials`, canonical cache trigger validation.
