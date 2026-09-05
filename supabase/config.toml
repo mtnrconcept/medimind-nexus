@@ -1,25 +1,34 @@
 project_id = "kparxcfspgoonqttduyk"
 
 [functions.pubmed-search]
-verify_jwt = false
+verify_jwt = true
 
 [functions.import-icd]
-verify_jwt = false
+verify_jwt = true
 
 [functions.ai-assistant]
-verify_jwt = false
+verify_jwt = true
 
 [functions.pathology-analyzer]
-verify_jwt = false
+verify_jwt = true
 
 [functions.cross-data-analyzer]
-verify_jwt = false
+verify_jwt = true
 
 [functions.deep-research]
-verify_jwt = false
+verify_jwt = true
 
 [functions.medical-scraper]
 verify_jwt = true
 
 [functions.import-swissmedic]
-verify_jwt = false
+verify_jwt = true
+
+[functions.cde-systematic-analyze]
+verify_jwt = true
+
+[functions.deep-research-graph]
+verify_jwt = true
+
+[functions.clinical-trials-sync]
+verify_jwt = true
