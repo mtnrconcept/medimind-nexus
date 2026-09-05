@@ -1,0 +1,44 @@
+name: Prepare isolated remediation tooling
+on:
+  push:
+    branches: [codex/remediation-science-design-20260906]
+    paths: [.github/workflows/medicore-remediation-checks.yml]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  tooling:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Create isolated workspace and verify source
+        run: |
+          test -z "$(git status --porcelain)"
+          git worktree add --detach /tmp/medicore-tooling HEAD
+          cd /tmp/medicore-tooling
+          test -z "$(git status --porcelain)"
+          cat AGENTS.md
+          git rev-parse HEAD
+      - name: Install locked dependencies for offline verification
+        working-directory: /tmp/medicore-tooling
+        run: |
+          npm ci
+          npm test
+          tar -czf /tmp/medicore-dependencies.tgz node_modules
+          sha256sum /tmp/medicore-dependencies.tgz > /tmp/medicore-dependencies.sha256
+      - uses: actions/upload-artifact@v4
+        with:
+          name: medicore-dependencies
+          path: |
+            /tmp/medicore-dependencies.tgz
+            /tmp/medicore-dependencies.sha256
+          retention-days: 1
+          if-no-files-found: error
