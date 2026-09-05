@@ -82,5 +82,8 @@ jobs:
       - name: Apply clinical security migration
         run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20260905180144_20260905183000_clinical_security_foundation.sql
 
-      - name: Assert authorization and provenance behavior
+      - name: Apply AI analysis job expiry guard
+        run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20260905192000_ai_analysis_job_expiry_guard.sql
+
+      - name: Assert authorization, ownership and provenance behavior
         run: psql -v ON_ERROR_STOP=1 -f tests/clinical-security-assertions.sql
