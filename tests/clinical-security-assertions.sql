@@ -8,8 +8,11 @@ begin
   end if;
 end $$;
 
--- New AI ownership/expiry and ClinicalTrials.gov provenance columns must exist.
+-- AI ownership/expiry and ClinicalTrials.gov provenance columns must exist.
 do $$
+declare
+  expiry_nullable text;
+  expiry_default text;
 begin
   if (
     select count(*)
@@ -19,6 +22,25 @@ begin
       and column_name in ('requested_by', 'expires_at')
   ) <> 2 then
     raise exception 'ai_analysis_jobs ownership columns missing';
+  end if;
+
+  select is_nullable, column_default
+  into expiry_nullable, expiry_default
+  from information_schema.columns
+  where table_schema = 'public'
+    and table_name = 'ai_analysis_jobs'
+    and column_name = 'expires_at';
+
+  if expiry_nullable <> 'NO' then
+    raise exception 'ai_analysis_jobs.expires_at must be not null';
+  end if;
+
+  if expiry_default is null then
+    raise exception 'ai_analysis_jobs.expires_at default is missing';
+  end if;
+
+  if exists (select 1 from public.ai_analysis_jobs where expires_at is null) then
+    raise exception 'ai_analysis_jobs contains rows without expiry';
   end if;
 
   if (
@@ -34,6 +56,40 @@ begin
     raise exception 'clinical_trials provenance columns missing';
   end if;
 end $$;
+
+-- A producer that omits expires_at must receive a bounded default.
+insert into public.ai_analysis_jobs (
+  id,
+  public_token,
+  function_name,
+  analysis_mode,
+  status,
+  progress_percentage,
+  request_payload
+) values (
+  'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+  'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
+  'expiry-guard-test',
+  'full_analysis',
+  'queued',
+  0,
+  '{}'::jsonb
+);
+
+do $$
+begin
+  if not exists (
+    select 1
+    from public.ai_analysis_jobs
+    where id = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'
+      and expires_at > created_at
+  ) then
+    raise exception 'ai_analysis_jobs expiry default was not applied';
+  end if;
+end $$;
+
+delete from public.ai_analysis_jobs
+where id = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
 
 -- Anonymous callers must no longer execute privileged SECURITY DEFINER functions.
 do $$
