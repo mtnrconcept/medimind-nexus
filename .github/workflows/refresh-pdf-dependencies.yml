@@ -1,0 +1,46 @@
+name: Refresh secure PDF dependencies
+
+on:
+  push:
+    branches:
+      - codex/clinical-safety-foundation-20260905
+    paths:
+      - .github/workflows/refresh-pdf-dependencies.yml
+
+permissions:
+  contents: write
+
+jobs:
+  refresh-lockfile:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout branch
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Upgrade PDF dependencies and regenerate lockfile
+        run: npm install --save-exact jspdf@4.2.1 jspdf-autotable@5.0.8
+
+      - name: Verify production dependencies
+        run: npm audit --omit=dev --audit-level=critical
+
+      - name: Commit regenerated manifest and lockfile
+        run: |
+          rm .github/workflows/refresh-pdf-dependencies.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add package.json package-lock.json .github/workflows/refresh-pdf-dependencies.yml
+          if git diff --cached --quiet; then
+            echo "No dependency changes generated"
+            exit 1
+          fi
+          git commit -m "fix: upgrade secure PDF dependencies"
+          git push origin "HEAD:${GITHUB_REF_NAME}"
