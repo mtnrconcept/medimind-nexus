@@ -20,7 +20,7 @@ Create `public.patient_access_grants` with `patient_id`, `user_id`, `can_write`,
 
 During migration, every current authenticated user receives a write grant for every current patient. This preserves the application's current all-authenticated behavior for the two existing accounts while converting future access into an explicit model. No patient rows or clinical documents are deleted.
 
-Policies on `patients`, tables whose UUID `patient_id` references patients, `patient_documents`, and the `patient-documents` storage bucket are replaced with access-grant checks. Storage object paths must begin with the patient UUID; the bucket is currently empty, so this does not orphan existing objects.
+Policies on `patients`, tables whose UUID `patient_id` references patients, `patient_documents`, and the `patient-documents` storage bucket are replaced with access-grant checks. Storage object paths must begin with the patient UUID; existing objects already use a patient UUID as their first path segment, so the policy preserves access without orphaning those objects.
 
 `ai_analysis_jobs` receives `requested_by` and `expires_at`; clients can read only their own unexpired jobs, while writes remain service-side.
 
