@@ -26,14 +26,25 @@ test('does not infer a lab trend from a single measurement', () => {
   ]);
   assert.equal(trends.length, 1);
   assert.equal(trends[0].trend, 'indeterminate');
+  assert.equal(trends[0].direction, 'indeterminate');
 });
 
-test('derives a trend only from comparable repeated measurements', () => {
+test('reports measurement direction without assigning clinical improvement or worsening', () => {
   const trends = deriveLabTrends([
-    { test: 'CRP', value: 30, unit: 'mg/L', date: '2026-09-02', is_abnormal: true },
-    { test: 'CRP', value: 20, unit: 'mg/L', date: '2026-09-01', is_abnormal: true },
+    { test: 'Biomarqueur generique', value: 30, unit: 'U/L', date: '2026-09-02', is_abnormal: true },
+    { test: 'Biomarqueur generique', value: 20, unit: 'U/L', date: '2026-09-01', is_abnormal: true },
   ]);
-  assert.equal(trends[0].trend, 'worsening');
+  assert.equal(trends[0].direction, 'rising');
+  assert.equal(trends[0].trend, 'indeterminate');
+});
+
+test('keeps comparable measurements stable within tolerance', () => {
+  const trends = deriveLabTrends([
+    { test: 'Biomarqueur generique', value: 20.3, unit: 'U/L', date: '2026-09-02' },
+    { test: 'Biomarqueur generique', value: 20, unit: 'U/L', date: '2026-09-01' },
+  ]);
+  assert.equal(trends[0].direction, 'stable');
+  assert.equal(trends[0].trend, 'stable');
 });
 
 test('derives prevention status from due dates rather than presence alone', () => {
