@@ -28,28 +28,13 @@ jobs:
           cat AGENTS.md
           git rev-parse HEAD
           mkdir -p /tmp/medicore-quality
-      - uses: supabase/setup-cli@v1
-        with:
-          version: 2.95.2
-      - name: Read schema types without exporting records or credentials
-        env:
-          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
-        run: |
-          if [ -z "$SUPABASE_ACCESS_TOKEN" ]; then
-            echo 'SCHEMA_TYPES=UNAVAILABLE_MISSING_CI_ACCESS_TOKEN' > /tmp/medicore-quality/schema-status.txt
-          elif supabase gen types typescript --project-id kparxcfspgoonqttduyk --schema public > /tmp/medicore-quality/database-types.ts 2> /tmp/schema-error.log; then
-            echo 'SCHEMA_TYPES=GENERATED_FROM_LIVE_SCHEMA' > /tmp/medicore-quality/schema-status.txt
-          else
-            rm -f /tmp/medicore-quality/database-types.ts
-            echo 'SCHEMA_TYPES=UNAVAILABLE_GENERATION_FAILED' > /tmp/medicore-quality/schema-status.txt
-          fi
-          cat /tmp/medicore-quality/schema-status.txt
       - name: Prepare compatible dependency changes for review
         working-directory: /tmp/medicore-tooling
         run: |
           npm ci
           npm audit --omit=dev --json > /tmp/medicore-quality/audit-before.json || true
           npm audit fix --package-lock-only --ignore-scripts > /tmp/medicore-quality/audit-fix.log 2>&1 || true
+          npm install --save-exact --ignore-scripts https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz
           npm ci
           npm audit --omit=dev --json > /tmp/medicore-quality/audit-after.json || true
           git diff -- package.json package-lock.json > /tmp/medicore-quality/dependencies.patch
