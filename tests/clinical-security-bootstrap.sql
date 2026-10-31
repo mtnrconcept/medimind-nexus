@@ -147,19 +147,25 @@ insert into public.patients(id,patient_id,age,gender,nationality) values
 do $$
 declare
   tbl text;
+  legacy_policy text;
 begin
-  foreach tbl in array array[
-    'discovery_api_cache',
-    'discovery_evidence_packs',
-    'discovery_evidence_snippets',
-    'discovery_hypotheses',
-    'discovery_kg_triples',
-    'discovery_papers',
-    'discovery_research_sessions'
-  ] loop
+  -- Use the exact policy names observed on the live project. A synthetic
+  -- generic name would leave an unrelated policy in place and fail the CI
+  -- assertion even though the production migration correctly removes each.
+  for tbl, legacy_policy in
+    select * from (values
+      ('discovery_api_cache', 'discovery_cache_all'),
+      ('discovery_evidence_packs', 'discovery_packs_all'),
+      ('discovery_evidence_snippets', 'discovery_snippets_all'),
+      ('discovery_hypotheses', 'discovery_hypotheses_all'),
+      ('discovery_kg_triples', 'discovery_triples_all'),
+      ('discovery_papers', 'discovery_papers_all'),
+      ('discovery_research_sessions', 'discovery_sessions_all')
+    ) as live_policy(table_name, policy_name)
+  loop
     execute format('create table public.%I (id uuid primary key default gen_random_uuid())', tbl);
     execute format('alter table public.%I enable row level security', tbl);
-    execute format('create policy legacy_public_write on public.%I for all to public using (true) with check (true)', tbl);
+    execute format('create policy %I on public.%I for all to public using (true) with check (true)', legacy_policy, tbl);
     execute format('grant select, insert, update, delete on public.%I to anon, authenticated', tbl);
   end loop;
 end $$;
