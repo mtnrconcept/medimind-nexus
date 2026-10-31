@@ -1,4 +1,4 @@
-import { useState, useEffect, createContext, useContext, ReactNode } from 'react';
+import { useState, useEffect, useRef, createContext, useContext, ReactNode } from 'react';
 import { User, Session } from '@supabase/supabase-js';
 import { supabase } from '@/integrations/supabase/client';
 
@@ -9,6 +9,7 @@ interface AuthContextType {
   session: Session | null;
   role: AppRole | null;
   loading: boolean;
+  roleLoading: boolean;
   signIn: (email: string, password: string) => Promise<{ error: Error | null }>;
   signUp: (email: string, password: string, metadata: { first_name: string; last_name: string; role: AppRole }) => Promise<{ error: Error | null }>;
   signOut: () => Promise<void>;
@@ -21,8 +22,10 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const [session, setSession] = useState<Session | null>(null);
   const [role, setRole] = useState<AppRole | null>(null);
   const [loading, setLoading] = useState(true);
+  const [roleLoading, setRoleLoading] = useState(false);
+  const roleRequestVersion = useRef(0);
 
-  const fetchUserRole = async (userId: string) => {
+  const fetchUserRole = async (userId: string, version: number) => {
     try {
       const { data, error } = await supabase
         .from('user_roles')
@@ -30,41 +33,49 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         .eq('user_id', userId)
         .limit(1);
 
-      if (!error && data && data.length > 0) {
-        setRole(data[0].role as AppRole);
-      }
+      if (version !== roleRequestVersion.current) return;
+      if (error) throw error;
+      setRole(data && data.length > 0 ? (data[0].role as AppRole) : null);
     } catch (err) {
-      console.error('Error fetching user role:', err);
+      if (version === roleRequestVersion.current) {
+        setRole(null);
+        console.error('Error fetching user role:', err);
+      }
+    } finally {
+      if (version === roleRequestVersion.current) setRoleLoading(false);
     }
   };
 
   useEffect(() => {
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      (event, session) => {
-        setSession(session);
-        setUser(session?.user ?? null);
-
-        if (session?.user) {
-          setTimeout(() => {
-            fetchUserRole(session.user.id);
-          }, 0);
-        } else {
-          setRole(null);
-        }
-        setLoading(false);
-      }
-    );
-
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setSession(session);
-      setUser(session?.user ?? null);
-      if (session?.user) {
-        fetchUserRole(session.user.id);
-      }
+    let mounted = true;
+    const requestVersion = roleRequestVersion;
+    const applySession = (nextSession: Session | null) => {
+      if (!mounted) return;
+      const version = ++roleRequestVersion.current;
+      setSession(nextSession);
+      setUser(nextSession?.user ?? null);
+      setRole(null);
+      setRoleLoading(Boolean(nextSession?.user));
       setLoading(false);
-    });
-
-    return () => subscription.unsubscribe();
+      if (nextSession?.user) {
+        // Supabase auth listeners must not synchronously make other Supabase requests.
+        setTimeout(() => {
+          if (mounted && version === roleRequestVersion.current) {
+            void fetchUserRole(nextSession.user.id, version);
+          }
+        }, 0);
+      }
+    };
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(
+      (_event, nextSession) => applySession(nextSession)
+    );
+    supabase.auth.getSession()
+      .then(({ data: { session: currentSession } }) => applySession(currentSession))
+      .catch((error) => {
+        console.error('Session initialization failed:', error);
+        applySession(null);
+      });
+    return () => { mounted = false; ++requestVersion.current; subscription.unsubscribe(); };
   }, []);
 
   const signIn = async (email: string, password: string) => {
@@ -96,10 +107,12 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     setUser(null);
     setSession(null);
     setRole(null);
+    setRoleLoading(false);
+    ++roleRequestVersion.current;
   };
 
   return (
-    <AuthContext.Provider value={{ user, session, role, loading, signIn, signUp, signOut }}>
+    <AuthContext.Provider value={{ user, session, role, loading, roleLoading, signIn, signUp, signOut }}>
       {children}
     </AuthContext.Provider>
   );

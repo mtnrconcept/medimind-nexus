@@ -84,3 +84,9 @@ jobs:
 
       - name: Assert authorization and provenance behavior
         run: psql -v ON_ERROR_STOP=1 -f tests/clinical-security-assertions.sql
+
+      - name: Apply research evidence integrity migration
+        run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261031071206_secure_discovery_evidence.sql
+
+      - name: Assert evidence write isolation
+        run: psql -v ON_ERROR_STOP=1 -f tests/discovery-evidence-security-assertions.sql

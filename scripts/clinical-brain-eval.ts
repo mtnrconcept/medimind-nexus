@@ -23,7 +23,7 @@ const simpleRoute = selectClinicalModel({
   elementCount: 2,
 });
 
-assert.equal(simpleRoute.model, 'gpt-5.4-mini');
+assert.equal(simpleRoute.model, 'gpt-6-luna');
 assert.equal(simpleRoute.reasoningEffort, 'low');
 assert.equal(simpleRoute.finalReviewRequired, false);
 
@@ -35,7 +35,8 @@ const promptProfile = profileClinicalPrompt(
 
 assert.equal(promptProfile.isClinical, true);
 assert.equal(promptProfile.task, 'polypharmacy');
-assert.equal(promptProfile.hasExternalEvidence, true);
+// Merely mentioning PubMed is not proof of successful external retrieval.
+assert.equal(promptProfile.hasExternalEvidence, false);
 assert.equal(promptProfile.elementCount, 7);
 
 const criticalRisk = detectHighRiskContext({
@@ -91,7 +92,7 @@ assert.equal(nonClinicalPlan.clinicalRoute, undefined);
 const explicitGpt5Plan = prepareClinicalAICall(
   'Summarize operational dashboard notes.',
   'Group duplicate UI labels and return a short JSON object.',
-  { model: 'gpt-5.5', reasoningEffort: 'low' },
+  { model: 'gpt-5.5', forceModel: true, reasoningEffort: 'low' },
   () => undefined,
 );
 

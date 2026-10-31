@@ -4,49 +4,45 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
-import { User, Lock, ArrowRight, AlertCircle } from 'lucide-react';
+import { User, ArrowRight, AlertCircle, LockKeyhole } from 'lucide-react';
+import { useAuth } from '@/hooks/useAuth';
+import { preparePatientLookup } from '@/components/auth/access-policy';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 
 const PatientLoginBlock = () => {
   const navigate = useNavigate();
+  const { user, loading } = useAuth();
   const [patientId, setPatientId] = useState('');
-  const [password, setPassword] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleSubmit = async (event: React.FormEvent) => {
+    event.preventDefault();
     setError('');
-    setIsLoading(true);
-
-    // Check password
-    if (password !== '1234') {
-      setError('Mot de passe incorrect');
-      setIsLoading(false);
+    const identifier = preparePatientLookup(user?.id ?? null, patientId);
+    if (!identifier) {
+      setError('Connexion professionnelle et identifiant patient valide requis.');
       return;
     }
-
+    setIsLoading(true);
     try {
-      // Search for patient by patient_id
+      // The authenticated user's explicit grants are checked by patients RLS.
       const { data, error: dbError } = await supabase
         .from('patients')
         .select('id')
-        .eq('patient_id', patientId.trim())
+        .eq('patient_id', identifier)
         .maybeSingle();
-
       if (dbError) throw dbError;
-
       if (!data) {
-        setError('Patient non trouvé');
-        setIsLoading(false);
+        setError('Dossier introuvable ou accès non autorisé.');
         return;
       }
-
-      toast.success('Accès autorisé');
+      toast.success('Dossier autorisé');
       navigate(`/patients/${data.id}`);
-    } catch {
-      setError('Erreur lors de la recherche');
+    } catch (cause) {
+      console.error('Patient lookup failed:', cause);
+      setError('Recherche impossible. Vérifiez votre connexion et vos droits.');
     } finally {
       setIsLoading(false);
     }
@@ -58,82 +54,46 @@ const PatientLoginBlock = () => {
         <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-primary/10 flex items-center justify-center border border-primary/30">
           <User className="w-8 h-8 text-primary" />
         </div>
-        <CardTitle className="text-xl text-primary font-mono">
-          Accès Dossier Patient
-        </CardTitle>
+        <CardTitle className="text-xl text-primary">Accès sécurisé aux dossiers</CardTitle>
         <p className="text-sm text-muted-foreground mt-1">
-          Entrez l'identifiant patient pour accéder au dossier médical complet
+          Identifiez-vous avec votre compte professionnel. Chaque dossier est soumis à des autorisations explicites.
         </p>
       </CardHeader>
       <CardContent>
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div className="space-y-2">
-            <Label htmlFor="patientId" className="text-muted-foreground">
-              Identifiant Patient
-            </Label>
-            <div className="relative">
-              <User className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+        {!user ? (
+          <div className="space-y-4">
+            <p className="flex items-center gap-2 text-sm text-muted-foreground">
+              <LockKeyhole className="w-4 h-4 flex-shrink-0" />
+              {loading ? 'Vérification de la session…' : 'Connexion Supabase Auth requise avant la recherche.'}
+            </p>
+            <Button onClick={() => navigate('/auth')} disabled={loading} className="w-full">
+              Se connecter <ArrowRight className="w-4 h-4 ml-2" />
+            </Button>
+          </div>
+        ) : (
+          <form onSubmit={handleSubmit} className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="patientId">Identifiant patient autorisé</Label>
               <Input
-                id="patientId"
-                type="text"
-                placeholder="Ex: PAT-001"
-                value={patientId}
-                onChange={(e) => setPatientId(e.target.value)}
-                className="pl-10 bg-secondary border-border focus:border-primary font-mono"
-                required
+                id="patientId" type="text" placeholder="Ex. PAT-001"
+                value={patientId} onChange={(event) => setPatientId(event.target.value)}
+                maxLength={80} autoComplete="off" required
               />
             </div>
-          </div>
-
-          <div className="space-y-2">
-            <Label htmlFor="password" className="text-muted-foreground">
-              Code d'accès
-            </Label>
-            <div className="relative">
-              <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-              <Input
-                id="password"
-                type="password"
-                placeholder="••••"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                className="pl-10 bg-secondary border-border focus:border-primary font-mono"
-                required
-              />
-            </div>
-          </div>
-
-          {error && (
-            <div className="flex items-center gap-2 text-sm text-destructive bg-destructive/10 p-3 rounded-lg border border-destructive/30">
-              <AlertCircle className="w-4 h-4 flex-shrink-0" />
-              <span>{error}</span>
-            </div>
-          )}
-
-          <Button
-            type="submit"
-            disabled={isLoading || !patientId || !password}
-            className="w-full font-mono"
-          >
-            {isLoading ? (
-              <div className="flex items-center gap-2">
-                <div className="w-4 h-4 border-2 border-primary-foreground/30 border-t-primary-foreground rounded-full animate-spin" />
-                Vérification...
-              </div>
-            ) : (
-              <div className="flex items-center gap-2">
-                Accéder au dossier
-                <ArrowRight className="w-4 h-4" />
-              </div>
+            {error && (
+              <p role="alert" className="flex items-center gap-2 text-sm text-destructive">
+                <AlertCircle className="w-4 h-4 flex-shrink-0" />{error}
+              </p>
             )}
-          </Button>
-        </form>
-
-        <div className="mt-4 pt-4 border-t border-border">
-          <p className="text-xs text-center text-muted-foreground">
-            Accès réservé au personnel médical autorisé
-          </p>
-        </div>
+            <Button type="submit" className="w-full" disabled={isLoading || !patientId.trim()}>
+              {isLoading ? 'Recherche…' : 'Ouvrir le dossier autorisé'}
+              {!isLoading && <ArrowRight className="w-4 h-4 ml-2" />}
+            </Button>
+          </form>
+        )}
+        <p className="mt-4 pt-4 border-t border-border text-xs text-center text-muted-foreground">
+          Aucune modification de traitement sans validation médicale.
+        </p>
       </CardContent>
     </Card>
   );

@@ -140,3 +140,26 @@ insert into public.user_roles(id,user_id,role) values
 insert into public.patients(id,patient_id,age,gender,nationality) values
   ('33333333-3333-4333-8333-333333333333','P1',40,'F','CH'),
   ('44444444-4444-4444-8444-444444444444','P2',50,'M','CH');
+
+
+-- Legacy research/evidence schema subset used to verify the new privilege migration.
+-- Source functions write through the service role; authenticated clients read only.
+do $$
+declare
+  tbl text;
+begin
+  foreach tbl in array array[
+    'discovery_api_cache',
+    'discovery_evidence_packs',
+    'discovery_evidence_snippets',
+    'discovery_hypotheses',
+    'discovery_kg_triples',
+    'discovery_papers',
+    'discovery_research_sessions'
+  ] loop
+    execute format('create table public.%I (id uuid primary key default gen_random_uuid())', tbl);
+    execute format('alter table public.%I enable row level security', tbl);
+    execute format('create policy legacy_public_write on public.%I for all to public using (true) with check (true)', tbl);
+    execute format('grant select, insert, update, delete on public.%I to anon, authenticated', tbl);
+  end loop;
+end $$;
