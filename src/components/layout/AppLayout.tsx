@@ -81,6 +81,7 @@ const AppLayout = ({ children }: AppLayoutProps) => {
       icon: FlaskConical,
       items: [
         { path: '/cross-data-analysis', label: t('analysis.crossDataAnalysis', 'Analyse Cross-Data'), icon: Network },
+        ...(role === 'admin' ? [{ path: '/research/microsignals', label: 'Laboratoire microsignaux · 50 cas fictifs', icon: Activity }] : []),
         { path: '/continuous-discovery', label: 'Discovery Engine', icon: Sparkles },
         { path: '/discovery-platform', label: 'Plateforme de Découverte', icon: Activity },
       ]

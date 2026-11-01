@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { extractBearerToken, normalizeSignalLab, parseSignalRequest } from "./security.ts";
 
 const corsHeaders = {
     "Access-Control-Allow-Origin": "*",
@@ -29,7 +30,7 @@ interface LabTrend {
     values: { date: string; value: number }[];
     trend: 'stable' | 'increasing' | 'decreasing' | 'volatile';
     trend_strength: number; // 0-1
-    current_status: 'normal' | 'borderline' | 'abnormal' | 'critical';
+    current_status: 'normal' | 'borderline' | 'abnormal' | 'critical' | 'unverified';
 }
 
 interface WeakSignal {
@@ -192,40 +193,54 @@ serve(async (req) => {
     }
 
     try {
-        const request: SignalRequest = await req.json();
-
-        if (!request.patient_id) {
-            return new Response(
-                JSON.stringify({ error: "patient_id is required" }),
-                { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-            );
+        const token = extractBearerToken(req.headers.get('Authorization'));
+        if (!token) {
+            return new Response(JSON.stringify({ error: 'Authentification requise' }),
+                { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+        }
+        let request: SignalRequest & { lookback_days: number; sensitivity: 'low' | 'medium' | 'high' };
+        try {
+            request = parseSignalRequest(await req.json());
+        } catch {
+            return new Response(JSON.stringify({ error: 'Requête clinique invalide' }),
+                { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
         }
 
-        const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
-        const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-        const supabase = createClient(supabaseUrl, supabaseKey);
+        const supabaseUrl = Deno.env.get('SUPABASE_URL');
+        const anonKey = Deno.env.get('SUPABASE_ANON_KEY');
+        if (!supabaseUrl || !anonKey) throw new Error('Supabase client not configured');
+        // The requester's JWT is forwarded to PostgREST. Every table read is
+        // restricted by patient-scoped RLS; never use a service-role client here.
+        const supabase = createClient(supabaseUrl, anonKey, {
+            global: { headers: { Authorization: `Bearer ${token}` } },
+            auth: { persistSession: false, autoRefreshToken: false },
+        });
+        const { data: identity, error: identityError } = await supabase.auth.getUser(token);
+        if (identityError || !identity.user) {
+            return new Response(JSON.stringify({ error: 'Session non valide' }),
+                { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+        }
+        const { data: authorizedPatient, error: patientError } = await supabase
+            .from('patients').select('id').eq('id', request.patient_id).maybeSingle();
+        if (patientError) throw new Error('Patient permission query failed');
+        if (!authorizedPatient) {
+            return new Response(JSON.stringify({ error: 'Accès dossier non autorisé' }),
+                { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+        }
 
-        const lookbackDays = request.lookback_days || 90;
-        const sensitivity = request.sensitivity || 'medium';
+        const lookbackDays = request.lookback_days;
+        const sensitivity = request.sensitivity;
         const sensitivityMultiplier = sensitivity === 'high' ? 0.8 : sensitivity === 'low' ? 1.2 : 1;
 
-        // Fetch lab results
         const lookbackDate = new Date();
         lookbackDate.setDate(lookbackDate.getDate() - lookbackDays);
-
-        const { data: labResults } = await supabase
+        const { data: labResults, error: labError } = await supabase
             .from('patient_lab_results')
-            .select('*')
+            .select('test_name, test_date, value, unit, reference_min, reference_max')
             .eq('patient_id', request.patient_id)
-            .gte('measured_at', lookbackDate.toISOString())
-            .order('measured_at', { ascending: true });
-
-        // Fetch patient medications for correlation analysis
-        const { data: medications } = await supabase
-            .from('patient_medications')
-            .select('*, medications(name)')
-            .eq('patient_id', request.patient_id)
-            .eq('is_active', true);
+            .gte('test_date', lookbackDate.toISOString().slice(0, 10))
+            .order('test_date', { ascending: true });
+        if (labError) throw new Error('Patient laboratory query failed');
 
         const response: SignalResponse = {
             patient_id: request.patient_id,
@@ -248,34 +263,32 @@ serve(async (req) => {
             });
         }
 
-        // Group by parameter
-        const parameterGroups = new Map<string, { date: string; value: number; ref_min?: number; ref_max?: number }[]>();
-
-        for (const lab of labResults) {
-            const param = lab.parameter_name;
-            if (!parameterGroups.has(param)) {
-                parameterGroups.set(param, []);
-            }
-            parameterGroups.get(param)!.push({
-                date: lab.measured_at,
-                value: lab.value,
-                ref_min: lab.reference_min,
-                ref_max: lab.reference_max
+        // Only canonical test-name / date / unit combinations are comparable.
+        // Unknown analytes or mismatched units are explicitly excluded instead
+        // of being treated as normal values.
+        const parameterGroups = new Map<string, { date: string; value: number; unit: string; ref_min?: number; ref_max?: number }[]>();
+        for (const row of labResults) {
+            const lab = normalizeSignalLab(row);
+            if (!lab) continue;
+            if (!parameterGroups.has(lab.parameter)) parameterGroups.set(lab.parameter, []);
+            parameterGroups.get(lab.parameter)!.push({
+                date: lab.date, value: lab.value, unit: lab.unit,
+                ref_min: lab.ref_min, ref_max: lab.ref_max,
             });
         }
-
-        // Analyze each parameter
+// Analyze each parameter
         const organRiskMap = new Map<string, { factors: string[]; worst_status: string; key_params: string[] }>();
 
         for (const [param, values] of parameterGroups.entries()) {
             // Find matching biomarker definition
             const definition = Object.entries(BIOMARKER_DEFINITIONS).find(([key]) =>
-                param.toLowerCase().includes(key.toLowerCase()) || key.toLowerCase().includes(param.toLowerCase())
+                param.toLocaleLowerCase('fr') === key.toLocaleLowerCase('fr')
             )?.[1];
 
             const { trend, strength } = calculateTrend(values);
             const latestValue = values[values.length - 1].value;
-            const status = definition ? assessStatus(latestValue, definition) : 'normal';
+            const status = definition && values[values.length - 1].unit === definition.unit
+                ? assessStatus(latestValue, definition) : 'unverified';
 
             // Record lab trend
             response.lab_trends.push({
@@ -422,9 +435,9 @@ serve(async (req) => {
         });
 
     } catch (error) {
-        console.error("Signal detector error:", error);
+        console.error("Signal detector failed (details withheld to protect clinical data)");
         return new Response(
-            JSON.stringify({ error: "Signal detection failed", details: String(error) }),
+            JSON.stringify({ error: "Signal detection failed" }),
             { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );
     }

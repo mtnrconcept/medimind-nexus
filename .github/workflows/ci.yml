@@ -34,6 +34,12 @@ jobs:
       - name: Focused clinical typecheck
         run: npm run typecheck
 
+      - name: Typecheck microsignal engine and synthetic cohort
+        run: npm run typecheck:microsignals
+
+      - name: Edge signal-detector syntax and local imports
+        run: npm run check:signal-edge
+
       - name: Lint
         run: npm run lint
 
