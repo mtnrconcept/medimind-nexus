@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { resolveRouteAccess, preparePatientLookup } from '../src/components/auth/access-policy.ts';
+import { resolveRouteAccess, preparePatientLookup, sanitizeSignupMetadata } from '../src/components/auth/access-policy.ts';
 
 test('anonymous visitors must authenticate for protected routes', () => {
   assert.equal(resolveRouteAccess({ userId: null, loading: false, roleLoading: false, role: null }), 'login');
@@ -29,4 +29,12 @@ test('patient identifier lookup trims and validates without shared PIN', () => {
   assert.equal(preparePatientLookup('user-1', '  PAT-001  '), 'PAT-001');
   assert.equal(preparePatientLookup('user-1', ''), null);
   assert.equal(preparePatientLookup('user-1', 'x'.repeat(100)), null);
+});
+
+
+test('signup metadata never grants a role by trusting user-controlled fields', () => {
+  assert.deepEqual(
+    sanitizeSignupMetadata({ first_name: '  Dr  ', last_name: '  Example  ', role: 'admin' }),
+    { first_name: 'Dr', last_name: 'Example' },
+  );
 });

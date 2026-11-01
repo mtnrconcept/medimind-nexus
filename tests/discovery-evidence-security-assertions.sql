@@ -40,3 +40,34 @@ begin
     end if;
   end loop;
 end $$;
+
+
+-- An untrusted sign-up metadata role must never grant privileged DB rights.
+-- Run inside a transaction so the fake user edit is not retained.
+begin;
+update auth.users
+set raw_user_meta_data = '{"role":"admin"}'::jsonb
+where id = '11111111-1111-4111-8111-111111111111';
+
+select set_config('request.jwt.claim.sub', '11111111-1111-4111-8111-111111111111', true);
+select set_config('request.jwt.claim.role', 'authenticated', true);
+set local role authenticated;
+do $$
+begin
+  if public.is_admin_optimized() then
+    raise exception 'Untrusted signup role escalated to admin';
+  end if;
+end $$;
+reset role;
+
+update public.user_roles set role = 'admin'
+where user_id = '11111111-1111-4111-8111-111111111111';
+set local role authenticated;
+do $$
+begin
+  if not public.is_admin_optimized() then
+    raise exception 'Trusted database admin role no longer works';
+  end if;
+end $$;
+reset role;
+rollback;

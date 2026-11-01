@@ -20,7 +20,9 @@ $$;
 
 create table auth.users (
   id uuid primary key,
-  email text
+  email text,
+  raw_user_meta_data jsonb not null default '{}'::jsonb,
+  raw_app_meta_data jsonb not null default '{}'::jsonb
 );
 
 create table public.user_roles (
@@ -28,6 +30,22 @@ create table public.user_roles (
   user_id uuid not null references auth.users(id) on delete cascade,
   role text not null default 'doctor'
 );
+
+-- Reproduce the CURRENT live bug before applying the authorization migration.
+create or replace function public.is_admin_optimized()
+returns boolean
+language plpgsql stable security definer
+set search_path = public, auth, extensions, pg_temp
+as $$
+begin
+  return exists (
+    select 1 from auth.users where id = auth.uid()
+      and (raw_user_meta_data->>'role' = 'admin'
+           or raw_app_meta_data->>'role' = 'admin'
+           or exists (select 1 from public.user_roles where user_id = auth.uid() and role = 'admin'))
+  );
+end;
+$$;
 
 create table public.patients (
   id uuid primary key,
