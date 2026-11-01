@@ -26,6 +26,7 @@ import { cn } from '@/lib/utils';
 import DNAVisualizer from '@/components/nexus/DNAVisualizer';
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import HypothesisReport from '@/components/nexus/HypothesisReport';
+import ScientificEvidencePanel from '@/components/nexus/ScientificEvidencePanel';
 import { DiscoveryTabContent } from '@/components/nexus/DiscoveryTabContent';
 import {
     Tooltip,
@@ -3414,6 +3415,10 @@ const DiscoveryPlatform = () => {
 
                 <div className="max-w-[1600px] mx-auto px-6">
                     <NexusHero />
+
+                    <div className="mx-auto w-full max-w-5xl">
+                        <ScientificEvidencePanel />
+                    </div>
 
                     {/* Scientific Search Tool */}
                     <div className="max-w-5xl mx-auto w-full mb-12 relative z-10 -mt-8 px-4">

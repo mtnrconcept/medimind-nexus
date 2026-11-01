@@ -46,6 +46,9 @@ jobs:
       - name: Edge signal-detector syntax and local imports
         run: npm run check:signal-edge
 
+      - name: Typecheck scientific research Edge Functions
+        run: npx --yes deno@2.9.6 check --no-lock --node-modules-dir=manual supabase/functions/scientific-evidence/index.ts supabase/functions/deep-research-graph/index.ts
+
       - name: Lint
         run: npm run lint
 

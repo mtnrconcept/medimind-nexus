@@ -32,3 +32,6 @@ verify_jwt = true
 
 [functions.clinical-trials-sync]
 verify_jwt = true
+
+[functions.scientific-evidence]
+verify_jwt = true
