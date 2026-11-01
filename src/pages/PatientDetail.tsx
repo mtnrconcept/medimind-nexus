@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button';
 import { supabase } from '@/integrations/supabase/client';
 import { useAI } from '@/contexts/AIContext';
 import { resolveAIJob } from '@/lib/aiJobs';
-import { ArrowLeft, Lock, Shield, Loader2 } from 'lucide-react';
+import { ArrowLeft, Shield, Loader2, FileText } from 'lucide-react';
 import AIAssistant from '@/components/patient/AIAssistant';
 import SafetyAlertBanner from '@/components/patient/SafetyAlertBanner';
 import { PatientPathologySimilarity } from '@/components/patient/PatientPathologySimilarity';
@@ -70,20 +70,24 @@ const PatientDetail = () => {
   const { id } = useParams<{ id: string }>();
   const [patient, setPatient] = useState<Patient | null>(null);
   const [loading, setLoading] = useState(true);
-  const [decrypting, setDecrypting] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [aiSynthesis, setAiSynthesis] = useState<any>(null);
   const [fetchingSynthesis, setFetchingSynthesis] = useState(false);
 
   useEffect(() => {
-    const timer = setTimeout(() => setDecrypting(false), 1500);
-    return () => clearTimeout(timer);
-  }, []);
-
-  useEffect(() => {
+    let active = true;
     const fetchPatient = async () => {
-      if (!id) return;
-
-      const { data } = await supabase
+      setLoading(true);
+      setLoadError(null);
+      setPatient(null);
+      setAiSynthesis(null);
+      if (!id) {
+        setLoadError('Dossier introuvable ou accès non autorisé.');
+        setLoading(false);
+        return;
+      }
+      try {
+      const { data, error } = await supabase
         .from('patients')
         .select(`
           *,
@@ -113,7 +117,12 @@ const PatientDetail = () => {
         .eq('id', id)
         .maybeSingle();
 
-      if (data) {
+        if (error) throw error;
+        if (!data) {
+          if (active) setLoadError('Dossier introuvable ou accès non autorisé.');
+          return;
+        }
+        if (!active) return;
         const patientData = data as any;
         setPatient({
           id: patientData.id,
@@ -159,10 +168,15 @@ const PatientDetail = () => {
           social_factors: patientData.patient_social_factors,
           patient_pathologies: patientData.patient_pathologies,
         });
+      } catch (error) {
+        console.error('Chargement du patient indisponible', error);
+        if (active) setLoadError('Impossible de charger le dossier. Vérifiez votre connexion et vos droits.');
+      } finally {
+        if (active) setLoading(false);
       }
-      setLoading(false);
     };
-    fetchPatient();
+    void fetchPatient();
+    return () => { active = false; };
   }, [id]);
 
   const alerts = usePatientAlerts(
@@ -197,26 +211,24 @@ const PatientDetail = () => {
     }
   };
 
-  if (loading || !patient) {
+  if (loading) {
     return (
       <AppLayout>
-        <div className="flex items-center justify-center h-[50vh]">
-          <Loader2 className="h-8 w-8 animate-spin text-primary" />
+        <div className="flex min-h-[50vh] items-center justify-center gap-3 text-sm text-muted-foreground" role="status">
+          <Loader2 className="h-5 w-5 animate-spin text-primary" aria-hidden="true" /> Chargement du dossier…
         </div>
       </AppLayout>
     );
   }
 
-  // Decryption animation
-  if (decrypting) {
+  if (loadError || !patient) {
     return (
       <AppLayout>
-        <div className="flex flex-col items-center justify-center h-[50vh] gap-4">
-          <Lock className="h-12 w-12 text-primary animate-pulse" />
-          <div className="text-lg font-medium">Déchiffrement des données patient...</div>
-          <div className="w-48 h-2 bg-muted rounded-full overflow-hidden">
-            <div className="h-full bg-primary animate-[loading_1.5s_ease-in-out]" style={{ width: '100%' }} />
-          </div>
+        <div className="mx-auto mt-16 max-w-lg space-y-5 rounded-2xl border border-border bg-card p-8 text-center shadow-sm" role="alert">
+          <FileText className="mx-auto h-9 w-9 text-muted-foreground" aria-hidden="true" />
+          <h1 className="text-xl font-bold">Dossier indisponible</h1>
+          <p className="text-sm text-muted-foreground">{loadError || 'Dossier introuvable ou accès non autorisé.'}</p>
+          <Button asChild variant="outline"><Link to="/patients"><ArrowLeft className="h-4 w-4" /> Retour aux patients</Link></Button>
         </div>
       </AppLayout>
     );
@@ -224,29 +236,26 @@ const PatientDetail = () => {
 
   return (
     <AppLayout>
-      <div className="min-h-screen flex flex-col px-2 sm:px-4 pb-20">
-        {/* Header - Fixed Height */}
-        <div className="shrink-0 py-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 sm:gap-4">
-          <div className="flex items-center gap-2 sm:gap-4">
-            <Link to="/patients">
-              <Button variant="outline" size="sm" className="touch-manipulation">
-                <ArrowLeft className="h-4 w-4 sm:mr-2" />
-                <span className="hidden sm:inline">Retour</span>
-              </Button>
-            </Link>
-            <div>
-              <h1 className="text-base sm:text-lg md:text-xl font-bold truncate max-w-[200px] sm:max-w-none">
+      <div className="space-y-5 pb-10">
+        <div className="flex flex-col gap-4 rounded-2xl border border-border/80 bg-card px-5 py-5 shadow-sm sm:flex-row sm:items-center sm:justify-between sm:px-7 sm:py-6">
+          <div className="flex min-w-0 items-center gap-3 sm:gap-4">
+            <Button variant="outline" size="icon" asChild className="shrink-0" aria-label="Retour aux patients">
+              <Link to="/patients"><ArrowLeft className="h-4 w-4" /></Link>
+            </Button>
+            <div className="min-w-0">
+              <p className="clinical-eyebrow mb-1">Dossier patient · {patient.patient_id}</p>
+              <h1 className="truncate text-xl font-bold sm:text-2xl">
                 {patient.first_name && patient.last_name
                   ? `${patient.first_name} ${patient.last_name}`
                   : `Patient ${patient.patient_id}`
                 }
               </h1>
-              <p className="text-xs sm:text-sm text-muted-foreground truncate max-w-[200px] sm:max-w-none">
+              <p className="mt-1 truncate text-sm text-muted-foreground">
                 {patient.pathologies?.name || 'Pathologie non spécifiée'}
               </p>
             </div>
           </div>
-          <div className="flex items-center gap-1 sm:gap-2 w-full sm:w-auto justify-end">
+          <div className="flex w-full flex-wrap items-center justify-end gap-2 sm:w-auto">
             <ExportDialog
               patientData={{
                 patient: {
@@ -451,21 +460,20 @@ const PatientDetail = () => {
               isPreFetching={fetchingSynthesis}
             />
 
-            <Badge variant="secondary" className="flex items-center gap-1 text-xs">
-              <Shield className="h-3 w-3" />
-              <span className="hidden sm:inline">Données chiffrées</span>
-              <span className="sm:hidden">Chiffré</span>
+            <Badge variant="outline" className="flex items-center gap-1.5 text-xs text-muted-foreground">
+              <Shield className="h-3.5 w-3.5" />
+              Dossier à accès contrôlé
             </Badge>
           </div>
         </div>
 
         {/* Safety Alerts - Fixed Height */}
-        <div className="shrink-0 mb-4">
+        <div>
           <SafetyAlertBanner alerts={alerts} />
         </div>
 
         {/* Exact pathology comparison, subject to the caller’s Supabase RLS permissions. */}
-        <div className="shrink-0 mb-4">
+        <div>
           <PatientPathologySimilarity
             key={patient.id}
             patientId={patient.id}
@@ -475,7 +483,7 @@ const PatientDetail = () => {
         </div>
 
         {/* Main Content - Flex-1 (Takes remaining space) */}
-        <div className="flex-1 min-h-0">
+        <div className="min-h-0">
           <PatientDossierLayout
             patientId={patient.id}
             patient={{

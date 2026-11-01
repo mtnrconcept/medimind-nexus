@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, Link } from 'react-router-dom';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -18,6 +18,7 @@ import {
 } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
 import { supabase } from '@/integrations/supabase/client';
+import { useAuth } from '@/hooks/useAuth';
 import { 
   Search, 
   Plus, 
@@ -53,6 +54,7 @@ interface Patient {
 
 const PatientDirectory = () => {
   const navigate = useNavigate();
+  const { role } = useAuth();
   const [patients, setPatients] = useState<Patient[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
@@ -94,14 +96,15 @@ const PatientDirectory = () => {
   };
 
   const filteredPatients = useMemo(() => {
-    let filtered = patients.filter(p => {
+    const filtered = patients.filter(p => {
       const searchLower = search.toLowerCase();
       const fullName = `${p.first_name || ''} ${p.last_name || ''}`.toLowerCase();
       const phone = p.phone?.toLowerCase() || '';
       const email = p.email?.toLowerCase() || '';
       const city = p.city?.toLowerCase() || '';
       
-      return fullName.includes(searchLower) || 
+      return (p.patient_id || '').toLowerCase().includes(searchLower) ||
+             fullName.includes(searchLower) ||
              phone.includes(searchLower) || 
              email.includes(searchLower) ||
              city.includes(searchLower);
@@ -260,19 +263,19 @@ const PatientDirectory = () => {
 
   return (
     <Card>
-      <CardHeader>
-        <div className="flex items-center justify-between">
+      <CardHeader className="border-b border-border/70 px-5 py-5 sm:px-6">
+        <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
-            <CardTitle className="flex items-center gap-2">
+            <CardTitle className="flex items-center gap-2 text-base font-bold">
               <Users className="h-5 w-5 text-primary" />
-              Répertoire Patients
+              Dossiers accessibles
             </CardTitle>
             <CardDescription>
-              {patients.length} patient(s) enregistré(s)
+              {patients.length} dossier(s) visibles selon vos droits
             </CardDescription>
           </div>
           
-          <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+          {role === 'admin' && <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
             <DialogTrigger asChild>
               <Button>
                 <Plus className="h-4 w-4 mr-2" />
@@ -386,19 +389,19 @@ const PatientDirectory = () => {
                 </Button>
               </DialogFooter>
             </DialogContent>
-          </Dialog>
+          </Dialog>}
         </div>
       </CardHeader>
-      <CardContent className="space-y-4">
+      <CardContent className="space-y-4 p-5 sm:p-6">
         {/* Barre de recherche et tri */}
         <div className="flex flex-col sm:flex-row gap-4">
           <div className="relative flex-1">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
             <Input
-              placeholder="Rechercher par nom, téléphone, email..."
+              placeholder="Nom, identifiant, téléphone ou ville…"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              className="pl-10"
+              className="h-11 pl-10"
             />
           </div>
           <div className="flex gap-2">
@@ -422,7 +425,7 @@ const PatientDirectory = () => {
         </div>
 
         {/* Liste des patients groupés */}
-        <ScrollArea className="h-[500px]">
+        <ScrollArea className="h-[min(68vh,710px)]" aria-label="Dossiers patients">
           {groupedPatients.length === 0 ? (
             <div className="text-center py-12 text-muted-foreground">
               <User className="h-12 w-12 mx-auto mb-4 opacity-20" />
@@ -444,10 +447,10 @@ const PatientDirectory = () => {
                   {/* Patients dans le groupe */}
                   <div className="space-y-2 pt-2">
                     {patientsInGroup.map((patient) => (
-                      <div
+                      <Link
                         key={patient.id}
-                        onClick={() => navigate(`/patients/${patient.id}`)}
-                        className="flex items-center gap-4 p-4 rounded-lg border hover:bg-accent/50 cursor-pointer transition-colors group"
+                        className="group flex items-center gap-4 rounded-xl border border-border/70 bg-card p-4 transition-colors hover:border-primary/25 hover:bg-primary/[0.04] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                        to={`/patients/${patient.id}`}
                       >
                         <Avatar className="h-12 w-12">
                           <AvatarFallback className="bg-primary/10 text-primary font-medium">
@@ -497,7 +500,7 @@ const PatientDirectory = () => {
                         </div>
 
                         <ChevronRight className="h-5 w-5 text-muted-foreground group-hover:text-primary transition-colors" />
-                      </div>
+                      </Link>
                     ))}
                   </div>
                 </div>

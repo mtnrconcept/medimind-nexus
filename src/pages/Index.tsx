@@ -1,90 +1,62 @@
+import { Link } from 'react-router-dom';
+import { ArrowRight, BookOpen, FileText, HeartPulse, Search, ShieldCheck, Users } from 'lucide-react';
+import { Button } from '@/components/ui/button';
 import PatientLoginBlock from '@/components/patient/PatientLoginBlock';
-import { Activity, Shield, Brain } from 'lucide-react';
 
-const Index = () => {
-  return (
-    <div className="min-h-screen bg-background flex flex-col">
-      {/* Header */}
-      <header className="p-6 border-b border-border">
-        <div className="max-w-6xl mx-auto flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-lg bg-primary flex items-center justify-center">
-              <Activity className="w-6 h-6 text-primary-foreground" />
-            </div>
-            <div>
-              <h1 className="text-xl font-bold text-foreground">Médicore</h1>
-              <p className="text-xs text-muted-foreground">Système Médical Avancé</p>
-            </div>
+const pathways = [
+  { icon: Users, title: 'Consulter un dossier', description: 'Accéder au suivi clinique d’un patient autorisé.' },
+  { icon: BookOpen, title: 'Explorer les pathologies', description: 'Parcourir le référentiel et les informations médicales.' },
+  { icon: Search, title: 'Comparer et rechercher', description: 'Retrouver des données communes et des pistes d’analyse.' },
+];
+
+const Index = () => (
+  <div className="min-h-screen bg-background text-foreground">
+    <header className="border-b border-border/70 bg-card">
+      <div className="mx-auto flex h-[76px] max-w-6xl items-center justify-between gap-3 px-5 sm:px-8">
+        <Link to="/" className="flex items-center gap-3 rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary" aria-label="MediCore — Accueil">
+          <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary text-primary-foreground"><HeartPulse className="h-5 w-5" /></span>
+          <span><strong className="block text-[17px] font-bold leading-none tracking-tight">MediCore</strong><span className="mt-1 block text-[11px] text-muted-foreground">Plateforme clinique</span></span>
+        </Link>
+        <Button asChild className="h-10 gap-2"><Link to="/auth">Espace professionnel <ArrowRight className="h-4 w-4" /></Link></Button>
+      </div>
+    </header>
+    <main>
+      <section className="mx-auto grid max-w-6xl items-center gap-10 px-5 py-14 sm:px-8 sm:py-20 lg:grid-cols-[minmax(0,1fr)_420px] lg:gap-16">
+        <div className="space-y-6">
+          <p className="clinical-eyebrow">Le bon parcours, au bon moment</p>
+          <h1 className="max-w-2xl text-[clamp(2.5rem,5vw,4.4rem)] font-bold leading-[1.08] tracking-tight">
+            Des dossiers médicaux <span className="text-primary">plus faciles à explorer.</span>
+          </h1>
+          <p className="max-w-lg text-base leading-relaxed text-muted-foreground sm:text-lg">
+            Un espace de travail pour consulter les informations patients, retrouver les pathologies et analyser les données accessibles selon les droits de chacun.
+          </p>
+          <div className="flex flex-wrap gap-3">
+            <Button asChild size="lg" className="gap-2"><Link to="/auth">Accéder à l’application <ArrowRight className="h-4 w-4" /></Link></Button>
+            <span className="flex items-center gap-2 px-3 text-xs text-muted-foreground"><ShieldCheck className="h-4 w-4 text-primary" /> Accès avec autorisation individuelle</span>
           </div>
-          <div className="flex items-center gap-4 text-muted-foreground text-sm">
-            <div className="flex items-center gap-1">
-              <Shield className="w-4 h-4 text-success" />
-              <span>Sécurisé</span>
-            </div>
-            <div className="flex items-center gap-1">
-              <Brain className="w-4 h-4 text-primary" />
-              <span>IA Activée</span>
-            </div>
+          <div className="grid gap-3 border-t border-border pt-7 sm:grid-cols-3">
+            {pathways.map(({ icon: Icon, title, description }) => (
+              <div key={title} className="space-y-2 rounded-2xl border border-border/70 bg-card/70 p-4">
+                <Icon className="h-5 w-5 text-primary" aria-hidden="true" />
+                <h2 className="text-sm font-bold tracking-tight">{title}</h2>
+                <p className="text-xs leading-relaxed text-muted-foreground">{description}</p>
+              </div>
+            ))}
           </div>
         </div>
-      </header>
-
-      {/* Main content */}
-      <main className="flex-1 flex items-center justify-center p-6">
-        <div className="w-full max-w-4xl">
-          <div className="text-center mb-8">
-            <h2 className="text-3xl font-bold text-foreground mb-2">
-              Portail <span className="text-primary">Patient</span>
-            </h2>
-            <p className="text-muted-foreground max-w-md mx-auto">
-              Accédez au dossier médical complet avec jumeau numérique 3D, 
-              alertes de sécurité et prédictions IA.
-            </p>
-          </div>
-
+        <div className="relative">
+          <div className="pointer-events-none absolute -inset-5 -z-10 rounded-[40px] bg-gradient-to-br from-primary/[0.09] via-secondary/50 to-transparent" />
           <PatientLoginBlock />
-
-          {/* Features grid */}
-          <div className="mt-12 grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div className="p-4 rounded-lg bg-card border border-border text-center">
-              <div className="w-12 h-12 mx-auto mb-3 rounded-full bg-primary/10 flex items-center justify-center">
-                <Activity className="w-6 h-6 text-primary" />
-              </div>
-              <h3 className="font-semibold text-foreground mb-1">Jumeau Numérique</h3>
-              <p className="text-xs text-muted-foreground">
-                Visualisation 3D avec 4 calques anatomiques interactifs
-              </p>
-            </div>
-            <div className="p-4 rounded-lg bg-card border border-border text-center">
-              <div className="w-12 h-12 mx-auto mb-3 rounded-full bg-destructive/10 flex items-center justify-center">
-                <Shield className="w-6 h-6 text-destructive" />
-              </div>
-              <h3 className="font-semibold text-foreground mb-1">Alertes Temps Réel</h3>
-              <p className="text-xs text-muted-foreground">
-                Détection automatique des contre-indications et interactions
-              </p>
-            </div>
-            <div className="p-4 rounded-lg bg-card border border-border text-center">
-              <div className="w-12 h-12 mx-auto mb-3 rounded-full bg-primary/10 flex items-center justify-center">
-                <Brain className="w-6 h-6 text-primary" />
-              </div>
-              <h3 className="font-semibold text-foreground mb-1">Prédictions IA</h3>
-              <p className="text-xs text-muted-foreground">
-                Analyse prédictive des risques à 3 mois avec confiance IA
-              </p>
-            </div>
-          </div>
         </div>
-      </main>
-
-      {/* Footer */}
-      <footer className="p-4 border-t border-border text-center">
-        <p className="text-xs text-muted-foreground">
-          © 2024 Médicore - Système de gestion médicale avancée
-        </p>
-      </footer>
-    </div>
-  );
-};
+      </section>
+      <section className="border-t border-border/70 bg-card/80 px-5 py-6 sm:px-8">
+        <div className="mx-auto flex max-w-6xl flex-col items-start justify-between gap-3 text-sm text-muted-foreground sm:flex-row sm:items-center">
+          <span className="flex items-center gap-2"><FileText className="h-4 w-4 text-primary" /> MediCore · Gestion et analyse de données médicales</span>
+          <span className="text-xs">Les résultats d’aide à la décision nécessitent une validation clinique.</span>
+        </div>
+      </section>
+    </main>
+  </div>
+);
 
 export default Index;

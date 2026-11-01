@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import AppLayout from '@/components/layout/AppLayout';
+import PageHeading from '@/components/layout/PageHeading';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -9,12 +10,9 @@ import { useAutoTranslation } from '@/contexts/TranslationContext';
 import { Sparkles, Search, Brain, Loader2 } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
-import { useTheme } from 'next-themes';
-import { cn } from '@/lib/utils';
 
 const CrossDataAnalysis = () => {
     const { t } = useAutoTranslation();
-    const { theme } = useTheme();
     const [patientId, setPatientId] = useState('');
     const [isLoading, setIsLoading] = useState(false);
     const [patientData, setPatientData] = useState<any>(null);
@@ -126,112 +124,42 @@ const CrossDataAnalysis = () => {
 
     return (
         <AppLayout>
-            {/* Parallax Background - Theme Aware */}
-            <div className="fixed inset-0 -z-10 overflow-hidden">
-                <div className={cn(
-                    "absolute inset-0",
-                    theme === 'dark'
-                        ? "bg-gradient-to-br from-[#020617] via-[#0f172a] to-[#1e1b4b]"
-                        : "bg-gradient-to-br from-cyan-50 via-blue-50 to-indigo-50"
-                )} />
-                <div className="absolute top-0 left-0 w-full h-full opacity-30">
-                    <div className={cn(
-                        "absolute top-20 left-10 w-72 h-72 rounded-full filter blur-3xl animate-blob",
-                        theme === 'dark' ? "bg-cyan-500/20" : "bg-cyan-400 mix-blend-multiply opacity-20"
-                    )} />
-                    <div className={cn(
-                        "absolute top-40 right-10 w-72 h-72 rounded-full filter blur-3xl animate-blob animation-delay-2000",
-                        theme === 'dark' ? "bg-purple-500/20" : "bg-blue-400 mix-blend-multiply opacity-20"
-                    )} />
-                </div>
-            </div>
-
-            <div className="space-y-6 pb-12">
-                {/* Header */}
-                <div className={cn(
-                    "relative overflow-hidden rounded-3xl backdrop-blur-xl border shadow-2xl",
-                    theme === 'dark'
-                        ? "bg-[#0f172a]/80 border-white/10"
-                        : "bg-gradient-to-br from-cyan-500/10 via-blue-500/10 to-indigo-500/10 border-white/20"
-                )}>
-                    <div className={cn(
-                        "absolute inset-0",
-                        theme === 'dark' ? "bg-gradient-to-br from-cyan-500/5 to-purple-500/5" : "bg-white/5"
-                    )} />
-                    <div className="relative p-8">
-                        <div className="flex items-center gap-3">
-                            <div className="p-3 rounded-xl bg-gradient-to-br from-cyan-400 to-blue-500">
-                                <Brain className="h-6 w-6 text-white" />
-                            </div>
-                            <div>
-                                <h1 className={cn(
-                                    "text-3xl font-bold bg-clip-text text-transparent",
-                                    theme === 'dark'
-                                        ? "bg-gradient-to-r from-cyan-400 via-blue-400 to-purple-400"
-                                        : "bg-gradient-to-r from-cyan-600 via-blue-600 to-indigo-600"
-                                )}>
-                                    {t('Analyse IA Cross-Data')}
-                                </h1>
-                                <p className={cn(theme === 'dark' ? "text-slate-400" : "text-slate-600")}>
-                                    {t('Comparaison avec 19,000+ références médicales mondiales')}
-                                </p>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-
-                {/* Search Section */}
-                <Card className={cn(
-                    "backdrop-blur-xl border shadow-xl",
-                    theme === 'dark'
-                        ? "bg-[#0f172a]/80 border-white/10"
-                        : "bg-white/40 border-white/20"
-                )}>
-                    <CardHeader>
-                        <CardTitle className="flex items-center gap-2">
-                            <Search className="h-5 w-5 text-cyan-600" />
-                            {t('Lancer une Analyse')}
+            <div className="clinical-page">
+                <PageHeading
+                    eyebrow="Aide à la décision"
+                    title="Analyses croisées"
+                    description="Chargez un dossier autorisé pour examiner les informations cliniques associées et effectuer une analyse comparative."
+                />
+                <Card>
+                    <CardHeader className="border-b border-border/70 px-6 py-5">
+                        <CardTitle className="flex items-center gap-2 text-base font-bold">
+                            <Search className="h-5 w-5 text-primary" /> Sélectionner un dossier
                         </CardTitle>
+                        <p className="text-xs text-muted-foreground">La recherche respecte les accès de votre compte.</p>
                     </CardHeader>
-                    <CardContent>
-                        <div className="flex gap-4">
-                            <div className="flex-1">
-                                <Label htmlFor="patientId">{t('ID Patient')}</Label>
+                    <CardContent className="p-6">
+                        <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
+                            <div className="min-w-0 flex-1 space-y-2">
+                                <Label htmlFor="patientId">Identifiant patient</Label>
                                 <Input
                                     id="patientId"
-                                    placeholder={t('Entrez l\'ID du patient (ex: b0c4d6e7)')}
+                                    placeholder="Ex. PAT-001"
                                     value={patientId}
-                                    onChange={(e) => setPatientId(e.target.value)}
-                                    onKeyPress={(e) => e.key === 'Enter' && handleAnalyze()}
-                                    className="mt-1 bg-white/50 border-white/30"
+                                    onChange={event => setPatientId(event.target.value)}
+                                    onKeyDown={event => { if (event.key === 'Enter' && !isLoading) void handleAnalyze(); }}
+                                    className="h-11"
                                     disabled={isLoading}
                                 />
                             </div>
-                            <div className="flex items-end">
-                                <Button
-                                    onClick={handleAnalyze}
-                                    disabled={isLoading}
-                                    className="gap-2 bg-gradient-to-r from-cyan-500 to-blue-500 hover:from-cyan-600 hover:to-blue-600 text-white shadow-lg shadow-cyan-500/50"
-                                >
-                                    {isLoading ? (
-                                        <>
-                                            <Loader2 className="h-4 w-4 animate-spin" />
-                                            {t('Chargement...')}
-                                        </>
-                                    ) : (
-                                        <>
-                                            <Sparkles className="h-4 w-4" />
-                                            {t('Lancer l\'Analyse')}
-                                        </>
-                                    )}
-                                </Button>
-                            </div>
+                            <Button onClick={handleAnalyze} disabled={isLoading || !patientId.trim()} className="h-11 shrink-0 gap-2">
+                                {isLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
+                                {isLoading ? 'Chargement…' : 'Analyser ce dossier'}
+                            </Button>
                         </div>
-                        <p className="text-sm text-slate-600 mt-2">
+                        <p className="mt-3 text-xs leading-relaxed text-muted-foreground">
                             {patientData
-                                ? `${t('Patient chargé')} : ${patientData.patient_id} - ${patientData.age} ${t('ans')} - ${patientData.gender === 'M' ? t('Masculin') : t('Féminin')}`
-                                : t("L'analyse pré-sélectionnera automatiquement les pathologies, symptômes, traitements et médicaments du patient")
-                            }
+                                ? `Dossier ${patientData.patient_id} chargé : vous pouvez examiner ses données ci-dessous.`
+                                : 'Après sélection, les diagnostics, symptômes, traitements et médicaments connus du patient seront proposés à l’analyse.'}
                         </p>
                     </CardContent>
                 </Card>
@@ -240,20 +168,6 @@ const CrossDataAnalysis = () => {
                 <CrossDataAnalyzer patientData={patientData} />
             </div>
 
-            <style>{`
-        @keyframes blob {
-          0%, 100% { transform: translate(0, 0) scale(1); }
-          25% { transform: translate(20px, -50px) scale(1.1); }
-          50% { transform: translate(-20px, 20px) scale(0.9); }
-          75% { transform: translate(50px, 50px) scale(1.05); }
-        }
-        .animate-blob {
-          animation: blob 20s infinite;
-        }
-        .animation-delay-2000 {
-          animation-delay: 2s;
-        }
-      `}</style>
         </AppLayout>
     );
 };

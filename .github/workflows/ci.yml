@@ -40,6 +40,9 @@ jobs:
       - name: Typecheck authorized patient pathology matching
         run: npm run typecheck:patient-matching
 
+      - name: Typecheck clinical workspace and navigation
+        run: npm run typecheck:workspace
+
       - name: Edge signal-detector syntax and local imports
         run: npm run check:signal-edge
 

@@ -160,7 +160,7 @@ const PathologyDetail = () => {
     <AppLayout>
       <div className="space-y-6">
         {/* Header */}
-        <div className="flex items-start gap-4">
+        <div className="flex flex-wrap items-start gap-4 rounded-2xl border border-border/80 bg-card px-5 py-6 shadow-sm sm:px-7">
           <Link to="/pathologies">
             <Button variant="ghost" size="icon">
               <ArrowLeft className="h-5 w-5" />
@@ -168,7 +168,7 @@ const PathologyDetail = () => {
           </Link>
           <div className="flex-1">
             <div className="flex items-center gap-3 flex-wrap">
-              <h1 className="text-3xl font-bold">{pathology.name}</h1>
+              <h1 className="text-2xl font-bold tracking-tight sm:text-3xl">{pathology.name}</h1>
               {pathology.icd_code && (
                 <Badge variant="outline" className="font-mono text-lg">
                   {pathology.icd_code}
