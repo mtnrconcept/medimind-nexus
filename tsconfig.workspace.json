@@ -16,6 +16,10 @@
     "src/pages/Patients.tsx",
     "src/pages/Pathologies.tsx",
     "src/pages/NotFound.tsx",
+    "src/components/nexus/ScientificEvidencePanel.tsx",
+    "tests/scientific-evidence*.test.ts",
+    "tests/deep-research-sources.test.ts",
+    "tests/research-notebook.test.ts",
     "tests/clinical-ui-routes.test.ts",
     "tests/clinical-workspace-navigation.test.ts",
     "tests/dashboard-summary.test.ts"

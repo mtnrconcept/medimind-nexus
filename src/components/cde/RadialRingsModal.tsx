@@ -7,6 +7,7 @@ import { X, Play, Pause, RotateCcw, Sparkles, Loader2, MessageSquare, ExternalLi
 import { supabase } from '@/integrations/supabase/client';
 import { useAI } from '@/contexts/AIContext';
 import { RingNode, RingEdge, MicroSignal, RadialRingsData } from '@/types/graph';
+import type { SourceStatus } from '../../../supabase/functions/deep-research-graph/sources';
 import { RING_COLORS, LANE_COLORS, NODE_TYPE_COLORS, EDGE_TYPE_COLORS, TIMING } from '@/config/graphSemantics';
 import { isWebGLAvailable, getSemanticEdgeColor, isNodeType, transformNode, transformEdge, getEdgeKey, dedupeEdges } from '@/utils/graphUtils';
 import DraggablePanel from './DraggablePanel';
@@ -3909,7 +3910,7 @@ Fournis:
 
         } catch (err) {
             console.error('Link explanation error:', err);
-            setExplanation(`**Connexion: ${sourceNode.name} → ${targetNode.name}**\n\nRelation: ${edge.relationship}\nGrade: ${edge.evidence_grade}\n\n_L'analyse IA détaillée n'a pas pu être chargée. Cette connexion représente une relation identifiée dans la littérature scientifique entre ces deux concepts._`);
+            setExplanation(`**Connexion: ${sourceNode.name} → ${targetNode.name}**\n\nRelation: ${edge.relationship}\nGrade: ${edge.evidence_grade}\n\n_L'analyse IA détaillée n'a pas pu être chargée. Consultez les références du graphe pour vérifier cette relation proposée._`);
         } finally {
             setIsLoading(false);
         }
@@ -4609,6 +4610,9 @@ export default function RadialRingsModal({
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [fromCache, setFromCache] = useState(false);
+    const { invokeAI, llmMode } = useAI();
+    const researchRequest = useRef<AbortController | null>(null);
+    const [researchSources, setResearchSources] = useState<Record<string, SourceStatus[]>>({});
     const [animationTime, setAnimationTime] = useState(0);
     const [isPaused, setIsPaused] = useState(false);
     const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
@@ -5086,6 +5090,7 @@ IMPORTANT: Retourne UNIQUEMENT les IDs des nœuds qui forment le schéma thérap
         if (isOpen && allPathologies.length > 0) {
             setCentralNode(primaryPathology);
             if (initialData) {
+                setResearchSources({});
                 // Determine if initialData is the full object or just knowledge_graph
                 if (initialData.knowledge_graph) {
                     setData(initialData);
@@ -5107,7 +5112,10 @@ IMPORTANT: Retourne UNIQUEMENT les IDs des nœuds qui forment le schéma thérap
                 fetchData(allPathologies);
             }
         }
-        return () => { if (animationRef.current) cancelAnimationFrame(animationRef.current); };
+        return () => {
+            researchRequest.current?.abort();
+            if (animationRef.current) cancelAnimationFrame(animationRef.current);
+        };
     }, [isOpen, allPathologies.join(',')]);
 
     useEffect(() => {
@@ -5227,6 +5235,9 @@ IMPORTANT: Retourne UNIQUEMENT les IDs des nœuds qui forment le schéma thérap
     }, []);
 
     const fetchData = async (pathologies: string[]) => {
+        researchRequest.current?.abort();
+        const request = new AbortController();
+        researchRequest.current = request;
         // Initialize with central nodes for ALL pathologies (Dual Graph Init)
         const initialNodes: RingNode[] = pathologies.map((p, i) => ({
             id: `central-init-${i}`,
@@ -5236,7 +5247,7 @@ IMPORTANT: Retourne UNIQUEMENT les IDs des nœuds qui forment le schéma thérap
             node_type: 'PATHOLOGY',
             properties: { description: 'Initialisation...', source: 'System' },
             proximity_score: 1,
-            evidence_grade: 'A',
+            evidence_grade: 'D',
             translation_gap: false,
             parent_pathology: p
         }));
@@ -5250,6 +5261,7 @@ IMPORTANT: Retourne UNIQUEMENT les IDs des nœuds qui forment le schéma thérap
         setIsLoading(true);
         setError(null);
         setFromCache(false);
+        setResearchSources({});
         setAnimationTime(0);
         startTimeRef.current = 0;
         setNewlySpawnedNodes(new Set());
@@ -5257,9 +5269,10 @@ IMPORTANT: Retourne UNIQUEMENT les IDs des nœuds qui forment le schéma thérap
 
         try {
             const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
-            const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+            const supabaseKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY || import.meta.env.VITE_SUPABASE_ANON_KEY;
             const { data: { session } } = await supabase.auth.getSession();
-            const token = session?.access_token || supabaseKey;
+            const token = session?.access_token;
+            if (!token) throw new Error('Connectez-vous pour lancer une recherche.');
 
             // Worker function to fetch and stream a single pathology graph
             const fetchPathologyStream = async (pathology: string) => {
@@ -5270,6 +5283,7 @@ IMPORTANT: Retourne UNIQUEMENT les IDs des nœuds qui forment le schéma thérap
                         'apikey': supabaseKey
                     },
                     method: 'POST',
+                    signal: request.signal,
                     body: JSON.stringify({
                         topic: pathology,
                         pathologies: [pathology],
@@ -5323,6 +5337,9 @@ IMPORTANT: Retourne UNIQUEMENT les IDs des nœuds qui forment le schéma thérap
                         try {
                             const eventData = JSON.parse(cleanedLine.slice(6));
 
+                            if (eventData.type === 'complete' && Array.isArray(eventData.source_statuses)) {
+                                setResearchSources(prev => ({ ...prev, [pathology]: eventData.source_statuses }));
+                            }
                             // Handle Node Events
                             if (eventData.type === 'cached' || eventData.type === 'node') {
                                 const rawNodes = eventData.type === 'cached' ? eventData.nodes : [eventData.node];
@@ -5343,9 +5360,10 @@ IMPORTANT: Retourne UNIQUEMENT les IDs des nœuds qui forment le schéma thérap
                                             // Don't add to uniqueNewNodes
                                         }
                                     } else {
-                                        // New unique node
-                                        localKnownNames.set(normName, n.id);
-                                        uniqueNewNodes.push(n);
+                                        const graphId = pathologies.length > 1 ? `pathology-${pathologies.indexOf(pathology)}-${n.id}` : n.id;
+                                        localKnownNames.set(normName, graphId);
+                                        localRedirects.set(n.id, graphId);
+                                        uniqueNewNodes.push({ ...n, id: graphId });
                                     }
                                 });
 
@@ -5353,7 +5371,7 @@ IMPORTANT: Retourne UNIQUEMENT les IDs des nœuds qui forment le schéma thérap
                                     // CRITICAL: Tag node with current pathology for Twin Layout distribution
                                     n.parent_pathology = pathology;
                                     const trNode = transformNode(n, allPathologies, primaryPathology);
-                                    nodeQueueRef.current.push(trNode);
+                                    nodeQueueRef.current.push({ ...trNode, evidence_grade: 'D' });
                                 });
 
                                 if (eventData.type === 'cached') {
@@ -5382,9 +5400,10 @@ IMPORTANT: Retourne UNIQUEMENT les IDs des nœuds qui forment le schéma thérap
                                     if (!e.relationship && e.edge_type) e.relationship = e.edge_type;
 
                                     // Apply redirects
-                                    const source = localRedirects.get(e.source) || e.source;
-                                    const target = localRedirects.get(e.target) || e.target;
-                                    return transformEdge({ ...e, source, target });
+                                    const source = e.source_id ?? e.source;
+                                    const target = e.target_id ?? e.target;
+                                    return { ...transformEdge({ ...e, source_id: localRedirects.get(source) || source,
+                                        target_id: localRedirects.get(target) || target }), evidence_grade: 'D' };
                                 });
 
                                 setData(prev => prev ? ({
@@ -5405,6 +5424,7 @@ IMPORTANT: Retourne UNIQUEMENT les IDs des nœuds qui forment le schéma thérap
             setIsLoading(false);
 
         } catch (err) {
+            if (request.signal.aborted) return;
             console.error('[DEEP-RESEARCH] Error:', err);
             setError(String(err));
             setIsLoading(false);
@@ -5448,6 +5468,7 @@ IMPORTANT: Retourne UNIQUEMENT les IDs des nœuds qui forment le schéma thérap
         try {
             // Prepare existing nodes for cross-link analysis
             const nodeId = node.id;
+            const expansionTopic = node.name;
             const existingNodesForCrossLink = data.knowledge_graph.nodes
                 .filter(n => n.id !== nodeId)
                 .map(n => ({
@@ -5459,6 +5480,7 @@ IMPORTANT: Retourne UNIQUEMENT les IDs des nœuds qui forment le schéma thérap
 
             const response = await invokeAI('deep-research-graph', {
                 topic: node.name,
+                medication: ['DRUG', 'MEDICATION'].includes((node.node_type || node.lane).toUpperCase()) ? node.name : undefined,
                 max_nodes: 100,
                 include_pubmed: true,
                 include_fda: true,
@@ -5468,59 +5490,40 @@ IMPORTANT: Retourne UNIQUEMENT les IDs des nœuds qui forment le schéma thérap
             if (response.error) throw response.error;
 
             const result = response.data;
-            console.log('[EXPAND] Deep research result:', result);
+            if (llmMode === 'cloud' && Array.isArray(result.source_statuses)) {
+                setResearchSources(prev => ({ ...prev, [expansionTopic]: result.source_statuses }));
+            }
 
-            // Transform new nodes using centralized logic
-            const newNodes: RingNode[] = result.nodes.map((n: any) => {
-                n.parent_pathology = node.parent_pathology;
-                return transformNode(n, allPathologies, primaryPathology);
-            });
-
-            // Build maps for resolving node references
-            const newNodeIdToName = new Map<string, string>();
-            const newNodeNameToId = new Map<string, string>();
-            newNodes.forEach(n => {
-                newNodeIdToName.set(n.id, n.name);
-                newNodeNameToId.set(n.name.toLowerCase(), n.id);
-            });
-
-            // Also map existing nodes by name for cross-link resolution
-            const existingNodeNameToId = new Map<string, string>();
-            data.knowledge_graph.nodes.forEach(n => {
-                existingNodeNameToId.set(n.name.toLowerCase(), n.id);
-            });
-
-            // Combine both maps for edge resolution
-            const allNodeNameToId = new Map<string, string>([...existingNodeNameToId, ...newNodeNameToId]);
-
-            // Transform new edges with cross-link resolution
+            // Returned IDs are local to this expansion. Reuse existing concepts by name;
+            // scope new IDs to the selected node before attaching edges to the displayed graph.
+            const idsByName = new Map(data.knowledge_graph.nodes.map(n => [n.name.toLowerCase(), n.id]));
+            idsByName.set(node.name.toLowerCase(), node.id);
+            const idsByResponseId = new Map<string, string>();
+            const nodesToAdd: RingNode[] = [];
+            for (const raw of result.nodes) {
+                const name = raw.label.toLowerCase();
+                const graphId = idsByName.get(name) ?? `expansion-${node.id}-${raw.id}`;
+                idsByResponseId.set(raw.id, graphId);
+                if (!idsByName.has(name)) {
+                    nodesToAdd.push({ ...transformNode({ ...raw, id: graphId, parent_pathology: node.parent_pathology },
+                        allPathologies, primaryPathology), evidence_grade: 'D' });
+                    idsByName.set(name, graphId);
+                }
+            }
+            const resolveId = (id: string) => idsByResponseId.get(id) ?? idsByName.get(id.toLowerCase()) ?? id;
             const newEdges: RingEdge[] = result.edges.map((e: any) => {
-                let sourceId = e.source_id;
-                let targetId = e.target_id;
-
-                if (!newNodeIdToName.has(sourceId)) {
-                    const resolvedId = allNodeNameToId.get(sourceId.toLowerCase());
-                    if (resolvedId) sourceId = resolvedId;
-                }
-                if (!newNodeIdToName.has(targetId)) {
-                    const resolvedId = allNodeNameToId.get(targetId.toLowerCase());
-                    if (resolvedId) targetId = resolvedId;
-                }
-
+                const sourceId = resolveId(e.source_id);
+                const targetId = resolveId(e.target_id);
                 return {
                     id: `${sourceId}-${targetId}`,
                     source: sourceId,
                     target: targetId,
                     relationship: e.edge_type,
                     weight: e.weight || 0.5,
-                    evidence_grade: e.weight > 0.8 ? 'A' : e.weight > 0.5 ? 'B' : 'C',
+                    evidence_grade: 'D',
                     translation_gap: false
                 };
             });
-
-            // Merge with existing nodes, avoiding duplicates
-            const existingNodeNames = new Set(data.knowledge_graph.nodes.map(n => n.name.toLowerCase()));
-            const nodesToAdd = newNodes.filter(n => !existingNodeNames.has(n.name.toLowerCase()));
 
             // Add nodes progressively with COSMIC STREAMING animation
             let currentNodes = [...data.knowledge_graph.nodes];
@@ -5579,8 +5582,7 @@ IMPORTANT: Retourne UNIQUEMENT les IDs des nœuds qui forment le schéma thérap
 
         } catch (err) {
             console.error('[EXPAND] Error:', err);
-            setCentralNode(node.name);
-            await fetchData([node.name]);
+            setError('La recherche complémentaire a échoué.');
         } finally {
             setIsLoading(false);
             setIsExpanding(false);
@@ -5845,6 +5847,26 @@ IMPORTANT: Retourne UNIQUEMENT les IDs des nœuds qui forment le schéma thérap
 
                                 {/* Scrollable Content */}
                                 <div className="flex-1 overflow-y-auto overflow-x-hidden p-2 sm:p-3 min-h-0">
+                                    {Object.entries(researchSources).map(([topic, statuses]) => (
+                                        <details key={topic} className="mb-3 text-xs text-gray-300">
+                                            <summary className="cursor-pointer font-medium">Sources · {topic}</summary>
+                                            <p className="my-1 text-gray-400">Les liens générés sont des hypothèses de recherche.</p>
+                                            {statuses.map(entry => (
+                                                <div key={entry.source} className="my-2">
+                                                    <strong>{entry.source}</strong> · {({
+                                                        available: 'résultats disponibles', partial: 'réponse partielle',
+                                                        empty: 'aucun résultat', skipped: 'non interrogée', unavailable: 'indisponible'
+                                                    })[entry.status]} ({entry.count})
+                                                    {entry.detail && <p>{entry.detail}</p>}
+                                                    {!!entry.failed_tables?.length && <p>Tables indisponibles · {entry.failed_tables.join(', ')}</p>}
+                                                    {entry.records.map(record => (
+                                                        <a key={record.id} href={record.url} target="_blank" rel="noreferrer"
+                                                            className="block text-cyan-300 underline break-words">{record.id} · {record.title}</a>
+                                                    ))}
+                                                </div>
+                                            ))}
+                                        </details>
+                                    ))}
                                     {/* Node Search */}
                                     <div className="mb-3 relative">
                                         <div className="relative">
