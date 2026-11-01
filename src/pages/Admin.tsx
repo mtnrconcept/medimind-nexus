@@ -76,11 +76,10 @@ const Admin = () => {
   const [importIcdProgress, setImportIcdProgress] = useState({ current: 0, total: 0 });
 
   useEffect(() => {
-    // TEMPORAIRE: Désactivé pour config initiale
-    // if (role !== "admin") {
-    //   navigate("/dashboard");
-    //   return;
-    // }
+    if (role !== "admin") {
+      navigate("/dashboard", { replace: true });
+      return;
+    }
 
     const fetchData = async () => {
       try {

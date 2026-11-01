@@ -56,7 +56,7 @@ const AnimatedRoutes = () => {
           <Route path="/discovery-platform" element={<ProtectedRoute><DiscoveryPlatform /></ProtectedRoute>} />
           <Route path="/tools/switch-calculator" element={<ProtectedRoute><SwitchCalculator /></ProtectedRoute>} />
           <Route path="/tools/molecule-workbench" element={<ProtectedRoute><MoleculeWorkbenchPage /></ProtectedRoute>} />
-          <Route path="/admin" element={<Admin />} /> {/* TEMPORAIRE: Sans protection pour config initiale */}
+          <Route path="/admin" element={<ProtectedRoute requiredRole="admin"><Admin /></ProtectedRoute>} />
           <Route path="/populate-data" element={<ProtectedRoute><PopulateData /></ProtectedRoute>} />
 
           {/* SMART on FHIR routes */}

@@ -20,7 +20,9 @@ $$;
 
 create table auth.users (
   id uuid primary key,
-  email text
+  email text,
+  raw_user_meta_data jsonb not null default '{}'::jsonb,
+  raw_app_meta_data jsonb not null default '{}'::jsonb
 );
 
 create table public.user_roles (
@@ -28,6 +30,22 @@ create table public.user_roles (
   user_id uuid not null references auth.users(id) on delete cascade,
   role text not null default 'doctor'
 );
+
+-- Reproduce the CURRENT live bug before applying the authorization migration.
+create or replace function public.is_admin_optimized()
+returns boolean
+language plpgsql stable security definer
+set search_path = public, auth, extensions, pg_temp
+as $$
+begin
+  return exists (
+    select 1 from auth.users where id = auth.uid()
+      and (raw_user_meta_data->>'role' = 'admin'
+           or raw_app_meta_data->>'role' = 'admin'
+           or exists (select 1 from public.user_roles where user_id = auth.uid() and role = 'admin'))
+  );
+end;
+$$;
 
 create table public.patients (
   id uuid primary key,
@@ -140,3 +158,32 @@ insert into public.user_roles(id,user_id,role) values
 insert into public.patients(id,patient_id,age,gender,nationality) values
   ('33333333-3333-4333-8333-333333333333','P1',40,'F','CH'),
   ('44444444-4444-4444-8444-444444444444','P2',50,'M','CH');
+
+
+-- Legacy research/evidence schema subset used to verify the new privilege migration.
+-- Source functions write through the service role; authenticated clients read only.
+do $$
+declare
+  tbl text;
+  legacy_policy text;
+begin
+  -- Use the exact policy names observed on the live project. A synthetic
+  -- generic name would leave an unrelated policy in place and fail the CI
+  -- assertion even though the production migration correctly removes each.
+  for tbl, legacy_policy in
+    select * from (values
+      ('discovery_api_cache', 'discovery_cache_all'),
+      ('discovery_evidence_packs', 'discovery_packs_all'),
+      ('discovery_evidence_snippets', 'discovery_snippets_all'),
+      ('discovery_hypotheses', 'discovery_hypotheses_all'),
+      ('discovery_kg_triples', 'discovery_triples_all'),
+      ('discovery_papers', 'discovery_papers_all'),
+      ('discovery_research_sessions', 'discovery_sessions_all')
+    ) as live_policy(table_name, policy_name)
+  loop
+    execute format('create table public.%I (id uuid primary key default gen_random_uuid())', tbl);
+    execute format('alter table public.%I enable row level security', tbl);
+    execute format('create policy %I on public.%I for all to public using (true) with check (true)', legacy_policy, tbl);
+    execute format('grant select, insert, update, delete on public.%I to anon, authenticated', tbl);
+  end loop;
+end $$;

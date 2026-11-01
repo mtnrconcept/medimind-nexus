@@ -101,6 +101,7 @@ export interface AICallOptions {
   maxTokens?: number;
   temperature?: number;
   reasoningEffort?: ClinicalReasoningEffort;
+  reasoningMode?: 'standard' | 'pro';
   responseFormat?: Record<string, unknown>;
   timeoutMs?: number;
   clinicalTask?: ClinicalTask;
@@ -119,7 +120,7 @@ export interface AIEmbeddingOptions {
   timeoutMs?: number;
 }
 
-const DEFAULT_OPENAI_MODEL = 'gpt-5.5';
+const DEFAULT_OPENAI_MODEL = 'gpt-6.1-sol';
 const OPENAI_CHAT_COMPLETIONS_URL = 'https://api.openai.com/v1/chat/completions';
 const OPENAI_RESPONSES_URL = 'https://api.openai.com/v1/responses';
 const OPENAI_EMBEDDINGS_URL = 'https://api.openai.com/v1/embeddings';
@@ -150,9 +151,9 @@ function isKnownNonOpenAIModel(model: string): boolean {
 }
 
 function resolveOpenAIModel(options: AICallOptions, envModel?: string): string {
-  const requested = options.forceModel
-    ? options.model || envModel
-    : envModel || options.model;
+  // The clinical router (or explicit caller) owns model selection. OPENAI_MODEL is
+  // only a default, never an override of a critical clinical safety decision.
+  const requested = options.model || envModel;
   const candidate = (requested || DEFAULT_OPENAI_MODEL).trim();
 
   if (isKnownNonOpenAIModel(candidate)) {
@@ -194,7 +195,7 @@ function strongerReasoningEffort(
     return routed;
   }
 
-  const order: ClinicalReasoningEffort[] = ['none', 'low', 'medium', 'high', 'xhigh'];
+  const order: ClinicalReasoningEffort[] = ['none', 'low', 'medium', 'high', 'xhigh', 'max'];
   return order.indexOf(requested) >= order.indexOf(routed) ? requested : routed;
 }
 
@@ -288,9 +289,12 @@ export function prepareClinicalAICall(
   const clinicalSafety = options.clinicalRiskAssessment || detectHighRiskContext({
     ...options.clinicalInput,
     selectedElementCount: options.elementCount || options.clinicalInput?.selectedElementCount || profile.elementCount,
+    // System instructions can contain examples of dangerous drugs or conditions;
+    // examples are not patient observations and must not alter patient risk.
     freeText: [
       options.clinicalInput?.freeText,
-      routingText,
+      options.clinicalContextText,
+      userPromptToPlainText(userPrompt),
     ].filter(Boolean).join('\n\n'),
   });
   const route = selectClinicalModel({
@@ -299,10 +303,16 @@ export function prepareClinicalAICall(
     elementCount: profile.elementCount,
     hasExternalEvidence: options.hasExternalEvidence ?? profile.hasExternalEvidence,
   }, getClinicalModelEnv(getEnv));
+  const selectedModel = options.forceModel ? options.model || route.model : route.model;
+  const supportsMaxPro = /^gpt-(?:6(?:\.|-|$)|5\.6(?:\.|-|$))/i.test(selectedModel);
+  const wantedEffort = strongerReasoningEffort(options.reasoningEffort, route.reasoningEffort);
+  const supportedEffort = wantedEffort === 'max' && !supportsMaxPro ? 'xhigh' : wantedEffort;
   const routedOptions: AICallOptions = {
     ...options,
-    model: options.forceModel ? options.model : route.model,
-    reasoningEffort: strongerReasoningEffort(options.reasoningEffort, route.reasoningEffort),
+    model: selectedModel,
+    reasoningEffort: supportedEffort,
+    reasoningMode: supportsMaxPro && (route.reasoningMode === 'pro' || options.reasoningMode === 'pro') ? 'pro' : undefined,
+    maxTokens: supportedEffort === 'max' ? Math.max(options.maxTokens ?? 0, 25_000) : options.maxTokens,
     timeoutMs: options.timeoutMs ?? route.timeoutMs,
   };
   const routedSystemPrompt = systemPrompt.includes(CLINICAL_CONTRACT_MARKER)
@@ -394,11 +404,11 @@ function hasReasoningEffort(options: AICallOptions): boolean {
 }
 
 function shouldUseResponsesAPI(model: string, options: AICallOptions): boolean {
-  return /^gpt-5(?:\.|-|$)/i.test(model.trim()) || hasReasoningEffort(options);
+  return /^gpt-[56](?:\.|-|$)/i.test(model.trim()) || hasReasoningEffort(options);
 }
 
 function supportsResponsesTemperature(model: string): boolean {
-  return !/^gpt-5(?:\.|-|$)/i.test(model.trim());
+  return !/^gpt-[56](?:\.|-|$)/i.test(model.trim());
 }
 
 function buildChatCompletionsBody(model: string, options: AICallOptions): Record<string, unknown> {
@@ -433,7 +443,10 @@ function buildResponsesBody(model: string, options: AICallOptions): Record<strin
   }
 
   if (hasReasoningEffort(options)) {
-    body.reasoning = { effort: options.reasoningEffort };
+    body.reasoning = {
+      effort: options.reasoningEffort,
+      ...(options.reasoningMode === 'pro' && /^gpt-(?:6(?:\.|-|$)|5\.6(?:\.|-|$))/i.test(model) ? { mode: 'pro' } : {}),
+    };
   }
 
   if (options.responseFormat) {

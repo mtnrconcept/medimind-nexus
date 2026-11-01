@@ -1,5 +1,5 @@
 export type ClinicalRiskLevel = 'low' | 'medium' | 'high' | 'critical';
-export type ClinicalReasoningEffort = 'none' | 'low' | 'medium' | 'high' | 'xhigh';
+export type ClinicalReasoningEffort = 'none' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
 export type ClinicalTask =
   | 'simple_lookup'
   | 'official_label_summary'
@@ -56,6 +56,7 @@ export interface ClinicalModelEnv {
 export interface ClinicalModelRoute {
   model: string;
   reasoningEffort: ClinicalReasoningEffort;
+  reasoningMode?: 'standard' | 'pro';
   timeoutMs: number;
   finalReviewRequired: boolean;
   routeReason: string;
@@ -71,7 +72,10 @@ export interface ClinicalPromptProfile {
 export const CLINICAL_RESPONSE_CONTRACT = `## CONTRAT CLINIQUE VERIFIABLE
 - La base de donnees interne, les notices officielles et les sources citees sont la source de verite; le modele ne doit pas inventer.
 - Distinguer explicitement: preuve confirmee, interaction theorique, absence de donnee, donnees contradictoires.
-- Toute affirmation clinique importante doit etre reliee a une preuve interne ou externe; sinon indiquer l'incertitude.
+- Toute affirmation clinique importante doit etre reliee a une preuve identifiable (PMID, DOI, NCT ou recommandation officielle) et a sa date; sinon indiquer l'incertitude.
+- Une mention de PubMed, d'un essai ou d'une notice sans resultat recupere et verifie NE CONSTITUE PAS une preuve.
+- Un essai enregistre ne prouve ni l'efficacite ni l'innocuite d'un traitement; distinguer protocole, resultats publies et interpretation.
+- Separer observation, hypothese, correlation et causalite; signaler les contradicteurs, les donnees manquantes et la population etudiee.
 - En contexte critique, polypharmacie, grossesse, enfant, sujet age, insuffisance renale/hepatique ou medicament a marge etroite, exiger validation humaine.
 - Ne jamais produire une prescription personnalisee definitive, une posologie nouvelle ou une modification de traitement sans validation medicale.
 - Les recommandations doivent etre actionnables, prudentes et exprimees comme aide a la decision clinique.`;
@@ -246,7 +250,11 @@ function entityToText(entity: ClinicalEntity): string {
 }
 
 function matchTerms(text: string, terms: string[]): string[] {
-  return terms.filter((term) => text.includes(normalizeClinicalText(term)));
+  const paddedText = ` ${normalizeClinicalText(text)} `;
+  return terms.filter((term) => {
+    const normalizedTerm = normalizeClinicalText(term);
+    return normalizedTerm.length > 0 && paddedText.includes(` ${normalizedTerm} `);
+  });
 }
 
 function uniq(values: string[]): string[] {
@@ -269,7 +277,9 @@ export function profileClinicalPrompt(
 ): ClinicalPromptProfile {
   const text = normalizeClinicalText(freeText);
   const isClinical = countDistinctClinicalTerms(text) >= 2;
-  const hasExternalEvidence = /\b(pubmed|doi|pmid|source|sources|evidence|preuve|swissmedic|openfda|ansm|drugbank)\b/.test(text);
+  // Mentions in a prompt are not externally retrieved or verified evidence.
+  // Only the caller supplying a verified evidence bundle can assert that fact.
+  const hasExternalEvidence = false;
   const denseGraph = elementCount >= 6 || /\b(polypharmacie|polypharmacy|multi drug|multi medication|graphe dense|dense graph)\b/.test(text);
   let task: ClinicalTask = explicitTask || 'suspected_interaction';
 
@@ -307,7 +317,7 @@ export function detectHighRiskContext(input: ClinicalRiskInput): ClinicalRiskAss
     normalizeClinicalText(input.freeText),
   ].join(' ');
 
-  const highRiskMedicationMatches = matchTerms(medicationText, HIGH_RISK_MEDICATION_TERMS);
+  const highRiskMedicationMatches = matchTerms([medicationText, normalizeClinicalText(input.freeText)].join(' '), HIGH_RISK_MEDICATION_TERMS);
   const vulnerableMatches = matchTerms(allText, VULNERABLE_CONTEXT_TERMS);
   const criticalMatches = matchTerms(allText, CRITICAL_CONTEXT_TERMS);
   const flags: string[] = [];
@@ -368,9 +378,9 @@ export function selectClinicalModel(
   input: ClinicalModelRouteInput,
   env: ClinicalModelEnv = {},
 ): ClinicalModelRoute {
-  const simpleModel = env.OPENAI_CLINICAL_SIMPLE_MODEL || 'gpt-5.4-mini';
-  const standardModel = env.OPENAI_CLINICAL_STANDARD_MODEL || env.OPENAI_MODEL || 'gpt-5.5';
-  const criticalModel = env.OPENAI_CLINICAL_CRITICAL_MODEL || standardModel;
+  const simpleModel = env.OPENAI_CLINICAL_SIMPLE_MODEL || 'gpt-6-luna';
+  const standardModel = env.OPENAI_CLINICAL_STANDARD_MODEL || 'gpt-6.1-sol';
+  const criticalModel = env.OPENAI_CLINICAL_CRITICAL_MODEL || 'gpt-6-astra';
   const finalReviewModel = env.OPENAI_CLINICAL_FINAL_REVIEW_MODEL || criticalModel;
   const elementCount = input.elementCount || 0;
   const isComplex =
@@ -379,6 +389,21 @@ export function selectClinicalModel(
     input.task === 'final_safety_review' ||
     input.riskAssessment.riskLevel === 'critical' ||
     elementCount >= 6;
+
+  // Criticality must win over routine task labels, including known interactions
+  // and official-label summaries. Older GPT-5.5 models do not support max/pro.
+  if (input.riskAssessment.riskLevel === 'critical' || input.task === 'final_safety_review') {
+    const model = input.task === 'final_safety_review' ? finalReviewModel : criticalModel;
+    const supportsMaxPro = /^gpt-(?:6(?:\.|-|$)|5\.6(?:\.|-|$))/i.test(model);
+    return {
+      model,
+      reasoningEffort: supportsMaxPro ? 'max' : 'xhigh',
+      ...(supportsMaxPro ? { reasoningMode: 'pro' as const } : {}),
+      timeoutMs: 180_000,
+      finalReviewRequired: true,
+      routeReason: 'critical clinical context requires the strongest supported reasoning and human verification',
+    };
+  }
 
   if (input.task === 'simple_lookup' && input.riskAssessment.riskLevel === 'low') {
     return {
@@ -406,8 +431,8 @@ export function selectClinicalModel(
 
   if (isComplex) {
     return {
-      model: input.task === 'final_safety_review' ? finalReviewModel : criticalModel,
-      reasoningEffort: input.riskAssessment.riskLevel === 'critical' ? 'xhigh' : 'high',
+      model: criticalModel,
+      reasoningEffort: 'high',
       timeoutMs: 120_000,
       finalReviewRequired: true,
       routeReason: 'complex or high-risk clinical reasoning requires strongest configured model',
