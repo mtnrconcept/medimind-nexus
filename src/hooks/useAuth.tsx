@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, createContext, useContext, ReactNode } from 'react';
 import { User, Session } from '@supabase/supabase-js';
 import { supabase } from '@/integrations/supabase/client';
+import { sanitizeSignupMetadata } from '@/components/auth/access-policy';
 
 type AppRole = 'admin' | 'researcher' | 'doctor';
 
@@ -11,7 +12,7 @@ interface AuthContextType {
   loading: boolean;
   roleLoading: boolean;
   signIn: (email: string, password: string) => Promise<{ error: Error | null }>;
-  signUp: (email: string, password: string, metadata: { first_name: string; last_name: string; role: AppRole }) => Promise<{ error: Error | null }>;
+  signUp: (email: string, password: string, metadata: { first_name: string; last_name: string }) => Promise<{ error: Error | null }>;
   signOut: () => Promise<void>;
 }
 
@@ -89,14 +90,14 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const signUp = async (
     email: string,
     password: string,
-    metadata: { first_name: string; last_name: string; role: AppRole }
+    metadata: { first_name: string; last_name: string }
   ) => {
     const { error } = await supabase.auth.signUp({
       email,
       password,
       options: {
         emailRedirectTo: `${window.location.origin}/`,
-        data: metadata,
+        data: sanitizeSignupMetadata(metadata),
       },
     });
     return { error };

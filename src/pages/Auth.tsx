@@ -6,9 +6,8 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useToast } from '@/hooks/use-toast';
-import { Activity, Stethoscope, FlaskConical, Shield } from 'lucide-react';
+import { Activity } from 'lucide-react';
 import { z } from 'zod';
 
 const emailSchema = z.string().email('Email invalide');
@@ -26,7 +25,6 @@ const Auth = () => {
   const [signupPassword, setSignupPassword] = useState('');
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
-  const [role, setRole] = useState<'doctor' | 'researcher' | 'admin'>('doctor');
 
   useEffect(() => {
     if (user && !loading) {
@@ -96,7 +94,6 @@ const Auth = () => {
     const { error } = await signUp(signupEmail, signupPassword, {
       first_name: firstName,
       last_name: lastName,
-      role,
     });
     setIsSubmitting(false);
 
@@ -119,15 +116,6 @@ const Auth = () => {
         title: 'Inscription réussie',
         description: 'Bienvenue sur Médicore !',
       });
-    }
-  };
-
-  const getRoleIcon = (roleType: string) => {
-    switch (roleType) {
-      case 'doctor': return <Stethoscope className="h-4 w-4" />;
-      case 'researcher': return <FlaskConical className="h-4 w-4" />;
-      case 'admin': return <Shield className="h-4 w-4" />;
-      default: return null;
     }
   };
 
@@ -233,34 +221,9 @@ const Auth = () => {
                       required
                     />
                   </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="role">Profil professionnel</Label>
-                    <Select value={role} onValueChange={(value: 'doctor' | 'researcher' | 'admin') => setRole(value)}>
-                      <SelectTrigger>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="doctor">
-                          <div className="flex items-center gap-2">
-                            <Stethoscope className="h-4 w-4" />
-                            Médecin
-                          </div>
-                        </SelectItem>
-                        <SelectItem value="researcher">
-                          <div className="flex items-center gap-2">
-                            <FlaskConical className="h-4 w-4" />
-                            Chercheur
-                          </div>
-                        </SelectItem>
-                        <SelectItem value="admin">
-                          <div className="flex items-center gap-2">
-                            <Shield className="h-4 w-4" />
-                            Administrateur
-                          </div>
-                        </SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
+                  <p className="rounded-md border border-border bg-secondary/30 px-3 py-2 text-xs text-muted-foreground">
+                    Les droits médecin, chercheur et administrateur sont attribués après vérification par un administrateur habilité.
+                  </p>
                   <Button type="submit" className="w-full" disabled={isSubmitting}>
                     {isSubmitting ? 'Inscription...' : 'S\'inscrire'}
                   </Button>

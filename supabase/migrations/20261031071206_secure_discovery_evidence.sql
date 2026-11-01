@@ -29,3 +29,20 @@ begin
     execute format('create policy evidence_read_authenticated on public.%I for select to authenticated using (true)', tbl);
   end loop;
 end $$;
+
+
+-- Existing admin policies call is_admin_optimized(). Previous versions trusted
+-- auth.users.raw_user_meta_data.role, which any signup can submit or update.
+-- Only the server-managed user_roles table is an authorization source.
+create or replace function public.is_admin_optimized()
+returns boolean
+language sql
+stable
+security definer
+set search_path = public, auth, extensions, pg_temp
+as $$
+  select public.is_current_user_admin();
+$$;
+
+revoke all on function public.is_admin_optimized() from public, anon;
+grant execute on function public.is_admin_optimized() to authenticated, service_role;

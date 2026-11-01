@@ -23,3 +23,16 @@ export function preparePatientLookup(userId: string | null, patientIdentifier: s
   const identifier = patientIdentifier.trim();
   return /^[\p{L}\p{N}_-]{3,80}$/u.test(identifier) ? identifier : null;
 }
+
+
+/** Sign-up metadata is public input, never an authorization or role source. */
+export function sanitizeSignupMetadata(metadata: {
+  first_name: string;
+  last_name: string;
+  role?: unknown;
+}): { first_name: string; last_name: string } {
+  return {
+    first_name: metadata.first_name.trim().slice(0, 100),
+    last_name: metadata.last_name.trim().slice(0, 100),
+  };
+}
