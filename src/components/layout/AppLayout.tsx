@@ -1,424 +1,257 @@
-import { ReactNode, useState } from 'react';
-import { useNavigate, useLocation, Link, useSearchParams } from 'react-router-dom';
-import { useTranslation } from 'react-i18next';
+import { type ReactNode, useEffect, useMemo, useState } from 'react';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
+import {
+  Activity, ArrowUpRight, Beaker, BookOpen, BrainCircuit, Calculator, ChartNoAxesCombined,
+  ChevronDown, Cloud, Cpu, Database, FlaskConical, HeartPulse, LayoutDashboard, LogOut,
+  Menu, Search, ShieldCheck, Users,
+  type LucideIcon,
+} from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
+import { useAI } from '@/contexts/AIContext';
+import { ThemeToggle } from '@/components/ThemeToggle';
+import { LanguageSelector } from '@/components/ui/language-selector';
 import { Button } from '@/components/ui/button';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel,
+  DropdownMenuSeparator, DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import {
-  Sheet,
-  SheetContent,
-  SheetTrigger,
-} from '@/components/ui/sheet';
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from "@/components/ui/collapsible";
-import {
-  Activity,
-  Search,
-  BookOpen,
-  LayoutDashboard,
-  Users,
-  Settings,
-  LogOut,
-  Stethoscope,
-  FlaskConical,
-  Shield,
-  Menu,
-  X,
-  Sparkles,
-  ChevronDown,
-  Database,
-  Calculator,
-  Beaker,
-  Network
-} from 'lucide-react';
+import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from '@/components/ui/sheet';
 import { cn } from '@/lib/utils';
-import { ThemeToggle } from '@/components/ThemeToggle';
-import { LanguageSelector } from '@/components/ui/language-selector';
-import { useAI } from '@/contexts/AIContext';
-import { useTheme } from 'next-themes';
-import CursorCSS from '@/components/nexus/CursorCSS';
-import { useEffect, useRef } from 'react';
-import { Cpu, Cloud } from 'lucide-react';
+import {
+  buildNavigation, getRouteInfo, isNavigationActive,
+  type WorkspaceGroup, type WorkspaceLink,
+} from './navigation';
 
-interface AppLayoutProps {
-  children: ReactNode;
+interface AppLayoutProps { children: ReactNode }
+
+const iconMap: Record<string, LucideIcon> = {
+  dashboard: LayoutDashboard,
+  patients: Users,
+  pathologies: BookOpen,
+  analysis: ChartNoAxesCombined,
+  search: Search,
+  discovery: BrainCircuit,
+  research: FlaskConical,
+  microsignals: Activity,
+  molecule: Beaker,
+  calculator: Calculator,
+  admin: ShieldCheck,
+  import: Database,
+};
+
+const roleLabel = {
+  admin: 'Administrateur',
+  doctor: 'Médecin',
+  researcher: 'Chercheur',
+} as const;
+
+function Brand({ compact = false }: { compact?: boolean }) {
+  return (
+    <Link to="/dashboard" className="flex min-w-0 items-center gap-3 rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary" aria-label="MediCore — Vue d’ensemble">
+      <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[13px] bg-primary text-primary-foreground shadow-sm">
+        <HeartPulse className="h-5 w-5" aria-hidden="true" />
+      </span>
+      {!compact && (
+        <span className="min-w-0 leading-tight">
+          <span className="block text-[17px] font-bold tracking-tight text-foreground">MediCore</span>
+          <span className="block text-[11px] font-medium text-muted-foreground">Espace clinique</span>
+        </span>
+      )}
+    </Link>
+  );
+}
+
+function NavigationItem({ item, pathname, onNavigate }: {
+  item: WorkspaceLink;
+  pathname: string;
+  onNavigate?: () => void;
+}) {
+  const Icon = iconMap[item.icon] ?? Activity;
+  const active = isNavigationActive(item.path, pathname);
+  return (
+    <Link
+      to={item.path}
+      onClick={onNavigate}
+      aria-current={active ? 'page' : undefined}
+      className={cn(
+        'group flex min-h-10 items-center gap-3 rounded-xl px-3 py-2.5 text-[13px] font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary',
+        active
+          ? 'bg-primary/10 text-primary shadow-[inset_3px_0_0_hsl(var(--primary))]'
+          : 'text-muted-foreground hover:bg-muted hover:text-foreground',
+      )}
+    >
+      <Icon className={cn('h-[18px] w-[18px] shrink-0', active ? 'text-primary' : 'text-muted-foreground group-hover:text-foreground')} aria-hidden="true" />
+      <span className="min-w-0 flex-1 truncate">{item.label}</span>
+      {active && <span className="sr-only">Page actuelle</span>}
+    </Link>
+  );
+}
+
+function Navigation({ groups, pathname, onNavigate, mobile = false }: {
+  groups: WorkspaceGroup[];
+  pathname: string;
+  onNavigate?: () => void;
+  mobile?: boolean;
+}) {
+  return (
+    <nav aria-label="Navigation principale" className="space-y-5">
+      {groups.map((group, index) => (
+        <div key={group.id}>
+          {index === 0 ? (
+            <div className="mb-2 px-3 text-[10px] font-bold uppercase tracking-[0.14em] text-muted-foreground/80">
+              {group.label}
+            </div>
+          ) : (
+            <details open={mobile || group.items.some(item => isNavigationActive(item.path, pathname))} className="group/section" key={`${group.id}-${mobile ? 'mobile' : 'desktop'}`}>
+              <summary className="mb-1 flex min-h-9 cursor-pointer list-none items-center justify-between rounded-lg px-3 text-[11px] font-bold uppercase tracking-[0.1em] text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary [&::-webkit-details-marker]:hidden">
+                {group.label}
+                <ChevronDown className="h-3.5 w-3.5 transition-transform group-open/section:rotate-180" aria-hidden="true" />
+              </summary>
+              <div className="space-y-1">
+                {group.items.map((item) => <NavigationItem key={item.id} item={item} pathname={pathname} onNavigate={onNavigate} />)}
+              </div>
+            </details>
+          )}
+          {index === 0 && (
+            <div className="space-y-1">
+              {group.items.map((item) => <NavigationItem key={item.id} item={item} pathname={pathname} onNavigate={onNavigate} />)}
+            </div>
+          )}
+        </div>
+      ))}
+    </nav>
+  );
 }
 
 const AppLayout = ({ children }: AppLayoutProps) => {
   const navigate = useNavigate();
   const location = useLocation();
-  const { t } = useTranslation();
   const { user, role, signOut } = useAuth();
-  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-  const { theme } = useTheme();
   const { llmMode, setLLMMode } = useAI();
-  const scrollRef = useRef<number>(0);
-
-  // Expanded menu structure
-  const menuGroups = [
-    {
-      title: "Clinique",
-      icon: Stethoscope,
-      items: [
-        { path: '/dashboard', label: t('nav.dashboard', 'Tableau de bord'), icon: LayoutDashboard },
-        { path: '/patients', label: t('nav.patients', 'Patients'), icon: Users },
-        { path: '/pathologies', label: t('nav.pathologies', 'Pathologies'), icon: BookOpen },
-      ]
-    },
-    {
-      title: "Recherche",
-      icon: FlaskConical,
-      items: [
-        { path: '/cross-data-analysis', label: t('analysis.crossDataAnalysis', 'Analyse Cross-Data'), icon: Network },
-        ...(role === 'admin' ? [{ path: '/research/microsignals', label: 'Laboratoire microsignaux · 50 cas fictifs', icon: Activity }] : []),
-        { path: '/continuous-discovery', label: 'Discovery Engine', icon: Sparkles },
-        { path: '/discovery-platform', label: 'Plateforme de Découverte', icon: Activity },
-      ]
-    },
-    {
-      title: "Outils",
-      icon: Beaker,
-      items: [
-        { path: '/tools/molecule-workbench', label: 'Molecule Workbench', icon: Beaker },
-        { path: '/tools/switch-calculator', label: 'Switch Calculator', icon: Calculator },
-        { path: '/search', label: t('common.search', 'Recherche Globale'), icon: Search },
-      ]
-    },
-    {
-      title: "Système",
-      icon: Settings,
-      items: [
-        { path: '/populate-data', label: 'Injection de Données', icon: Database },
-        { path: '/admin', label: t('nav.admin', 'Administration'), icon: Shield },
-      ]
-    }
-  ];
+  const [mobileOpen, setMobileOpen] = useState(false);
+  const groups = useMemo(() => buildNavigation(role), [role]);
+  const current = getRouteInfo(location.pathname);
+  const first = typeof user?.user_metadata?.first_name === 'string' ? user.user_metadata.first_name.trim() : '';
+  const last = typeof user?.user_metadata?.last_name === 'string' ? user.user_metadata.last_name.trim() : '';
+  const userDisplay = [first, last].filter(Boolean).join(' ') || user?.email || 'Compte utilisateur';
+  const initials = ([first?.[0], last?.[0]].filter(Boolean).join('') || user?.email?.[0] || 'U').toUpperCase();
 
   useEffect(() => {
-    document.body.classList.toggle('light-theme', theme === 'light');
-  }, [theme]);
+    setMobileOpen(false);
+  }, [location.pathname]);
 
-  // Subtle parallax scroll effect
   useEffect(() => {
-    const handleScroll = () => {
-      scrollRef.current = window.scrollY;
-      const parallaxBg = document.getElementById('parallax-bg');
-      if (parallaxBg) {
-        parallaxBg.style.transform = `translateY(${window.scrollY * 0.2}px)`;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') {
+        event.preventDefault();
+        navigate('/search');
       }
     };
-    window.addEventListener('scroll', handleScroll);
-    return () => window.removeEventListener('scroll', handleScroll);
-  }, []);
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [navigate]);
 
   const handleSignOut = async () => {
     await signOut();
     navigate('/auth');
   };
 
-  const getRoleIcon = () => {
-    switch (role) {
-      case 'doctor': return <Stethoscope className="h-4 w-4" />;
-      case 'researcher': return <FlaskConical className="h-4 w-4" />;
-      case 'admin': return <Shield className="h-4 w-4" />;
-      default: return null;
-    }
-  };
-
-  const getRoleLabel = () => {
-    switch (role) {
-      case 'doctor': return t('nav.doctor', 'Médecin');
-      case 'researcher': return t('nav.researcher', 'Chercheur');
-      case 'admin': return t('nav.admin', 'Administrateur');
-      default: return t('nav.user', 'Utilisateur');
-    }
-  };
-
-  const initials = user?.user_metadata?.first_name?.[0]?.toUpperCase() +
-    user?.user_metadata?.last_name?.[0]?.toUpperCase() || 'U';
-
-  const [mouseAtTop, setMouseAtTop] = useState(false);
-  const [searchParams] = useSearchParams();
-  const currentTab = searchParams.get('tab');
-
-  const isRadialGraphPage = location.pathname === '/continuous-discovery' && currentTab === 'radial';
-
-  useEffect(() => {
-    if (!isRadialGraphPage) return;
-
-    const handleMouseMove = (e: MouseEvent) => {
-      if (e.clientY < 40) {
-        setMouseAtTop(true);
-      }
-      else if (e.clientY > 80 && mouseAtTop) {
-        setMouseAtTop(false);
-      }
-    };
-    window.addEventListener('mousemove', handleMouseMove);
-    return () => window.removeEventListener('mousemove', handleMouseMove);
-  }, [mouseAtTop, isRadialGraphPage]);
-
-  // Force header visibility if not on radial graph page
-  const showHeader = !isRadialGraphPage || mouseAtTop;
-
   return (
-    <div className={cn(
-      "min-h-screen transition-colors duration-700 relative overflow-x-hidden",
-      theme === 'dark' ? 'bg-[#020617] text-slate-200' : 'bg-[#fcfdfe] text-slate-900'
-    )}>
-      <CursorCSS />
+    <div className="clinical-workspace min-h-screen bg-background text-foreground">
+      <a href="#clinical-main" className="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-[100] focus:rounded-lg focus:bg-card focus:px-4 focus:py-2 focus:text-foreground focus:shadow-lg">
+        Aller au contenu principal
+      </a>
 
-      <div id="parallax-bg" className="fixed inset-0 pointer-events-none overflow-hidden z-0">
-        <div className={cn(
-          "absolute top-0 right-0 w-[1000px] h-[1000px] blur-[140px] rounded-full -translate-y-1/2 translate-x-1/2 transition-colors duration-700",
-          theme === 'dark' ? 'bg-cyan-500/10' : 'bg-cyan-400/20'
-        )} />
-        <div className={cn(
-          "absolute bottom-0 left-0 w-[800px] h-[800px] blur-[120px] rounded-full translate-y-1/2 -translate-x-1/4 transition-colors duration-700",
-          theme === 'dark' ? 'bg-indigo-600/10' : 'bg-indigo-400/15'
-        )} />
-        <div className={cn(
-          "absolute inset-0 opacity-[0.03]",
-          theme === 'dark' ? 'invert-0' : 'invert'
-        )} style={{ backgroundImage: 'radial-gradient(#22d3ee 1px, transparent 1px)', backgroundSize: '40px 40px' }} />
-      </div>
+      {/* A calm, persistent navigation avoids multi-level dropdown hunting. */}
+      <aside className="fixed inset-y-0 left-0 z-30 hidden w-[252px] flex-col border-r border-border/80 bg-card/95 lg:flex" aria-label="Menu de l’espace clinique">
+        <div className="border-b border-border/70 px-6 py-5"><Brand /></div>
+        <div className="min-h-0 flex-1 overflow-y-auto px-3 py-6">
+          <Navigation groups={groups} pathname={location.pathname} />
+        </div>
+        <div className="border-t border-border/70 px-5 py-4">
+          <p className="text-[11px] leading-relaxed text-muted-foreground">Aide à l’analyse médicale · Les résultats nécessitent une validation clinique.</p>
+        </div>
+      </aside>
 
-      <div
-        className={cn(
-          "fixed top-0 left-0 right-0 h-2 z-[60]",
-          !isRadialGraphPage && "hidden"
-        )}
-        onMouseEnter={() => setMouseAtTop(true)}
-      />
-
-      <header className={cn(
-        "fixed top-0 z-[100] w-full border-b backdrop-blur-xl transition-all duration-500 ease-in-out transform",
-        !showHeader ? "-translate-y-full opacity-0" : "translate-y-0 opacity-100",
-        theme === 'dark'
-          ? "bg-[#020617]/80 border-white/5"
-          : "bg-white/80 border-slate-200/50"
-      )}>
-        <div className="container flex h-16 items-center justify-between px-4">
-          <div className="flex items-center gap-4">
-            {/* Mobile Menu */}
-            <Sheet open={mobileMenuOpen} onOpenChange={setMobileMenuOpen}>
-              <SheetTrigger asChild className="md:hidden">
-                <Button variant="ghost" size="icon" className="shrink-0">
+      <div className="min-w-0 lg:pl-[252px]">
+        <header className="sticky top-0 z-20 border-b border-border/75 bg-card/95 backdrop-blur-xl">
+          <div className="flex h-[70px] items-center gap-3 px-4 sm:px-6 lg:px-9">
+            <Sheet open={mobileOpen} onOpenChange={setMobileOpen}>
+              <SheetTrigger asChild>
+                <Button variant="ghost" size="icon" className="shrink-0 lg:hidden" aria-label="Ouvrir la navigation">
                   <Menu className="h-5 w-5" />
-                  <span className="sr-only">Menu</span>
                 </Button>
               </SheetTrigger>
-              <SheetContent side="left" className={cn(
-                "w-[300px] p-0 overflow-y-auto",
-                theme === 'dark' ? "bg-[#0a0f1a] border-white/10" : "bg-white border-slate-200"
-              )}>
-                <div className="flex flex-col min-h-full">
-                  <div className="p-6 border-b border-white/5">
-                    <div className="flex items-center gap-3">
-                      <div className="w-10 h-10 rounded-lg flex items-center justify-center font-black text-lg bg-cyan-500/20 border border-cyan-500/40 text-cyan-400">
-                        N
-                      </div>
-                      <div>
-                        <span className="text-lg font-bold text-cyan-400">NEXUS<span className="text-slate-500">MED</span></span>
-                      </div>
-                    </div>
-                  </div>
-
-                  <nav className="flex-1 p-4 space-y-2">
-                    {menuGroups.map((group, idx) => (
-                      <Collapsible key={idx} defaultOpen={idx === 0} className="space-y-2">
-                        <CollapsibleTrigger className="flex items-center justify-between w-full p-2 text-sm font-medium text-slate-400 hover:text-white transition-colors">
-                          <div className="flex items-center gap-2">
-                            <group.icon className="w-4 h-4" />
-                            {group.title}
-                          </div>
-                          <ChevronDown className="w-3 h-3 transition-transform duration-200" />
-                        </CollapsibleTrigger>
-                        <CollapsibleContent className="space-y-1 pl-6">
-                          {group.items.map((item) => (
-                            <Link
-                              key={item.path}
-                              to={item.path}
-                              onClick={() => setMobileMenuOpen(false)}
-                              className={cn(
-                                "flex items-center gap-2 p-2 rounded-md text-sm transition-colors",
-                                location.pathname === item.path
-                                  ? "bg-cyan-500/10 text-cyan-400"
-                                  : "text-slate-400 hover:text-slate-200 hover:bg-white/5"
-                              )}
-                            >
-                              <item.icon className="w-4 h-4" />
-                              {item.label}
-                            </Link>
-                          ))}
-                        </CollapsibleContent>
-                      </Collapsible>
-                    ))}
-                  </nav>
-
-                  <div className="p-4 border-t border-white/5 mt-auto">
-                    <Button
-                      variant="destructive"
-                      className="w-full gap-2"
-                      onClick={handleSignOut}
-                    >
-                      <LogOut className="h-4 w-4" />
-                      Se déconnecter
-                    </Button>
-                  </div>
+              <SheetContent side="left" className="flex w-[300px] flex-col overflow-y-auto p-0 sm:w-[320px]">
+                <SheetHeader className="border-b border-border px-5 py-5">
+                  <SheetTitle className="sr-only">Navigation MediCore</SheetTitle>
+                  <Brand />
+                </SheetHeader>
+                <div className="flex-1 px-3 py-5">
+                  <Navigation groups={groups} pathname={location.pathname} mobile onNavigate={() => setMobileOpen(false)} />
                 </div>
               </SheetContent>
             </Sheet>
 
-            <Link to="/dashboard" className="flex items-center gap-3">
-              <div className={cn(
-                "w-9 h-9 rounded-lg flex items-center justify-center font-black text-base",
-                theme === 'dark'
-                  ? "bg-cyan-500/20 border border-cyan-500/40 text-cyan-400"
-                  : "bg-cyan-600/10 border border-cyan-600/30 text-cyan-600"
-              )}>
-                N
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                <span className="hidden sm:inline">MediCore</span>
+                <span className="hidden sm:inline" aria-hidden="true">/</span>
+                <span>{current.section}</span>
+                {current.parentPath && <>
+                  <span aria-hidden="true">/</span>
+                  <Link to={current.parentPath} className="font-medium text-primary hover:underline">{getRouteInfo(current.parentPath).title}</Link>
+                </>}
               </div>
-              <span className={cn(
-                "text-lg font-bold hidden sm:inline",
-                theme === 'dark' ? "text-cyan-400" : "text-cyan-600"
-              )}>NEXUS<span className={theme === 'dark' ? "text-slate-300" : "text-slate-700"}>MED</span></span>
+              <p className="truncate text-sm font-semibold tracking-tight text-foreground sm:text-[15px]">{current.title}</p>
+            </div>
+
+            <Link to="/search" className="hidden min-h-9 items-center gap-2 rounded-xl border border-border bg-background/70 px-3 text-xs text-muted-foreground transition-colors hover:border-primary/40 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary md:flex" aria-label="Ouvrir la recherche médicale (Ctrl K)">
+              <Search className="h-4 w-4" aria-hidden="true" />
+              <span className="hidden xl:inline">Rechercher</span>
+              <kbd className="hidden rounded-md border border-border px-1.5 py-0.5 font-sans text-[10px] xl:inline">Ctrl K</kbd>
             </Link>
-
-            {/* Desktop Navigation */}
-            <nav className="hidden md:flex items-center gap-2 ml-6">
-              {menuGroups.map((group, idx) => (
-                <DropdownMenu key={idx}>
-                  <DropdownMenuTrigger asChild>
-                    <Button variant="ghost" size="sm" className="gap-2 text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-100">
-                      <group.icon className="w-4 h-4" />
-                      {group.title}
-                      <ChevronDown className="w-3 h-3 opacity-50" />
-                    </Button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="start" className="w-56 p-2">
-                    {group.items.map((item) => (
-                      <DropdownMenuItem key={item.path} asChild>
-                        <Link
-                          to={item.path}
-                          className={cn(
-                            "flex items-center gap-2 cursor-pointer",
-                            location.pathname === item.path && "bg-accent text-accent-foreground"
-                          )}
-                        >
-                          <item.icon className="w-4 h-4 text-muted-foreground" />
-                          <span>{item.label}</span>
-                        </Link>
-                      </DropdownMenuItem>
-                    ))}
-                  </DropdownMenuContent>
-                </DropdownMenu>
-              ))}
-            </nav>
-          </div>
-
-          <div className="flex items-center gap-2">
-            {/* LLM Mode Switcher */}
-            <Button
-              variant="ghost"
-              size="sm"
-              className={cn(
-                "gap-2 px-3 border border-transparent transition-all duration-300",
-                llmMode === 'local'
-                  ? "bg-purple-500/10 text-purple-400 border-purple-500/30 hover:bg-purple-500/20"
-                  : "text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-100"
-              )}
-              onClick={() => setLLMMode(llmMode === 'cloud' ? 'local' : 'cloud')}
-              title={llmMode === 'cloud' ? "Mode IA: Cloud OpenAI" : "Mode IA: Local (Meditron)"}
-            >
-              {llmMode === 'cloud' ? <Cloud className="h-4 w-4" /> : <Cpu className="h-4 w-4" />}
-              <span className="hidden lg:inline text-xs font-semibold uppercase tracking-wider">
-                {llmMode === 'cloud' ? 'Cloud' : 'Local'}
-              </span>
-            </Button>
-
-            <LanguageSelector />
+            <div className="hidden sm:block"><LanguageSelector /></div>
             <ThemeToggle />
 
-            {/* User Menu */}
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <Button variant="ghost" className="gap-2 px-2">
-                  <Avatar className="h-8 w-8">
-                    <AvatarFallback className="bg-primary text-primary-foreground text-sm">
-                      {initials}
-                    </AvatarFallback>
+                <Button variant="ghost" className="h-10 gap-2 rounded-xl px-1.5 sm:px-2" aria-label="Ouvrir le menu du compte">
+                  <Avatar className="h-8 w-8 border border-primary/15">
+                    <AvatarFallback className="bg-primary/10 text-xs font-bold text-primary">{initials}</AvatarFallback>
                   </Avatar>
-                  <span className="hidden sm:inline-block text-sm">
-                    {user?.user_metadata?.first_name}
-                  </span>
+                  <span className="hidden max-w-32 truncate text-xs font-semibold xl:inline">{first || 'Compte'}</span>
+                  <ChevronDown className="hidden h-3 w-3 text-muted-foreground sm:block" aria-hidden="true" />
                 </Button>
               </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-56 bg-popover border-border">
-                <DropdownMenuLabel className="font-normal">
-                  <div className="flex flex-col space-y-1">
-                    <p className="text-sm font-medium leading-none">
-                      {user?.user_metadata?.first_name} {user?.user_metadata?.last_name}
-                    </p>
-                    <p className="text-xs leading-none text-muted-foreground">
-                      {user?.email}
-                    </p>
-                    <div className="flex items-center gap-1 pt-1 text-xs text-muted-foreground">
-                      {getRoleIcon()}
-                      {getRoleLabel()}
-                    </div>
-                  </div>
+              <DropdownMenuContent align="end" className="w-64 rounded-2xl p-2 shadow-xl">
+                <DropdownMenuLabel className="space-y-1 px-3 py-2 font-normal">
+                  <div className="truncate text-sm font-semibold text-foreground">{userDisplay}</div>
+                  <div className="truncate text-xs text-muted-foreground">{user?.email}</div>
+                  <div className="text-xs font-medium text-primary">{role ? roleLabel[role] : 'Accès limité'}</div>
                 </DropdownMenuLabel>
-                <DropdownMenuSeparator className="bg-border" />
-                <DropdownMenuItem onClick={handleSignOut} className="text-destructive focus:text-destructive">
-                  <LogOut className="mr-2 h-4 w-4" />
-                  Se déconnecter
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onClick={() => navigate('/dashboard')} className="gap-2 rounded-lg"><LayoutDashboard className="h-4 w-4" /> Tableau de bord</DropdownMenuItem>
+                <DropdownMenuItem onClick={() => setLLMMode(llmMode === 'cloud' ? 'local' : 'cloud')} className="gap-2 rounded-lg">
+                  {llmMode === 'cloud' ? <Cloud className="h-4 w-4" /> : <Cpu className="h-4 w-4" />}
+                  Préférence IA : {llmMode === 'cloud' ? 'Cloud' : 'Local'}
                 </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onClick={handleSignOut} className="gap-2 rounded-lg text-destructive focus:text-destructive"><LogOut className="h-4 w-4" /> Se déconnecter</DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
           </div>
-        </div>
-      </header>
+        </header>
 
-      {/* Main Content */}
-      <main className={cn(
-        "container py-4 md:py-6 px-4 animate-fade-in relative z-10",
-        !isRadialGraphPage ? "pt-24" : "pt-4"
-      )}>
-        {children}
-      </main>
-
-      {/* Footer / Status Bar (Nexus Style) */}
-      <footer className={cn(
-        "fixed bottom-0 left-0 right-0 h-8 backdrop-blur-md border-t border-white/5 flex items-center justify-between px-6 z-[100] overflow-hidden text-[9px] uppercase tracking-widest",
-        theme === 'dark' ? 'bg-[#020617]/80 text-slate-400' : 'bg-white/80 text-slate-500'
-      )}>
-        <div className="flex items-center gap-6">
-          <div className="flex items-center gap-2">
-            <div className="w-1.5 h-1.5 bg-green-500 rounded-full animate-pulse shadow-[0_0_8px_#22c55e]" />
-            <span className="font-bold">Status: Optimal</span>
-          </div>
-          <div className="h-3 w-px bg-white/10" />
-          <span>AES-256</span>
-          <div className="h-3 w-px bg-white/10" />
-          <span>v2.4.0</span>
+        <main id="clinical-main" tabIndex={-1} className="mx-auto w-full max-w-[1640px] px-4 pb-16 pt-7 outline-none sm:px-6 lg:px-9 lg:pt-9">
+          {children}
+        </main>
+        <div className="mx-auto flex max-w-[1640px] items-center justify-between border-t border-border/55 px-4 py-5 text-[11px] text-muted-foreground sm:px-6 lg:px-9">
+          <span>MediCore · Espace clinique</span>
+          <span className="flex items-center gap-1"><ArrowUpRight className="h-3 w-3" aria-hidden="true" /> Aide à la décision</span>
         </div>
-        <div className="flex items-center gap-6 font-mono">
-          <span className="hidden md:inline">Health Index: 98%</span>
-          <span className="text-slate-500">© 2026 NexusMed</span>
-        </div>
-      </footer>
+      </div>
     </div>
   );
 };

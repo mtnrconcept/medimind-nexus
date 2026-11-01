@@ -1,388 +1,213 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { useAuth } from '@/hooks/useAuth';
-import { useAutoTranslation } from '@/contexts/TranslationContext';
+import {
+  ArrowRight, ArrowUpRight, BookOpen, ChartNoAxesCombined,
+  CheckCircle2, ChevronRight, FileText, HeartPulse, Search,
+  ShieldCheck, Stethoscope, Users, type LucideIcon,
+} from 'lucide-react';
 import AppLayout from '@/components/layout/AppLayout';
+import { useAuth } from '@/hooks/useAuth';
+import { supabase } from '@/integrations/supabase/client';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { supabase } from '@/integrations/supabase/client';
-import { useTheme } from 'next-themes';
-import { cn } from '@/lib/utils';
-import {
-  Users,
-  Brain,
-  Activity,
-  TrendingUp,
-  Stethoscope,
-  Heart,
-  FileText,
-  BarChart3,
-  Sparkles,
-  ArrowRight,
-} from 'lucide-react';
+import { Badge } from '@/components/ui/badge';
+import { Skeleton } from '@/components/ui/skeleton';
+import { displayCount, displayPatientName, getGreeting } from '@/lib/dashboardSummary';
 
-interface Stats {
-  totalPatients: number;
-  criticalAlerts: number;
-  aiAnalyses: number;
-  activeMonitoring: number;
+type RecentPatient = {
+  id: string;
+  patient_id: string;
+  first_name: string | null;
+  last_name: string | null;
+  created_at: string | null;
+  age: number | null;
+  pathologies: { name: string } | null;
+};
+
+interface Overview {
+  patientCount: number | null;
+  pathologyCount: number | null;
+  recentPatients: RecentPatient[];
+  error: string | null;
 }
+
+const overviewEmpty: Overview = { patientCount: null, pathologyCount: null, recentPatients: [], error: null };
+
+const shortcuts: { title: string; description: string; path: string; icon: LucideIcon; eyebrow: string }[] = [
+  { title: 'Dossiers patients', description: 'Consulter les informations et le suivi clinique.', path: '/patients', icon: Users, eyebrow: 'Prise en charge' },
+  { title: 'Index des pathologies', description: 'Rechercher un diagnostic ou une référence.', path: '/pathologies', icon: BookOpen, eyebrow: 'Connaissances' },
+  { title: 'Analyses croisées', description: 'Comparer les données de dossiers autorisés.', path: '/cross-data-analysis', icon: ChartNoAxesCombined, eyebrow: 'Analyse' },
+  { title: 'Recherche médicale', description: 'Explorer des symptômes et des sources médicales.', path: '/search', icon: Search, eyebrow: 'Recherche' },
+];
 
 const Dashboard = () => {
   const { user } = useAuth();
-  const { t } = useAutoTranslation();
-  const { theme } = useTheme();
-  const [stats, setStats] = useState<Stats>({
-    totalPatients: 0,
-    criticalAlerts: 0,
-    aiAnalyses: 0,
-    activeMonitoring: 0,
-  });
-  const [scrollY, setScrollY] = useState(0);
+  const [overview, setOverview] = useState<Overview>(overviewEmpty);
+  const [loading, setLoading] = useState(true);
+  const [refresh, setRefresh] = useState(0);
+  const firstName = typeof user?.user_metadata?.first_name === 'string' ? user.user_metadata.first_name.trim() : '';
 
   useEffect(() => {
-    const handleScroll = () => setScrollY(window.scrollY);
-    window.addEventListener('scroll', handleScroll);
-    return () => window.removeEventListener('scroll', handleScroll);
-  }, []);
-
-  useEffect(() => {
-    const fetchStats = async () => {
-      const { count } = await supabase
-        .from('patients')
-        .select('*', { count: 'exact', head: true });
-
-      setStats({
-        totalPatients: count || 0,
-        criticalAlerts: 12,
-        aiAnalyses: 847,
-        activeMonitoring: 34,
+    let active = true;
+    const fetchOverview = async () => {
+      setLoading(true);
+      const [patients, pathologies, recent] = await Promise.all([
+        supabase.from('patients').select('id', { count: 'exact', head: true }),
+        supabase.from('pathologies').select('id', { count: 'exact', head: true }),
+        supabase.from('patients').select('id, patient_id, first_name, last_name, age, created_at, pathologies(name)').order('created_at', { ascending: false }).limit(5),
+      ]);
+      if (!active) return;
+      setOverview({
+        patientCount: patients.error ? null : patients.count,
+        pathologyCount: pathologies.error ? null : pathologies.count,
+        recentPatients: recent.error ? [] : (recent.data || []) as unknown as RecentPatient[],
+        error: patients.error || pathologies.error || recent.error
+          ? 'Certaines informations n’ont pas pu être chargées. Vérifiez votre connexion et vos droits d’accès.'
+          : null,
       });
+      setLoading(false);
     };
-    fetchStats();
-  }, []);
-
-  const getGreeting = () => {
-    const hour = new Date().getHours();
-    if (hour < 12) return t('Bonjour');
-    if (hour < 18) return t('Bon après-midi');
-    return t('Bonsoir');
-  };
-
-  const tools = [
-    {
-      title: t('Index des Pathologies'),
-      description: t('Consultez la base de données complète des pathologies avec leurs symptômes, traitements et protocoles'),
-      icon: FileText,
-      link: '/pathologies',
-      color: 'from-cyan-500 to-blue-500',
-      stats: t('10,000+ pathologies'),
-    },
-    {
-      title: t('Recherche par Symptômes'),
-      description: t('Identifiez les pathologies potentielles à partir d\'une liste de symptômes observés'),
-      icon: Stethoscope,
-      link: '/search',
-      color: 'from-blue-500 to-indigo-500',
-      stats: t('1,800+ symptômes'),
-    },
-    {
-      title: t('Analyse Croisée des Données'),
-      description: t('Croisez les données de plusieurs patients pour identifier des patterns et corrélations'),
-      icon: BarChart3,
-      link: '/cross-data-analysis',
-      color: 'from-indigo-500 to-purple-500',
-      stats: t('Analyse comparative'),
-    },
-    {
-      title: t('Analyse IA Live'),
-      description: t('Intelligence artificielle en temps réel pour l\'analyse des données médicales'),
-      icon: Brain,
-      link: '/continuous-discovery?tab=analyze',
-      color: 'from-purple-500 to-pink-500',
-      stats: t('IA conversationnelle'),
-    },
-    {
-      title: t('Découvertes'),
-      description: t('Explorez les dernières découvertes médicales et liens sémantiques entre pathologies'),
-      icon: Sparkles,
-      link: '/continuous-discovery?tab=feed',
-      color: 'from-pink-500 to-rose-500',
-      stats: t('Exploration continue'),
-    },
-    {
-      title: t('Outils Cliniques'),
-      description: t('Suite d\'outils cliniques: calculateurs, scores, interactions médicamenteuses'),
-      icon: Heart,
-      link: '/continuous-discovery?tab=tools',
-      color: 'from-rose-500 to-orange-500',
-      stats: t('Outils intégrés'),
-    },
-    {
-      title: t('Moteur de Découverte'),
-      description: t('Moteur IA pour découvrir de nouvelles connexions médicales et hypothèses'),
-      icon: TrendingUp,
-      link: '/continuous-discovery?tab=discovery',
-      color: 'from-orange-500 to-amber-500',
-      stats: t('Génération de connexions'),
-    },
-    {
-      title: t('Radial 3D'),
-      description: t('Visualisation 3D interactive des relations entre pathologies, symptômes et traitements'),
-      icon: Activity,
-      link: '/continuous-discovery?tab=radial',
-      color: 'from-amber-500 to-cyan-500',
-      stats: t('Graphe sémantique'),
-    },
-    {
-      title: t('Analyse Systématique'),
-      description: t('Analyse systématique approfondie avec génération de rapports cliniques complets'),
-      icon: Users,
-      link: '/continuous-discovery?tab=systematic',
-      color: 'from-teal-500 to-cyan-500',
-      stats: t('Rapports IA'),
-    },
-  ];
+    void fetchOverview();
+    return () => { active = false; };
+  }, [refresh]);
 
   return (
     <AppLayout>
-      {/* Parallax Background - Theme Aware */}
-      <div className="fixed inset-0 -z-10 overflow-hidden">
-        <div
-          className={cn(
-            "absolute inset-0",
-            theme === 'dark'
-              ? "bg-gradient-to-br from-[#020617] via-[#0f172a] to-[#1e1b4b]"
-              : "bg-gradient-to-br from-cyan-50 via-blue-50 to-indigo-50"
-          )}
-          style={{ transform: `translateY(${scrollY * 0.5}px)` }}
-        />
-        <div
-          className="absolute top-0 left-0 w-full h-full opacity-30"
-          style={{ transform: `translateY(${scrollY * 0.3}px)` }}
-        >
-          <div className={cn(
-            "absolute top-20 left-10 w-72 h-72 rounded-full filter blur-3xl animate-blob",
-            theme === 'dark' ? "bg-cyan-500/20" : "bg-cyan-400 mix-blend-multiply opacity-20"
-          )} />
-          <div className={cn(
-            "absolute top-40 right-10 w-72 h-72 rounded-full filter blur-3xl animate-blob animation-delay-2000",
-            theme === 'dark' ? "bg-purple-500/20" : "bg-blue-400 mix-blend-multiply opacity-20"
-          )} />
-          <div className={cn(
-            "absolute -bottom-8 left-1/2 w-72 h-72 rounded-full filter blur-3xl animate-blob animation-delay-4000",
-            theme === 'dark' ? "bg-indigo-500/20" : "bg-indigo-400 mix-blend-multiply opacity-20"
-          )} />
-        </div>
-      </div>
-
-      <div className="space-y-4 sm:space-y-6 md:space-y-8 pb-8 md:pb-12 px-2 sm:px-0">
-        {/* Hero Section with Glassmorphism */}
-        <div className={cn(
-          "relative overflow-hidden rounded-xl sm:rounded-2xl md:rounded-3xl backdrop-blur-xl border shadow-2xl",
-          theme === 'dark'
-            ? "bg-[#0f172a]/80 border-white/10"
-            : "bg-gradient-to-br from-cyan-500/10 via-blue-500/10 to-indigo-500/10 border-white/20"
-        )}>
-          <div className={cn(
-            "absolute inset-0",
-            theme === 'dark' ? "bg-gradient-to-br from-cyan-500/5 to-purple-500/5" : "bg-white/5"
-          )} />
-          <div className="relative p-4 sm:p-6 md:p-8 lg:p-12">
-            <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-6">
-              <div className="space-y-4">
-                <div className={cn(
-                  "inline-flex items-center gap-2 px-4 py-2 rounded-full backdrop-blur-sm border",
-                  theme === 'dark'
-                    ? "bg-cyan-500/10 border-cyan-500/30"
-                    : "bg-white/20 border-white/30"
-                )}>
-                  <Sparkles className={cn("h-4 w-4", theme === 'dark' ? "text-cyan-400" : "text-cyan-600")} />
-                  <span className={cn("text-sm font-medium", theme === 'dark' ? "text-cyan-300" : "text-cyan-900")}>MediMind Nexus</span>
-                </div>
-                <h1 className={cn(
-                  "text-2xl sm:text-3xl md:text-4xl lg:text-5xl font-bold bg-clip-text text-transparent",
-                  theme === 'dark'
-                    ? "bg-gradient-to-r from-cyan-400 via-blue-400 to-purple-400"
-                    : "bg-gradient-to-r from-cyan-600 via-blue-600 to-indigo-600"
-                )}>
-                  {getGreeting()}, {user?.user_metadata?.first_name || 'Docteur'}
-                </h1>
-                <p className={cn(
-                  "text-sm sm:text-base md:text-lg max-w-2xl",
-                  theme === 'dark' ? "text-slate-400" : "text-slate-600"
-                )}>
-                  {t('Plateforme médicale intelligente avec IA, visualisation 3D et analyse prédictive')}
-                </p>
-              </div>
-              <div className="flex flex-wrap gap-2 sm:gap-3">
-                <Link to="/patients">
-                  <Button size="default" className="gap-1.5 sm:gap-2 bg-gradient-to-r from-cyan-500 to-blue-500 hover:from-cyan-600 hover:to-blue-600 text-white shadow-lg shadow-cyan-500/50 touch-manipulation text-sm sm:text-base">
-                    <Users className="h-4 w-4 sm:h-5 sm:w-5" />
-                    Patients
-                  </Button>
-                </Link>
-                <Link to="/pathologies">
-                  <Button size="default" variant="outline" className="gap-1.5 sm:gap-2 border-2 border-cyan-200 hover:bg-cyan-50 touch-manipulation text-sm sm:text-base">
-                    <FileText className="h-4 w-4 sm:h-5 sm:w-5" />
-                    Index
-                  </Button>
-                </Link>
-              </div>
-            </div>
+      <div className="clinical-page">
+        <div className="flex flex-col gap-5 sm:flex-row sm:items-end sm:justify-between">
+          <div className="space-y-2">
+            <p className="clinical-eyebrow">Votre espace de travail</p>
+            <h1 className="text-[clamp(1.7rem,3vw,2.35rem)] font-bold tracking-tight">
+              {getGreeting(new Date().getHours())}{firstName ? `, ${firstName}` : ''}
+            </h1>
+            <p className="max-w-2xl text-sm leading-relaxed text-muted-foreground">
+              Accédez rapidement à vos dossiers, recherchez une pathologie ou lancez une analyse.
+            </p>
           </div>
+          <Button asChild className="h-11 shrink-0 gap-2 shadow-sm">
+            <Link to="/patients"><Users className="h-4 w-4" /> Ouvrir les dossiers <ArrowRight className="h-4 w-4" /></Link>
+          </Button>
         </div>
 
-        {/* Stats Cards with Glassmorphism */}
-        <div className="grid gap-3 sm:gap-4 md:gap-6 grid-cols-2 lg:grid-cols-4">
-          {[
-            { label: 'Patients', value: stats.totalPatients, icon: Users, color: 'cyan' },
-            { label: 'Alertes Critiques', value: stats.criticalAlerts, icon: Activity, color: 'blue' },
-            { label: 'Analyses IA', value: stats.aiAnalyses, icon: Brain, color: 'indigo' },
-            { label: 'Surveillance Active', value: stats.activeMonitoring, icon: Stethoscope, color: 'purple' },
-          ].map((stat, idx) => (
-            <div
-              key={idx}
-              className={cn(
-                "group relative overflow-hidden rounded-2xl backdrop-blur-xl border shadow-xl hover:shadow-2xl transition-all duration-300 hover:-translate-y-1",
-                theme === 'dark'
-                  ? "bg-[#0f172a]/80 border-white/10"
-                  : "bg-white/40 border-white/20"
+        {overview.error && (
+          <div role="alert" className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-warning/30 bg-warning/10 px-4 py-3 text-sm text-foreground">
+            <span>{overview.error}</span>
+            <Button variant="outline" size="sm" onClick={() => setRefresh(n => n + 1)}>Réessayer</Button>
+          </div>
+        )}
+
+        <section aria-label="Vue d’ensemble des données accessibles" className="grid gap-4 md:grid-cols-3">
+          <Card className="overflow-hidden border-primary/15 bg-gradient-to-br from-primary/[0.08] via-card to-card shadow-sm md:col-span-1">
+            <CardContent className="flex h-full flex-col justify-between gap-7 p-6">
+              <div className="flex items-start justify-between">
+                <span className="flex h-11 w-11 items-center justify-center rounded-2xl bg-primary text-primary-foreground"><Stethoscope className="h-5 w-5" /></span>
+                <Badge variant="outline" className="border-primary/20 bg-card text-primary">Mon espace clinique</Badge>
+              </div>
+              <div className="space-y-2">
+                <h2 className="text-lg font-bold">Prendre en charge un patient</h2>
+                <p className="text-sm leading-relaxed text-muted-foreground">Consultez le dossier, les analyses disponibles et les comparaisons cliniques autorisées.</p>
+                <Link to="/patients" className="inline-flex items-center gap-1 pt-2 text-sm font-semibold text-primary hover:underline">
+                  Accéder aux patients <ArrowUpRight className="h-4 w-4" />
+                </Link>
+              </div>
+            </CardContent>
+          </Card>
+          <Card className="md:col-span-1">
+            <CardContent className="flex h-full flex-col justify-between gap-8 p-6">
+              <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-secondary text-primary"><Users className="h-5 w-5" /></div>
+              <div>
+                <p className="text-sm font-medium text-muted-foreground">Dossiers patients accessibles</p>
+                {loading ? <Skeleton className="mt-3 h-12 w-24" /> : <p className="mt-3 text-4xl font-bold tracking-tight tabular-nums">{displayCount(overview.patientCount)}</p>}
+                <p className="mt-2 text-xs text-muted-foreground">Comptage réel selon les droits de votre session</p>
+              </div>
+            </CardContent>
+          </Card>
+          <Card className="md:col-span-1">
+            <CardContent className="flex h-full flex-col justify-between gap-8 p-6">
+              <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-secondary text-primary"><BookOpen className="h-5 w-5" /></div>
+              <div>
+                <p className="text-sm font-medium text-muted-foreground">Pathologies dans l’index</p>
+                {loading ? <Skeleton className="mt-3 h-12 w-24" /> : <p className="mt-3 text-4xl font-bold tracking-tight tabular-nums">{displayCount(overview.pathologyCount)}</p>}
+                <p className="mt-2 text-xs text-muted-foreground">Référentiel disponible pour votre session</p>
+              </div>
+            </CardContent>
+          </Card>
+        </section>
+
+        <section className="grid gap-5 xl:grid-cols-[minmax(0,1.45fr)_minmax(320px,1fr)]" aria-labelledby="recent-records-heading">
+          <Card className="overflow-hidden">
+            <CardHeader className="flex flex-row items-center justify-between border-b border-border/70 px-6 py-5">
+              <div className="space-y-1">
+                <CardTitle id="recent-records-heading" className="text-base font-bold">Dossiers récents</CardTitle>
+                <p className="text-xs text-muted-foreground">Derniers patients visibles par votre compte</p>
+              </div>
+              <Button variant="ghost" size="sm" asChild><Link to="/patients">Tout voir <ArrowRight className="h-4 w-4" /></Link></Button>
+            </CardHeader>
+            <CardContent className="p-2 sm:p-3">
+              {loading ? (
+                <div className="space-y-3 p-3">{[0,1,2].map(n=><Skeleton key={n} className="h-14 w-full rounded-xl" />)}</div>
+              ) : overview.recentPatients.length === 0 ? (
+                <div className="flex flex-col items-center gap-2 px-5 py-12 text-center"><FileText className="h-8 w-8 text-muted-foreground/50" /><p className="font-medium">Aucun dossier récent accessible</p><p className="text-xs text-muted-foreground">Les dossiers autorisés apparaîtront ici.</p></div>
+              ) : (
+                <ul className="divide-y divide-border/55">
+                  {overview.recentPatients.map((patient) => (
+                    <li key={patient.id}>
+                      <Link to={`/patients/${patient.id}`} className="group flex min-h-[72px] items-center gap-3 rounded-xl px-3 py-3 transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary">
+                        <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-secondary text-primary"><FileText className="h-4 w-4" /></span>
+                        <span className="min-w-0 flex-1">
+                          <span className="block truncate text-sm font-semibold text-foreground">{displayPatientName(patient)}</span>
+                          <span className="block truncate text-xs text-muted-foreground">{patient.pathologies?.name || 'Diagnostic non précisé'} · {patient.patient_id}</span>
+                        </span>
+                        <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground group-hover:text-primary" aria-hidden="true" />
+                      </Link>
+                    </li>
+                  ))}
+                </ul>
               )}
-            >
-              <div className={cn(
-                "absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity",
-                theme === 'dark' ? "bg-gradient-to-br from-cyan-500/10 to-purple-500/10" : "bg-gradient-to-br from-white/50 to-transparent"
-              )} />
-              <div className="relative p-6">
-                <div className="flex items-center justify-between mb-4">
-                  <div className={`p-3 rounded-xl bg-gradient-to-br from-${stat.color}-400/20 to-${stat.color}-500/20`}>
-                    <stat.icon className={`h-6 w-6 text-${stat.color}-${theme === 'dark' ? '400' : '600'}`} />
-                  </div>
-                  <TrendingUp className="h-4 w-4 text-green-500" />
+            </CardContent>
+          </Card>
+          <Card>
+            <CardHeader className="border-b border-border/70 px-6 py-5">
+              <CardTitle className="text-base font-bold">Repères de travail</CardTitle>
+              <p className="text-xs text-muted-foreground">Une progression simple, du dossier à l’analyse</p>
+            </CardHeader>
+            <CardContent className="space-y-5 px-6 py-6">
+              {[
+                { icon: Users, title: 'Ouvrir un dossier', description: 'Partir des données du patient.' },
+                { icon: ChartNoAxesCombined, title: 'Comparer les parcours', description: 'Rechercher des antécédents similaires.' },
+                { icon: CheckCircle2, title: 'Vérifier les conclusions', description: 'Interpréter les résultats avec un professionnel.' },
+              ].map(({ icon: Icon, title, description }, index) => (
+                <div key={title} className="flex gap-3">
+                  <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-border bg-muted text-primary"><Icon className="h-4 w-4" /></span>
+                  <div><p className="text-sm font-semibold">{index + 1}. {title}</p><p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">{description}</p></div>
                 </div>
-                <div className="space-y-1">
-                  <p className={cn("text-sm font-medium", theme === 'dark' ? "text-slate-400" : "text-slate-600")}>{stat.label}</p>
-                  <p className={cn(
-                    "text-3xl font-bold bg-clip-text text-transparent",
-                    theme === 'dark'
-                      ? "bg-gradient-to-r from-cyan-400 to-blue-400"
-                      : "bg-gradient-to-r from-cyan-600 to-blue-600"
-                  )}>
-                    {stat.value}
-                  </p>
-                </div>
+              ))}
+              <div className="mt-2 flex items-start gap-2 rounded-xl border border-primary/15 bg-primary/[0.05] p-3 text-xs leading-relaxed text-muted-foreground">
+                <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-primary" aria-hidden="true" />
+                Les outils d’analyse assistent la décision : ils ne remplacent pas une validation clinique.
               </div>
-            </div>
-          ))}
-        </div>
+            </CardContent>
+          </Card>
+        </section>
 
-        {/* Tools Grid */}
-        <div>
-          <div className="mb-4 sm:mb-6">
-            <h2 className={cn("text-xl sm:text-2xl font-bold mb-1 sm:mb-2", theme === 'dark' ? "text-white" : "text-slate-800")}>Outils Disponibles</h2>
-            <p className={cn("text-sm sm:text-base", theme === 'dark' ? "text-slate-400" : "text-slate-600")}>Explorez toutes les fonctionnalités de la plateforme</p>
+        <section aria-labelledby="tools-heading" className="space-y-4">
+          <div className="flex flex-wrap items-end justify-between gap-2">
+            <div><h2 id="tools-heading" className="clinical-section-heading">Aller plus loin</h2><p className="mt-1 text-sm text-muted-foreground">Accès direct aux principales fonctionnalités</p></div>
+            <Badge variant="secondary" className="gap-1.5 text-[11px]"><HeartPulse className="h-3.5 w-3.5" /> Espace de travail</Badge>
           </div>
-
-          <div className="grid gap-3 sm:gap-4 md:gap-6 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-            {tools.map((tool, idx) => (
-              <Link key={idx} to={tool.link}>
-                <div className={cn(
-                  "group h-full relative overflow-hidden rounded-2xl backdrop-blur-xl border shadow-xl hover:shadow-2xl transition-all duration-300 hover:-translate-y-2",
-                  theme === 'dark'
-                    ? "bg-[#0f172a]/80 border-white/10"
-                    : "bg-white/40 border-white/20"
-                )}>
-                  {/* Gradient Overlay */}
-                  <div className={`absolute inset-0 bg-gradient-to-br ${tool.color} opacity-0 group-hover:opacity-10 transition-opacity`} />
-
-                  {/* Content */}
-                  <div className="relative p-6 h-full flex flex-col">
-                    {/* Icon */}
-                    <div className={`mb-4 p-3 rounded-xl bg-gradient-to-br ${tool.color} w-fit`}>
-                      <tool.icon className="h-6 w-6 text-white" />
-                    </div>
-
-                    {/* Title */}
-                    <h3 className={cn(
-                      "text-lg font-bold mb-2 transition-colors",
-                      theme === 'dark' ? "text-white group-hover:text-cyan-400" : "text-slate-800 group-hover:text-cyan-600"
-                    )}>
-                      {tool.title}
-                    </h3>
-
-                    {/* Description */}
-                    <p className={cn("text-sm mb-4 flex-1 line-clamp-3", theme === 'dark' ? "text-slate-400" : "text-slate-600")}>
-                      {tool.description}
-                    </p>
-
-                    {/* Stats */}
-                    <div className={cn(
-                      "flex items-center justify-between pt-4 border-t",
-                      theme === 'dark' ? "border-slate-700/50" : "border-slate-200/50"
-                    )}>
-                      <span className={cn("text-xs font-medium", theme === 'dark' ? "text-slate-500" : "text-slate-500")}>{tool.stats}</span>
-                      <ArrowRight className="h-4 w-4 text-cyan-500 transform group-hover:translate-x-1 transition-transform" />
-                    </div>
-                  </div>
-                </div>
+          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+            {shortcuts.map(({ title, description, path, icon: Icon, eyebrow }) => (
+              <Link key={path} to={path} className="group rounded-2xl border border-border/80 bg-card p-5 shadow-sm transition-all hover:-translate-y-0.5 hover:border-primary/35 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary">
+                <span className="flex items-center justify-between"><span className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary/10 text-primary"><Icon className="h-5 w-5" /></span><ArrowUpRight className="h-4 w-4 text-muted-foreground group-hover:text-primary" /></span>
+                <span className="mt-5 block text-[10px] font-bold uppercase tracking-[0.13em] text-primary">{eyebrow}</span>
+                <span className="mt-1 block text-sm font-bold text-foreground">{title}</span>
+                <span className="mt-1.5 block text-xs leading-relaxed text-muted-foreground">{description}</span>
               </Link>
             ))}
           </div>
-        </div>
-
-        {/* Quick Actions */}
-        <div className={cn(
-          "rounded-xl sm:rounded-2xl backdrop-blur-xl border shadow-xl p-4 sm:p-6 md:p-8",
-          theme === 'dark'
-            ? "bg-[#0f172a]/80 border-white/10"
-            : "bg-gradient-to-br from-cyan-500/10 via-blue-500/10 to-indigo-500/10 border-white/20"
-        )}>
-          <h2 className={cn("text-xl sm:text-2xl font-bold mb-4 sm:mb-6", theme === 'dark' ? "text-white" : "text-slate-800")}>Actions Rapides</h2>
-          <div className="grid gap-3 sm:gap-4 grid-cols-1 sm:grid-cols-3">
-            <Link to="/patients">
-              <div className="group p-6 rounded-xl bg-white/50 backdrop-blur-sm border border-white/30 hover:bg-white/70 transition-all cursor-pointer">
-                <Users className="h-8 w-8 text-cyan-600 mb-3" />
-                <h3 className="font-semibold text-slate-800 mb-1">Nouveau Patient</h3>
-                <p className="text-sm text-slate-600">Créer un dossier patient</p>
-              </div>
-            </Link>
-            <Link to="/patients">
-              <div className="group p-6 rounded-xl bg-white/50 backdrop-blur-sm border border-white/30 hover:bg-white/70 transition-all cursor-pointer">
-                <Brain className="h-8 w-8 text-blue-600 mb-3" />
-                <h3 className="font-semibold text-slate-800 mb-1">Analyse IA</h3>
-                <p className="text-sm text-slate-600">Lancer une analyse</p>
-              </div>
-            </Link>
-            <Link to="/pathologies">
-              <div className="group p-6 rounded-xl bg-white/50 backdrop-blur-sm border border-white/30 hover:bg-white/70 transition-all cursor-pointer">
-                <FileText className="h-8 w-8 text-indigo-600 mb-3" />
-                <h3 className="font-semibold text-slate-800 mb-1">Base de Connaissances</h3>
-                <p className="text-sm text-slate-600">Consulter l'index</p>
-              </div>
-            </Link>
-          </div>
-        </div>
+        </section>
       </div>
-
-      <style>{`
-        @keyframes blob {
-          0%, 100% { transform: translate(0, 0) scale(1); }
-          25% { transform: translate(20px, -50px) scale(1.1); }
-          50% { transform: translate(-20px, 20px) scale(0.9); }
-          75% { transform: translate(50px, 50px) scale(1.05); }
-        }
-        .animate-blob {
-          animation: blob 20s infinite;
-        }
-        .animation-delay-2000 {
-          animation-delay: 2s;
-        }
-        .animation-delay-4000 {
-          animation-delay: 4s;
-        }
-      `}</style>
-    </AppLayout >
+    </AppLayout>
   );
 };
 

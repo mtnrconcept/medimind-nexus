@@ -2,107 +2,87 @@
 @tailwind components;
 @tailwind utilities;
 
-/* Definition of the design system. All colors, gradients, fonts, etc should be defined here. 
-All colors MUST be HSL.
-Medical professional aesthetic - Dark theme with cyan/teal accent
-*/
-
 @layer base {
   :root {
-    /* Light Mode - Clinical Clean (Blanc & Turquoise) */
-    --background: 210 40% 98%;
-    /* Fond très légèrement bleuté/blanc */
-    --foreground: 215 25% 27%;
-    /* Texte principal: Bleu Ardoise foncé (Lisibilité max) */
-
+    /* Clinical workspace: neutral canvas, legible ink and a single restrained accent. */
+    --background: 210 30% 97%;
+    --foreground: 216 34% 15%;
     --card: 0 0% 100%;
-    --card-foreground: 215 25% 27%;
-
+    --card-foreground: 216 34% 15%;
     --popover: 0 0% 100%;
-    --popover-foreground: 215 25% 27%;
-
-    --primary: 188 78% 41%;
-    /* Turquoise Médical (#179BAE) - Contraste fort sur blanc */
+    --popover-foreground: 216 34% 15%;
+    --primary: 177 64% 27%;
     --primary-foreground: 0 0% 100%;
-
-    --secondary: 210 40% 96.1%;
-    --secondary-foreground: 222.2 47.4% 11.2%;
-
-    --muted: 210 40% 96.1%;
-    --muted-foreground: 215.4 16.3% 46.9%;
-    /* Gris moyen lisible */
-
-    --accent: 188 78% 41%;
-    --accent-foreground: 0 0% 100%;
-
-    --destructive: 0 84.2% 60.2%;
-    --destructive-foreground: 210 40% 98%;
-
-    --border: 214.3 31.8% 91.4%;
-    --input: 214.3 31.8% 91.4%;
-    --ring: 188 78% 41%;
-
-    --radius: 0.75rem;
-
+    --secondary: 210 28% 94%;
+    --secondary-foreground: 216 34% 18%;
+    --muted: 210 24% 95%;
+    --muted-foreground: 216 14% 39%;
+    --accent: 177 30% 94%;
+    --accent-foreground: 177 60% 24%;
+    --destructive: 0 70% 45%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 213 21% 87%;
+    --input: 213 21% 87%;
+    --ring: 177 64% 27%;
+    --radius: 0.875rem;
     --sidebar-background: 0 0% 100%;
-    --sidebar-foreground: 215 25% 27%;
-    --sidebar-primary: 188 78% 41%;
+    --sidebar-foreground: 216 34% 15%;
+    --sidebar-primary: 177 64% 27%;
     --sidebar-primary-foreground: 0 0% 100%;
-    --sidebar-accent: 210 40% 96.1%;
-    --sidebar-accent-foreground: 215 25% 27%;
-    --sidebar-border: 214.3 31.8% 91.4%;
-    --sidebar-ring: 188 78% 41%;
-
-    /* Status colors */
-    --success: 142 76% 36%;
+    --sidebar-accent: 177 30% 94%;
+    --sidebar-accent-foreground: 177 60% 24%;
+    --sidebar-border: 213 21% 87%;
+    --sidebar-ring: 177 64% 27%;
+    --success: 151 59% 31%;
     --success-foreground: 0 0% 100%;
-    --warning: 38 92% 50%;
-    --warning-foreground: 222 47% 11%;
-    /* NexusMed Redesign Tokens */
+    --warning: 35 90% 44%;
+    --warning-foreground: 35 70% 10%;
+    --info: 201 80% 41%;
+    --info-foreground: 0 0% 100%;
+    /* Specialized research visualizations may still use their own color tokens. */
     --nexus-bg-dark: 222 47% 4%;
     --nexus-cyan: 188 91% 50%;
     --nexus-purple: 263 90% 64%;
     --nexus-magenta: 302 82% 56%;
-
-    /* Design Reference Tokens */
-    --bg-color: #020617;
-    --text-color: #e2e8f0;
-    --accent-color: #22d3ee;
-  }
-
-  .light-theme,
-  [data-theme='light'] {
-    --bg-color: #f8fafc;
-    --text-color: #0f172a;
-    --accent-color: #0891b2;
+    --bg-color: #f6f9fa;
+    --text-color: #192f3f;
+    --accent-color: #0c8279;
   }
 
   .dark {
-    /* NexusMed Dark Theme - Deep Navy */
-    --background: 222 47% 4%;
-    --foreground: 215 25% 90%;
-
-    --card: 222 47% 6%;
-    --card-foreground: 215 25% 90%;
-
-    --popover: 222 47% 6%;
-    --popover-foreground: 215 25% 90%;
-
-    --primary: 188 91% 50%;
-    --primary-foreground: 222 47% 4%;
-
-    --secondary: 222 47% 10%;
-    --secondary-foreground: 215 25% 90%;
-
-    --muted: 222 47% 12%;
-    --muted-foreground: 215 25% 60%;
-
-    --accent: 188 91% 50%;
-    --accent-foreground: 222 47% 4%;
-
-    --border: 215 25% 15%;
-    --input: 215 25% 15%;
-    --ring: 188 91% 50%;
+    --background: 215 34% 11%;
+    --foreground: 210 25% 94%;
+    --card: 216 32% 15%;
+    --card-foreground: 210 25% 94%;
+    --popover: 216 32% 15%;
+    --popover-foreground: 210 25% 94%;
+    --primary: 176 53% 53%;
+    --primary-foreground: 216 37% 11%;
+    --secondary: 213 28% 21%;
+    --secondary-foreground: 210 25% 94%;
+    --muted: 214 27% 20%;
+    --muted-foreground: 213 17% 72%;
+    --accent: 178 33% 21%;
+    --accent-foreground: 176 55% 77%;
+    --destructive: 0 62% 49%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 216 20% 28%;
+    --input: 216 20% 28%;
+    --ring: 176 53% 53%;
+    --sidebar-background: 216 32% 15%;
+    --sidebar-foreground: 210 25% 94%;
+    --sidebar-primary: 176 53% 53%;
+    --sidebar-primary-foreground: 216 37% 11%;
+    --sidebar-accent: 178 33% 21%;
+    --sidebar-accent-foreground: 176 55% 77%;
+    --sidebar-border: 216 20% 28%;
+    --sidebar-ring: 176 53% 53%;
+    --success: 151 57% 52%;
+    --warning: 38 86% 59%;
+    --info: 201 80% 65%;
+    --bg-color: #142335;
+    --text-color: #f0f5f8;
+    --accent-color: #69d3c2;
   }
 }
 
@@ -113,31 +93,25 @@ Medical professional aesthetic - Dark theme with cyan/teal accent
 
   body {
     @apply bg-background text-foreground antialiased;
-    font-family: 'Exo 2', 'Inter', sans-serif;
+    font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    font-size: 14px;
+    line-height: 1.55;
   }
 
-  h1,
-  h2,
-  h3,
-  .nexus-header {
-    font-family: 'Orbitron', 'Michroma', sans-serif;
-    letter-spacing: 0.05em;
-    font-weight: 700;
-  }
-
-  h1 {
-    font-size: 2.5rem;
-    line-height: 1.1;
-  }
-
-  h2 {
-    font-size: 1.75rem;
+  h1, h2, h3 {
+    font-family: inherit;
+    font-weight: 650;
+    letter-spacing: -0.025em;
     line-height: 1.2;
   }
 
-  h3 {
-    font-size: 1.25rem;
-    line-height: 1.3;
+  h1 { font-size: clamp(1.65rem, 2.7vw, 2.15rem); }
+  h2 { font-size: clamp(1.3rem, 2vw, 1.65rem); }
+  h3 { font-size: 1.125rem; }
+
+  .nexus-header {
+    font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+    font-weight: 700;
   }
 
   .nexus-hero-title {
@@ -744,5 +718,35 @@ Medical professional aesthetic - Dark theme with cyan/teal accent
   98% {
     clip-path: inset(20% 0 50% 0);
     transform: translateX(3px);
+  }
+}
+/* Consistent foundations for pages that still use specialized research layouts. */
+@layer components {
+  .clinical-page { @apply space-y-6 pb-8; }
+  .clinical-section-heading { @apply text-lg font-semibold tracking-tight text-foreground; }
+  .clinical-eyebrow { @apply text-[11px] font-bold uppercase tracking-[0.14em] text-primary; }
+  .clinical-panel { @apply rounded-2xl border border-border/80 bg-card shadow-sm; }
+  .clinical-supporting-text { @apply text-sm leading-relaxed text-muted-foreground; }
+}
+
+.clinical-workspace {
+  background-image: radial-gradient(ellipse 1100px 380px at 90% 0%, hsl(var(--primary) / 0.035), transparent 75%);
+}
+
+.clinical-workspace :is(button, a, input, select, textarea):focus-visible {
+  outline: 2px solid hsl(var(--ring));
+  outline-offset: 2px;
+}
+
+.clinical-workspace :is(table th, table td) { vertical-align: middle; }
+.clinical-workspace table th { font-size: 11px; font-weight: 650; text-transform: uppercase; letter-spacing: 0.07em; }
+.clinical-workspace table tbody tr:hover { background: hsl(var(--muted) / 0.55); }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
   }
 }

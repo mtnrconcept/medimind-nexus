@@ -204,10 +204,11 @@ const Admin = () => {
 
   return (
     <AppLayout>
-      <div className="space-y-6">
-        <div>
-          <h1 className="text-3xl font-bold flex items-center gap-2">
-            <Settings className="h-8 w-8" />
+      <div className="clinical-page">
+        <div className="space-y-2">
+          <p className="clinical-eyebrow">Gestion de la plateforme</p>
+          <h1 className="flex items-center gap-2 text-2xl font-bold tracking-tight sm:text-3xl">
+            <Settings className="h-6 w-6 text-primary" />
             {t('Administration')}
           </h1>
           <p className="text-muted-foreground mt-1">{t('Gérez les utilisateurs et les données de la plateforme')}</p>

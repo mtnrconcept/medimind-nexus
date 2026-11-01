@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -7,7 +7,7 @@ import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useToast } from '@/hooks/use-toast';
-import { Activity } from 'lucide-react';
+import { Activity, ArrowLeft, ArrowRight, HeartPulse, BookOpen, Users, ShieldCheck } from 'lucide-react';
 import { z } from 'zod';
 
 const emailSchema = z.string().email('Email invalide');
@@ -121,118 +121,119 @@ const Auth = () => {
 
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-background">
-        <Activity className="h-8 w-8 animate-pulse text-primary" />
+      <div className="flex min-h-screen items-center justify-center bg-background" aria-busy="true" aria-label="Vérification de la session">
+        <Activity className="h-7 w-7 animate-pulse text-primary" aria-hidden="true" />
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-background p-4">
-      <div className="w-full max-w-md">
-        <div className="text-center mb-8">
-          <div className="flex items-center justify-center gap-2 mb-2">
-            <Activity className="h-10 w-10 text-primary" />
-            <h1 className="text-3xl font-bold text-foreground">Médicore</h1>
+    <div className="grid min-h-screen bg-background lg:grid-cols-[minmax(360px,44%)_1fr]">
+      <aside className="relative hidden min-h-screen flex-col overflow-hidden bg-[#123c45] px-12 py-11 text-white lg:flex" aria-label="Présentation de MediCore">
+        <div className="pointer-events-none absolute -right-24 -top-24 h-80 w-80 rounded-full bg-[#3c958c]/30 blur-3xl" />
+        <div className="pointer-events-none absolute -bottom-32 -left-12 h-80 w-80 rounded-full bg-[#0b222d]/70 blur-3xl" />
+        <Link to="/" className="relative flex w-fit items-center gap-3 rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white">
+          <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-white/15"><HeartPulse className="h-5 w-5" /></span>
+          <span className="text-xl font-bold tracking-tight">MediCore</span>
+        </Link>
+        <div className="relative mt-auto max-w-lg pb-6">
+          <span className="rounded-full border border-white/20 bg-white/10 px-3 py-1.5 text-xs font-medium text-[#d9f7f1]">Espace de travail clinique</span>
+          <h1 className="mt-7 text-[clamp(2.6rem,4vw,4rem)] font-bold leading-[1.08] tracking-tight text-white">
+            L'information médicale, <span className="text-[#a6e3d9]">au bon endroit.</span>
+          </h1>
+          <p className="mt-5 max-w-md text-base leading-relaxed text-[#d1e3e5]">
+            Des dossiers patients aux analyses croisées, retrouvez un parcours clair et des données accessibles selon vos autorisations.
+          </p>
+          <div className="mt-12 space-y-5 border-t border-white/20 pt-8">
+            <div className="flex items-center gap-3 text-sm text-[#d6e7e8]"><Users className="h-5 w-5 text-[#a6e3d9]" /> Dossiers patients et suivi clinique</div>
+            <div className="flex items-center gap-3 text-sm text-[#d6e7e8]"><BookOpen className="h-5 w-5 text-[#a6e3d9]" /> Index médical et recherche</div>
+            <div className="flex items-center gap-3 text-sm text-[#d6e7e8]"><ShieldCheck className="h-5 w-5 text-[#a6e3d9]" /> Accès soumis aux droits de chaque utilisateur</div>
           </div>
-          <p className="text-muted-foreground">Plateforme Médicale Intelligente</p>
         </div>
+        <p className="relative text-xs text-[#a9c4c8]">MediCore · Aide à l'analyse et à la décision médicale</p>
+      </aside>
 
-        <Card>
-          <Tabs defaultValue="login">
-            <CardHeader>
-              <TabsList className="grid w-full grid-cols-2">
-                <TabsTrigger value="login">Connexion</TabsTrigger>
-                <TabsTrigger value="signup">Inscription</TabsTrigger>
-              </TabsList>
-            </CardHeader>
-            <CardContent>
-              <TabsContent value="login">
-                <form onSubmit={handleLogin} className="space-y-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="login-email">Email</Label>
-                    <Input
-                      id="login-email"
-                      type="email"
-                      placeholder="docteur@hopital.fr"
-                      value={loginEmail}
-                      onChange={(e) => setLoginEmail(e.target.value)}
-                      required
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="login-password">Mot de passe</Label>
-                    <Input
-                      id="login-password"
-                      type="password"
-                      value={loginPassword}
-                      onChange={(e) => setLoginPassword(e.target.value)}
-                      required
-                    />
-                  </div>
-                  <Button type="submit" className="w-full" disabled={isSubmitting}>
-                    {isSubmitting ? 'Connexion...' : 'Se connecter'}
-                  </Button>
-                </form>
-              </TabsContent>
+      <main className="flex min-h-screen items-center justify-center px-5 py-12 sm:px-10 lg:px-14">
+        <div className="w-full max-w-[440px]">
+          <div className="mb-8 flex items-center justify-between gap-3">
+            <Link to="/" className="inline-flex items-center gap-2 rounded-lg text-xs font-medium text-muted-foreground hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary">
+              <ArrowLeft className="h-4 w-4" /> Accueil
+            </Link>
+            <span className="text-xs text-muted-foreground lg:hidden">MediCore</span>
+          </div>
+          <div className="mb-8">
+            <p className="clinical-eyebrow">Espace professionnel</p>
+            <h1 className="mt-2 text-3xl font-bold tracking-tight">Accéder à MediCore</h1>
+            <p className="mt-2 text-sm leading-relaxed text-muted-foreground">Connectez-vous pour accéder à votre espace clinique.</p>
+          </div>
 
-              <TabsContent value="signup">
-                <form onSubmit={handleSignup} className="space-y-4">
-                  <div className="grid grid-cols-2 gap-4">
+          <Card className="border-border/80 shadow-[0_12px_50px_-24px_rgba(23,49,61,0.25)]">
+            <Tabs defaultValue="login">
+              <CardHeader className="pb-0">
+                <TabsList className="grid h-11 w-full grid-cols-2 rounded-xl bg-muted/80">
+                  <TabsTrigger value="login" className="rounded-lg">Connexion</TabsTrigger>
+                  <TabsTrigger value="signup" className="rounded-lg">Créer un compte</TabsTrigger>
+                </TabsList>
+              </CardHeader>
+              <CardContent className="pb-6 pt-6">
+                <TabsContent value="login" className="mt-0">
+                  <form onSubmit={handleLogin} className="space-y-5">
                     <div className="space-y-2">
-                      <Label htmlFor="firstName">Prénom</Label>
-                      <Input
-                        id="firstName"
-                        placeholder="Jean"
-                        value={firstName}
-                        onChange={(e) => setFirstName(e.target.value)}
-                        required
-                      />
+                      <Label htmlFor="login-email">Adresse e-mail</Label>
+                      <Input id="login-email" type="email" autoComplete="username" placeholder="nom@etablissement.ch"
+                        value={loginEmail} onChange={(event) => setLoginEmail(event.target.value)} required className="h-11" />
                     </div>
                     <div className="space-y-2">
-                      <Label htmlFor="lastName">Nom</Label>
-                      <Input
-                        id="lastName"
-                        placeholder="Dupont"
-                        value={lastName}
-                        onChange={(e) => setLastName(e.target.value)}
-                        required
-                      />
+                      <Label htmlFor="login-password">Mot de passe</Label>
+                      <Input id="login-password" type="password" autoComplete="current-password"
+                        value={loginPassword} onChange={(event) => setLoginPassword(event.target.value)} required className="h-11" />
                     </div>
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="signup-email">Email professionnel</Label>
-                    <Input
-                      id="signup-email"
-                      type="email"
-                      placeholder="docteur@hopital.fr"
-                      value={signupEmail}
-                      onChange={(e) => setSignupEmail(e.target.value)}
-                      required
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="signup-password">Mot de passe</Label>
-                    <Input
-                      id="signup-password"
-                      type="password"
-                      value={signupPassword}
-                      onChange={(e) => setSignupPassword(e.target.value)}
-                      required
-                    />
-                  </div>
-                  <p className="rounded-md border border-border bg-secondary/30 px-3 py-2 text-xs text-muted-foreground">
-                    Les droits médecin, chercheur et administrateur sont attribués après vérification par un administrateur habilité.
-                  </p>
-                  <Button type="submit" className="w-full" disabled={isSubmitting}>
-                    {isSubmitting ? 'Inscription...' : 'S\'inscrire'}
-                  </Button>
-                </form>
-              </TabsContent>
-            </CardContent>
-          </Tabs>
-        </Card>
-      </div>
+                    <Button type="submit" className="h-11 w-full gap-2" disabled={isSubmitting}>
+                      {isSubmitting ? 'Connexion en cours…' : 'Se connecter'}
+                      {!isSubmitting && <ArrowRight className="h-4 w-4" />}
+                    </Button>
+                  </form>
+                </TabsContent>
+                <TabsContent value="signup" className="mt-0">
+                  <form onSubmit={handleSignup} className="space-y-4">
+                    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                      <div className="space-y-2">
+                        <Label htmlFor="firstName">Prénom</Label>
+                        <Input id="firstName" autoComplete="given-name" value={firstName}
+                          onChange={(e) => setFirstName(e.target.value)} required className="h-11" />
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="lastName">Nom</Label>
+                        <Input id="lastName" autoComplete="family-name" value={lastName}
+                          onChange={(e) => setLastName(e.target.value)} required className="h-11" />
+                      </div>
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="signup-email">E-mail professionnel</Label>
+                      <Input id="signup-email" type="email" autoComplete="email" placeholder="nom@etablissement.ch"
+                        value={signupEmail} onChange={(e) => setSignupEmail(e.target.value)} required className="h-11" />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="signup-password">Mot de passe</Label>
+                      <Input id="signup-password" type="password" autoComplete="new-password" minLength={6}
+                        value={signupPassword} onChange={(e) => setSignupPassword(e.target.value)} required className="h-11" />
+                      <p className="text-xs text-muted-foreground">Au moins 6 caractères.</p>
+                    </div>
+                    <p className="rounded-xl border border-primary/15 bg-primary/[0.05] p-3 text-xs leading-relaxed text-muted-foreground">
+                      Les droits médecin, chercheur et administrateur sont attribués après vérification par un administrateur habilité.
+                    </p>
+                    <Button type="submit" className="h-11 w-full gap-2" disabled={isSubmitting}>
+                      {isSubmitting ? 'Inscription en cours…' : 'Créer mon compte'}
+                      {!isSubmitting && <ArrowRight className="h-4 w-4" />}
+                    </Button>
+                  </form>
+                </TabsContent>
+              </CardContent>
+            </Tabs>
+          </Card>
+          <p className="mt-7 text-center text-xs leading-relaxed text-muted-foreground">L'accès aux dossiers dépend des autorisations accordées à votre compte. Ne partagez jamais vos identifiants.</p>
+        </div>
+      </main>
     </div>
   );
 };

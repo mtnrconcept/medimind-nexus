@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import AppLayout from "@/components/layout/AppLayout";
+import PageHeading from "@/components/layout/PageHeading";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -25,6 +26,7 @@ const ITEMS_PER_PAGE = 20;
 const Pathologies = () => {
   const [pathologies, setPathologies] = useState<Pathology[]>([]);
   const [loading, setLoading] = useState(true);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [totalCount, setTotalCount] = useState(0);
 
   // Filtres et Pagination
@@ -67,13 +69,12 @@ const Pathologies = () => {
       setLoading(true);
 
       // Construction de la requête de base
-      let query = supabase.from("pathologies").select("*", { count: "exact" });
+      let query = supabase.from("pathologies").select("id, name, icd_code, synonyms, description, category, specialty, severity", { count: "exact" });
 
       // Application des filtres Serveur
-      if (searchTerm) {
-        // Recherche dans le nom, le code ICD ou la description
-        // Note: Pour les synonymes (tableau), c'est plus complexe, on se concentre sur les champs texte
-        query = query.or(`name.ilike.%${searchTerm}%,icd_code.ilike.%${searchTerm}%,description.ilike.%${searchTerm}%`);
+      const safeQuery = searchTerm.trim().slice(0, 80).replace(/[(),.%*]/g, ' ');
+      if (safeQuery.trim()) {
+        query = query.or(`name.ilike.%${safeQuery}%,icd_code.ilike.%${safeQuery}%,description.ilike.%${safeQuery}%`);
       }
 
       if (selectedCategory !== "all") {
@@ -92,9 +93,13 @@ const Pathologies = () => {
 
       if (error) {
         console.error("Erreur chargement pathologies:", error);
+        setErrorMessage('Le référentiel médical est momentanément indisponible.');
+        setPathologies([]);
+        setTotalCount(0);
       } else {
         setPathologies(data || []);
         setTotalCount(count || 0);
+        setErrorMessage(null);
       }
 
       setLoading(false);
@@ -141,38 +146,34 @@ const Pathologies = () => {
       case "critical":
         return "Critique";
       default:
-        return severity;
+        return severity || 'Non classé';
     }
   };
 
   return (
     <AppLayout>
-      <div className="space-y-4 sm:space-y-6 px-2 sm:px-0">
-        <div>
-          <h1 className="text-xl sm:text-2xl md:text-3xl font-bold flex items-center gap-2">
-            <BookOpen className="h-5 w-5 sm:h-6 sm:w-6 md:h-8 md:w-8" />
-            <span className="hidden xs:inline">Index des</span> Pathologies
-          </h1>
-          <p className="text-sm sm:text-base text-muted-foreground mt-1">
-            <span className="hidden sm:inline">Consultez et recherchez dans notre base de données médicales</span> ({totalCount} entrées)
-          </p>
-        </div>
+      <div className="clinical-page">
+        <PageHeading
+          eyebrow="Référentiel médical"
+          title="Pathologies"
+          description={`Recherchez un diagnostic, un code ou une spécialité dans l’index médical (${totalCount.toLocaleString('fr-CH')} résultats dans la sélection).`}
+        />
 
         {/* Filters */}
         <Card>
-          <CardContent className="pt-4 sm:pt-6">
-            <div className="flex flex-col md:flex-row gap-4">
+          <CardContent className="p-5 sm:p-6">
+            <div className="flex flex-col gap-3 md:flex-row md:items-center">
               <div className="relative flex-1">
                 <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                 <Input
-                  placeholder="Rechercher (Nom, Code CIM, Description)..."
+                  placeholder="Nom, code CIM, description…"
                   value={searchTerm}
                   onChange={(e) => setSearchTerm(e.target.value)}
-                  className="pl-10"
+                  className="h-11 pl-10"
                 />
               </div>
               <Select value={selectedCategory} onValueChange={setSelectedCategory}>
-                <SelectTrigger className="w-full md:w-[200px]">
+                <SelectTrigger aria-label="Catégorie" className="h-11 w-full md:w-[200px]">
                   <Filter className="h-4 w-4 mr-2" />
                   <SelectValue placeholder="Catégorie" />
                 </SelectTrigger>
@@ -186,7 +187,7 @@ const Pathologies = () => {
                 </SelectContent>
               </Select>
               <Select value={selectedSeverity} onValueChange={setSelectedSeverity}>
-                <SelectTrigger className="w-full md:w-[180px]">
+                <SelectTrigger aria-label="Sévérité" className="h-11 w-full md:w-[180px]">
                   <SelectValue placeholder="Sévérité" />
                 </SelectTrigger>
                 <SelectContent>
@@ -202,8 +203,10 @@ const Pathologies = () => {
         </Card>
 
         {/* Results */}
-        <div className="grid gap-4">
-          {loading ? (
+        <div className="grid gap-3">
+          {errorMessage ? (
+            <Card><CardContent className="py-10 text-center text-sm text-destructive" role="alert">{errorMessage}</CardContent></Card>
+          ) : loading ? (
             <Card>
               <CardContent className="py-8 text-center text-muted-foreground">
                 <div className="flex justify-center mb-2">
@@ -220,13 +223,13 @@ const Pathologies = () => {
             </Card>
           ) : (
             pathologies.map((pathology) => (
-              <Link key={pathology.id} to={`/pathologies/${pathology.id}`}>
-                <Card className="hover:border-primary/50 transition-colors cursor-pointer">
-                  <CardContent className="py-4">
+              <Link key={pathology.id} to={`/pathologies/${pathology.id}`} className="block rounded-2xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary">
+                <Card className="cursor-pointer transition-colors hover:border-primary/40 hover:bg-primary/[0.02]">
+                  <CardContent className="px-5 py-5 sm:px-6">
                     <div className="flex items-start justify-between gap-4">
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2 flex-wrap">
-                          <h3 className="font-semibold text-lg">{pathology.name}</h3>
+                          <h3 className="text-base font-bold tracking-tight">{pathology.name}</h3>
                           {pathology.icd_code && (
                             <Badge variant="outline" className="font-mono">
                               {pathology.icd_code}
@@ -242,7 +245,7 @@ const Pathologies = () => {
                             {pathology.synonyms.length > 3 && "..."}
                           </p>
                         )}
-                        <p className="text-sm mt-2 line-clamp-2">{pathology.description}</p>
+                        <p className="mt-2 line-clamp-2 text-sm leading-relaxed text-muted-foreground">{pathology.description}</p>
                         <div className="flex gap-2 mt-2">
                           <Badge variant="secondary">{pathology.category}</Badge>
                           <Badge variant="secondary">{pathology.specialty}</Badge>

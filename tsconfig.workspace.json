@@ -1,0 +1,23 @@
+{
+  "extends": "./tsconfig.app.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "allowImportingTsExtensions": true
+  },
+  "include": [
+    "src/vite-env.d.ts",
+    "src/components/layout/**/*.tsx",
+    "src/components/layout/navigation.ts",
+    "src/components/patient/PatientDirectory.tsx",
+    "src/lib/dashboardSummary.ts",
+    "src/pages/Dashboard.tsx",
+    "src/pages/Auth.tsx",
+    "src/pages/Index.tsx",
+    "src/pages/Patients.tsx",
+    "src/pages/Pathologies.tsx",
+    "src/pages/NotFound.tsx",
+    "tests/clinical-ui-routes.test.ts",
+    "tests/clinical-workspace-navigation.test.ts",
+    "tests/dashboard-summary.test.ts"
+  ]
+}

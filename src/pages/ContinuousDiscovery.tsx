@@ -414,7 +414,7 @@ const ContinuousDiscovery = () => {
                                         {t('Continuous Discovery Engine')}
                                     </h1>
                                     <p className="text-xs sm:text-sm text-slate-600 dark:text-slate-400 hidden sm:block">
-                                        {t('Analyse IA en continu avec OpenAI GPT-5.5')}
+                                        {t('Exploration scientifique et synthèses assistées par IA')}
                                     </p>
                                 </div>
                             </div>

@@ -1,318 +1,167 @@
-import { useEffect, useState, useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
+import { ChevronLeft, ChevronRight, Filter, Search, Users, BookUser, ArrowUpRight } from 'lucide-react';
 import AppLayout from '@/components/layout/AppLayout';
+import PageHeading from '@/components/layout/PageHeading';
+import PatientDirectory from '@/components/patient/PatientDirectory';
+import { supabase } from '@/integrations/supabase/client';
 import { Card, CardContent } from '@/components/ui/card';
-import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { supabase } from '@/integrations/supabase/client';
-import { useAutoTranslation } from '@/contexts/TranslationContext';
-import { Search, Users, ChevronLeft, ChevronRight, BookUser } from 'lucide-react';
-import PatientDirectory from '@/components/patient/PatientDirectory';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { Skeleton } from '@/components/ui/skeleton';
 
-interface Patient {
+interface PatientEntry {
   id: string;
   patient_id: string;
-  age: number;
-  gender: string;
-  nationality: string;
-  treatment: string;
-  outcome: string;
-  pathology_id: string;
-  pathologies?: {
-    name: string;
-  };
+  age: number | null;
+  gender: string | null;
+  nationality: string | null;
+  treatment: string | null;
+  outcome: string | null;
+  pathologies: { name: string } | null;
 }
 
-const ITEMS_PER_PAGE = 20;
+const PER_PAGE = 20;
 
-const nationalityFlags: Record<string, string> = {
-  FR: '🇫🇷',
-  JP: '🇯🇵',
-  US: '🇺🇸',
-  BR: '🇧🇷',
-  DE: '🇩🇪',
-  GB: '🇬🇧',
-  IN: '🇮🇳',
-  CA: '🇨🇦',
-  AU: '🇦🇺',
-  ES: '🇪🇸',
-  IT: '🇮🇹',
-  MX: '🇲🇽',
-  CH: '🇨🇭',
-  Suisse: '🇨🇭',
-};
+function outcomeBadge(outcome?: string | null) {
+  switch (outcome) {
+    case 'RESOLVED': return <Badge variant="outline" className="border-success/30 bg-success/10 text-success">Résolu</Badge>;
+    case 'ONGOING': return <Badge variant="outline" className="border-warning/30 bg-warning/10 text-foreground">En cours</Badge>;
+    case 'SIDE_EFFECT': return <Badge variant="outline" className="border-destructive/30 bg-destructive/10 text-destructive">Effet indésirable</Badge>;
+    default: return <span className="text-xs text-muted-foreground">Non renseigné</span>;
+  }
+}
 
 const Patients = () => {
-  const { t } = useAutoTranslation();
-  const [patients, setPatients] = useState<Patient[]>([]);
+  const [entries, setEntries] = useState<PatientEntry[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
-  const [selectedNationality, setSelectedNationality] = useState<string>('all');
-  const [selectedOutcome, setSelectedOutcome] = useState<string>('all');
-  const [selectedAgeGroup, setSelectedAgeGroup] = useState<string>('all');
-  const [selectedGender, setSelectedGender] = useState<string>('all');
-  const [currentPage, setCurrentPage] = useState(1);
-
-  const nationalities = useMemo(() =>
-    [...new Set(patients.map(p => p.nationality))].sort(),
-    [patients]
-  );
+  const [country, setCountry] = useState('all');
+  const [status, setStatus] = useState('all');
+  const [ageGroup, setAgeGroup] = useState('all');
+  const [gender, setGender] = useState('all');
+  const [page, setPage] = useState(1);
+  const [reload, setReload] = useState(0);
 
   useEffect(() => {
-    const fetchPatients = async () => {
-      const { data, error } = await supabase
+    let active = true;
+    setLoading(true);
+    const fetchRecords = async () => {
+      const { data, error: dbError } = await supabase
         .from('patients')
-        .select(`
-          *,
-          pathologies (name)
-        `)
+        .select('id, patient_id, age, gender, nationality, treatment, outcome, pathologies(name)')
         .order('created_at', { ascending: false });
-
-      if (data) {
-        setPatients(data);
+      if (!active) return;
+      if (dbError) {
+        setError('Impossible de charger les dossiers accessibles. Vérifiez vos droits et votre connexion.');
+      } else {
+        setError(null);
+        setEntries((data || []) as unknown as PatientEntry[]);
       }
       setLoading(false);
     };
+    void fetchRecords();
+    return () => { active = false; };
+  }, [reload]);
 
-    fetchPatients();
-  }, []);
-
-  const filteredPatients = useMemo(() => {
-    let result = patients;
-
-    if (searchTerm) {
-      const term = searchTerm.toLowerCase();
-      result = result.filter(p =>
-        p.patient_id.toLowerCase().includes(term) ||
-        p.treatment?.toLowerCase().includes(term) ||
-        p.pathologies?.name?.toLowerCase().includes(term)
-      );
+  const countries = useMemo(() => [...new Set(entries.map(e => e.nationality).filter((e): e is string => Boolean(e)))].sort(), [entries]);
+  const filtered = useMemo(() => entries.filter(patient => {
+    const text = searchTerm.trim().toLocaleLowerCase('fr');
+    if (text && ![patient.patient_id, patient.treatment, patient.pathologies?.name].some(v => v?.toLocaleLowerCase('fr').includes(text))) return false;
+    if (country !== 'all' && patient.nationality !== country) return false;
+    if (status !== 'all' && patient.outcome !== status) return false;
+    if (gender !== 'all' && patient.gender !== gender) return false;
+    if (ageGroup !== 'all') {
+      if (patient.age == null) return false;
+      const age = patient.age;
+      if (ageGroup === '0-30' && age > 30) return false;
+      if (ageGroup === '31-50' && (age <= 30 || age > 50)) return false;
+      if (ageGroup === '51-70' && (age <= 50 || age > 70)) return false;
+      if (ageGroup === '70+' && age <= 70) return false;
     }
-
-    if (selectedNationality !== 'all') {
-      result = result.filter(p => p.nationality === selectedNationality);
-    }
-
-    if (selectedOutcome !== 'all') {
-      result = result.filter(p => p.outcome === selectedOutcome);
-    }
-
-    if (selectedGender !== 'all') {
-      result = result.filter(p => p.gender === selectedGender);
-    }
-
-    if (selectedAgeGroup !== 'all') {
-      result = result.filter(p => {
-        switch (selectedAgeGroup) {
-          case '0-30': return p.age <= 30;
-          case '31-50': return p.age > 30 && p.age <= 50;
-          case '51-70': return p.age > 50 && p.age <= 70;
-          case '70+': return p.age > 70;
-          default: return true;
-        }
-      });
-    }
-
-    return result;
-  }, [patients, searchTerm, selectedNationality, selectedOutcome, selectedAgeGroup, selectedGender]);
-
-  const totalPages = Math.ceil(filteredPatients.length / ITEMS_PER_PAGE);
-  const paginatedPatients = filteredPatients.slice(
-    (currentPage - 1) * ITEMS_PER_PAGE,
-    currentPage * ITEMS_PER_PAGE
-  );
-
-  const getOutcomeBadge = (outcome: string) => {
-    switch (outcome) {
-      case 'RESOLVED':
-        return <Badge className="bg-green-500/20 text-green-700 dark:text-green-400 border-green-500/30">{t('Résolu')}</Badge>;
-      case 'ONGOING':
-        return <Badge className="bg-yellow-500/20 text-yellow-700 dark:text-yellow-400 border-yellow-500/30">{t('En cours')}</Badge>;
-      case 'SIDE_EFFECT':
-        return <Badge className="bg-destructive/20 text-destructive border-destructive/30">{t('Effet secondaire')}</Badge>;
-      default:
-        return <Badge variant="secondary">{outcome}</Badge>;
-    }
-  };
-
-  const truncateId = (id: string) => `${id.slice(0, 6)}...`;
+    return true;
+  }), [entries, searchTerm, country, status, gender, ageGroup]);
+  const totalPages = Math.max(1, Math.ceil(filtered.length / PER_PAGE));
+  const currentPage = Math.min(page, totalPages);
+  const visible = filtered.slice((currentPage - 1) * PER_PAGE, currentPage * PER_PAGE);
+  const hasFilters = [country, status, ageGroup, gender].some(v => v !== 'all');
+  const resetPage = () => setPage(1);
 
   return (
     <AppLayout>
-      <div className="space-y-4 sm:space-y-6 px-2 sm:px-0">
-        <div>
-          <h1 className="text-xl sm:text-2xl md:text-3xl font-bold flex items-center gap-2">
-            <Users className="h-5 w-5 sm:h-6 sm:w-6 md:h-8 md:w-8" />
-            {t('Gestion Patients')}
-          </h1>
-          <p className="text-sm sm:text-base text-muted-foreground mt-1">
-            {t('Gérez votre patientèle et accédez aux données anonymisées')}
-          </p>
-        </div>
-
-        <Tabs defaultValue="directory" className="space-y-3 sm:space-y-4">
-          <TabsList className="w-full sm:w-auto flex">
-            <TabsTrigger value="directory" className="flex-1 sm:flex-none flex items-center justify-center gap-1 sm:gap-2 text-xs sm:text-sm touch-manipulation">
-              <BookUser className="h-4 w-4" />
-              {t('Ma Patientèle')}
-            </TabsTrigger>
-            <TabsTrigger value="anonymous" className="flex-1 sm:flex-none flex items-center justify-center gap-1 sm:gap-2 text-xs sm:text-sm touch-manipulation">
-              <Users className="h-3 w-3 sm:h-4 sm:w-4" />
-              <span className="hidden xs:inline">{t('Données')}</span> {t('Anonymisées')}
-            </TabsTrigger>
+      <div className="clinical-page">
+        <PageHeading eyebrow="Espace clinique" title="Patients" description="Retrouvez les dossiers autorisés, consultez leur suivi ou explorez les données par identifiant." />
+        <Tabs defaultValue="directory" className="space-y-5">
+          <TabsList className="grid h-11 w-full max-w-[475px] grid-cols-2 rounded-xl bg-muted/80 p-1">
+            <TabsTrigger value="directory" className="gap-2 rounded-lg text-xs sm:text-sm"><BookUser className="h-4 w-4" /> Dossiers nominatifs</TabsTrigger>
+            <TabsTrigger value="identifiers" className="gap-2 rounded-lg text-xs sm:text-sm"><Users className="h-4 w-4" /> Vue par identifiant</TabsTrigger>
           </TabsList>
-
-          {/* Répertoire patients */}
-          <TabsContent value="directory">
+          <TabsContent value="directory" className="mt-0">
             <PatientDirectory />
           </TabsContent>
-
-          {/* Données anonymisées */}
-          <TabsContent value="anonymous" className="space-y-4">
-            {/* Filters */}
+          <TabsContent value="identifiers" className="mt-0 space-y-4">
             <Card>
-              <CardContent className="pt-6">
-                <div className="flex flex-col lg:flex-row gap-4">
-                  <div className="relative flex-1">
-                    <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                    <Input
-                      placeholder="Rechercher par ID, traitement, pathologie..."
-                      value={searchTerm}
-                      onChange={(e) => {
-                        setSearchTerm(e.target.value);
-                        setCurrentPage(1);
-                      }}
-                      className="pl-10"
-                    />
+              <CardContent className="space-y-4 p-5 sm:p-6">
+                <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
+                  <div><h2 className="text-base font-bold">Explorer par identifiant</h2><p className="text-xs text-muted-foreground">Cette vue contient des informations cliniques et reste soumise aux autorisations du dossier.</p></div>
+                  <Badge variant="outline" className="w-fit">{loading ? 'Chargement…' : `${filtered.length} résultat(s) chargés`}</Badge>
+                </div>
+                <div className="flex flex-col gap-3 md:flex-row">
+                  <div className="relative min-w-0 flex-1">
+                    <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
+                    <Input className="h-11 pl-10" value={searchTerm} onChange={e => { setSearchTerm(e.target.value); resetPage(); }} aria-label="Chercher un identifiant, traitement ou diagnostic" placeholder="Identifiant, diagnostic, traitement…" />
                   </div>
-                  <Select value={selectedNationality} onValueChange={(v) => { setSelectedNationality(v); setCurrentPage(1); }}>
-                    <SelectTrigger className="w-full lg:w-[160px]">
-                      <SelectValue placeholder="Nationalité" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">Tous pays</SelectItem>
-                      {nationalities.map((nat) => (
-                        <SelectItem key={nat} value={nat}>
-                          {nationalityFlags[nat] || '🌍'} {nat}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  <Select value={selectedAgeGroup} onValueChange={(v) => { setSelectedAgeGroup(v); setCurrentPage(1); }}>
-                    <SelectTrigger className="w-full lg:w-[140px]">
-                      <SelectValue placeholder="Âge" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">Tous âges</SelectItem>
-                      <SelectItem value="0-30">0-30 ans</SelectItem>
-                      <SelectItem value="31-50">31-50 ans</SelectItem>
-                      <SelectItem value="51-70">51-70 ans</SelectItem>
-                      <SelectItem value="70+">70+ ans</SelectItem>
-                    </SelectContent>
-                  </Select>
-                  <Select value={selectedGender} onValueChange={(v) => { setSelectedGender(v); setCurrentPage(1); }}>
-                    <SelectTrigger className="w-full lg:w-[120px]">
-                      <SelectValue placeholder="Genre" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">Tous</SelectItem>
-                      <SelectItem value="M">Homme</SelectItem>
-                      <SelectItem value="F">Femme</SelectItem>
-                    </SelectContent>
-                  </Select>
-                  <Select value={selectedOutcome} onValueChange={(v) => { setSelectedOutcome(v); setCurrentPage(1); }}>
-                    <SelectTrigger className="w-full lg:w-[160px]">
-                      <SelectValue placeholder="Statut" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">Tous statuts</SelectItem>
-                      <SelectItem value="RESOLVED">Résolu</SelectItem>
-                      <SelectItem value="ONGOING">En cours</SelectItem>
-                      <SelectItem value="SIDE_EFFECT">Effet secondaire</SelectItem>
-                    </SelectContent>
-                  </Select>
+                  <details className="group relative rounded-xl border border-border bg-card px-3 py-1">
+                    <summary className="flex h-9 cursor-pointer list-none items-center gap-2 text-sm font-medium text-foreground [&::-webkit-details-marker]:hidden">
+                      <Filter className="h-4 w-4" /> Filtres {hasFilters && <span className="h-2 w-2 rounded-full bg-primary" aria-label="Filtres actifs" />}
+                    </summary>
+                    <div className="grid gap-3 border-t border-border pb-3 pt-3 md:grid-cols-2">
+                      <Select value={country} onValueChange={v => { setCountry(v); resetPage(); }}><SelectTrigger aria-label="Pays"><SelectValue placeholder="Pays" /></SelectTrigger><SelectContent><SelectItem value="all">Tous pays</SelectItem>{countries.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}</SelectContent></Select>
+                      <Select value={ageGroup} onValueChange={v => { setAgeGroup(v); resetPage(); }}><SelectTrigger aria-label="Tranche d’âge"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">Tous âges</SelectItem><SelectItem value="0-30">0–30 ans</SelectItem><SelectItem value="31-50">31–50 ans</SelectItem><SelectItem value="51-70">51–70 ans</SelectItem><SelectItem value="70+">Plus de 70 ans</SelectItem></SelectContent></Select>
+                      <Select value={gender} onValueChange={v => { setGender(v); resetPage(); }}><SelectTrigger aria-label="Genre"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">Tous genres</SelectItem><SelectItem value="M">Masculin</SelectItem><SelectItem value="F">Féminin</SelectItem></SelectContent></Select>
+                      <Select value={status} onValueChange={v => { setStatus(v); resetPage(); }}><SelectTrigger aria-label="Statut"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">Tous statuts</SelectItem><SelectItem value="RESOLVED">Résolu</SelectItem><SelectItem value="ONGOING">En cours</SelectItem><SelectItem value="SIDE_EFFECT">Effet indésirable</SelectItem></SelectContent></Select>
+                      {hasFilters && <Button variant="ghost" size="sm" className="md:col-span-2" onClick={() => {setCountry('all');setAgeGroup('all');setGender('all');setStatus('all');resetPage();}}>Effacer les filtres</Button>}
+                    </div>
+                  </details>
                 </div>
               </CardContent>
             </Card>
-
-            {/* Table */}
-            <Card>
-              <CardContent className="p-0">
-                {loading ? (
-                  <div className="p-8 text-center text-muted-foreground">
-                    Chargement des patients...
-                  </div>
-                ) : (
+            <Card className="overflow-hidden">
+              {error ? (
+                <div role="alert" className="space-y-3 px-6 py-12 text-center"><p className="text-sm text-destructive">{error}</p><Button variant="outline" onClick={() => setReload(x=>x+1)}>Réessayer</Button></div>
+              ) : loading ? (
+                <CardContent className="space-y-3 p-6">{[0,1,2,3].map(i => <Skeleton key={i} className="h-14 rounded-xl" />)}</CardContent>
+              ) : visible.length === 0 ? (
+                <CardContent className="p-12 text-center"><Users className="mx-auto h-9 w-9 text-muted-foreground/60" /><p className="mt-3 text-sm font-semibold">Aucun patient trouvé</p><p className="mt-1 text-xs text-muted-foreground">Essayez d’autres critères de recherche.</p></CardContent>
+              ) : (
+                <div className="w-full overflow-x-auto">
                   <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead className="font-mono">ID Patient</TableHead>
-                        <TableHead>Âge/Genre</TableHead>
-                        <TableHead>Pays</TableHead>
-                        <TableHead>Pathologie</TableHead>
-                        <TableHead>Traitement</TableHead>
-                        <TableHead>Statut</TableHead>
+                    <TableHeader><TableRow><TableHead>Identifiant</TableHead><TableHead>Profil</TableHead><TableHead>Pathologie</TableHead><TableHead>Traitement</TableHead><TableHead>Suivi</TableHead><TableHead className="w-12" /></TableRow></TableHeader>
+                    <TableBody>{visible.map(patient => (
+                      <TableRow key={patient.id}>
+                        <TableCell><Link to={`/patients/${patient.id}`} className="font-mono text-sm font-semibold text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary">{patient.patient_id}</Link></TableCell>
+                        <TableCell className="whitespace-nowrap text-sm">{patient.age != null ? `${patient.age} ans` : 'Âge non renseigné'} · {patient.gender || '—'}<span className="ml-1 text-muted-foreground">{patient.nationality || ''}</span></TableCell>
+                        <TableCell className="max-w-52 truncate text-sm">{patient.pathologies?.name || 'Non précisée'}</TableCell>
+                        <TableCell className="max-w-52 truncate text-sm text-muted-foreground">{patient.treatment || 'Non renseigné'}</TableCell>
+                        <TableCell>{outcomeBadge(patient.outcome)}</TableCell>
+                        <TableCell><Link to={`/patients/${patient.id}`} aria-label={`Ouvrir le dossier ${patient.patient_id}`} className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-primary hover:bg-primary/10"><ArrowUpRight className="h-4 w-4" /></Link></TableCell>
                       </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {paginatedPatients.map((patient) => (
-                        <TableRow key={patient.id} className="cursor-pointer hover:bg-accent">
-                          <TableCell>
-                            <Link to={`/patients/${patient.id}`} className="font-mono text-primary hover:underline">
-                              {truncateId(patient.patient_id)}
-                            </Link>
-                          </TableCell>
-                          <TableCell>
-                            {patient.age} ans / {patient.gender === 'M' ? '♂' : '♀'}
-                          </TableCell>
-                          <TableCell>
-                            <span className="text-xl mr-2">{nationalityFlags[patient.nationality] || '🌍'}</span>
-                            {patient.nationality}
-                          </TableCell>
-                          <TableCell className="max-w-[200px] truncate">
-                            {patient.pathologies?.name || '-'}
-                          </TableCell>
-                          <TableCell className="max-w-[200px] truncate">
-                            {patient.treatment || '-'}
-                          </TableCell>
-                          <TableCell>{getOutcomeBadge(patient.outcome)}</TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
+                    ))}</TableBody>
                   </Table>
-                )}
-              </CardContent>
+                </div>
+              )}
             </Card>
-
-            {/* Pagination */}
-            <div className="flex flex-col sm:flex-row items-center justify-between gap-2 sm:gap-0">
-              <p className="text-xs sm:text-sm text-muted-foreground">
-                {filteredPatients.length} patient(s) trouvé(s)
-              </p>
-              <div className="flex items-center gap-2">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
-                  disabled={currentPage === 1}
-                >
-                  <ChevronLeft className="h-4 w-4" />
-                </Button>
-                <span className="text-sm">
-                  Page {currentPage} sur {totalPages || 1}
-                </span>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
-                  disabled={currentPage >= totalPages}
-                >
-                  <ChevronRight className="h-4 w-4" />
-                </Button>
+            <div className="flex flex-col items-center justify-between gap-3 text-sm text-muted-foreground sm:flex-row">
+              <span>{filtered.length} patient(s) dans la sélection</span>
+              <div className="flex items-center gap-3">
+                <Button size="icon" variant="outline" onClick={() => setPage(p=>Math.max(1,p-1))} disabled={currentPage===1} aria-label="Page précédente"><ChevronLeft className="h-4 w-4" /></Button>
+                <span className="tabular-nums">Page {currentPage} sur {totalPages}</span>
+                <Button size="icon" variant="outline" onClick={() => setPage(p=>Math.min(totalPages,p+1))} disabled={currentPage>=totalPages} aria-label="Page suivante"><ChevronRight className="h-4 w-4" /></Button>
               </div>
             </div>
           </TabsContent>

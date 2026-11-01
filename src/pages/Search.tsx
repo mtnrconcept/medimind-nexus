@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import AppLayout from '@/components/layout/AppLayout';
+import PageHeading from '@/components/layout/PageHeading';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -272,25 +273,17 @@ const Search = () => {
 
   return (
     <AppLayout>
-      <div className="space-y-4 sm:space-y-6 px-2 sm:px-0">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 sm:gap-4">
-          <div>
-            <h1 className="text-xl sm:text-2xl md:text-3xl font-bold flex items-center gap-2">
-              <SearchIcon className="h-5 w-5 sm:h-6 sm:w-6 md:h-8 md:w-8" />
-              <span className="hidden sm:inline">Recherche Avancée par</span> Symptômes
-            </h1>
-            <p className="text-sm sm:text-base text-muted-foreground mt-1 hidden sm:block">
-              Sélectionnez les symptômes observés pour identifier les pathologies possibles avec la Deep Research IA
-            </p>
-          </div>
-          <Button
-            onClick={() => setQuestionnaireOpen(true)}
-            className="bg-gradient-to-r from-primary to-purple-500 hover:from-primary/90 hover:to-purple-500/90 touch-manipulation w-full sm:w-auto text-sm sm:text-base"
-          >
-            <MessageCircle className="h-4 w-4 mr-1 sm:mr-2" />
-            <span className="hidden xs:inline">Assistant de</span> symptômes
-          </Button>
-        </div>
+      <div className="clinical-page">
+        <PageHeading
+          eyebrow="Recherche médicale"
+          title="Explorer par symptômes"
+          description="Sélectionnez les symptômes observés, puis examinez les résultats avec leur niveau de preuve et leurs limites."
+          actions={
+            <Button onClick={() => setQuestionnaireOpen(true)} className="h-11 gap-2">
+              <MessageCircle className="h-4 w-4" /> Questionnaire guidé
+            </Button>
+          }
+        />
 
         {/* Questionnaire Modal */}
         <SymptomQuestionnaireModal
