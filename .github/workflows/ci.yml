@@ -37,6 +37,9 @@ jobs:
       - name: Typecheck microsignal engine and synthetic cohort
         run: npm run typecheck:microsignals
 
+      - name: Typecheck authorized patient pathology matching
+        run: npm run typecheck:patient-matching
+
       - name: Edge signal-detector syntax and local imports
         run: npm run check:signal-edge
 

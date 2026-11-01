@@ -9,6 +9,7 @@ import { resolveAIJob } from '@/lib/aiJobs';
 import { ArrowLeft, Lock, Shield, Loader2 } from 'lucide-react';
 import AIAssistant from '@/components/patient/AIAssistant';
 import SafetyAlertBanner from '@/components/patient/SafetyAlertBanner';
+import { PatientPathologySimilarity } from '@/components/patient/PatientPathologySimilarity';
 import ExportDialog from '@/components/patient/ExportDialog';
 import { PatientDossierLayout } from '@/components/patient/dossier';
 import { usePatientAlerts, parseExtendedLabResults, type ExtendedLabResults as ExtendedLabResultsType } from '@/hooks/usePatientAlerts';
@@ -461,6 +462,16 @@ const PatientDetail = () => {
         {/* Safety Alerts - Fixed Height */}
         <div className="shrink-0 mb-4">
           <SafetyAlertBanner alerts={alerts} />
+        </div>
+
+        {/* Exact pathology comparison, subject to the caller’s Supabase RLS permissions. */}
+        <div className="shrink-0 mb-4">
+          <PatientPathologySimilarity
+            key={patient.id}
+            patientId={patient.id}
+            primaryPathology={patient.pathologies}
+            recordedPathologies={patient.patient_pathologies}
+          />
         </div>
 
         {/* Main Content - Flex-1 (Takes remaining space) */}
