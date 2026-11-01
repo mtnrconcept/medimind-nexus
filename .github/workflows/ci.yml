@@ -34,6 +34,12 @@ jobs:
       - name: Focused clinical typecheck
         run: npm run typecheck
 
+      - name: Typecheck microsignal engine and synthetic cohort
+        run: npm run typecheck:microsignals
+
+      - name: Edge signal-detector syntax and local imports
+        run: npm run check:signal-edge
+
       - name: Lint
         run: npm run lint
 
@@ -86,7 +92,7 @@ jobs:
         run: psql -v ON_ERROR_STOP=1 -f tests/clinical-security-assertions.sql
 
       - name: Apply research evidence integrity migration
-        run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261031071206_secure_discovery_evidence.sql
+        run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261101044524_20261031071206_secure_discovery_evidence.sql
 
       - name: Assert evidence write isolation
         run: psql -v ON_ERROR_STOP=1 -f tests/discovery-evidence-security-assertions.sql

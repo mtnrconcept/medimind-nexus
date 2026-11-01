@@ -14,7 +14,10 @@
     "check": "npm run test && npm run typecheck && npm run lint && npm run build",
     "preview": "vite preview",
     "import:data": "npx tsx scripts/import-local-data.ts",
-    "clinical-brain:audit": "tsx scripts/clinical-brain-eval.ts"
+    "clinical-brain:audit": "tsx scripts/clinical-brain-eval.ts",
+    "generate:microsignals-demo": "tsx scripts/generate-microsignal-cohort.ts",
+    "typecheck:microsignals": "tsc --noEmit --pretty false --skipLibCheck --allowImportingTsExtensions --moduleResolution bundler --module esnext --target es2022 --jsx react-jsx --resolveJsonModule --esModuleInterop src/lib/microSignals/engine.ts src/lib/microSignals/synthetic.ts src/lib/microSignals/demo-state.ts tests/microsignal-cohort.test.ts tests/microsignal-engine.test.ts tests/microsignal-stream.test.ts supabase/functions/signal-detector/security.ts tests/signal-detector-security.test.ts",
+    "check:signal-edge": "node scripts/check-signal-edge.mjs"
   },
   "dependencies": {
     "@faker-js/faker": "^10.2.0",

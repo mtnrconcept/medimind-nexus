@@ -1,0 +1,675 @@
+{
+  "id": "SIM-P026",
+  "dataOrigin": "synthetic",
+  "studyId": "SIM-CLOZAPINE-MYOCARDITIS-2026",
+  "pseudonym": "Lina Besson · fictif",
+  "demographics": {
+    "dateOfBirth": "1993-02-02",
+    "ageAtIndex": 32,
+    "sex": "M",
+    "nationality": "CH",
+    "heightCm": 180,
+    "weightKg": 80,
+    "site": "Centre simulé Lyon"
+  },
+  "socioEconomic": {
+    "occupationCategory": "Employé (fictif)",
+    "livingSituation": "Autonome",
+    "accessToCare": "Suivi ambulatoire simulé"
+  },
+  "lifestyle": {
+    "smoker": false,
+    "alcohol": "Aucune consommation déclarée (simulation)",
+    "activity": "Activité légère",
+    "sleepHours": 7
+  },
+  "familyHistory": [
+    {
+      "relation": "parent au 1er degré",
+      "condition": "Hypertension artérielle",
+      "onsetAge": 51
+    }
+  ],
+  "allergies": [
+    {
+      "substance": "Non renseigné",
+      "status": "unknown",
+      "reaction": null
+    }
+  ],
+  "vaccinations": [
+    {
+      "vaccine": "Grippe saisonnière",
+      "administeredAt": "2024-10-05",
+      "status": "unknown"
+    }
+  ],
+  "diagnoses": [
+    {
+      "code": "ICD10:F20.9",
+      "label": "Schizophrénie résistante",
+      "diagnosedAt": "2023-11-02",
+      "status": "confirmed",
+      "validatedBy": "simulated_clinician"
+    },
+    {
+      "code": "ICD10:E11.9",
+      "label": "Diabète de type 2",
+      "diagnosedAt": "2024-08-18",
+      "status": "confirmed",
+      "validatedBy": "simulated_clinician"
+    }
+  ],
+  "medications": [
+    {
+      "code": "ATC:N05AH02",
+      "name": "Clozapine",
+      "dose": "75 mg/j (montée progressive simulée)",
+      "frequency": "quotidienne",
+      "startedAt": "2025-11-01",
+      "endedAt": null,
+      "indication": "Schizophrénie résistante documentée",
+      "adherence": "documented"
+    },
+    {
+      "code": "ATC:N05BA01",
+      "name": "Diazépam",
+      "dose": "2 mg si besoin (simulation)",
+      "frequency": "au besoin",
+      "startedAt": "2025-08-23",
+      "endedAt": null,
+      "indication": "Anxiété",
+      "adherence": "unknown"
+    },
+    {
+      "code": "ATC:A10BA02",
+      "name": "Metformine",
+      "dose": "500 mg/j (simulation)",
+      "frequency": "quotidienne",
+      "startedAt": "2025-04-15",
+      "endedAt": null,
+      "indication": "Diabète de type 2",
+      "adherence": "documented"
+    }
+  ],
+  "labs": [
+    {
+      "id": "SIM-P026-crp-0",
+      "code": "LOINC:1988-5",
+      "label": "Protéine C-réactive",
+      "observedAt": "2025-11-01",
+      "value": 3,
+      "unit": "mg/L",
+      "upperReference": 5,
+      "assay": "CRP quantitative sérum",
+      "source": "simulated_lab"
+    },
+    {
+      "id": "SIM-P026-tni-0",
+      "code": "LOINC:89579-7",
+      "label": "Troponine cardiaque I ultrasensible",
+      "observedAt": "2025-11-01",
+      "value": 4,
+      "unit": "ng/L",
+      "upperReference": 14,
+      "assay": "hs-cTnI méthode simulée; LSN hypothétique locale",
+      "source": "simulated_lab"
+    },
+    {
+      "id": "SIM-P026-neu-0",
+      "code": "LOINC:751-8",
+      "label": "Neutrophiles",
+      "observedAt": "2025-11-01",
+      "value": 3.9000000000000004,
+      "unit": "G/L",
+      "upperReference": 7.5,
+      "assay": "Numération neutrophiles simulée",
+      "source": "simulated_lab"
+    },
+    {
+      "id": "SIM-P026-cre-0",
+      "code": "LOINC:2160-0",
+      "label": "Créatinine",
+      "observedAt": "2025-11-01",
+      "value": 85,
+      "unit": "µmol/L",
+      "upperReference": 105,
+      "assay": "Biochimie simulée",
+      "source": "simulated_lab"
+    },
+    {
+      "id": "SIM-P026-alt-0",
+      "code": "LOINC:1742-6",
+      "label": "ALAT",
+      "observedAt": "2025-11-01",
+      "value": 27,
+      "unit": "U/L",
+      "upperReference": 45,
+      "assay": "Biochimie simulée",
+      "source": "simulated_lab"
+    },
+    {
+      "id": "SIM-P026-crp-7",
+      "code": "LOINC:1988-5",
+      "label": "Protéine C-réactive",
+      "observedAt": "2025-11-08",
+      "value": 3,
+      "unit": "mg/L",
+      "upperReference": 5,
+      "assay": "CRP quantitative sérum",
+      "source": "simulated_lab"
+    },
+    {
+      "id": "SIM-P026-tni-7",
+      "code": "LOINC:89579-7",
+      "label": "Troponine cardiaque I ultrasensible",
+      "observedAt": "2025-11-08",
+      "value": 4,
+      "unit": "ng/L",
+      "upperReference": 14,
+      "assay": "hs-cTnI méthode simulée; LSN hypothétique locale",
+      "source": "simulated_lab"
+    },
+    {
+      "id": "SIM-P026-neu-7",
+      "code": "LOINC:751-8",
+      "label": "Neutrophiles",
+      "observedAt": "2025-11-08",
+      "value": 3.9000000000000004,
+      "unit": "G/L",
+      "upperReference": 7.5,
+      "assay": "Numération neutrophiles simulée",
+      "source": "simulated_lab"
+    },
+    {
+      "id": "SIM-P026-cre-7",
+      "code": "LOINC:2160-0",
+      "label": "Créatinine",
+      "observedAt": "2025-11-08",
+      "value": 85,
+      "unit": "µmol/L",
+      "upperReference": 105,
+      "assay": "Biochimie simulée",
+      "source": "simulated_lab"
+    },
+    {
+      "id": "SIM-P026-alt-7",
+      "code": "LOINC:1742-6",
+      "label": "ALAT",
+      "observedAt": "2025-11-08",
+      "value": 27,
+      "unit": "U/L",
+      "upperReference": 45,
+      "assay": "Biochimie simulée",
+      "source": "simulated_lab"
+    },
+    {
+      "id": "SIM-P026-crp-14",
+      "code": "LOINC:1988-5",
+      "label": "Protéine C-réactive",
+      "observedAt": "2025-11-15",
+      "value": 3,
+      "unit": "mg/L",
+      "upperReference": 5,
+      "assay": "CRP quantitative sérum",
+      "source": "simulated_lab"
+    },
+    {
+      "id": "SIM-P026-tni-14",
+      "code": "LOINC:89579-7",
+      "label": "Troponine cardiaque I ultrasensible",
+      "observedAt": "2025-11-15",
+      "value": 4,
+      "unit": "ng/L",
+      "upperReference": 14,
+      "assay": "hs-cTnI méthode simulée; LSN hypothétique locale",
+      "source": "simulated_lab"
+    },
+    {
+      "id": "SIM-P026-neu-14",
+      "code": "LOINC:751-8",
+      "label": "Neutrophiles",
+      "observedAt": "2025-11-15",
+      "value": 3.9000000000000004,
+      "unit": "G/L",
+      "upperReference": 7.5,
+      "assay": "Numération neutrophiles simulée",
+      "source": "simulated_lab"
+    },
+    {
+      "id": "SIM-P026-cre-14",
+      "code": "LOINC:2160-0",
+      "label": "Créatinine",
+      "observedAt": "2025-11-15",
+      "value": 85,
+      "unit": "µmol/L",
+      "upperReference": 105,
+      "assay": "Biochimie simulée",
+      "source": "simulated_lab"
+    },
+    {
+      "id": "SIM-P026-alt-14",
+      "code": "LOINC:1742-6",
+      "label": "ALAT",
+      "observedAt": "2025-11-15",
+      "value": 27,
+      "unit": "U/L",
+      "upperReference": 45,
+      "assay": "Biochimie simulée",
+      "source": "simulated_lab"
+    },
+    {
+      "id": "SIM-P026-crp-21",
+      "code": "LOINC:1988-5",
+      "label": "Protéine C-réactive",
+      "observedAt": "2025-11-22",
+      "value": 3,
+      "unit": "mg/L",
+      "upperReference": 5,
+      "assay": "CRP quantitative sérum",
+      "source": "simulated_lab"
+    },
+    {
+      "id": "SIM-P026-tni-21",
+      "code": "LOINC:89579-7",
+      "label": "Troponine cardiaque I ultrasensible",
+      "observedAt": "2025-11-22",
+      "value": 4,
+      "unit": "ng/L",
+      "upperReference": 14,
+      "assay": "hs-cTnI méthode simulée; LSN hypothétique locale",
+      "source": "simulated_lab"
+    },
+    {
+      "id": "SIM-P026-neu-21",
+      "code": "LOINC:751-8",
+      "label": "Neutrophiles",
+      "observedAt": "2025-11-22",
+      "value": 3.9000000000000004,
+      "unit": "G/L",
+      "upperReference": 7.5,
+      "assay": "Numération neutrophiles simulée",
+      "source": "simulated_lab"
+    },
+    {
+      "id": "SIM-P026-cre-21",
+      "code": "LOINC:2160-0",
+      "label": "Créatinine",
+      "observedAt": "2025-11-22",
+      "value": 85,
+      "unit": "µmol/L",
+      "upperReference": 105,
+      "assay": "Biochimie simulée",
+      "source": "simulated_lab"
+    },
+    {
+      "id": "SIM-P026-alt-21",
+      "code": "LOINC:1742-6",
+      "label": "ALAT",
+      "observedAt": "2025-11-22",
+      "value": 27,
+      "unit": "U/L",
+      "upperReference": 45,
+      "assay": "Biochimie simulée",
+      "source": "simulated_lab"
+    },
+    {
+      "id": "SIM-P026-crp-28",
+      "code": "LOINC:1988-5",
+      "label": "Protéine C-réactive",
+      "observedAt": "2025-11-29",
+      "value": 3,
+      "unit": "mg/L",
+      "upperReference": 5,
+      "assay": "CRP quantitative sérum",
+      "source": "simulated_lab"
+    },
+    {
+      "id": "SIM-P026-tni-28",
+      "code": "LOINC:89579-7",
+      "label": "Troponine cardiaque I ultrasensible",
+      "observedAt": "2025-11-29",
+      "value": 4,
+      "unit": "ng/L",
+      "upperReference": 14,
+      "assay": "hs-cTnI méthode simulée; LSN hypothétique locale",
+      "source": "simulated_lab"
+    },
+    {
+      "id": "SIM-P026-neu-28",
+      "code": "LOINC:751-8",
+      "label": "Neutrophiles",
+      "observedAt": "2025-11-29",
+      "value": 3.9000000000000004,
+      "unit": "G/L",
+      "upperReference": 7.5,
+      "assay": "Numération neutrophiles simulée",
+      "source": "simulated_lab"
+    },
+    {
+      "id": "SIM-P026-cre-28",
+      "code": "LOINC:2160-0",
+      "label": "Créatinine",
+      "observedAt": "2025-11-29",
+      "value": 85,
+      "unit": "µmol/L",
+      "upperReference": 105,
+      "assay": "Biochimie simulée",
+      "source": "simulated_lab"
+    },
+    {
+      "id": "SIM-P026-alt-28",
+      "code": "LOINC:1742-6",
+      "label": "ALAT",
+      "observedAt": "2025-11-29",
+      "value": 27,
+      "unit": "U/L",
+      "upperReference": 45,
+      "assay": "Biochimie simulée",
+      "source": "simulated_lab"
+    },
+    {
+      "id": "SIM-P026-crp-42",
+      "code": "LOINC:1988-5",
+      "label": "Protéine C-réactive",
+      "observedAt": "2025-12-13",
+      "value": 3,
+      "unit": "mg/L",
+      "upperReference": 5,
+      "assay": "CRP quantitative sérum",
+      "source": "simulated_lab"
+    },
+    {
+      "id": "SIM-P026-tni-42",
+      "code": "LOINC:89579-7",
+      "label": "Troponine cardiaque I ultrasensible",
+      "observedAt": "2025-12-13",
+      "value": 4,
+      "unit": "ng/L",
+      "upperReference": 14,
+      "assay": "hs-cTnI méthode simulée; LSN hypothétique locale",
+      "source": "simulated_lab"
+    },
+    {
+      "id": "SIM-P026-neu-42",
+      "code": "LOINC:751-8",
+      "label": "Neutrophiles",
+      "observedAt": "2025-12-13",
+      "value": 3.9000000000000004,
+      "unit": "G/L",
+      "upperReference": 7.5,
+      "assay": "Numération neutrophiles simulée",
+      "source": "simulated_lab"
+    },
+    {
+      "id": "SIM-P026-cre-42",
+      "code": "LOINC:2160-0",
+      "label": "Créatinine",
+      "observedAt": "2025-12-13",
+      "value": 85,
+      "unit": "µmol/L",
+      "upperReference": 105,
+      "assay": "Biochimie simulée",
+      "source": "simulated_lab"
+    },
+    {
+      "id": "SIM-P026-alt-42",
+      "code": "LOINC:1742-6",
+      "label": "ALAT",
+      "observedAt": "2025-12-13",
+      "value": 27,
+      "unit": "U/L",
+      "upperReference": 45,
+      "assay": "Biochimie simulée",
+      "source": "simulated_lab"
+    }
+  ],
+  "vitals": [
+    {
+      "date": "2025-11-01",
+      "heartRateBpm": 78,
+      "temperatureC": 36.7,
+      "systolicBp": 118,
+      "diastolicBp": 72,
+      "oxygenSaturationPct": 98
+    },
+    {
+      "date": "2025-11-08",
+      "heartRateBpm": 78,
+      "temperatureC": 36.7,
+      "systolicBp": 118,
+      "diastolicBp": 72,
+      "oxygenSaturationPct": 98
+    },
+    {
+      "date": "2025-11-15",
+      "heartRateBpm": 78,
+      "temperatureC": 36.7,
+      "systolicBp": 118,
+      "diastolicBp": 72,
+      "oxygenSaturationPct": 98
+    },
+    {
+      "date": "2025-11-22",
+      "heartRateBpm": 78,
+      "temperatureC": 36.7,
+      "systolicBp": 118,
+      "diastolicBp": 72,
+      "oxygenSaturationPct": 98
+    },
+    {
+      "date": "2025-11-29",
+      "heartRateBpm": 78,
+      "temperatureC": 36.7,
+      "systolicBp": 118,
+      "diastolicBp": 72,
+      "oxygenSaturationPct": 98
+    },
+    {
+      "date": "2025-12-13",
+      "heartRateBpm": 78,
+      "temperatureC": 36.7,
+      "systolicBp": 118,
+      "diastolicBp": 72,
+      "oxygenSaturationPct": 98
+    }
+  ],
+  "ecgs": [
+    {
+      "date": "2025-11-01",
+      "finding": "ECG de référence simulé, sans anomalie spécifique",
+      "status": "baseline"
+    },
+    {
+      "date": "2025-11-29",
+      "finding": "Pas de modification significative simulée",
+      "status": "followup"
+    }
+  ],
+  "encounters": [
+    {
+      "date": "2025-11-01",
+      "specialty": "Psychiatrie / médecine interne (simulation)",
+      "type": "Bilan initial",
+      "findings": [
+        "Suivi clinique",
+        "Examen standardisé simulé"
+      ],
+      "assessment": "Bilan initial et surveillance protocolisée.",
+      "plan": "Suivi par professionnel de santé (scénario de démonstration)."
+    },
+    {
+      "date": "2025-11-15",
+      "specialty": "Psychiatrie / médecine interne (simulation)",
+      "type": "Suivi J14",
+      "findings": [
+        "Suivi clinique",
+        "Examen standardisé simulé"
+      ],
+      "assessment": "Surveillance clinique sans conclusion causale.",
+      "plan": "Suivi par professionnel de santé (scénario de démonstration)."
+    },
+    {
+      "date": "2025-11-29",
+      "specialty": "Psychiatrie / médecine interne (simulation)",
+      "type": "Suivi J28",
+      "findings": [
+        "Suivi clinique",
+        "Examen standardisé simulé"
+      ],
+      "assessment": "Surveillance clinique sans conclusion causale.",
+      "plan": "Suivi par professionnel de santé (scénario de démonstration)."
+    },
+    {
+      "date": "2025-12-13",
+      "specialty": "Psychiatrie / médecine interne (simulation)",
+      "type": "Suivi J42",
+      "findings": [
+        "Suivi clinique",
+        "Examen standardisé simulé"
+      ],
+      "assessment": "Surveillance clinique sans conclusion causale.",
+      "plan": "Suivi par professionnel de santé (scénario de démonstration)."
+    }
+  ],
+  "timeline": [
+    {
+      "id": "SIM-P026-dx-0",
+      "date": "2023-11-02",
+      "kind": "diagnosis",
+      "text": "Schizophrénie résistante — confirmed"
+    },
+    {
+      "id": "SIM-P026-dx-1",
+      "date": "2024-08-18",
+      "kind": "diagnosis",
+      "text": "Diabète de type 2 — confirmed"
+    },
+    {
+      "id": "SIM-P026-med-2",
+      "date": "2025-04-15",
+      "kind": "medication",
+      "text": "Metformine (500 mg/j (simulation))"
+    },
+    {
+      "id": "SIM-P026-med-1",
+      "date": "2025-08-23",
+      "kind": "medication",
+      "text": "Diazépam (2 mg si besoin (simulation))"
+    },
+    {
+      "id": "SIM-P026-crp-0",
+      "date": "2025-11-01",
+      "kind": "lab",
+      "text": "Protéine C-réactive : 3 mg/L"
+    },
+    {
+      "id": "SIM-P026-enc-0",
+      "date": "2025-11-01",
+      "kind": "visit",
+      "text": "Bilan initial"
+    },
+    {
+      "id": "SIM-P026-med-0",
+      "date": "2025-11-01",
+      "kind": "medication",
+      "text": "Clozapine (75 mg/j (montée progressive simulée))"
+    },
+    {
+      "id": "SIM-P026-tni-0",
+      "date": "2025-11-01",
+      "kind": "lab",
+      "text": "Troponine cardiaque I ultrasensible : 4 ng/L"
+    },
+    {
+      "id": "SIM-P026-crp-7",
+      "date": "2025-11-08",
+      "kind": "lab",
+      "text": "Protéine C-réactive : 3 mg/L"
+    },
+    {
+      "id": "SIM-P026-tni-7",
+      "date": "2025-11-08",
+      "kind": "lab",
+      "text": "Troponine cardiaque I ultrasensible : 4 ng/L"
+    },
+    {
+      "id": "SIM-P026-crp-14",
+      "date": "2025-11-15",
+      "kind": "lab",
+      "text": "Protéine C-réactive : 3 mg/L"
+    },
+    {
+      "id": "SIM-P026-enc-1",
+      "date": "2025-11-15",
+      "kind": "visit",
+      "text": "Suivi J14"
+    },
+    {
+      "id": "SIM-P026-tni-14",
+      "date": "2025-11-15",
+      "kind": "lab",
+      "text": "Troponine cardiaque I ultrasensible : 4 ng/L"
+    },
+    {
+      "id": "SIM-P026-crp-21",
+      "date": "2025-11-22",
+      "kind": "lab",
+      "text": "Protéine C-réactive : 3 mg/L"
+    },
+    {
+      "id": "SIM-P026-tni-21",
+      "date": "2025-11-22",
+      "kind": "lab",
+      "text": "Troponine cardiaque I ultrasensible : 4 ng/L"
+    },
+    {
+      "id": "SIM-P026-crp-28",
+      "date": "2025-11-29",
+      "kind": "lab",
+      "text": "Protéine C-réactive : 3 mg/L"
+    },
+    {
+      "id": "SIM-P026-enc-2",
+      "date": "2025-11-29",
+      "kind": "visit",
+      "text": "Suivi J28"
+    },
+    {
+      "id": "SIM-P026-tni-28",
+      "date": "2025-11-29",
+      "kind": "lab",
+      "text": "Troponine cardiaque I ultrasensible : 4 ng/L"
+    },
+    {
+      "id": "SIM-P026-crp-42",
+      "date": "2025-12-13",
+      "kind": "lab",
+      "text": "Protéine C-réactive : 3 mg/L"
+    },
+    {
+      "id": "SIM-P026-enc-3",
+      "date": "2025-12-13",
+      "kind": "visit",
+      "text": "Suivi J42"
+    },
+    {
+      "id": "SIM-P026-tni-42",
+      "date": "2025-12-13",
+      "kind": "lab",
+      "text": "Troponine cardiaque I ultrasensible : 4 ng/L"
+    }
+  ],
+  "provenance": {
+    "generatedBy": "MediCore deterministic demo generator",
+    "generatorVersion": "1.0",
+    "references": [
+      "PMID:21524186",
+      "PMID:35048875",
+      "PMID:40452212"
+    ],
+    "realPatientData": false,
+    "samplingMethod": "deliberately_enriched_case_control",
+    "clinicalClaimsValidated": false
+  }
+}

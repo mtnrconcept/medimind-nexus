@@ -21,6 +21,7 @@ const Admin = lazy(() => import("./pages/Admin"));
 const Patients = lazy(() => import("./pages/Patients"));
 const PatientDetail = lazy(() => import("./pages/PatientDetail"));
 const CrossDataAnalysis = lazy(() => import("./pages/CrossDataAnalysis"));
+const MicroSignalsLab = lazy(() => import("./pages/MicroSignalsLab"));
 const ContinuousDiscovery = lazy(() => import("./pages/ContinuousDiscovery"));
 const DiscoveryPlatform = lazy(() => import("./pages/DiscoveryPlatform"));
 const SwitchCalculator = lazy(() => import("./pages/SwitchCalculator"));
@@ -52,6 +53,7 @@ const AnimatedRoutes = () => {
           <Route path="/patients" element={<ProtectedRoute><Patients /></ProtectedRoute>} />
           <Route path="/patients/:id" element={<ProtectedRoute><PatientDetail /></ProtectedRoute>} />
           <Route path="/cross-data-analysis" element={<ProtectedRoute><CrossDataAnalysis /></ProtectedRoute>} />
+          <Route path="/research/microsignals" element={<ProtectedRoute requiredRole="admin"><MicroSignalsLab /></ProtectedRoute>} />
           <Route path="/continuous-discovery" element={<ProtectedRoute><ContinuousDiscovery /></ProtectedRoute>} />
           <Route path="/discovery-platform" element={<ProtectedRoute><DiscoveryPlatform /></ProtectedRoute>} />
           <Route path="/tools/switch-calculator" element={<ProtectedRoute><SwitchCalculator /></ProtectedRoute>} />
