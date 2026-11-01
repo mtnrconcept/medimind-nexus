@@ -8,7 +8,8 @@ test('dashboard metrics never invent counts when the query is unavailable', () =
   assert.equal(displayCount(-1), '—');
   assert.equal(displayCount(NaN), '—');
   assert.equal(displayCount(0), '0');
-  assert.equal(displayCount(1000).replace(/\s/g, ''), '1000');
+  // CLDR versions use either whitespace or an apostrophe for Swiss grouping.
+  assert.equal(displayCount(1000).replace(/[\s'’]/g, ''), '1000');
 });
 
 test('name formatting tolerates missing names without leaking a raw UUID', () => {
