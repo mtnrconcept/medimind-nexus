@@ -43,6 +43,9 @@ jobs:
       - name: Typecheck clinical workspace and navigation
         run: npm run typecheck:workspace
 
+      - name: Typecheck anatomical atlas viewer
+        run: npx tsc -p tsconfig.anatomical-twin.json --pretty false
+
       - name: Edge signal-detector syntax and local imports
         run: npm run check:signal-edge
 
