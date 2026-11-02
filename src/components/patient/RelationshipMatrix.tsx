@@ -76,7 +76,9 @@ interface AnalysisResult {
     sources?: string[];
 }
 
+import { buildPairHash, typedElementKey, type SelectedElement } from '../../../supabase/functions/cross-data-analyzer/analysis-utils';
 interface RelationshipMatrixProps {
+    snapshot?: { elements: SelectedElement[]; cells: Record<string, unknown[]> };
     pathologies: Pathology[];
     symptoms: Symptom[];
     treatments: Treatment[];
@@ -116,7 +118,7 @@ export function RelationshipMatrix({
     selectedSymptoms,
     selectedTreatments,
     selectedMedications,
-    analysisResult
+    analysisResult, snapshot
 }: RelationshipMatrixProps) {
 
     // État pour le dialog de détails du lien
@@ -190,6 +192,7 @@ export function RelationshipMatrix({
 
     // Créer la liste de tous les éléments sélectionnés
     const allElements = useMemo((): MatrixElement[] => {
+        if (snapshot) return snapshot.elements.map(e => ({ ...e, id: typedElementKey(e) }));
         const elements: MatrixElement[] = [];
 
         // Pathologies
@@ -213,13 +216,14 @@ export function RelationshipMatrix({
         });
 
         return elements;
-    }, [pathologies, symptoms, treatments, medications, selectedPathologies, selectedSymptoms, selectedTreatments, selectedMedications]);
+    }, [snapshot, pathologies, symptoms, treatments, medications, selectedPathologies, selectedSymptoms, selectedTreatments, selectedMedications]);
 
     // Obtenir la pastille pour une intersection
     const getPillForIntersection = (rowElement: MatrixElement, colElement: MatrixElement): PillInfo | null => {
         if (rowElement.id === colElement.id) return null; // Même élément
 
-        const causalLinks = analysisResult?.causalLinks || [];
+        const pair = buildPairHash(rowElement.name, rowElement.type, colElement.name, colElement.type);
+        const causalLinks = snapshot ? (snapshot.cells[pair] || []) as CausalLink[] : analysisResult?.causalLinks || [];
 
         // Chercher un lien entre les deux éléments EXACTEMENT (dans les deux directions)
         // Le lien doit correspondre à CES DEUX éléments spécifiques, pas à d'autres
@@ -470,7 +474,9 @@ export function RelationshipMatrix({
                                                                 </TooltipContent>
                                                             </Tooltip>
                                                         ) : (
-                                                            <span className="text-gray-300">—</span>
+                                                            <span className="text-xs text-muted-foreground">{snapshot ?
+                                                                (buildPairHash(rowElement.name, rowElement.type, colElement.name, colElement.type) in snapshot.cells ?
+                                                                    'Lien non établi' : 'En attente') : '—'}</span>
                                                         )}
                                                     </TableCell>
                                                 );

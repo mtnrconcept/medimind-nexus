@@ -37,6 +37,7 @@ import {
   Database,
 } from 'lucide-react';
 import { toast } from 'sonner';
+import { useCrossMatrix } from '@/hooks/useCrossMatrix';
 import { useAI } from '@/contexts/AIContext';
 import { resolveAIJob, type AIJobProgress } from '@/lib/aiJobs';
 import { VideoLoader } from './VideoLoader';
@@ -183,6 +184,7 @@ interface AnalysisResult {
 }
 
 interface PatientData {
+  id: string;
   linked_pathologies?: { pathologies?: { id: string; name: string } }[];
   linked_medications?: { medications?: { id: string; name: string } }[];
   linked_symptoms?: { symptoms?: { id: string; name: string } }[];
@@ -203,7 +205,10 @@ interface NCBIConcept {
 }
 
 const CrossDataAnalyzer = ({ patientData }: CrossDataAnalyzerProps) => {
-  const { invokeAI } = useAI();
+  const { invokeAI, llmMode } = useAI();
+  const matrix = useCrossMatrix<AnalysisResult>(patientData?.id, llmMode === 'cloud');
+  const matrixActive = matrix.job && !matrix.job.stalled && ['processing', 'queued'].includes(matrix.job.status);
+  const matrixResume = matrix.job && (matrix.job.stalled || matrix.job.status === 'failed');
   const [pathologies, setPathologies] = useState<Pathology[]>([]);
   const [symptoms, setSymptoms] = useState<Symptom[]>([]);
   const [treatments, setTreatments] = useState<Treatment[]>([]);
@@ -217,6 +222,9 @@ const CrossDataAnalyzer = ({ patientData }: CrossDataAnalyzerProps) => {
   const [isAutoSelecting, setIsAutoSelecting] = useState(false);
   const [result, setResult] = useState<AnalysisResult | null>(null);
   const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    if (llmMode === 'cloud') setResult(matrix.job?.result_payload.analysis ?? null);
+  }, [llmMode, matrix.job]);
   const [viewMode, setViewMode] = useState<'list' | 'network'>('list');
 
   const [selectedPathologies, setSelectedPathologies] = useState<string[]>([]);
@@ -538,8 +546,6 @@ const CrossDataAnalyzer = ({ patientData }: CrossDataAnalyzerProps) => {
         const selectedMedIds: string[] = [];
         const selectedSymptIds: string[] = [];
 
-        console.log('🔍 Données patient reçues:', patientData);
-
         // Fonction de nuance pour comparer les termes FR/EN
         const matchesWithNuance = (dbName: string, searchTerm: string): boolean => {
           const normalize = (str: string) => str.toLowerCase().trim()
@@ -838,6 +844,11 @@ const CrossDataAnalyzer = ({ patientData }: CrossDataAnalyzerProps) => {
       return;
     }
 
+    if (llmMode === 'cloud') {
+      setError(null);
+      await matrix.submit('matrix.start', buildAnalysisRequestBody());
+      return;
+    }
     setAnalyzing(true);
     setAnalysisProgress(null);
     setError(null);
@@ -892,7 +903,7 @@ const CrossDataAnalyzer = ({ patientData }: CrossDataAnalyzerProps) => {
 
     try {
       const { data, error: fnError } = await invokeAI('cross-data-analyzer', {
-        ...buildAnalysisRequestBody(),
+        ...(matrix.job?.selection ?? buildAnalysisRequestBody()),
         analysisMode: 'treatment_schemas',
         currentAnalysis: result,
         async: true,
@@ -1651,9 +1662,9 @@ const CrossDataAnalyzer = ({ patientData }: CrossDataAnalyzerProps) => {
                 </p>
                 <Button
                   onClick={runAnalysis}
-                  disabled={analyzing || getTotalSelected() < 2}
+                  disabled={analyzing || matrix.busy || Boolean(matrixActive) || getTotalSelected() < 2}
                 >
-                  {analyzing ? (
+                  {analyzing || matrixActive ? (
                     <>
                       <Loader2 className="h-4 w-4 mr-2 animate-spin" />
                       Analyse en cours...
@@ -1667,6 +1678,16 @@ const CrossDataAnalyzer = ({ patientData }: CrossDataAnalyzerProps) => {
                 </Button>
               </div >
 
+              {matrix.job && (
+                <div className="rounded-md border p-3 space-y-2">
+                  <p role="status">{matrix.job.progress_message}</p>
+                  {matrix.job.error_message && <p>{matrix.job.error_message}</p>}
+                  {matrixResume && <Button disabled={matrix.busy} onClick={() => matrix.submit('matrix.resume', { jobId: matrix.job.id })}>
+                    Reprendre l’analyse
+                  </Button>}
+                </div>
+              )}
+              {matrix.error && <p role="alert" className="text-destructive">{matrix.error}</p>}
               {analysisProgress && (
                 <div className="rounded-md border bg-muted/30 p-3 text-sm text-muted-foreground">
                   <div className="flex items-center justify-between gap-3">
@@ -1692,6 +1713,20 @@ const CrossDataAnalyzer = ({ patientData }: CrossDataAnalyzerProps) => {
                 )
               }
 
+              {/* Matrice des Relations */}
+              <RelationshipMatrix
+                pathologies={pathologies}
+                symptoms={symptoms}
+                treatments={treatments}
+                medications={medications}
+                selectedPathologies={selectedPathologies}
+                selectedSymptoms={selectedSymptoms}
+                selectedTreatments={selectedTreatments}
+                selectedMedications={selectedMedications}
+                snapshot={matrix.job?.result_payload}
+                analysisResult={result}
+              />
+
               {/* Résultats */}
               {
                 result && (
@@ -1706,11 +1741,11 @@ const CrossDataAnalyzer = ({ patientData }: CrossDataAnalyzerProps) => {
                       <SchemaComparisonPanel comparison={result.schemaComparison} />
                     )}
 
-                    <TreatmentSchemaGenerator
+                    {(!matrix.job || matrix.job.status === 'completed') && <TreatmentSchemaGenerator
                       hasSchemas={(result.treatmentSchemas?.length || 0) > 0}
                       isGenerating={generatingTreatmentSchemas}
                       onGenerate={runTreatmentSchemaGeneration}
-                    />
+                    />}
 
                     {result.treatmentSchemas && result.treatmentSchemas.length > 0 && (
                       <TreatmentSchemasPanel schemas={result.treatmentSchemas} />
@@ -1816,19 +1851,6 @@ const CrossDataAnalyzer = ({ patientData }: CrossDataAnalyzerProps) => {
                   </div>
                 )
               }
-
-              {/* Matrice des Relations */}
-              <RelationshipMatrix
-                pathologies={pathologies}
-                symptoms={symptoms}
-                treatments={treatments}
-                medications={medications}
-                selectedPathologies={selectedPathologies}
-                selectedSymptoms={selectedSymptoms}
-                selectedTreatments={selectedTreatments}
-                selectedMedications={selectedMedications}
-                analysisResult={result}
-              />
             </>
           )}
         </CardContent >

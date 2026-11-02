@@ -31,7 +31,7 @@ const SMARTLaunch = lazy(() => import("./pages/smart/Launch"));
 const SMARTCallback = lazy(() => import("./pages/smart/Callback"));
 const PopulateData = lazy(() => import("./pages/PopulateData"));
 
-const queryClient = new QueryClient();
+const queryClient = new QueryClient({ defaultOptions: { queries: { refetchOnWindowFocus: false } } });
 
 const RouteFallback = () => (
   <div className="min-h-screen bg-background" aria-busy="true" aria-live="polite" />

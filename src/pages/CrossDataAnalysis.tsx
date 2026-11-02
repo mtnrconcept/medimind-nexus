@@ -1,4 +1,6 @@
-import { useState } from 'react';
+import { useAuth } from '@/hooks/useAuth';
+import { useAI } from '@/contexts/AIContext';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import AppLayout from '@/components/layout/AppLayout';
 import PageHeading from '@/components/layout/PageHeading';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -6,22 +8,22 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import CrossDataAnalyzer from '@/components/patient/CrossDataAnalyzer';
-import { useAutoTranslation } from '@/contexts/TranslationContext';
 import { Sparkles, Search, Brain, Loader2 } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 
 const CrossDataAnalysis = () => {
-    const { t } = useAutoTranslation();
+    const { user } = useAuth();
+    const { llmMode } = useAI();
     const [patientId, setPatientId] = useState('');
     const [isLoading, setIsLoading] = useState(false);
     const [patientData, setPatientData] = useState<any>(null);
 
-    const handleAnalyze = async () => {
-        if (!patientId.trim()) {
-            toast.error(t('Veuillez entrer un ID patient'));
-            return;
-        }
+    const scopeKey = user ? 'medicore:matrix:scope:' + user.id : null;
+    const lookup = useRef(0);
+    const loadPatient = useCallback(async (identifier: string, restore = false) => {
+        if (!identifier.trim() || !scopeKey) return;
+        const version = ++lookup.current;
 
         setIsLoading(true);
 
@@ -33,9 +35,10 @@ const CrossDataAnalysis = () => {
                     *,
                     pathologies (id, name, category, specialty, severity)
                 `)
-                .eq('patient_id', patientId.trim())
+                .eq(restore ? 'id' : 'patient_id', identifier.trim())
                 .maybeSingle();
 
+            if (version !== lookup.current) return;
             if (error) {
                 console.error('Erreur recherche patient:', error);
                 toast.error('Erreur lors de la recherche du patient');
@@ -43,6 +46,7 @@ const CrossDataAnalysis = () => {
             }
 
             if (!patient) {
+                if (restore) sessionStorage.removeItem(scopeKey);
                 toast.error('Patient non trouvé');
                 return;
             }
@@ -102,7 +106,11 @@ const CrossDataAnalysis = () => {
                 linked_treatments: patientTreatments
             };
 
+            if (version !== lookup.current) return;
             setPatientData(enrichedPatient);
+            setPatientId(patient.patient_id);
+            sessionStorage.setItem(scopeKey, patient.id);
+            if (restore) return;
 
             const linkedCount = patientPathologies.length + patientMedications.length +
                 patientSymptoms.length + patientTreatments.length;
@@ -117,10 +125,18 @@ const CrossDataAnalysis = () => {
             console.error('Erreur:', err);
             toast.error('Une erreur est survenue');
         } finally {
-            setIsLoading(false);
+            if (version === lookup.current) setIsLoading(false);
         }
-    };
+    }, [scopeKey]);
 
+    useEffect(() => {
+        const saved = scopeKey && sessionStorage.getItem(scopeKey);
+        if (saved) void loadPatient(saved, true);
+        const activeLookup = lookup;
+        return () => { ++activeLookup.current; };
+    }, [scopeKey, loadPatient]);
+
+    const handleAnalyze = () => loadPatient(patientId);
 
     return (
         <AppLayout>
@@ -156,6 +172,13 @@ const CrossDataAnalysis = () => {
                                 {isLoading ? 'Chargement…' : 'Analyser ce dossier'}
                             </Button>
                         </div>
+                        {patientData && <Button variant="ghost" size="sm" onClick={() => {
+                            if (scopeKey) sessionStorage.removeItem(scopeKey);
+                            ++lookup.current;
+                            setIsLoading(false);
+                            setPatientData(null);
+                            setPatientId('');
+                        }}>Quitter le dossier</Button>}
                         <p className="mt-3 text-xs leading-relaxed text-muted-foreground">
                             {patientData
                                 ? `Dossier ${patientData.patient_id} chargé : vous pouvez examiner ses données ci-dessous.`
@@ -165,7 +188,7 @@ const CrossDataAnalysis = () => {
                 </Card>
 
                 {/* Cross Data Analyzer Component - Always Visible */}
-                <CrossDataAnalyzer patientData={patientData} />
+                <CrossDataAnalyzer key={JSON.stringify([user?.id, patientData?.id, llmMode])} patientData={patientData} />
             </div>
 
         </AppLayout>
