@@ -1,0 +1,37 @@
+{
+  "sourcePath": "C:\\Users\\Pc\\Downloads\\MediCore-modele-3D\\MediCore-Atlas3D.glb",
+  "sourceSha256": "0d0288f51b8bbc4fa793555842bd85d8e851165d893bba6bea37e16554d25430",
+  "sourceBytes": 189417880,
+  "webBytes": 48567652,
+  "webSha256": "f637b420f04c74c89a51175c8f969d9d66b55adf0d20d38afc4dce7380366fbb",
+  "nodes": 3229,
+  "meshes": 3210,
+  "materials": 19,
+  "systems": [
+    "os",
+    "digestif",
+    "sensoriel",
+    "nerveux",
+    "ligaments",
+    "fascias-tendons",
+    "muscles",
+    "arteres",
+    "autres-structures",
+    "endocrinien",
+    "veines",
+    "coeur",
+    "cartilages",
+    "respiratoire",
+    "organes-lymphoides",
+    "peau",
+    "reproducteur-masculin",
+    "urinaire",
+    "membranes"
+  ],
+  "license": {
+    "version": "2.0",
+    "copyright": "BodyParts3D, © The Database Center for Life Science licensed under CC Attribution 4.0 International",
+    "generator": "MediCore atlas export; Open Anatomy Atlas geometry"
+  },
+  "transform": "@gltf-transform/cli 4.5.1 meshopt --quantize-position 16 --quantize-normal 14"
+}

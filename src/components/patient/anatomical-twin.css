@@ -1,0 +1,24 @@
+.anatomical-alert-zone {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  border: 2px solid #f97316;
+  border-radius: 50%;
+  background: rgb(239 68 68 / 25%);
+  animation: anatomical-alert-pulse 2s ease-in-out infinite;
+  cursor: pointer;
+}
+.anatomical-alert-zone.is-critical {
+  border-color: #ef4444;
+  background: rgb(239 68 68 / 50%);
+}
+.anatomical-alert-zone:focus-visible {
+  outline: 3px solid white;
+  outline-offset: 3px;
+}
+@keyframes anatomical-alert-pulse {
+  0%, 100% { opacity: .4; }
+  50% { opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .anatomical-alert-zone { animation: none; opacity: .9; }
+}
