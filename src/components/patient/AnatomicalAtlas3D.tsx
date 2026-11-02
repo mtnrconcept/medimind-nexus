@@ -1,6 +1,6 @@
-import { Component, Suspense, useEffect, useMemo, useRef, type ReactNode } from 'react';
+import { Component, Suspense, useEffect, useMemo, useRef, type ComponentRef, type ReactNode } from 'react';
 import { Canvas, useFrame, useLoader, useThree } from '@react-three/fiber';
-import { OrbitControls, Html } from '@react-three/drei';
+import { OrbitControls, Html, useProgress } from '@react-three/drei';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { MeshoptDecoder } from 'three/examples/jsm/libs/meshopt_decoder.module.js';
 import * as THREE from 'three';
@@ -13,6 +13,7 @@ interface Props {
   alerts: PatientAlert[];
   pulse: boolean;
   view: AnatomicalView;
+  cameraRevision: number;
 }
 
 class AtlasBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
@@ -90,13 +91,32 @@ function AtlasScene({ layers, opacity, alerts, pulse }: Props) {
 
 function AtlasCanvas(props: Props) {
   const rotation: Record<AnatomicalView, number> = { front: 0, back: Math.PI, left: Math.PI / 2, right: -Math.PI / 2 };
-  return <Canvas frameloop="demand" camera={{ position: [0, 0, 3.8], fov: 45 }} dpr={[1, 1.5]} gl={{ antialias: true, powerPreference: 'default' }}>
+  return <Canvas frameloop="demand" style={{ touchAction: 'none' }} camera={{ position: [0, 0, 3.8], fov: 45 }} dpr={[1, 1.5]} gl={{ antialias: true, powerPreference: 'default' }}>
     <ambientLight intensity={1.1} /><directionalLight position={[3, 4, 5]} intensity={2} /><directionalLight position={[-3, 1, -2]} intensity={.8} />
-    <Suspense fallback={<Html center><p className="whitespace-nowrap text-sm text-white" role="status">Chargement de l’atlas 3D…</p></Html>}>
+    <Suspense fallback={<Html center><AtlasLoading /></Html>}>
       <group rotation={[0, rotation[props.view], 0]}><AtlasScene {...props} /></group>
     </Suspense>
-    <OrbitControls key={props.view} enablePan={false} minDistance={1.6} maxDistance={7} />
+    <AtlasCameraControls view={props.view} cameraRevision={props.cameraRevision} />
   </Canvas>;
+}
+
+function AtlasCameraControls({ view, cameraRevision }: Pick<Props, 'view' | 'cameraRevision'>) {
+  const controls = useRef<ComponentRef<typeof OrbitControls>>(null);
+  const camera = useThree(state => state.camera);
+  const invalidate = useThree(state => state.invalidate);
+  useEffect(() => {
+    camera.position.set(0, 0, 3.8);
+    camera.up.set(0, 1, 0);
+    controls.current?.target.set(0, 0, 0);
+    controls.current?.update();
+    invalidate();
+  }, [view, cameraRevision, camera, invalidate]);
+  return <OrbitControls key={`${view}-${cameraRevision}`} ref={controls} enablePan enableDamping dampingFactor={0.12} minDistance={1.6} maxDistance={7} mouseButtons={{ LEFT: THREE.MOUSE.ROTATE, MIDDLE: THREE.MOUSE.DOLLY, RIGHT: THREE.MOUSE.PAN }} touches={{ ONE: THREE.TOUCH.ROTATE, TWO: THREE.TOUCH.DOLLY_PAN }} />;
+}
+
+function AtlasLoading() {
+  const { progress } = useProgress();
+  return <p className="whitespace-nowrap rounded-md bg-slate-950/90 px-4 py-2 text-sm text-white" role="status">Chargement de l’atlas 3D… {Math.round(progress)} %</p>;
 }
 
 export default function AnatomicalAtlas3D(props: Props) {

@@ -1,3 +1,14 @@
+.anatomical-atlas-canvas {
+  position: relative;
+  overflow: hidden;
+  /* The rest of the dossier still scrolls normally. */
+  touch-action: none;
+  overscroll-behavior: contain;
+}
+.anatomical-atlas-canvas canvas {
+  touch-action: none !important;
+  outline: none;
+}
 .anatomical-alert-zone {
   position: absolute;
   transform: translate(-50%, -50%);

@@ -134,15 +134,16 @@ const PatientDossierLayout = ({ patientId, patient }: PatientDossierLayoutProps)
         }
     };
 
+    const canMoveTiles = width >= 1200;
     const layouts = {
-        lg: [
+        lg: ([
             { i: 'navigation', x: 0, y: 0, w: 2, h: 10 },
-            { i: 'digital-twin', x: 2, y: 0, w: 7, h: 10 },
+            { i: 'digital-twin', x: 2, y: 0, w: 7, h: 16 },
             { i: 'ai-synthesis', x: 9, y: 0, w: 3, h: 6 },
             { i: 'summary', x: 0, y: 10, w: 2, h: 14 },
             { i: 'documents', x: 2, y: 10, w: 7, h: 10 },
             { i: 'ai-assistant', x: 9, y: 6, w: 3, h: 10 },
-        ]
+        ] as const).map(item => ({ ...item, isDraggable: canMoveTiles, isResizable: canMoveTiles }))
     };
 
     return (
@@ -158,7 +159,8 @@ const PatientDossierLayout = ({ patientId, patient }: PatientDossierLayoutProps)
                         cols={{ lg: 12, md: 10, sm: 6, xs: 4, xxs: 2 }}
                         rowHeight={50}
                         draggableHandle=".drag-handle"
-                        handle=".drag-handle"
+                        isDraggable={canMoveTiles}
+                        isResizable={canMoveTiles}
                         margin={[12, 12]}
                         containerPadding={[0, 0]}
                         width={width}
@@ -197,7 +199,7 @@ const PatientDossierLayout = ({ patientId, patient }: PatientDossierLayoutProps)
 
                         {/* Digital Twin */}
                         <div key="digital-twin" className="bg-background/20 rounded-2xl border border-border/50 overflow-hidden relative shadow-lg group">
-                            <div className="drag-handle absolute top-0 left-0 right-0 h-6 z-10 bg-gradient-to-b from-background/90 to-transparent cursor-move opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                            <div className={`drag-handle absolute top-0 left-0 right-0 h-6 z-10 bg-gradient-to-b from-background/90 to-transparent cursor-move opacity-0 group-hover:opacity-100 transition-opacity items-center justify-center ${canMoveTiles ? 'flex' : 'hidden'}`}>
                                 <div className="w-16 h-1 bg-primary/40 rounded-full"></div>
                             </div>
                             <div onPointerDown={(e) => e.stopPropagation()}
