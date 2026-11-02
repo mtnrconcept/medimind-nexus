@@ -121,12 +121,15 @@ type WebResearchResult = {
   articles: PubMedArticle[];
 };
 
+import { outputBudget, isOutputLimit } from './output-budget.ts';
+
 type AnalysisJobStatus = 'queued' | 'processing' | 'completed' | 'failed';
 
 type AnalysisJobPayload = {
   action?: string;
   async?: boolean;
   runJob?: boolean;
+  outputRetry?: boolean;
   jobId?: string;
   jobToken?: string;
   providerResponseId?: string;
@@ -173,6 +176,7 @@ function sanitizeJobPayload(payload: AnalysisJobPayload): AnalysisJobPayload {
     action: _action,
     async: _async,
     runJob: _runJob,
+    outputRetry: _outputRetry,
     jobId: _jobId,
     jobToken: _jobToken,
     providerResponseId: _providerResponseId,
@@ -214,6 +218,7 @@ function startBackgroundJob(
 ): void {
   const processorPayload: AnalysisJobPayload = {
     ...sanitizeJobPayload(payload),
+    outputRetry: payload.outputRetry === true,
     ...(payload.providerResponseId ? { providerResponseId: payload.providerResponseId } : {}),
     runJob: true,
     jobId,
@@ -1047,7 +1052,22 @@ serve(async (req) => {
           });
         }
 
-        const errorMessage = providerResult.errorMessage || `OpenAI background response ended with status ${providerResult.status}`;
+        const truncated = isOutputLimit(providerResult.status, providerResult.errorMessage);
+        if (truncated && !job.request_payload?.outputRetry) {
+          const retryPayload = { ...sanitizeJobPayload(job.request_payload || {}), outputRetry: true };
+          const message = 'Réponse incomplète. Nouvelle analyse avec une limite de sortie supérieure.';
+          // Only the poller that clears this provider ID may start another worker.
+          const { data: claimed, error } = await supabase.from('ai_analysis_jobs')
+            .update({ request_payload: retryPayload, provider_response_id: null, provider_status: 'retrying', progress_message: message })
+            .eq('id', job.id).eq('status', 'processing').eq('provider_response_id', job.provider_response_id)
+            .select('id').maybeSingle();
+          if (error) return jsonResponse({ error: 'Impossible de préparer la reprise de l’analyse.' }, 503);
+          if (claimed) startBackgroundJob(supabase, supabaseUrl, supabaseKey, job.id, jobToken, retryPayload);
+          return jsonResponse({ job: { ...job, provider_status: 'retrying', progress_message: message } });
+        }
+        const errorMessage = truncated
+          ? 'La réponse reste incomplète après deux tentatives. Réduisez le nombre d’éléments sélectionnés et relancez l’analyse.'
+          : providerResult.errorMessage || `OpenAI background response ended with status ${providerResult.status}`;
         await updateAnalysisJob(supabase, job.id, {
           status: 'failed' satisfies AnalysisJobStatus,
           provider_status: providerResult.status,
@@ -1090,7 +1110,7 @@ serve(async (req) => {
         return jsonResponse({ error: createJobError.message }, 500);
       }
 
-      startBackgroundJob(supabase, supabaseUrl, supabaseKey, job.id, job.public_token, payload);
+      startBackgroundJob(supabase, supabaseUrl, supabaseKey, job.id, job.public_token, sanitizeJobPayload(payload));
 
       return jsonResponse({
         job: {
@@ -1599,7 +1619,7 @@ Génère uniquement le JSON des schémas thérapeutiques alternatifs.`;
           forceModel: true,
           reasoningEffort: schemaRoute.reasoningEffort || OPENAI_CROSS_DATA_REASONING_EFFORT,
           responseFormat: { type: 'json_object' },
-          maxTokens: 6000,
+          maxTokens: outputBudget(6000, runJob && payload.outputRetry === true),
           timeoutMs: schemaTimeoutMs,
         };
 
@@ -1970,7 +1990,7 @@ Réponds UNIQUEMENT en français avec le JSON demandé. Génère uniquement les 
       forceModel: true,
       reasoningEffort: fullRoute.reasoningEffort || OPENAI_CROSS_DATA_REASONING_EFFORT,
       responseFormat: { type: 'json_object' },
-      maxTokens: 8000,
+      maxTokens: outputBudget(8000, runJob && payload.outputRetry === true),
       timeoutMs: analysisTimeoutMs,
     };
 
