@@ -27,6 +27,8 @@ import {
   type TreatmentSchema,
 } from "./analysis-utils.ts";
 
+import { handleMatrix } from './matrix-job.ts';
+
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
@@ -944,6 +946,10 @@ serve(async (req) => {
     if (!supabaseUrl || !supabaseKey) {
       throw new Error('Supabase function environment is incomplete: SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY are required');
     }
+    if (payload.action?.startsWith('matrix.')) {
+      return await handleMatrix(req, payload, supabaseUrl, supabaseKey, pair =>
+        searchPubMed(buildPairSearchQuery(pair), 2, Deno.env.get('NCBI_API_KEY')), createClient);
+    }
     const supabase = createClient(supabaseUrl, supabaseKey);
     activeSupabase = supabase;
     const {
@@ -982,6 +988,7 @@ serve(async (req) => {
         .select('id, status, progress_percentage, progress_message, request_payload, result_payload, error_message, model, reasoning_effort, degraded, degraded_reason, provider_name, provider_response_id, provider_status, provider_started_at, provider_completed_at, created_at, started_at, completed_at, updated_at')
         .eq('id', jobId)
         .eq('public_token', jobToken)
+        .neq('analysis_mode', 'progressive_matrix')
         .maybeSingle();
 
       if (jobError) {

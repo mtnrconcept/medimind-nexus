@@ -50,13 +50,20 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   useEffect(() => {
     let mounted = true;
     const requestVersion = roleRequestVersion;
+    let identity: string | null | undefined;
+    let authEventReceived = false;
     const applySession = (nextSession: Session | null) => {
       if (!mounted) return;
+      const userId = nextSession?.user.id ?? null;
+      const identityChanged = identity !== userId;
+      identity = userId;
       const version = ++roleRequestVersion.current;
       setSession(nextSession);
       setUser(nextSession?.user ?? null);
-      setRole(null);
-      setRoleLoading(Boolean(nextSession?.user));
+      if (identityChanged) {
+        setRole(null);
+        setRoleLoading(Boolean(userId));
+      }
       setLoading(false);
       if (nextSession?.user) {
         // Supabase auth listeners must not synchronously make other Supabase requests.
@@ -68,13 +75,16 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       }
     };
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      (_event, nextSession) => applySession(nextSession)
+      (_event, nextSession) => {
+        authEventReceived = true;
+        applySession(nextSession);
+      }
     );
     supabase.auth.getSession()
-      .then(({ data: { session: currentSession } }) => applySession(currentSession))
+      .then(({ data: { session: currentSession } }) => { if (!authEventReceived) applySession(currentSession); })
       .catch((error) => {
         console.error('Session initialization failed:', error);
-        applySession(null);
+        if (!authEventReceived) applySession(null);
       });
     return () => { mounted = false; ++requestVersion.current; subscription.unsubscribe(); };
   }, []);
