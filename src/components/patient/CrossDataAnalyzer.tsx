@@ -1120,7 +1120,7 @@ const CrossDataAnalyzer = ({ patientData }: CrossDataAnalyzerProps) => {
               selectedTreatmentIds={selectedTreatments}
               selectedMedicationIds={selectedMedications}
               analysisResultFromParent={result}
-              onAnalysisResultChange={incoming => setResult(ensureAnalysisShape(incoming))}
+              onAnalysisResultChange={incoming => setResult(ensureAnalysisShape(incoming as unknown as Parameters<typeof ensureAnalysisShape>[0]))}
               onGenerateTreatmentSchemas={runTreatmentSchemaGeneration}
               isGeneratingTreatmentSchemas={generatingTreatmentSchemas}
             />
