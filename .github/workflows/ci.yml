@@ -29,7 +29,7 @@ jobs:
         run: npm ci
 
       - name: Tests
-        run: npx tsx --test --test-concurrency=2 tests/*.test.ts
+        run: npx tsx --test --test-concurrency=1 tests/*.test.ts
 
       - name: Focused clinical typecheck
         run: npm run typecheck
