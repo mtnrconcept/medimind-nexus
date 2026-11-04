@@ -26,7 +26,7 @@ import {
     Crosshair, Search, Play, Square, Loader2, Brain, Sparkles,
     AlertTriangle, Lightbulb, Baby, ChevronDown, Check, Pill, Stethoscope, Globe
 } from 'lucide-react';
-import { supabase } from '@/integrations/supabase/client';
+import { supabase, aiFetch } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 import ResearchJourneyStep, { ResearchStep } from './ResearchJourneyStep';
 import DiscoveryCard from './DiscoveryCard';
@@ -151,7 +151,7 @@ const FocusedResearchPanel = () => {
                     try {
                         const { data: { session } } = await supabase.auth.getSession();
                         if (session) {
-                            const response = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/search-medical-concepts`, {
+                            const response = await aiFetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/search-medical-concepts`, {
                                 method: 'POST',
                                 headers: {
                                     'Content-Type': 'application/json',
@@ -245,7 +245,7 @@ const FocusedResearchPanel = () => {
                 ? `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/discovery-search`
                 : `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/focused-research`;
 
-            const response = await fetch(endpoint, {
+            const response = await aiFetch(endpoint, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
@@ -335,7 +335,7 @@ const FocusedResearchPanel = () => {
             toast.success(t('Recherche ciblée terminée'));
         } catch (err: any) {
             if (err.name === 'AbortError') {
-                toast.info(t('Recherche interrompue'));
+                toast.info(t('Suivi masqué. Le traitement reste accessible dans Activité IA.'));
             } else {
                 console.error('Focused research error:', err);
                 toast.error(err.message || t('Erreur lors de la recherche'));
@@ -537,7 +537,7 @@ const FocusedResearchPanel = () => {
                         {isResearching ? (
                             <>
                                 <Square className="h-4 w-4" />
-                                {t('Arrêter la recherche')}
+                                {t('Masquer le suivi')}
                             </>
                         ) : (
                             <>

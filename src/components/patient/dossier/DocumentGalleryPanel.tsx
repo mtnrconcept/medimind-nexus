@@ -3,7 +3,7 @@
  */
 
 import { useState, useCallback, useEffect } from 'react';
-import { supabase } from '@/integrations/supabase/client';
+import { supabase, aiFetch } from '@/integrations/supabase/client';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -317,7 +317,7 @@ const DocumentGalleryPanel = ({ patientId, onDataIntegrated }: DocumentGalleryPa
             formData.append('patientId', patientId);
 
             // Call the edge function with proper data
-            const response = await fetch(
+            const response = await aiFetch(
                 `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/document-analyzer`,
                 {
                     method: 'POST',

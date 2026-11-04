@@ -13,6 +13,12 @@ import {
   type ClinicalRiskInput,
   type ClinicalTask,
 } from './clinical-brain.ts';
+import {
+  BACKGROUND_AI_POLL_TIMEOUT_MS,
+  BACKGROUND_AI_START_TIMEOUT_MS,
+  resolveAIOutputTokens,
+  resolveDirectAITimeout,
+} from './ai-policy.ts';
 
 declare const Deno: {
   env: {
@@ -37,11 +43,44 @@ export interface AIBackgroundResponse {
   reasoningEffort?: ClinicalReasoningEffort;
   clinicalSafety?: ClinicalRiskAssessment;
   clinicalRoute?: AIClinicalRouteMetadata;
+  maxOutputTokens?: number;
 }
 
 export interface AIBackgroundPollResult extends AIBackgroundResponse {
   text?: string;
+  partialText?: string;
+  incompleteReason?: string;
   errorMessage?: string;
+}
+
+/** A partial answer must remain distinguishable from a usable final result. */
+export class AIIncompleteResponseError extends Error {
+  readonly reason: string;
+  readonly status: string;
+  readonly responseId?: string;
+  readonly partialText: string;
+  readonly maxOutputTokens?: number;
+  readonly resumable: boolean;
+
+  constructor(reason: string, details: {
+    responseId?: string;
+    partialText?: string;
+    maxOutputTokens?: number;
+    status?: string;
+  } = {}) {
+    super(`OpenAI response is incomplete (reason: ${reason})`);
+    this.name = 'AIIncompleteResponseError';
+    this.reason = reason;
+    this.status = details.status ?? 'incomplete';
+    this.responseId = details.responseId;
+    this.partialText = details.partialText ?? '';
+    // Legacy callers log Error objects. Keep recoverable clinical text out of
+    // ordinary error enumeration/inspection while retaining explicit access.
+    Object.defineProperty(this, 'partialText', { enumerable: false });
+    this.maxOutputTokens = details.maxOutputTokens;
+    // A retry must be decided and persisted by the job owner, never by the HTTP client.
+    this.resumable = reason === 'max_output_tokens';
+  }
 }
 
 export interface AIClinicalRouteMetadata {
@@ -124,8 +163,6 @@ const DEFAULT_OPENAI_MODEL = 'gpt-6.1-sol';
 const OPENAI_CHAT_COMPLETIONS_URL = 'https://api.openai.com/v1/chat/completions';
 const OPENAI_RESPONSES_URL = 'https://api.openai.com/v1/responses';
 const OPENAI_EMBEDDINGS_URL = 'https://api.openai.com/v1/embeddings';
-const DEFAULT_OPENAI_TIMEOUT_MS = 90_000;
-const OPENAI_BACKGROUND_REQUEST_TIMEOUT_MS = 15_000;
 const MAX_CLINICAL_ROUTING_TEXT_CHARS = 20_000;
 const CLINICAL_CONTRACT_MARKER = 'CONTRAT CLINIQUE VERIFIABLE';
 
@@ -180,11 +217,7 @@ function getOpenAIConfig(options: AICallOptions) {
 }
 
 function resolveTimeoutMs(options: AICallOptions): number {
-  const envValue = Number(Deno.env.get('OPENAI_TIMEOUT_MS'));
-  const configured = options.timeoutMs ?? envValue;
-  return Number.isFinite(configured) && configured > 0
-    ? configured
-    : DEFAULT_OPENAI_TIMEOUT_MS;
+  return resolveDirectAITimeout(options.timeoutMs, Deno.env.get('OPENAI_TIMEOUT_MS'));
 }
 
 function strongerReasoningEffort(
@@ -312,8 +345,10 @@ export function prepareClinicalAICall(
     model: selectedModel,
     reasoningEffort: supportedEffort,
     reasoningMode: supportsMaxPro && (route.reasoningMode === 'pro' || options.reasoningMode === 'pro') ? 'pro' : undefined,
-    maxTokens: supportedEffort === 'max' ? Math.max(options.maxTokens ?? 0, 25_000) : options.maxTokens,
-    timeoutMs: options.timeoutMs ?? route.timeoutMs,
+    maxTokens: resolveAIOutputTokens({ ...options, reasoningEffort: supportedEffort }),
+    // Routing controls clinical capability; the shared transport owns its deadline.
+    // Preserve an explicitly shorter caller deadline, otherwise allow 120 seconds.
+    timeoutMs: options.timeoutMs,
   };
   const routedSystemPrompt = systemPrompt.includes(CLINICAL_CONTRACT_MARKER)
     ? systemPrompt
@@ -337,66 +372,59 @@ export function prepareClinicalAICall(
   };
 }
 
-async function fetchOpenAI(
+async function withOpenAIRequest<T>(
   url: string,
   apiKey: string,
-  body: Record<string, unknown>,
+  request: { method: 'POST' | 'GET'; body?: Record<string, unknown> },
   timeoutMs: number,
-): Promise<Response> {
+  consume: (response: Response, signal: AbortSignal) => Promise<T>,
+): Promise<T> {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), timeoutMs);
   const startedAt = Date.now();
+  let timedOut = false;
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  const timeoutError = new Error(`OpenAI ${request.method} request timed out after ${timeoutMs}ms`);
+  const deadline = new Promise<never>((_resolve, reject) => {
+    timeout = setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+      reject(timeoutError);
+    }, timeoutMs);
+  });
 
   try {
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(body),
-      signal: controller.signal,
-    });
-    console.log(`[AI] OpenAI ${response.status} in ${Date.now() - startedAt}ms`);
-    return response;
+    // The deadline covers headers, JSON/SSE body reads, and awaited chunk consumers.
+    // Retrying a creation request here could pay for the same generation twice.
+    return await Promise.race([deadline, (async () => {
+      const response = await fetch(url, {
+        method: request.method,
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          'Content-Type': 'application/json',
+        },
+        ...(request.body ? { body: JSON.stringify(request.body) } : {}),
+        signal: controller.signal,
+      });
+      console.log(`[AI] OpenAI ${request.method} ${response.status} in ${Date.now() - startedAt}ms`);
+      return await consume(response, controller.signal);
+    })()]);
   } catch (error) {
-    if (error instanceof Error && error.name === 'AbortError') {
-      throw new Error(`OpenAI request timed out after ${timeoutMs}ms`);
-    }
+    if (timedOut) throw timeoutError;
     throw error;
   } finally {
-    clearTimeout(timeout);
+    if (timeout !== undefined) clearTimeout(timeout);
   }
 }
 
-async function fetchOpenAIGet(
-  url: string,
-  apiKey: string,
-  timeoutMs: number,
-): Promise<Response> {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), timeoutMs);
-  const startedAt = Date.now();
-
-  try {
-    const response = await fetch(url, {
-      method: 'GET',
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        'Content-Type': 'application/json',
-      },
-      signal: controller.signal,
-    });
-    console.log(`[AI] OpenAI GET ${response.status} in ${Date.now() - startedAt}ms`);
-    return response;
-  } catch (error) {
-    if (error instanceof Error && error.name === 'AbortError') {
-      throw new Error(`OpenAI GET request timed out after ${timeoutMs}ms`);
-    }
-    throw error;
-  } finally {
-    clearTimeout(timeout);
+async function readOpenAIJson(response: Response, label: string): Promise<Record<string, unknown>> {
+  if (!response.ok) {
+    throw new Error(`OpenAI ${label} request failed (${response.status}): ${await response.text()}`);
   }
+  const data: unknown = await response.json();
+  if (!data || typeof data !== 'object' || Array.isArray(data)) {
+    throw new Error(`OpenAI ${label} returned an invalid response`);
+  }
+  return data as Record<string, unknown>;
 }
 
 function hasReasoningEffort(options: AICallOptions): boolean {
@@ -414,7 +442,7 @@ function supportsResponsesTemperature(model: string): boolean {
 function buildChatCompletionsBody(model: string, options: AICallOptions): Record<string, unknown> {
   const body: Record<string, unknown> = {
     model,
-    max_completion_tokens: options.maxTokens || 4096,
+    max_completion_tokens: resolveAIOutputTokens(options),
   };
 
   if (options.temperature !== undefined) {
@@ -435,7 +463,7 @@ function buildChatCompletionsBody(model: string, options: AICallOptions): Record
 function buildResponsesBody(model: string, options: AICallOptions): Record<string, unknown> {
   const body: Record<string, unknown> = {
     model,
-    max_output_tokens: options.maxTokens || 4096,
+    max_output_tokens: resolveAIOutputTokens(options),
   };
 
   if (options.temperature !== undefined && supportsResponsesTemperature(model)) {
@@ -645,20 +673,56 @@ function extractResponsesError(data: Record<string, unknown>): string | undefine
   return undefined;
 }
 
-function extractResponsesStreamDelta(event: Record<string, unknown>): string {
-  if (typeof event.delta === 'string') {
-    return event.delta;
-  }
+function extractIncompleteReason(data: Record<string, unknown>): string | undefined {
+  const details = data.incomplete_details as { reason?: unknown } | null;
+  return details && typeof details.reason === 'string' ? details.reason : undefined;
+}
 
-  if (typeof event.text === 'string') {
-    return event.text;
-  }
+function extractOutputBudget(data: Record<string, unknown>, fallback?: number): number | undefined {
+  return typeof data.max_output_tokens === 'number' && Number.isFinite(data.max_output_tokens) && data.max_output_tokens > 0
+    ? Math.floor(data.max_output_tokens)
+    : fallback;
+}
 
-  if (typeof event.output_text === 'string') {
-    return event.output_text;
-  }
+function incompleteResponse(
+  data: Record<string, unknown>,
+  fallbackText = '',
+  fallbackBudget?: number,
+): AIIncompleteResponseError {
+  return new AIIncompleteResponseError(extractIncompleteReason(data) ?? 'unknown', {
+    responseId: typeof data.id === 'string' ? data.id : undefined,
+    partialText: extractResponsesText(data) || fallbackText,
+    maxOutputTokens: extractOutputBudget(data, fallbackBudget),
+  });
+}
 
-  return '';
+function requireCompletedResponse(data: Record<string, unknown>, fallbackText = '', fallbackBudget?: number): string {
+  if (data.status === 'incomplete') throw incompleteResponse(data, fallbackText, fallbackBudget);
+  if (data.error || (typeof data.status === 'string' && data.status !== 'completed')) {
+    throw new Error(`OpenAI response ${data.status ?? 'failed'}: ${extractResponsesError(data) ?? 'generation did not complete'}`);
+  }
+  const text = extractResponsesText(data) || fallbackText;
+  if (!text.trim()) throw new Error('OpenAI returned an empty response');
+  return text;
+}
+
+type ChatChoice = { message?: { content?: string }; delta?: { content?: string }; finish_reason?: string | null };
+
+function firstChatChoice(data: Record<string, unknown>): ChatChoice | undefined {
+  return Array.isArray(data.choices) ? data.choices[0] as ChatChoice | undefined : undefined;
+}
+
+function requireCompletedChat(data: Record<string, unknown>, fallbackBudget: number): string {
+  const choice = firstChatChoice(data);
+  const text = choice?.message?.content ?? '';
+  if (choice?.finish_reason && choice.finish_reason !== 'stop') {
+    throw new AIIncompleteResponseError(choice.finish_reason === 'length' ? 'max_output_tokens' : choice.finish_reason, {
+      responseId: typeof data.id === 'string' ? data.id : undefined, partialText: text, maxOutputTokens: fallbackBudget,
+    });
+  }
+  if (data.error) throw new Error(`OpenAI response failed: ${extractResponsesError(data) ?? 'generation did not complete'}`);
+  if (!text.trim()) throw new Error('OpenAI returned an empty response');
+  return text;
 }
 
 /**
@@ -683,31 +747,17 @@ export async function callAI(
         messages: buildMessages(prepared.systemPrompt, userPrompt),
       };
 
-  const response = await fetchOpenAI(
+  const data = await withOpenAIRequest(
     useResponsesAPI ? OPENAI_RESPONSES_URL : OPENAI_CHAT_COMPLETIONS_URL,
     apiKey,
-    body,
+    { method: 'POST', body },
     timeoutMs,
+    response => readOpenAIJson(response, useResponsesAPI ? 'Responses' : 'Chat Completions'),
   );
-
-  if (!response.ok) {
-    const errorText = await response.text();
-    const apiName = useResponsesAPI ? 'Responses' : 'Chat Completions';
-    throw new Error(`OpenAI ${apiName} request failed (${response.status}): ${errorText}`);
-  }
-
-  const data = await response.json();
+  const budget = resolveAIOutputTokens(prepared.options);
   const text = useResponsesAPI
-    ? extractResponsesText(data)
-    : data.choices?.[0]?.message?.content || '';
-
-  if (!text.trim()) {
-    const status = typeof data.status === 'string' ? data.status : 'unknown';
-    const reason = typeof data.incomplete_details === 'object'
-      ? JSON.stringify(data.incomplete_details)
-      : 'no text output';
-    throw new Error(`OpenAI returned an empty response (status: ${status}, reason: ${reason})`);
-  }
+    ? requireCompletedResponse(data, '', budget)
+    : requireCompletedChat(data, budget);
 
   return {
     text,
@@ -737,19 +787,13 @@ export async function startBackgroundAI(
     store: true,
   };
 
-  const response = await fetchOpenAI(
+  const data = await withOpenAIRequest(
     OPENAI_RESPONSES_URL,
     apiKey,
-    body,
-    Math.min(resolveTimeoutMs(prepared.options), OPENAI_BACKGROUND_REQUEST_TIMEOUT_MS),
+    { method: 'POST', body },
+    BACKGROUND_AI_START_TIMEOUT_MS,
+    response => readOpenAIJson(response, 'background'),
   );
-
-  if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(`OpenAI background request failed (${response.status}): ${errorText}`);
-  }
-
-  const data = await response.json() as Record<string, unknown>;
   const id = typeof data.id === 'string' ? data.id : '';
   const status = typeof data.status === 'string' ? data.status : 'unknown';
 
@@ -765,6 +809,7 @@ export async function startBackgroundAI(
     reasoningEffort: prepared.options.reasoningEffort,
     clinicalSafety: prepared.clinicalSafety,
     clinicalRoute: prepared.clinicalRoute,
+    maxOutputTokens: extractOutputBudget(data, resolveAIOutputTokens(prepared.options)),
   };
 }
 
@@ -777,23 +822,18 @@ export async function retrieveBackgroundAI(
     throw new Error('OPENAI_API_KEY not configured');
   }
 
-  const response = await fetchOpenAIGet(
+  const data = await withOpenAIRequest(
     `${OPENAI_RESPONSES_URL}/${encodeURIComponent(responseId)}`,
     apiKey,
-    Math.min(resolveTimeoutMs(options), OPENAI_BACKGROUND_REQUEST_TIMEOUT_MS),
+    { method: 'GET' },
+    BACKGROUND_AI_POLL_TIMEOUT_MS,
+    response => readOpenAIJson(response, 'background retrieve'),
   );
-
-  if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(`OpenAI background retrieve failed (${response.status}): ${errorText}`);
-  }
-
-  const data = await response.json() as Record<string, unknown>;
   const status = typeof data.status === 'string' ? data.status : 'unknown';
   const model = typeof data.model === 'string'
     ? data.model
     : (options.model || Deno.env.get('OPENAI_MODEL') || DEFAULT_OPENAI_MODEL);
-  const text = status === 'completed' ? extractResponsesText(data) : undefined;
+  const text = status === 'completed' ? requireCompletedResponse(data) : undefined;
 
   return {
     id: responseId,
@@ -802,6 +842,9 @@ export async function retrieveBackgroundAI(
     model,
     reasoningEffort: options.reasoningEffort,
     text,
+    partialText: status === 'incomplete' ? extractResponsesText(data) : undefined,
+    incompleteReason: extractIncompleteReason(data),
+    maxOutputTokens: extractOutputBudget(data, options.maxTokens),
     errorMessage: extractResponsesError(data),
   };
 }
@@ -822,14 +865,9 @@ export async function createEmbeddings(
     body.dimensions = options.dimensions;
   }
 
-  const response = await fetchOpenAI(OPENAI_EMBEDDINGS_URL, apiKey, body, timeoutMs);
-  if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(`OpenAI Embeddings request failed (${response.status}): ${errorText}`);
-  }
-
-  const data = await response.json() as { data?: Array<{ index?: number | string; embedding?: unknown }> };
-  const rows = Array.isArray(data.data) ? data.data : [];
+  const data = await withOpenAIRequest(OPENAI_EMBEDDINGS_URL, apiKey, { method: 'POST', body }, timeoutMs,
+    response => readOpenAIJson(response, 'Embeddings'));
+  const rows = Array.isArray(data.data) ? data.data as Array<{ index?: number | string; embedding?: unknown }> : [];
   return rows
     .sort((left, right) => Number(left.index || 0) - Number(right.index || 0))
     .map((row) => row.embedding)
@@ -850,6 +888,112 @@ export function cleanJsonString(input: string): string {
   }
 
   return cleaned.replace(/,\s*}/g, '}').replace(/,\s*]/g, ']');
+}
+
+async function consumeOpenAIStream(
+  response: Response,
+  signal: AbortSignal,
+  useResponsesAPI: boolean,
+  onChunk: (text: string) => void | Promise<void>,
+  maxOutputTokens: number,
+): Promise<string> {
+  if (!response.ok || !response.body) {
+    const apiName = useResponsesAPI ? 'Responses' : 'Chat Completions';
+    throw new Error(`OpenAI ${apiName} stream failed (${response.status}): ${await response.text()}`);
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let fullText = '';
+  let buffer = '';
+  let responseId: string | undefined;
+  let terminal = false;
+  const abortRead = () => { void reader.cancel().catch(() => undefined); };
+  signal.addEventListener('abort', abortRead, { once: true });
+
+  const acceptFrame = async (frame: string) => {
+    const payload = frame.split(/\r?\n/)
+      .filter(line => line.startsWith('data:'))
+      .map(line => line.slice(5).trimStart()).join('\n').trim();
+    if (!payload || payload === '[DONE]') return;
+    // A complete malformed frame is an interrupted stream, not ignorable output.
+    const parsed: unknown = JSON.parse(payload);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      throw new Error('OpenAI stream returned an invalid event');
+    }
+    const event = parsed as Record<string, unknown>;
+    if (useResponsesAPI) {
+      const snapshot = event.response && typeof event.response === 'object'
+        ? event.response as Record<string, unknown> : {};
+      if (typeof snapshot.id === 'string') responseId = snapshot.id;
+      if (event.type === 'response.incomplete') {
+        throw incompleteResponse({ id: responseId, ...snapshot }, fullText, maxOutputTokens);
+      }
+      if (event.type === 'response.failed' || event.type === 'response.cancelled') {
+        throw new Error(`OpenAI response ${snapshot.status ?? event.type}: ${extractResponsesError(snapshot) ?? 'generation did not complete'}`);
+      }
+      if (event.type === 'error' || event.type === 'response.error') {
+        throw new Error(`OpenAI stream failed: ${typeof event.message === 'string' ? event.message : extractResponsesError(event) ?? 'provider error'}`);
+      }
+      if (event.type === 'response.completed') {
+        const finalText = requireCompletedResponse(snapshot, fullText, maxOutputTokens);
+        if (!fullText) await onChunk(finalText);
+        fullText = finalText;
+        terminal = true;
+      } else if (event.type === 'response.output_text.delta' && typeof event.delta === 'string') {
+        fullText += event.delta;
+        await onChunk(event.delta);
+      }
+      // In particular, output_text.done repeats the complete text and is not a delta.
+      // Reasoning summaries, refusals and tool-argument deltas are not answer text.
+    } else {
+      if (typeof event.id === 'string') responseId = event.id;
+      if (event.error) throw new Error(`OpenAI stream failed: ${extractResponsesError(event) ?? 'provider error'}`);
+      const choice = firstChatChoice(event);
+      if (typeof choice?.delta?.content === 'string') {
+        fullText += choice.delta.content;
+        await onChunk(choice.delta.content);
+      }
+      if (choice?.finish_reason === 'stop') terminal = true;
+      else if (choice?.finish_reason) {
+        throw new AIIncompleteResponseError(choice.finish_reason === 'length' ? 'max_output_tokens' : choice.finish_reason, {
+          responseId, partialText: fullText, maxOutputTokens,
+        });
+      }
+    }
+  };
+
+  const consumeFrames = async () => {
+    let boundary: RegExpExecArray | null;
+    while (!terminal && (boundary = /\r?\n\r?\n/.exec(buffer))) {
+      const frame = buffer.slice(0, boundary.index);
+      buffer = buffer.slice(boundary.index + boundary[0].length);
+      await acceptFrame(frame);
+    }
+  };
+
+  try {
+    while (!terminal && !signal.aborted) {
+      const { done, value } = await reader.read();
+      if (done) {
+        buffer += decoder.decode();
+        await consumeFrames();
+        if (!terminal && buffer.trim()) await acceptFrame(buffer);
+        break;
+      }
+      buffer += decoder.decode(value, { stream: true });
+      await consumeFrames();
+    }
+    if (!terminal) {
+      throw new AIIncompleteResponseError('stream_ended', { responseId, partialText: fullText, maxOutputTokens });
+    }
+    if (!fullText.trim()) throw new Error('OpenAI returned an empty response');
+    return fullText;
+  } finally {
+    signal.removeEventListener('abort', abortRead);
+    await reader.cancel().catch(() => undefined);
+    reader.releaseLock();
+  }
 }
 
 /**
@@ -877,53 +1021,13 @@ export async function streamAI(
         stream: true,
       };
 
-  const response = await fetchOpenAI(
+  const fullText = await withOpenAIRequest(
     useResponsesAPI ? OPENAI_RESPONSES_URL : OPENAI_CHAT_COMPLETIONS_URL,
     apiKey,
-    body,
+    { method: 'POST', body },
     timeoutMs,
+    (response, signal) => consumeOpenAIStream(response, signal, useResponsesAPI, onChunk, resolveAIOutputTokens(prepared.options)),
   );
-
-  if (!response.ok || !response.body) {
-    const errorText = await response.text();
-    const apiName = useResponsesAPI ? 'Responses' : 'Chat Completions';
-    throw new Error(`OpenAI ${apiName} stream failed (${response.status}): ${errorText}`);
-  }
-
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder();
-  let fullText = '';
-  let buffer = '';
-
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-
-    buffer += decoder.decode(value, { stream: true });
-    const lines = buffer.split('\n');
-    buffer = lines.pop() || '';
-
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (!trimmed || !trimmed.startsWith('data:')) continue;
-
-      const payload = trimmed.slice(5).trim();
-      if (payload === '[DONE]') continue;
-
-      try {
-        const event = JSON.parse(payload);
-        const text = useResponsesAPI
-          ? extractResponsesStreamDelta(event)
-          : event.choices?.[0]?.delta?.content || '';
-        if (text) {
-          fullText += text;
-          await onChunk(text);
-        }
-      } catch {
-        // Ignore partial or non-JSON SSE lines.
-      }
-    }
-  }
 
   return {
     text: fullText,

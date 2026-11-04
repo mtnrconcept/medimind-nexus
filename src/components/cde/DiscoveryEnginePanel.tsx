@@ -11,7 +11,7 @@ import {
     TrendingUp, FileText, ChevronDown, ChevronUp,
     Sparkles, Activity, Database, Globe, FlaskConical
 } from 'lucide-react';
-import { supabase } from '@/integrations/supabase/client';
+import { supabase, aiFetch } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 import { useAutoTranslation } from '@/contexts/TranslationContext';
 import ReactMarkdown from 'react-markdown';
@@ -90,7 +90,7 @@ const DiscoveryEnginePanel = () => {
 
             const endpoint = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/discovery-engine`;
 
-            const response = await fetch(endpoint, {
+            const response = await aiFetch(endpoint, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
@@ -175,7 +175,7 @@ const DiscoveryEnginePanel = () => {
 
         } catch (err: any) {
             if (err.name === 'AbortError') {
-                toast.info(t('Analyse interrompue'));
+                toast.info(t('Suivi masqué. Le traitement reste accessible dans Activité IA.'));
             } else {
                 console.error('Discovery error:', err);
                 toast.error(err.message || t('Erreur lors de l\'analyse'));
@@ -303,7 +303,7 @@ const DiscoveryEnginePanel = () => {
                         {isResearching ? (
                             <>
                                 <Square className="h-5 w-5" />
-                                {t('Arrêter l\'analyse')}
+                                {t('Masquer le suivi')}
                             </>
                         ) : (
                             <>

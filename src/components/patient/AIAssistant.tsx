@@ -6,6 +6,8 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { Brain, Send, Loader2, Sparkles, Info } from 'lucide-react';
 import { toast } from 'sonner';
 import { useAI } from '@/contexts/AIContext';
+import { useAuth } from '@/hooks/useAuth';
+import { aiFetch } from '@/integrations/supabase/client';
 import ExplainabilityPanel, { type ExplainabilityData } from './ExplainabilityPanel';
 import type { ExtendedLabResults, PatientAlert } from '@/hooks/usePatientAlerts';
 
@@ -135,8 +137,19 @@ const AIAssistant = ({ patient }: AIAssistantProps) => {
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const { llmMode, localLLMConfig } = useAI();
+  const { session } = useAuth();
   const [showExplainability, setShowExplainability] = useState<number | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const observationRef = useRef<AbortController | null>(null);
+
+  useEffect(() => {
+    setMessages([]);
+    setIsLoading(false);
+    return () => {
+      observationRef.current?.abort();
+      observationRef.current = null;
+    };
+  }, [session?.user.id, patient.id]);
 
   useEffect(() => {
     if (scrollRef.current) {
@@ -145,6 +158,9 @@ const AIAssistant = ({ patient }: AIAssistantProps) => {
   }, [messages]);
 
   const streamChat = async (userMessage: string) => {
+    if (observationRef.current) return;
+    const controller = new AbortController();
+    observationRef.current = controller;
     setIsLoading(true);
     const userMsg: Message = { role: 'user', content: userMessage };
     setMessages(prev => [...prev, userMsg]);
@@ -211,11 +227,12 @@ ${consults}
       const formattedContext = formatPatientContext(rawContext);
 
       if (llmMode === 'cloud') {
-        const response = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/ai-assistant`, {
+        if (!session) throw new Error('Connectez-vous pour utiliser l’assistant.');
+        const response = await aiFetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/ai-assistant`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`,
+            'Authorization': `Bearer ${session.access_token}`,
             'apikey': import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY,
           },
           body: JSON.stringify({
@@ -223,7 +240,9 @@ ${consults}
             patient: rawContext, // Pass the standardized context
             conversationHistory: messages.slice(-10),
           }),
+          signal: controller.signal,
         });
+        if (controller.signal.aborted) return;
 
         if (!response.ok) {
           const errorData = await response.json();
@@ -242,6 +261,7 @@ ${consults}
 
         while (true) {
           const { done, value } = await reader.read();
+          if (controller.signal.aborted) return;
           if (done) break;
 
           buffer += decoder.decode(value, { stream: true });
@@ -318,6 +338,7 @@ Assistant :`;
             stop: ['\nUser:', '\nDirecteur:', '\nSystem:', '</s>', '###'],
           }),
         });
+        if (controller.signal.aborted) return;
 
         if (!response.ok) throw new Error(`Local LLM stream error: ${response.statusText}`);
         if (!response.body) throw new Error('No response body');
@@ -331,6 +352,7 @@ Assistant :`;
 
         while (true) {
           const { done, value } = await reader.read();
+          if (controller.signal.aborted) return;
           if (done) break;
 
           buffer += decoder.decode(value, { stream: true });
@@ -361,11 +383,15 @@ Assistant :`;
         }
       }
     } catch (error) {
+      if (controller.signal.aborted) return;
       console.error('AI Assistant error:', error);
       toast.error(error instanceof Error ? error.message : 'Erreur de l\'assistant IA');
       setMessages(prev => prev.slice(0, -1)); // Remove empty assistant message on error
     } finally {
-      setIsLoading(false);
+      if (observationRef.current === controller) {
+        observationRef.current = null;
+        setIsLoading(false);
+      }
     }
   };
 

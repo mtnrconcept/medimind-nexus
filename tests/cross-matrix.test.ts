@@ -34,7 +34,9 @@ test('server continues without a polling browser and resumes a truncated batch w
   };
   const database = new Map<string, StoredJob>();
   const submissions: string[][] = [];
-  const provider = new Map<string, { status: string; output_text?: string }>();
+  const provider = new Map<string, { status: string; output_text?: string; incomplete_details?: { reason: string }; max_output_tokens?: number }>();
+  const providerGets: string[] = [];
+  let failFirstRead = true;
   let truncate = true;
   const service = 'test-service', url = 'https://matrix.invalid';
   t.mock.method(globalThis, 'fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -45,19 +47,26 @@ test('server continues without a polling browser and resumes a truncated batch w
     if (u.pathname === '/auth/v1/user') return ok({ id: req.headers.get('authorization')?.slice(7) });
     if (u.pathname === '/rest/v1/patients') return ok([]);
     if (u.pathname === '/v1/responses' && req.method === 'POST') {
-      const input = JSON.parse((await req.json()).input[1].content);
+      const request = await req.json();
+      const input = JSON.parse(request.input[1].content);
       const hashes = input.pairs?.map(({ pair }: { pair: { pairHash: string } }) => pair.pairHash) || [];
       submissions.push(hashes);
       const id = 'ai-' + submissions.length;
-      // First group returns one explicit cell. Both the next group and its
-      // single-pair fallback exhaust their budget, then the clinician resumes.
+      // First group returns one explicit cell. The next group exhausts its
+      // larger bounded budgets, then the clinician resumes the remaining cells.
       const result = hashes.length ? { cells: hashes.slice(0, 1).map((pairHash: string) => ({ pairHash, links: [] })) } :
         { summary: 'Synthèse du test.' };
       const fail = truncate && submissions.length > 1;
-      provider.set(id, fail ? { status: 'incomplete' } : { status: 'completed', output_text: JSON.stringify(result) });
-      return ok({ id, status: 'queued' });
+      provider.set(id, fail ? { status: 'incomplete', incomplete_details: { reason: 'max_output_tokens' }, max_output_tokens: request.max_output_tokens } :
+        { status: 'completed', output_text: JSON.stringify(result) });
+      return ok({ id, status: 'queued', max_output_tokens: request.max_output_tokens });
     }
-    if (u.pathname.startsWith('/v1/responses/')) return ok(provider.get(u.pathname.split('/').pop()!));
+    if (u.pathname.startsWith('/v1/responses/')) {
+      const responseId = u.pathname.split('/').pop()!;
+      providerGets.push(responseId);
+      if (failFirstRead) { failFirstRead = false; throw new Error('Transient GET disconnection'); }
+      return ok(provider.get(responseId));
+    }
     assert.equal(u.pathname, '/rest/v1/ai_analysis_jobs');
     if (req.method === 'POST') {
       const row = { id: crypto.randomUUID(), updated_at: new Date().toISOString(), ...await req.json() };
@@ -68,6 +77,9 @@ test('server continues without a polling browser and resumes a truncated batch w
       !filter.startsWith('eq.') || String(field === 'request_payload->>scope' ? row.request_payload.scope : row[field]) === filter.slice(3)));
     if (req.method === 'PATCH') {
       const patch = await req.json();
+      // A valid response older than the former 20-minute cutoff must retain
+      // its identity when the next short worker resumes polling it.
+      if (patch.provider_started_at) patch.provider_started_at = new Date(Date.now() - 25 * 60_000).toISOString();
       rows.forEach(row => Object.assign(row, patch));
     }
     return ok(req.headers.get('accept')?.includes('vnd.pgrst.object') ? rows[0] ?? null : rows);
@@ -86,6 +98,8 @@ test('server continues without a polling browser and resumes a truncated batch w
   await drain();
   const [job] = database.values();
   assert.equal(job.status, 'failed');
+  assert.deepEqual(providerGets.slice(0, 2), ['ai-1', 'ai-1'], 'a GET error must keep and retry the same generation');
+  assert.ok(job.provider_response_id, 'a terminal incomplete response remains available for deliberate resume');
   const [first] = Object.keys(job.result_payload.cells);
   assert.ok(first);
   assert.equal((await (await dispatch({ action: 'matrix.latest', jobId: job.id }, 'other')).json()).job, null);

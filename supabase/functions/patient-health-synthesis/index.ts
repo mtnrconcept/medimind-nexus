@@ -1,8 +1,11 @@
+import {
+  prepareBackgroundJobPayload, prepareBackgroundJobRequest,
+  retrieveBackgroundForWorker, startBackgroundJobMonitor, stripBackgroundJobControls, updateBackgroundJobRecord,
+} from '../_shared/background-job-monitor.ts';
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import {
   cleanJsonString,
-  retrieveBackgroundAI,
   startBackgroundAI,
 } from "../_shared/ai-client.ts";
 import {
@@ -22,7 +25,6 @@ const JOB_TTL_MS = 24 * 60 * 60 * 1000;
 const MAX_CONTEXT_TEXT_LENGTH = 800;
 
 type JobStatus = "queued" | "processing" | "completed" | "failed";
-type RequestActor = { service: boolean; userId: string | null };
 
 type Payload = {
   action?: string;
@@ -31,6 +33,8 @@ type Payload = {
   jobId?: string;
   jobToken?: string;
   providerResponseId?: string;
+  _workerLease?: string;
+  _backgroundMaxTokens?: number;
   patient_id?: string;
 };
 
@@ -143,31 +147,13 @@ function namesMatch(left: unknown, right: unknown): boolean {
 }
 
 function sanitizeJobPayload(payload: Payload): Payload {
-  const {
-    action: _action,
-    async: _async,
-    runJob: _runJob,
-    jobId: _jobId,
-    jobToken: _jobToken,
-    providerResponseId: _providerResponseId,
-    ...requestPayload
-  } = payload;
-  return requestPayload;
+  return stripBackgroundJobControls(payload);
 }
 
 function isProviderPending(status: string | undefined | null): boolean {
   return status === "queued" || status === "in_progress";
 }
 
-async function authenticateRequest(req: Request, supabase: any, serviceRoleKey: string): Promise<RequestActor> {
-  const authorization = req.headers.get("authorization") || "";
-  if (authorization === `Bearer ${serviceRoleKey}`) return { service: true, userId: null };
-  const token = authorization.replace(/^Bearer\s+/i, "").trim();
-  if (!token) throw new Error("AUTH_REQUIRED");
-  const { data, error } = await supabase.auth.getUser(token);
-  if (error || !data?.user?.id) throw new Error("AUTH_INVALID");
-  return { service: false, userId: data.user.id };
-}
 
 async function userCanAccessPatient(supabase: any, userId: string, patientId: string): Promise<boolean> {
   const { data: admin, error: adminError } = await supabase
@@ -189,13 +175,13 @@ async function userCanAccessPatient(supabase: any, userId: string, patientId: st
   return Boolean(grant);
 }
 
-async function updateJob(supabase: any, jobId: string | undefined, patch: Record<string, unknown>): Promise<void> {
-  if (!jobId) return;
-  const { error } = await supabase
-    .from("ai_analysis_jobs")
-    .update({ ...patch, updated_at: new Date().toISOString() })
-    .eq("id", jobId);
-  if (error) console.error("[PatientHealthSynthesis] job update failed:", error.message || error);
+async function updateJob(
+  supabase: any,
+  jobId: string | undefined,
+  patch: Record<string, unknown>,
+  maxOutputTokens?: number,
+): Promise<void> {
+  await updateBackgroundJobRecord(supabase, jobId, patch, maxOutputTokens);
 }
 
 function startWorker(
@@ -203,47 +189,8 @@ function startWorker(
   supabaseUrl: string,
   serviceRoleKey: string,
   jobId: string,
-  publicToken: string,
-  payload: Payload,
 ): void {
-  const body: Payload = {
-    ...sanitizeJobPayload(payload),
-    ...(payload.providerResponseId ? { providerResponseId: payload.providerResponseId } : {}),
-    runJob: true,
-    jobId,
-    jobToken: publicToken,
-  };
-  const work = fetch(`${supabaseUrl}/functions/v1/${FUNCTION_NAME}`, {
-    method: "POST",
-    headers: {
-      apikey: serviceRoleKey,
-      Authorization: `Bearer ${serviceRoleKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(body),
-  }).then(async (response) => {
-    if (response.ok) return;
-    const text = await response.text().catch(() => "");
-    await updateJob(supabase, jobId, {
-      status: "failed",
-      progress_percentage: 100,
-      progress_message: "Echec du worker de synthese patient.",
-      error_message: `Worker returned ${response.status}: ${text}`,
-      completed_at: new Date().toISOString(),
-    });
-  }).catch(async (error) => {
-    await updateJob(supabase, jobId, {
-      status: "failed",
-      progress_percentage: 100,
-      progress_message: "Echec du lancement du worker de synthese patient.",
-      error_message: getErrorMessage(error),
-      completed_at: new Date().toISOString(),
-    });
-  });
-
-  const edgeRuntime = (globalThis as any).EdgeRuntime;
-  if (edgeRuntime?.waitUntil) edgeRuntime.waitUntil(work);
-  else work.catch((error) => console.error("[PatientHealthSynthesis] background worker error:", error));
+  startBackgroundJobMonitor({ supabase, supabaseUrl, serviceRoleKey, functionName: FUNCTION_NAME }, jobId);
 }
 
 async function fetchRows(
@@ -621,17 +568,21 @@ async function finalizeWithProvider(
   patientId: string,
   jobId: string,
   providerResponseId: string,
-): Promise<HealthSynthesis> {
+): Promise<HealthSynthesis | null> {
   const context = await fetchPatientContext(supabase, patientId);
   let degradedReason: string | undefined;
   let modelValue: any = {};
   try {
-    const provider = await retrieveBackgroundAI(providerResponseId, {
+    const provider = await retrieveBackgroundForWorker(supabase, jobId, providerResponseId, {
       model: "gpt-5.5",
       reasoningEffort: "high",
       timeoutMs: 15_000,
     });
-    if (isProviderPending(provider.status)) throw new Error(`Provider still ${provider.status}`);
+    if (!provider) return null;
+    if (isProviderPending(provider.status)) {
+      await updateJob(supabase, jobId, { provider_status: provider.status, progress_message: "Réponse IA encore en cours." });
+      return null;
+    }
     if (provider.status === "completed" && provider.text?.trim()) {
       modelValue = JSON.parse(cleanJsonString(provider.text));
     } else {
@@ -662,70 +613,25 @@ serve(async (req) => {
   let activeSupabase: any;
   let activeJobId: string | undefined;
   try {
-    const payload = await req.json().catch(() => ({})) as Payload;
+    let payload = await req.json().catch(() => ({})) as Payload;
     const supabaseUrl = Deno.env.get("SUPABASE_URL");
     const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
     if (!supabaseUrl || !serviceRoleKey) throw new Error("Supabase function environment is incomplete");
     const supabase = createClient(supabaseUrl, serviceRoleKey);
     activeSupabase = supabase;
 
-    let actor: RequestActor;
-    try {
-      actor = await authenticateRequest(req, supabase, serviceRoleKey);
-    } catch (error) {
-      return jsonResponse({ error: getErrorMessage(error) === "AUTH_INVALID" ? "Invalid session" : "Authentication required" }, 401);
-    }
+    const control = await prepareBackgroundJobRequest(req, payload, {
+      supabase, supabaseUrl, serviceRoleKey, functionName: FUNCTION_NAME, corsHeaders, allowLegacyToken: false,
+    });
+    if (control.response) return control.response;
+    payload = control.payload;
+    const actor = control.actor;
 
-    const action = payload.action;
     const runJob = payload.runJob === true;
     const jobId = payload.jobId;
-    const jobToken = payload.jobToken;
     activeJobId = jobId;
 
     if (runJob && !actor.service) return jsonResponse({ error: "Worker execution requires service authorization" }, 403);
-
-    if (action === "status") {
-      if (!jobId || !jobToken) return jsonResponse({ error: "jobId and jobToken are required" }, 400);
-      let query = supabase
-        .from("ai_analysis_jobs")
-        .select("id, public_token, status, progress_percentage, progress_message, request_payload, result_payload, error_message, model, reasoning_effort, degraded, degraded_reason, provider_name, provider_response_id, provider_status, provider_started_at, provider_completed_at, created_at, started_at, completed_at, updated_at, requested_by, expires_at")
-        .eq("id", jobId)
-        .eq("public_token", jobToken);
-      if (!actor.service) {
-        query = query.eq("requested_by", actor.userId).gt("expires_at", new Date().toISOString());
-      }
-      const { data: job, error } = await query.maybeSingle();
-      if (error) return jsonResponse({ error: error.message }, 500);
-      if (!job) return jsonResponse({ error: "Job not found or expired" }, 404);
-
-      if (job.status === "processing" && job.provider_name === "openai" && job.provider_response_id && job.provider_status !== "finalizing") {
-        const provider = await retrieveBackgroundAI(job.provider_response_id, {
-          model: typeof job.model === "string" ? job.model : undefined,
-          reasoningEffort: job.reasoning_effort,
-          timeoutMs: 15_000,
-        });
-        if (isProviderPending(provider.status)) {
-          await updateJob(supabase, job.id, {
-            provider_status: provider.status,
-            progress_percentage: Math.max(Number(job.progress_percentage || 0), 80),
-            progress_message: "Modele OpenAI en cours de raisonnement.",
-          });
-          return jsonResponse({ job: { ...job, provider_status: provider.status, progress_percentage: 80 } });
-        }
-
-        await updateJob(supabase, job.id, {
-          provider_status: "finalizing",
-          progress_percentage: 90,
-          progress_message: "Finalisation clinique de la synthese.",
-        });
-        startWorker(supabase, supabaseUrl, serviceRoleKey, job.id, job.public_token, {
-          ...(job.request_payload || {}),
-          providerResponseId: job.provider_response_id,
-        });
-        return jsonResponse({ job: { ...job, provider_status: "finalizing", progress_percentage: 90 } });
-      }
-      return jsonResponse({ job });
-    }
 
     if (!payload.patient_id) return jsonResponse({ error: "patient_id is required" }, 400);
 
@@ -744,14 +650,14 @@ serve(async (req) => {
           status: "queued" satisfies JobStatus,
           progress_percentage: 0,
           progress_message: "Synthese patient en file d attente.",
-          request_payload: sanitizeJobPayload(payload),
+          request_payload: prepareBackgroundJobPayload(sanitizeJobPayload(payload)),
           requested_by: actor.userId,
           expires_at: expiresAt,
         })
         .select("id, public_token, status, progress_percentage, progress_message, created_at, expires_at")
         .single();
       if (error) return jsonResponse({ error: error.message }, 500);
-      startWorker(supabase, supabaseUrl, serviceRoleKey, job.id, job.public_token, payload);
+      startWorker(supabase, supabaseUrl, serviceRoleKey, job.id);
       return jsonResponse({
         job: {
           id: job.id,
@@ -776,7 +682,7 @@ serve(async (req) => {
 
     if (payload.providerResponseId) {
       const synthesis = await finalizeWithProvider(supabase, payload.patient_id, jobId, payload.providerResponseId);
-      return jsonResponse(synthesis);
+      return synthesis ? jsonResponse(synthesis) : jsonResponse({ status: "processing", jobId }, 202);
     }
 
     const context = await fetchPatientContext(supabase, payload.patient_id);
@@ -790,7 +696,7 @@ serve(async (req) => {
         model: "gpt-5.5",
         forceModel: true,
         reasoningEffort: "high",
-        maxTokens: 5000,
+        maxTokens: payload._backgroundMaxTokens ?? 5000,
         responseFormat: { type: "json_object" },
         timeoutMs: 15_000,
         enforceClinicalContract: true,
@@ -805,7 +711,7 @@ serve(async (req) => {
         model: provider.model,
         reasoning_effort: provider.reasoningEffort,
         degraded: false,
-      });
+      }, provider.maxOutputTokens);
       return jsonResponse({ status: "processing", providerStatus: provider.status }, 202);
     } catch (error) {
       const reason = getErrorMessage(error);

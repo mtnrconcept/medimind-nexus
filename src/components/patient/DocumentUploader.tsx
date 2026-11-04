@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
 import { Badge } from '@/components/ui/badge';
 import { Upload, X, FileText, Image, FileSpreadsheet, File, Loader2 } from 'lucide-react';
-import { supabase } from '@/integrations/supabase/client';
+import { supabase, aiFetch } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 
 interface DocumentUploaderProps {
@@ -133,7 +133,7 @@ export default function DocumentUploader({ patientId, onUploadComplete, category
 
                 const { data: { session } } = await supabase.auth.getSession();
 
-                const analyzeResponse = await fetch(
+                const analyzeResponse = await aiFetch(
                     `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/document-analyzer`,
                     {
                         method: 'POST',

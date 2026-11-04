@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -8,7 +8,9 @@ import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
-import { supabase } from "@/integrations/supabase/client";
+import { supabase, aiTransport } from "@/integrations/supabase/client";
+import { useAuth } from "@/hooks/useAuth";
+import type { ScraperBatchResult } from "../../../supabase/functions/ai-tool-jobs/batch";
 import * as XLSX from "xlsx";
 import {
   Globe,
@@ -59,6 +61,7 @@ interface ImportLog {
 
 export const MedicalScraperPanel = () => {
   const { toast } = useToast();
+  const { user } = useAuth();
   const [activeTab, setActiveTab] = useState("import");
 
   // ETAT SCRAPER
@@ -72,6 +75,116 @@ export const MedicalScraperPanel = () => {
   const [scraperLogs, setScraperLogs] = useState<any[]>([]);
   const [rateLimitMode, setRateLimitMode] = useState<RateLimitMode>("normal");
   const [mappedUrls, setMappedUrls] = useState<string[]>([]);
+  const [batchJob, setBatchJob] = useState<{ id: string; owner: string } | null>(null);
+  const [stopRequested, setStopRequested] = useState(false);
+  const [requestingStop, setRequestingStop] = useState(false);
+  const batchObservation = useRef<AbortController | null>(null);
+
+  useEffect(() => {
+    setBatchJob(null);
+    setIsScraping(false);
+    setScraperProgress(0);
+    setScraperLogs([]);
+    setStopRequested(false);
+    setRequestingStop(false);
+    return () => {
+      batchObservation.current?.abort();
+      batchObservation.current = null;
+    };
+  }, [user?.id]);
+
+  const showBatchResult = (result: ScraperBatchResult) => {
+    setScraperProgress(Math.round((result.completed + result.failed + result.skipped) / Math.max(1, result.total) * 100));
+    setStopRequested(previous => previous || result.stopped);
+    const labels: Record<string, string> = {
+      medicationsAdded: 'médicaments ajoutés', sideEffectsAdded: 'effets ajoutés', interactionsAdded: 'interactions ajoutées',
+      contraindicationsAdded: 'contre-indications ajoutées', pathologiesAdded: 'pathologies ajoutées',
+      symptomsAdded: 'symptômes ajoutés', treatmentsAdded: 'traitements ajoutés', linksCreated: 'liens créés',
+      moleculesAdded: 'molécules ajoutées', moleculesUpdated: 'molécules mises à jour',
+    };
+    const statistics = Object.entries(result.stats).filter(([, count]) => count > 0)
+      .map(([name, count]) => `${count} ${labels[name] || name}`).join(', ');
+    setScraperLogs([
+      ...result.entries.slice(-10).map(entry => ({
+        type: entry.status === 'completed' ? 'success' : entry.status === 'failed' ? 'error' : 'info',
+        message: `${entry.status === 'completed' ? '✓' : entry.status === 'failed' ? '⚠' : '—'} ${entry.url}: ${entry.status === 'completed' ? 'traitée' : entry.status === 'skipped' ? 'non lancée' : entry.error || 'résultat à vérifier'}`,
+      })),
+      { type: result.success ? 'success' : result.finished && !result.stopped ? 'error' : 'info',
+        message: `${result.stopped ? 'Import arrêté. ' : ''}${result.completed}/${result.total} URL réussies, ${result.failed} en erreur, ${result.skipped} non lancées.` },
+      ...(statistics ? [{ type: 'info', message: statistics }] : []),
+    ]);
+  };
+
+  const handleScraperBatch = async () => {
+    if (!user || batchObservation.current) return;
+    const controller = new AbortController();
+    batchObservation.current = controller;
+    setIsScraping(true);
+    let latest: ScraperBatchResult | null = null;
+    try {
+      let jobId = batchJob?.owner === user.id ? batchJob.id : undefined;
+      if (!jobId) {
+        setScraperProgress(0);
+        setStopRequested(false);
+        setScraperLogs([{ type: 'info', message: `Envoi de ${mappedUrls.length} URL pour un traitement par groupes de 3, délai ${RATE_LIMIT_DELAYS[rateLimitMode] / 1000} s.` }]);
+        const receipt = await aiTransport.startBatch({ mode: scraperMode, urls: mappedUrls, rateLimitMode }, { owner: user.id, signal: controller.signal });
+        if (controller.signal.aborted) return;
+        jobId = receipt.id;
+        setBatchJob({ id: jobId, owner: user.id });
+      }
+      const result = await aiTransport.observe<ScraperBatchResult>(jobId, {
+        owner: user.id, signal: controller.signal,
+        onProgress: job => {
+          if (controller.signal.aborted) return;
+          setScraperProgress(job.progress_percentage ?? 0);
+          if (job.result_payload?.body) {
+            try {
+              const saved = JSON.parse(job.result_payload.body) as ScraperBatchResult;
+              if (Array.isArray(saved.entries) && saved.stats && typeof saved.total === 'number') {
+                latest = saved;
+                showBatchResult(saved);
+              }
+            } catch { /* Keep the last confirmed progress if a response is incomplete. */ }
+          }
+        },
+      });
+      if (controller.signal.aborted) return;
+      showBatchResult(result);
+      if (!result.finished || !result.success) throw new Error('L’import est incomplet. Les résultats disponibles sont conservés dans Activité IA.');
+      setBatchJob(null);
+      toast({ title: 'Import terminé', description: `${result.completed} URL traitées.` });
+    } catch (error) {
+      if (controller.signal.aborted) return;
+      if (latest?.finished) {
+        setBatchJob(null);
+        showBatchResult(latest);
+        toast({ title: latest.stopped ? 'Import arrêté' : 'Import terminé avec des erreurs',
+          description: `${latest.completed} réussies, ${latest.failed} en erreur, ${latest.skipped} non lancées.`,
+          variant: latest.stopped ? 'default' : 'destructive' });
+      } else {
+        toast({ title: 'Suivi momentanément indisponible',
+          description: error instanceof Error ? error.message : 'Retrouvez le lot dans Activité IA.', variant: 'destructive' });
+      }
+    } finally {
+      if (batchObservation.current === controller) {
+        batchObservation.current = null;
+        setIsScraping(false);
+      }
+    }
+  };
+
+  const handleStopBatch = async () => {
+    if (!batchJob || !user || batchJob.owner !== user.id) return;
+    setRequestingStop(true);
+    try {
+      await aiTransport.stopBatch(batchJob.id, { owner: user.id });
+      setStopRequested(true);
+      toast({ title: 'Arrêt demandé', description: 'Les URL non commencées sont arrêtées. Les URL déjà acceptées se terminent.' });
+    } catch (error) {
+      toast({ title: 'Arrêt non confirmé', description: error instanceof Error ? error.message : 'Réessayez.', variant: 'destructive' });
+    } finally { setRequestingStop(false); }
+  };
+
 
   // ETAT IMPORT EXCEL/CSV
   const [isImporting, setIsImporting] = useState(false);
@@ -340,7 +453,7 @@ export const MedicalScraperPanel = () => {
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <label className="text-sm font-medium">Mode de scraping</label>
-                  <Select value={scraperMode} onValueChange={(v: ScraperMode) => setScraperMode(v)}>
+                  <Select value={scraperMode} onValueChange={(v: ScraperMode) => setScraperMode(v)} disabled={isScraping || Boolean(batchJob)}>
                     <SelectTrigger>
                       <SelectValue />
                     </SelectTrigger>
@@ -368,7 +481,7 @@ export const MedicalScraperPanel = () => {
                 </div>
                 <div className="space-y-2">
                   <label className="text-sm font-medium">Vitesse (délai entre requêtes)</label>
-                  <Select value={rateLimitMode} onValueChange={(v: RateLimitMode) => setRateLimitMode(v)}>
+                  <Select value={rateLimitMode} onValueChange={(v: RateLimitMode) => setRateLimitMode(v)} disabled={isScraping || Boolean(batchJob)}>
                     <SelectTrigger>
                       <SelectValue />
                     </SelectTrigger>
@@ -423,7 +536,7 @@ export const MedicalScraperPanel = () => {
                     }
                     value={url}
                     onChange={(e) => setUrl(e.target.value)}
-                    disabled={isMapping || isScraping}
+                    disabled={isMapping || isScraping || Boolean(batchJob)}
                   />
                   <Button
                     onClick={async () => {
@@ -471,7 +584,7 @@ export const MedicalScraperPanel = () => {
                         setIsMapping(false);
                       }
                     }}
-                    disabled={isMapping || isScraping}
+                    disabled={isMapping || isScraping || Boolean(batchJob)}
                   >
                     {isMapping ? <Loader2 className="animate-spin" /> : <MapPin className="mr-2 h-4 w-4" />}
                     Mapper
@@ -485,121 +598,23 @@ export const MedicalScraperPanel = () => {
                   <div className="flex items-center justify-between">
                     <span className="text-sm font-medium">{mappedUrls.length} URLs prêtes</span>
                     <Button
-                      onClick={async () => {
-                        setIsScraping(true);
-                        setScraperProgress(0);
-                        const delay = RATE_LIMIT_DELAYS[rateLimitMode];
-                        const PARALLEL_BATCH_SIZE = 3; // Traiter 3 URLs en parallèle
-
-                        setScraperLogs(prev => [...prev, {
-                          type: "info",
-                          message: `🚀 Scraping parallèle: ${mappedUrls.length} URLs (${PARALLEL_BATCH_SIZE} en parallèle, délai: ${delay / 1000}s entre lots)...`
-                        }]);
-
-                        let processed = 0;
-                        let errors = 0;
-                        const stats = {
-                          medicationsAdded: 0,
-                          sideEffectsAdded: 0,
-                          interactionsAdded: 0,
-                          contraindicationsAdded: 0,
-                          pathologiesAdded: 0,
-                          symptomsAdded: 0,
-                          treatmentsAdded: 0,
-                          linksCreated: 0,
-                          moleculesAdded: 0,
-                          moleculesUpdated: 0
-                        };
-
-                        // Découper en chunks de PARALLEL_BATCH_SIZE
-                        const chunks: string[][] = [];
-                        for (let i = 0; i < mappedUrls.length; i += PARALLEL_BATCH_SIZE) {
-                          chunks.push(mappedUrls.slice(i, i + PARALLEL_BATCH_SIZE));
-                        }
-
-                        for (let chunkIndex = 0; chunkIndex < chunks.length; chunkIndex++) {
-                          const chunk = chunks[chunkIndex];
-                          const startIdx = chunkIndex * PARALLEL_BATCH_SIZE;
-
-                          setScraperLogs(prev => {
-                            const newLogs = [...prev];
-                            if (newLogs.length > 10) return [...newLogs.slice(-9), { type: "info", message: `⚡ Lot ${chunkIndex + 1}/${chunks.length}: ${chunk.length} URLs en parallèle...` }];
-                            return [...newLogs, { type: "info", message: `⚡ Lot ${chunkIndex + 1}/${chunks.length}: ${chunk.length} URLs en parallèle...` }];
-                          });
-
-                          // Traiter le chunk en parallèle
-                          const singleAction = scraperMode === "medications"
-                            ? "scrape-medication"
-                            : scraperMode === "molecules"
-                              ? "scrape-molecule"
-                              : "scrape";
-                          const results = await Promise.allSettled(
-                            chunk.map(async (currentUrl) => {
-                              const { data, error } = await supabase.functions.invoke("medical-scraper", {
-                                body: { action: singleAction, url: currentUrl }
-                              });
-                              if (error) throw error;
-                              if (!data.success) throw new Error(data.error || "Erreur inconnue");
-                              return { url: currentUrl, data };
-                            })
-                          );
-
-                          // Traiter les résultats du chunk
-                          results.forEach((result, idx) => {
-                            if (result.status === 'fulfilled') {
-                              const { data } = result.value;
-                              if (data.stats) {
-                                stats.medicationsAdded += data.stats.medicationsAdded || 0;
-                                stats.sideEffectsAdded += data.stats.sideEffectsAdded || 0;
-                                stats.interactionsAdded += data.stats.interactionsAdded || 0;
-                                stats.contraindicationsAdded += data.stats.contraindicationsAdded || 0;
-                                stats.pathologiesAdded += data.stats.pathologiesAdded || 0;
-                                stats.symptomsAdded += data.stats.symptomsAdded || 0;
-                                stats.treatmentsAdded += data.stats.treatmentsAdded || 0;
-                                stats.linksCreated += data.stats.linksCreated || 0;
-                                stats.moleculesAdded += data.stats.moleculesAdded || 0;
-                                stats.moleculesUpdated += data.stats.moleculesUpdated || 0;
-                              }
-                              processed++;
-                            } else {
-                              errors++;
-                              console.error(`Erreur:`, result.reason);
-                              setScraperLogs(prev => [...prev, { type: "error", message: `❌ ${chunk[idx].split('/').pop()}: ${result.reason?.message || 'Erreur'}` }]);
-                            }
-                          });
-
-                          // Update progress
-                          setScraperProgress(Math.round(((startIdx + chunk.length) / mappedUrls.length) * 100));
-
-                          // Pause entre les chunks (sauf dernier)
-                          if (chunkIndex < chunks.length - 1) {
-                            await new Promise(resolve => setTimeout(resolve, delay));
-                          }
-                        }
-
-                        // Final Recap
-                        setScraperLogs(prev => [...prev, {
-                          type: "success",
-                          message: `✅ Terminé! ${processed}/${mappedUrls.length} réussies, ${errors} erreurs.`
-                        }]);
-
-                        if (scraperMode === "medications") {
-                          setScraperLogs(prev => [...prev, { type: "info", message: `📊 Total: ${stats.medicationsAdded} méd, ${stats.sideEffectsAdded} effets, ${stats.interactionsAdded} interactions.` }]);
-                        } else if (scraperMode === "molecules") {
-                          setScraperLogs(prev => [...prev, { type: "info", message: `📊 Total: ${stats.moleculesAdded} Molécules ajoutées, ${stats.moleculesUpdated} mises à jour.` }]);
-                        } else {
-                          setScraperLogs(prev => [...prev, { type: "info", message: `📊 Total: ${stats.pathologiesAdded} path, ${stats.symptomsAdded} sympt, ${stats.treatmentsAdded} traits.` }]);
-                        }
-
-                        setIsScraping(false);
-                      }}
+                      onClick={handleScraperBatch}
                       disabled={isScraping}
                       className="bg-green-600 hover:bg-green-700"
                     >
                       {isScraping ? <Loader2 className="animate-spin mr-2" /> : <Play className="mr-2 h-4 w-4" />}
-                      Lancer le scraping
+                      {batchJob ? 'Reprendre le suivi' : 'Lancer le scraping'}
                     </Button>
                   </div>
+                  {batchJob && (
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Button variant="destructive" size="sm" onClick={handleStopBatch} disabled={stopRequested || requestingStop}>
+                        {requestingStop ? 'Demande en cours…' : stopRequested ? 'Arrêt demandé' : 'Arrêter les URL restantes'}
+                      </Button>
+                      {isScraping && <Button variant="outline" size="sm" onClick={() => batchObservation.current?.abort()}>Masquer le suivi</Button>}
+                      <span className="text-xs text-muted-foreground">Les URL déjà acceptées se terminent après un arrêt.</span>
+                    </div>
+                  )}
                   <ScrollArea className="h-[100px] border rounded p-2 bg-muted/20 text-xs font-mono">
                     {mappedUrls.slice(0, 20).map((u, i) => (
                       <div key={i} className="truncate text-muted-foreground">{u}</div>
@@ -631,7 +646,7 @@ export const MedicalScraperPanel = () => {
                   />
 
                   <p className="text-xs text-center text-muted-foreground font-mono">
-                    NE FERMEZ PAS CETTE PAGE. Le scraping continue en arrière-plan.
+                    Vous pouvez quitter cette page. Le lot continue côté serveur ; son suivi et ses résultats restent dans Activité IA.
                   </p>
                 </div>
               )}

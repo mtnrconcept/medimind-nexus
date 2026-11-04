@@ -1,4 +1,5 @@
 import { readBoundedJson } from '../_shared/bounded-json.ts';
+import { MAX_DIRECT_AI_TIMEOUT_MS } from '../_shared/ai-policy.ts';
 import { collectExternalSources, localSourceStatus, sourceProvenance, validMedication, type SourceStatus } from "./sources.ts";
 
 const corsHeaders = {
@@ -156,7 +157,7 @@ async function synthesize(input: ResearchInput, local: LocalData, statuses: Sour
         drug_interactions: local.interactions, source_statuses: statuses });
     try {
         const response = await callAI(systemPrompt, prompt, {
-            model: "gpt-5.5", reasoningEffort: "medium", maxTokens: 8000, timeoutMs: 45_000,
+            model: "gpt-5.5", reasoningEffort: "medium", maxTokens: 8000, timeoutMs: MAX_DIRECT_AI_TIMEOUT_MS,
         });
         const raw = response.text?.trim().replace(/^```(?:json)?\s*|\s*```$/g, "");
         if (!raw) throw new Error("No output");

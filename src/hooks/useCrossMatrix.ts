@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { supabase } from '@/integrations/supabase/client';
+import { isTransientRequestFailure } from '@/lib/requestFailures';
 import type { SelectedElement } from '../../supabase/functions/cross-data-analyzer/analysis-utils';
 
 export interface MatrixJob<T> {
@@ -34,13 +35,16 @@ export function useCrossMatrix<T>(patientId: string | undefined, enabled: boolea
 
   const watch = useCallback((id: string | undefined, attempt: number) => {
     async function update() {
+      let delay = 2500;
       try {
         const row = await request('matrix.latest', { jobId: id });
         if (version.current !== attempt) return;
         setJob(prev => prev?.id === row?.id && prev?.updated_at === row?.updated_at && prev?.stalled === row?.stalled ? prev : row);
         setError(null);
         setBusy(false);
-        if (!row || row.stalled || row.status === 'completed' || row.status === 'failed') return;
+        if (!row || row.status === 'completed' || row.status === 'failed') return;
+        // matrix.latest may just have awakened a stalled worker; keep observing it.
+        if (row.stalled) delay = 10_000;
         id = row.id;
       } catch (err) {
         if (version.current !== attempt) return;
@@ -50,8 +54,9 @@ export function useCrossMatrix<T>(patientId: string | undefined, enabled: boolea
           setJob(null);
           return;
         }
+        if (!isTransientRequestFailure(err)) return;
       }
-      timer.current = setTimeout(update, 2500);
+      timer.current = setTimeout(update, delay);
     }
     void update();
   }, [request]);

@@ -1,0 +1,26 @@
+{
+  "extends": "./tsconfig.app.json",
+  "compilerOptions": { "noEmit": true, "allowImportingTsExtensions": true },
+  "include": [
+    "src/vite-env.d.ts",
+    "src/components/ai/AIActivityPanel.tsx",
+    "src/components/admin/MedicalScraperPanel.tsx",
+    "src/components/patient/AIAssistant.tsx",
+    "src/hooks/useAuth.tsx",
+    "src/hooks/useCrossMatrix.ts",
+    "src/integrations/supabase/client.ts",
+    "src/lib/aiJobs.ts",
+    "src/lib/aiJobObservation.ts",
+    "src/lib/aiJobRecovery.ts",
+    "src/lib/aiTransport.ts",
+    "src/lib/aiResultDisplay.ts",
+    "src/lib/authContinuity.ts",
+    "src/lib/requestFailures.ts",
+    "tests/ai-job-continuity.test.ts",
+    "tests/ai-native-callers.test.ts",
+    "tests/ai-transport.test.ts",
+    "tests/ai-scraper-batch.test.ts",
+    "tests/ai-result-display.test.ts",
+    "tests/auth-continuity.test.ts"
+  ]
+}

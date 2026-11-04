@@ -14,7 +14,9 @@ import {
     XCircle, Clock, TrendingUp, Filter, RefreshCw, Loader2,
     Lightbulb, ChevronRight, Activity, Play, Square, Sparkles, Database, FlaskConical, Pause, Crosshair, History, Search, Pill, Beaker, Stethoscope, BookOpen
 } from 'lucide-react';
-import { supabase } from '@/integrations/supabase/client';
+import { supabase, aiFetch, aiTransport } from '@/integrations/supabase/client';
+import { useAuth } from '@/hooks/useAuth';
+import { describeSystematicRun, type SystematicRunResult } from '@/lib/aiResultDisplay';
 import { toast } from 'sonner';
 import DiscoveryCard from '@/components/cde/DiscoveryCard';
 import KnowledgeGraphView from '@/components/cde/KnowledgeGraphView';
@@ -66,6 +68,7 @@ interface CDEAnalyzeResult {
 const ContinuousDiscovery = () => {
     const { t } = useAutoTranslation();
     const { invokeAI } = useAI();
+    const { user } = useAuth();
     const [searchParams] = useSearchParams();
     const urlTab = searchParams.get('tab');
 
@@ -93,14 +96,13 @@ const ContinuousDiscovery = () => {
     const { stats: medicalStats, loading: statsLoading } = useMedicalStats();
 
     // Systematic analysis state
-    const [systematicRun, setSystematicRun] = useState<any>(null);
+    const [systematicJob, setSystematicJob] = useState<{ id: string; owner: string } | null>(null);
+    const systematicObservation = useRef<AbortController | null>(null);
     const [isSystematicRunning, setIsSystematicRunning] = useState(false);
     const [systematicProgress, setSystematicProgress] = useState('');
     const [systematicDiscoveries, setSystematicDiscoveries] = useState<any[]>([]);
     // NEW: Research workflow details
     const [researchSteps, setResearchSteps] = useState<any[]>([]);
-    const [currentPrompt, setCurrentPrompt] = useState('');
-    const [currentAnalysis, setCurrentAnalysis] = useState<any[]>([]);
     const [showResearchDetails, setShowResearchDetails] = useState(true);
     // NEW: Pathology targeting for systematic analysis
     const [targetPathology, setTargetPathology] = useState('');
@@ -110,6 +112,18 @@ const ContinuousDiscovery = () => {
     const [isRadialModalOpen, setIsRadialModalOpen] = useState(false);
     const [radialQueries, setRadialQueries] = useState<string[]>([]);
     const [radialQueryInput, setRadialQueryInput] = useState('');
+
+    useEffect(() => {
+        setIsSystematicRunning(false);
+        setSystematicJob(null);
+        setSystematicDiscoveries([]);
+        setResearchSteps([]);
+        setSystematicProgress('');
+        return () => {
+            systematicObservation.current?.abort();
+            systematicObservation.current = null;
+        };
+    }, [user?.id]);
 
     // Load discoveries and stats
     const loadData = async () => {
@@ -187,7 +201,7 @@ const ContinuousDiscovery = () => {
             const { data: { session } } = await supabase.auth.getSession();
             if (!session) throw new Error('Vous devez être connecté');
 
-            const response = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/medical-scraper`, {
+            const response = await aiFetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/medical-scraper`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
@@ -210,91 +224,7 @@ const ContinuousDiscovery = () => {
         }
     };
 
-    // Start AI Analysis with streaming
-    const handleStartAnalysis = async () => {
-        if (isAnalyzing) {
-            // Stop analysis
-            abortControllerRef.current?.abort();
-            setIsAnalyzing(false);
-            return;
-        }
-
-        setIsAnalyzing(true);
-        setAnalysisOutput('');
-        abortControllerRef.current = new AbortController();
-
-        try {
-            // Get the user's session token
-            const { data: { session } } = await supabase.auth.getSession();
-            if (!session) {
-                throw new Error('Vous devez être connecté');
-            }
-
-            const response = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/cde-analyze`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${session.access_token}`,
-                    'apikey': import.meta.env.VITE_SUPABASE_ANON_KEY,
-                },
-                body: JSON.stringify({}),
-                signal: abortControllerRef.current.signal,
-            });
-
-            if (!response.ok) {
-                throw new Error(`Erreur: ${response.status}`);
-            }
-
-            const reader = response.body?.getReader();
-            const decoder = new TextDecoder();
-
-            if (!reader) throw new Error('No reader available');
-
-            let fullOutput = '';
-
-            while (true) {
-                const { done, value } = await reader.read();
-                if (done) break;
-
-                const chunk = decoder.decode(value, { stream: true });
-                const lines = chunk.split('\n');
-
-                for (const line of lines) {
-                    if (line.startsWith('data: ')) {
-                        const data = line.slice(6);
-                        if (data === '[DONE]') continue;
-
-                        try {
-                            const parsed = JSON.parse(data);
-                            const content = parsed.choices?.[0]?.delta?.content;
-                            if (content) {
-                                fullOutput += content;
-                                setAnalysisOutput(fullOutput);
-                                // Auto-scroll to bottom
-                                if (outputRef.current) {
-                                    outputRef.current.scrollTop = outputRef.current.scrollHeight;
-                                }
-                            }
-                        } catch (e) {
-                            // Ignore parse errors
-                        }
-                    }
-                }
-            }
-
-            toast.success(t('Analyse terminée'));
-        } catch (err: any) {
-            if (err.name === 'AbortError') {
-                toast.info(t('Analyse interrompue'));
-            } else {
-                console.error('Analysis error:', err);
-                toast.error(err.message || t('Erreur lors de l\'analyse'));
-            }
-        } finally {
-            setIsAnalyzing(false);
-        }
-    };
-
+    // Server jobs keep running when the browser stops observing.
     const handleStartAsyncAnalysis = async () => {
         if (isAnalyzing) {
             abortControllerRef.current?.abort();
@@ -353,6 +283,73 @@ const ContinuousDiscovery = () => {
         } finally {
             setIsAnalyzing(false);
             abortControllerRef.current = null;
+        }
+    };
+
+    const handleSystematicAnalysis = async () => {
+        if (systematicObservation.current) return;
+        const controller = new AbortController();
+        systematicObservation.current = controller;
+        setIsSystematicRunning(true);
+        setSystematicProgress(systematicJob ? 'Reprise du suivi…' : 'Démarrage…');
+        try {
+            const { data: { session } } = await supabase.auth.getSession();
+            if (!session || session.user.id !== user?.id) throw new Error('Votre session a changé. Reconnectez-vous.');
+            if (controller.signal.aborted) return;
+            let jobId = systematicJob?.owner === session.user.id ? systematicJob.id : undefined;
+            if (!jobId) {
+                setSystematicDiscoveries([]);
+                setResearchSteps([]);
+                const response = await aiFetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/cde-systematic-analyze`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${session.access_token}` },
+                    body: JSON.stringify({ action: 'start', target_pathology: targetPathology || null }),
+                    signal: controller.signal,
+                });
+                const receipt = await response.json();
+                if (!response.ok || !receipt.success || !receipt.job?.id) throw new Error(receipt.error || 'Le serveur n’a pas confirmé l’analyse.');
+                if (controller.signal.aborted) return;
+                jobId = receipt.job.id;
+                setSystematicJob({ id: jobId!, owner: session.user.id });
+            }
+            const showResult = (result: SystematicRunResult) => {
+                const display = describeSystematicRun(result);
+                setSystematicDiscoveries(display.discoveries);
+                setResearchSteps(display.logs);
+            };
+            const result = await aiTransport.observe<SystematicRunResult>(jobId!, {
+                owner: session.user.id,
+                signal: controller.signal,
+                onProgress: job => {
+                    if (controller.signal.aborted) return;
+                    if (job.status === 'failed' || job.status === 'cancelled') setSystematicJob(null);
+                    setSystematicProgress(job.stalled ? 'Suivi interrompu, résultat à vérifier dans Activité IA.'
+                        : job.progress_message || `Analyse en cours · ${Math.round(job.progress_percentage ?? 0)} %`);
+                    if (job.result_payload?.body) {
+                        try {
+                            const partial = JSON.parse(job.result_payload.body) as SystematicRunResult;
+                            if (Array.isArray(partial.steps)) showResult(partial);
+                        } catch { /* A partial snapshot must not replace a saved result with an invented one. */ }
+                    }
+                },
+            });
+            if (controller.signal.aborted) return;
+            showResult(result);
+            setSystematicJob(null);
+            if (!result.completed || !result.success) throw new Error('L’analyse est incomplète. Les étapes disponibles sont conservées dans Activité IA.');
+            setSystematicProgress(`Analyse terminée · ${result.pairs_analyzed} paires analysées`);
+            toast.success('Analyse systématique terminée !');
+        } catch (error) {
+            if (!controller.signal.aborted) {
+                const message = error instanceof Error ? error.message : 'Le suivi est indisponible. Consultez Activité IA.';
+                setSystematicProgress(message);
+                toast.error(message);
+            }
+        } finally {
+            if (systematicObservation.current === controller) {
+                systematicObservation.current = null;
+                setIsSystematicRunning(false);
+            }
         }
     };
 
@@ -665,7 +662,7 @@ const ContinuousDiscovery = () => {
                                             <>
                                                 <Square className="h-4 w-4" />
                                                 {analysisJobProgress && <span>{analysisJobProgress.progress}%</span>}
-                                                {t('Arrêter')}
+                                                {t('Masquer le suivi')}
                                             </>
                                         ) : (
                                             <>
@@ -799,123 +796,24 @@ const ContinuousDiscovery = () => {
                                     <div className="flex gap-2">
                                         {!isSystematicRunning ? (
                                             <Button
-                                                onClick={async () => {
-                                                    setIsSystematicRunning(true);
-                                                    setSystematicProgress('Démarrage...');
-                                                    setSystematicDiscoveries([]);
-
-                                                    try {
-                                                        const { data: { session } } = await supabase.auth.getSession();
-                                                        if (!session) throw new Error('Non connecté');
-
-                                                        // Start the analysis
-                                                        const startRes = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/cde-systematic-analyze`, {
-                                                            method: 'POST',
-                                                            headers: {
-                                                                'Content-Type': 'application/json',
-                                                                'Authorization': `Bearer ${session.access_token}`,
-                                                                'apikey': import.meta.env.VITE_SUPABASE_ANON_KEY,
-                                                            },
-                                                            body: JSON.stringify({
-                                                                action: 'start',
-                                                                target_pathology: targetPathology || null
-                                                            }),
-                                                        });
-                                                        const startData = await startRes.json();
-                                                        if (!startData.success) throw new Error(startData.error);
-
-                                                        setSystematicRun(startData);
-                                                        setSystematicProgress(`0/${startData.total_substances} substances (${startData.total_pairs} paires)`);
-
-                                                        // Analyze each substance
-                                                        for (let i = 0; i < startData.total_substances; i++) {
-                                                            const analyzeRes = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/cde-systematic-analyze`, {
-                                                                method: 'POST',
-                                                                headers: {
-                                                                    'Content-Type': 'application/json',
-                                                                    'Authorization': `Bearer ${session.access_token}`,
-                                                                    'apikey': import.meta.env.VITE_SUPABASE_ANON_KEY,
-                                                                },
-                                                                body: JSON.stringify({ action: 'analyze', run_id: startData.run_id, substance_index: i }),
-                                                            });
-                                                            const analyzeData = await analyzeRes.json();
-
-                                                            if (analyzeData.completed) {
-                                                                setSystematicProgress('Analyse terminée !');
-                                                                break;
-                                                            }
-
-                                                            // REAL-TIME LOGS - Afficher chaque étape immédiatement
-                                                            const addLog = (step: string, detail: string, type: 'info' | 'query' | 'ai' | 'result' = 'info') => {
-                                                                setResearchSteps(prev => [...prev, {
-                                                                    timestamp: new Date().toLocaleTimeString(),
-                                                                    step,
-                                                                    detail,
-                                                                    type
-                                                                }]);
-                                                            };
-
-                                                            // Log: Substance en cours
-                                                            addLog('🔬 Analyse', `Substance: ${analyzeData.substance_analyzed} (${analyzeData.entity_type})`, 'info');
-
-                                                            // Log: Entités testées
-                                                            if (analyzeData.entities_tested && analyzeData.entities_tested.length > 0) {
-                                                                addLog('📊 Base de données', `Interrogation de ${analyzeData.entities_tested.length} entités: ${analyzeData.entities_tested.slice(0, 5).join(', ')}...`, 'query');
-                                                            }
-
-                                                            // Log: Prompt envoyé
-                                                            if (analyzeData.prompt_used) {
-                                                                addLog('🤖 Envoi à OpenAI', `Prompt de ${analyzeData.prompt_used.length} caractères envoyé au modèle IA`, 'ai');
-                                                                setCurrentPrompt(analyzeData.prompt_used);
-                                                            }
-
-                                                            // Log: Résultats
-                                                            if (analyzeData.full_analysis && analyzeData.full_analysis.length > 0) {
-                                                                const discoveries = analyzeData.full_analysis.filter((a: any) => !a.documented && a.discovery_type !== 'aucun');
-                                                                addLog('✨ Résultats', `${analyzeData.pairs_count} paires analysées, ${discoveries.length} nouvelles découvertes`, 'result');
-
-                                                                // Log chaque découverte importante
-                                                                discoveries.forEach((d: any) => {
-                                                                    addLog(`⚡ Découverte`, `${d.entity_b}: ${d.discovery_type} (${d.severity}) - ${d.mechanism || d.reasoning || 'mécanisme à explorer'}`, 'result');
-                                                                });
-
-                                                                setCurrentAnalysis(analyzeData.full_analysis);
-                                                            }
-
-                                                            setSystematicProgress(`${i + 1}/${startData.total_substances}: ${analyzeData.substance_analyzed} (${analyzeData.discoveries_count} découvertes)`);
-
-                                                            if (analyzeData.synthesis) {
-                                                                setSystematicDiscoveries(prev => [...prev, {
-                                                                    substance: analyzeData.substance_analyzed,
-                                                                    discoveries: analyzeData.discoveries_count,
-                                                                    synthesis: analyzeData.synthesis,
-                                                                    research_steps: analyzeData.research_steps,
-                                                                    full_analysis: analyzeData.full_analysis,
-                                                                    entities_tested: analyzeData.entities_tested
-                                                                }]);
-                                                            }
-                                                        }
-
-                                                        toast.success('Analyse systématique terminée !');
-                                                    } catch (err: any) {
-                                                        toast.error(err.message);
-                                                    } finally {
-                                                        setIsSystematicRunning(false);
-                                                    }
-                                                }}
+                                                onClick={handleSystematicAnalysis}
                                                 className="gap-2 bg-gradient-to-r from-violet-500 to-purple-600"
                                             >
                                                 <Play className="h-4 w-4" />
-                                                {t('Démarrer l\'analyse')}
+                                                {systematicJob ? t('Reprendre le suivi') : t('Démarrer l\'analyse')}
                                             </Button>
                                         ) : (
                                             <Button
                                                 variant="destructive"
-                                                onClick={() => setIsSystematicRunning(false)}
+                                                onClick={() => {
+                                                    systematicObservation.current?.abort();
+                                                    setIsSystematicRunning(false);
+                                                    setSystematicProgress('Le traitement se poursuit côté serveur. Retrouvez son résultat dans Activité IA.');
+                                                }}
                                                 className="gap-2"
                                             >
                                                 <Square className="h-4 w-4" />
-                                                {t('Arrêter')}
+                                                {t('Masquer le suivi')}
                                             </Button>
                                         )}
                                     </div>
@@ -923,7 +821,7 @@ const ContinuousDiscovery = () => {
                             </CardHeader>
                             <CardContent className="space-y-4">
                                 {/* NEW: Pathology Targeting Section */}
-                                {!isSystematicRunning && (
+                                {!isSystematicRunning && !systematicJob && (
                                     <div className="p-4 rounded-lg bg-gradient-to-r from-violet-50 to-purple-50 dark:from-violet-900/20 dark:to-purple-900/20 border border-violet-200 dark:border-violet-800 space-y-4">
                                         <div className="flex items-center gap-2 mb-2">
                                             <Crosshair className="h-5 w-5 text-violet-600" />
@@ -1034,7 +932,7 @@ const ContinuousDiscovery = () => {
                                                     <div className="flex items-center justify-between mb-2">
                                                         <h4 className="text-sm font-semibold text-green-400 flex items-center gap-2">
                                                             <Activity className="h-4 w-4 animate-pulse" />
-                                                            Console de Recherche IA - Temps Réel
+                                                            Progression de la recherche
                                                         </h4>
                                                         <Badge variant="outline" className="text-xs text-green-400 border-green-400">
                                                             {researchSteps.length} logs
@@ -1087,7 +985,7 @@ const ContinuousDiscovery = () => {
                                                     <div key={idx} className="p-4 rounded-lg bg-gradient-to-r from-amber-50 to-orange-50 dark:from-amber-900/20 dark:to-orange-900/20 border border-amber-200 dark:border-amber-800">
                                                         <div className="flex items-center justify-between mb-2">
                                                             <span className="font-medium text-amber-800 dark:text-amber-200">{item.substance}</span>
-                                                            <Badge variant="outline">{item.discoveries} découvertes</Badge>
+                                                            <Badge variant="outline">{item.discoveries === null ? 'Nombre non précisé' : item.discoveries + ' découvertes'}</Badge>
                                                         </div>
                                                         <p className="text-sm text-slate-600 dark:text-slate-400">{item.synthesis}</p>
                                                     </div>

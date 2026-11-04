@@ -14,7 +14,7 @@ import {
     Clock, Beaker, TrendingUp, ChevronDown, ChevronUp,
     ExternalLink, CheckCircle2, XCircle, AlertCircle, Sparkles
 } from 'lucide-react';
-import { supabase } from '@/integrations/supabase/client';
+import { supabase, aiFetch } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 import { useAutoTranslation } from '@/contexts/TranslationContext';
 import RadialRingsModal from './RadialRingsModal';
@@ -170,7 +170,7 @@ const AdvancedResearchPanel = () => {
                     ? { topic: query.trim() }
                     : { topic: query.trim(), time_range: timeRange[0], include_safety: includeSafety };
 
-            const response = await fetch(endpoint, {
+            const response = await aiFetch(endpoint, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
@@ -270,7 +270,7 @@ const AdvancedResearchPanel = () => {
             toast.success(t('Recherche terminée'));
         } catch (err: any) {
             if (err.name === 'AbortError') {
-                toast.info(t('Recherche interrompue'));
+                toast.info(t('Suivi masqué. Le traitement reste accessible dans Activité IA.'));
             } else {
                 console.error('Research error:', err);
                 toast.error(err.message || t('Erreur lors de la recherche'));
@@ -422,7 +422,7 @@ const AdvancedResearchPanel = () => {
                             {isResearching ? (
                                 <>
                                     <Square className="h-4 w-4" />
-                                    {t('Arrêter')}
+                                    {t('Masquer le suivi')}
                                 </>
                             ) : (
                                 <>
