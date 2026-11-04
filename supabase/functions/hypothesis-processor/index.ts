@@ -1,10 +1,16 @@
-// Hypothesis Processor - Background job processor for async hypothesis generation
-// This Edge Function processes pending jobs without timeout constraints
+// Hypothesis reasoning runs at OpenAI; short, leased workers persist its result.
 
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.3";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { corsHeaders } from "../_shared/cors.ts";
-import { streamAI, callAI } from "../_shared/ai-client.ts";
+import { retrieveBackgroundAI, startBackgroundAI } from "../_shared/ai-client.ts";
+import {
+    prepareBackgroundJobRequest, updateBackgroundJobRecord,
+    type BackgroundJobRow, type NativeJobPayload,
+} from "../_shared/background-job-monitor.ts";
+import {
+    advanceHypothesisProvider, extractHypothesisJSON, hypothesisClaimId, hypothesisLegacyPatch, publishHypothesisOnce,
+} from "../_shared/hypothesis-jobs.ts";
 import { jsonrepair } from "https://esm.sh/jsonrepair@3.1.0";
 
 console.log("Hypothesis Processor Function Started");
@@ -76,60 +82,44 @@ serve(async (req: Request) => {
         const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
         const supabase = createClient(supabaseUrl, supabaseKey);
 
-        const { job_id } = await req.json().catch(() => ({}));
-
-        console.log('🔄 Checking for pending jobs...', job_id ? `(Targeting ${job_id})` : '');
-
-        // Find the specific job or the oldest pending job
-        let queryBuilder = supabase
-            .from('hypothesis_generation_jobs')
-            .select('*');
-
-        if (job_id) {
-            queryBuilder = queryBuilder.eq('id', job_id);
-        } else {
-            queryBuilder = queryBuilder.eq('status', 'pending').order('created_at', { ascending: true }).limit(1);
-        }
-
-        const { data: jobs, error: fetchError } = await queryBuilder;
-
-        if (fetchError) {
-            console.error('Error fetching jobs:', fetchError);
-            return new Response(JSON.stringify({ error: fetchError.message }), {
-                headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-                status: 500,
+        const incoming = await req.json().catch(() => null) as (NativeJobPayload & { legacyJobId?: string }) | null;
+        if (!incoming || typeof incoming !== 'object') {
+            return new Response(JSON.stringify({ error: 'Invalid request' }), {
+                headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 400,
             });
         }
-
-        if (!jobs || jobs.length === 0) {
-            console.log('✅ No pending jobs' + (job_id ? ` with ID ${job_id}` : ''));
-            return new Response(JSON.stringify({ message: 'No pending jobs' }), {
-                headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        const prepared = await prepareBackgroundJobRequest(req, incoming, {
+            supabase, supabaseUrl, serviceRoleKey: supabaseKey,
+            functionName: 'hypothesis-processor', corsHeaders, allowLegacyToken: false,
+            async syncJob(mirror: BackgroundJobRow, signal?: AbortSignal) {
+                const { error } = await supabase.from('hypothesis_generation_jobs')
+                    .update(hypothesisLegacyPatch(mirror)).eq('id', mirror.id)
+                    .abortSignal(signal ?? AbortSignal.timeout(5_000));
+                if (error) throw new Error('Synchronisation de la progression indisponible.');
+            },
+        });
+        if (prepared.response) return prepared.response;
+        // Only a one-time service worker lease can create or publish hypotheses.
+        // Authenticated owners may use action=status through the shared helper.
+        if (!prepared.actor.service || !prepared.payload.runJob) {
+            return new Response(JSON.stringify({ error: 'Service worker lease required' }), {
+                headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 403,
             });
         }
-
-        const job: Job = jobs[0];
-
-        // If we targeted a specific job, make sure it's processable
-        if (job_id && job.status !== 'pending') {
-            console.log(`ℹ️ Job ${job.id} is already ${job.status}`);
-            return new Response(JSON.stringify({ message: `Job is already ${job.status}` }), {
-                headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        const { jobId, legacyJobId, providerResponseId, _backgroundMaxTokens } = prepared.payload;
+        if (!jobId || legacyJobId !== jobId) throw new Error('Référence de tâche incohérente.');
+        const { data: loadedJob, error: fetchError } = await supabase
+            .from('hypothesis_generation_jobs').select('*').eq('id', jobId).maybeSingle();
+        if (fetchError || !loadedJob) {
+            await updateBackgroundJobRecord(supabase, jobId, {
+                status: 'failed', error_message: 'La demande d’hypothèse est introuvable.',
+                completed_at: new Date().toISOString(),
             });
+            throw new Error('La demande d’hypothèse est introuvable.');
         }
+        const job = loadedJob as Job;
 
-        console.log(`📋 Processing job ${job.id}`);
-
-        // Mark job as processing
-        await supabase
-            .from('hypothesis_generation_jobs')
-            .update({
-                status: 'processing',
-                progress_percentage: 10,
-                progress_message: 'Début de l\'analyse RCDP...'
-            })
-            .eq('id', job.id);
-
+        let publishing = false;
         try {
             // Generate hypothesis using the shared OpenAI clinical route
             const systemPrompt = `Tu es l'IA de DÉCOUVERTE SCIENTIFIQUE "ULTRA V3", configurée pour une rigueur académique absolue.
@@ -326,107 +316,35 @@ CONTEXTE:
 
 Retourne JSON strict selon le format spécifié.`;
 
-            // Update progress
-            await supabase
-                .from('hypothesis_generation_jobs')
-                .update({
+            if (!providerResponseId) {
+                await updateBackgroundJobRecord(supabase, job.id, {
+                    status: 'processing', started_at: new Date().toISOString(),
                     progress_percentage: 30,
-                    progress_message: 'Analyse Ultra-Profonde RCDP (GPT-5.5 - Dual-Phase JSON/Reasoning)...'
-                })
-                .eq('id', job.id);
-
-            // Create broadcast channel for live streaming
-            const broadcastChannel = supabase.channel(`hypothesis-stream-${job.id}`, {
-                config: { broadcast: { self: true } }
-            });
-
-            // Subscribe and wait for connection
-            await new Promise<void>((resolve) => {
-                const timeout = setTimeout(() => {
-                    console.warn(`[Processor] Channel subscription timed out for ${job.id}`);
-                    resolve();
-                }, 5000);
-
-                broadcastChannel.subscribe((status: string) => {
-                    if (status === 'SUBSCRIBED') {
-                        console.log(`[Processor] Joined channel ${job.id} `);
-                        clearTimeout(timeout);
-                        resolve();
-                    } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
-                        console.error(`[Processor] Failed to join channel ${job.id}: ${status} `);
-                        clearTimeout(timeout);
-                        resolve();
-                    }
+                    progress_message: 'Préparation de l’analyse approfondie RCDP (GPT-5.5).',
                 });
-            });
-
-            // Call AI with streaming
-            const aiResponse = await streamAI(
-                systemPrompt,
-                userPrompt,
-                async (text: string) => {
-                    try {
-                        await broadcastChannel.send({
-                            type: 'broadcast',
-                            event: 'chunk',
-                            payload: { text }
-                        });
-                    } catch (err: any) {
-                        console.warn('Realtime send failed:', err);
-                    }
-                },
-                {
-                    model: 'gpt-5.5',
-                    reasoningEffort: 'high',
-                    maxTokens: 50000
-                }
-            );
-
-            const content = aiResponse.text;
-            console.log(`✅ Stream complete.Total length: ${content.length} `);
-
-            // Close broadcast channel
-            try {
-                await broadcastChannel.send({
-                    type: 'broadcast',
-                    event: 'stream_complete',
-                    payload: { message: 'Streaming terminé' }
-                });
-            } catch (err: any) {
-                console.warn('Completion broadcast failed:', err);
             }
-            await supabase.removeChannel(broadcastChannel);
+            const providerStep = await advanceHypothesisProvider({
+                providerResponseId, maxTokens: _backgroundMaxTokens,
+            }, {
+                start: maxTokens => startBackgroundAI(systemPrompt, userPrompt, {
+                    model: 'gpt-5.5', reasoningEffort: 'high', maxTokens,
+                }),
+                retrieve: responseId => retrieveBackgroundAI(responseId, {
+                    model: 'gpt-5.5', reasoningEffort: 'high',
+                }),
+                update: (patch, budget) => updateBackgroundJobRecord(supabase, job.id, patch, budget),
+            });
+            if (!providerStep.ready) {
+                return new Response(JSON.stringify({ accepted: true, job_id: job.id, status: 'processing' }), {
+                    headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 202,
+                });
+            }
+            const content = providerStep.text;
+            await updateBackgroundJobRecord(supabase, job.id, {
+                progress_percentage: 90, progress_message: 'Validation et sauvegarde du résultat complet...',
+            });
 
-            // Update progress
-            await supabase
-                .from('hypothesis_generation_jobs')
-                .update({
-                    progress_percentage: 70,
-                    progress_message: 'Parsing et sauvegarde du résultat...'
-                })
-                .eq('id', job.id);
-
-            // Parse JSON - Robust extraction
-            const extractJson = (text: string) => {
-                const match = text.match(/```(?: json) ?\s * ([\s\S] *?) \s * ```/);
-                if (match) return match[1].trim();
-
-                const lastBrace = text.lastIndexOf('}');
-                if (lastBrace === -1) return text.trim();
-
-                let balance = 0;
-                for (let i = lastBrace; i >= 0; i--) {
-                    if (text[i] === '}') balance++;
-                    else if (text[i] === '{') balance--;
-
-                    if (balance === 0 && text[i] === '{') {
-                        return text.substring(i, lastBrace + 1);
-                    }
-                }
-                return text.trim();
-            };
-
-            const jsonString = extractJson(content);
+            const jsonString = extractHypothesisJSON(content);
 
             if (!jsonString || jsonString.trim() === '') {
                 throw new Error('No JSON found in response');
@@ -491,6 +409,7 @@ Retourne JSON strict selon le format spécifié.`;
             // ===== ULTRA V3 HARD-FAIL VALIDATION =====
             const validateV3 = (data: ValidationData) => {
                 const errors: string[] = [];
+                if (typeof data.statement !== 'string' || !data.statement.trim()) errors.push('statement missing');
 
                 // 1. Scope
                 if (!data.clinical_scope) errors.push('clinical_scope missing');
@@ -563,30 +482,39 @@ Retourne JSON strict selon le format spécifié.`;
                 throw new Error(`Validation Violation: ${validationErrors.join(', ')} `);
             }
 
-            const uniqueId = `${h.hypothesis_id || 'hyp'} -${crypto.randomUUID().split('-')[0]} `;
-
-            // Save hypothesis to database - INCLUDING NEW V3 FIELDS
-            const { data: savedHyp, error: saveError } = await supabase
-                .from('discovery_hypotheses')
-                .insert({
-                    hypothesis_id: uniqueId,
-                    statement: h.statement,
-                    executive_summary: h.executive_summary,
-                    clinical_scope: h.clinical_scope,
-                    evidence_snapshot: h.evidence_index, // V3 Evidence Index
-                    contradictions: h.contradictions,
-                    novelty_findings: h.novelty_findings,
-                    validation_plan: h.validation_plan,
-                    detailed_analysis: h.reasoning_trace, // Reasoning trace as detailed analysis
-                    scores: h.scores,
-                    status: 'pending'
-                })
-                .select()
-                .single();
-
-            if (saveError) {
-                throw new Error(`Failed to save hypothesis: ${saveError.message} `);
-            }
+            // A crash after INSERT must recover the same clinical record, never
+            // create another report. Both PKs are verified UUID columns in prod.
+            publishing = true;
+            const { data: owner, error: ownerError } = await supabase.from('ai_analysis_jobs')
+                .select('requested_by').eq('id', job.id).eq('function_name', 'hypothesis-processor').single();
+            if (ownerError || !owner?.requested_by) throw new Error('Propriétaire de la tâche indisponible.');
+            const savedHyp = await publishHypothesisOnce<{ id: string }>(job.id, {
+                async insertIfAbsent() {
+                    const { data, error } = await supabase.from('discovery_hypotheses').upsert({
+                        id: job.id,
+                        hypothesis_id: `${h.hypothesis_id || 'HYP'}-${job.id}`,
+                        user_id: owner.requested_by,
+                        statement: h.statement,
+                        executive_summary: h.executive_summary,
+                        clinical_scope: h.clinical_scope,
+                        evidence_snapshot: h.evidence_index,
+                        contradictions: h.contradictions,
+                        novelty_findings: h.novelty_findings,
+                        validation_plan: h.validation_plan,
+                        detailed_analysis: h.reasoning_trace,
+                        scores: h.scores,
+                        status: 'pending',
+                    }, { onConflict: 'id', ignoreDuplicates: true }).select('id').maybeSingle();
+                    if (error) throw new Error('Enregistrement de l’hypothèse indisponible.');
+                    return data;
+                },
+                async load() {
+                    const { data, error } = await supabase.from('discovery_hypotheses')
+                        .select('id').eq('id', job.id).eq('user_id', owner.requested_by).maybeSingle();
+                    if (error) throw new Error('Vérification de la publication indisponible.');
+                    return data;
+                },
+            });
 
             // ===== PHASE 2: Persist structured graph nodes/edges from V3 claim_graph =====
             try {
@@ -606,7 +534,6 @@ Retourne JSON strict selon le format spécifié.`;
                     const normalizeEntities = async (labels: string[]) => {
                         // Placeholder for actual normalization logic
                         // This would typically call an external service or a local utility
-                        console.log('Normalizing entities:', labels);
                         const map = new Map<string, { label: string; type: string; id: string }>();
                         labels.forEach(label => map.set(label, { label: label, type: 'unknown', id: 'Unknown' }));
                         return map;
@@ -807,7 +734,8 @@ Retourne JSON strict selon le format spécifié.`;
                 // --- NEW: PERSIST LBD CLAIMS (Required for Contradiction Detector) ---
                 if (claimGraph && claimGraph.claims && claimGraph.claims.length > 0) {
                     try {
-                        const lbdClaimsInserts = claimGraph.claims.map((c: any) => ({
+                        const lbdClaimsInserts = await Promise.all(claimGraph.claims.map(async (c: any, index: number) => ({
+                            id: await hypothesisClaimId(job.id, index),
                             hypothesis_id: savedHyp.id,
                             subject_text: c.triple?.subject?.label || c.triple?.source?.label || 'Unknown',
                             subject_type: c.triple?.subject?.type || c.triple?.source?.type || 'Unknown',
@@ -819,34 +747,34 @@ Retourne JSON strict selon le format spécifié.`;
                             mechanistic_plausibility: c.confidence_score || 0.5, // approximate
                             inference_rule: 'AI_GENERATION_V3',
                             status: 'active'
-                        }));
+                        })));
 
-                        const { error: claimsError } = await supabase
+                        const { data: insertedClaims, error: claimsError } = await supabase
                             .from('lbd_claims')
-                            .insert(lbdClaimsInserts);
+                            .upsert(lbdClaimsInserts, { onConflict: 'id', ignoreDuplicates: true }).select('id');
 
                         if (claimsError) {
                             console.warn('⚠️ LBD Claims insert failed:', claimsError.message);
-                        } else {
-                            console.log(`✅ Inserted ${lbdClaimsInserts.length} LBD claims`);
+                        } else if (insertedClaims?.length) {
+                            console.log(`Inserted ${insertedClaims.length} LBD claims`);
 
                             // --- TRIGGER CONTRADICTION DETECTOR ---
                             console.log('🚀 Triggering LBD Contradiction Detector...');
-                            fetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/lbd-contradiction-detector`, {
+                            const detector = fetch(`${supabaseUrl}/functions/v1/lbd-contradiction-detector`, {
                                 method: 'POST',
                                 headers: {
-                                    'Authorization': `Bearer ${Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')}`,
-                                    'Content-Type': 'application/json'
+                                    'Authorization': `Bearer ${supabaseKey}`, apikey: supabaseKey,
+                                    'Content-Type': 'application/json',
                                 },
-                                body: JSON.stringify({
-                                    hypothesis_id: savedHyp.id,
-                                    pathology_label: savedHyp.title
-                                })
-                            }).then(res => {
-                                console.log(`📡 LBD Trigger Status: ${res.status}`);
-                            }).catch(err => {
-                                console.error('❌ Failed to trigger LBD:', err);
-                            });
+                                body: JSON.stringify({ hypothesis_id: savedHyp.id, pathology_label: job.query }),
+                                signal: AbortSignal.timeout(45_000),
+                            }).then(async response => {
+                                await response.body?.cancel();
+                                if (!response.ok) console.warn('Contradiction detector could not confirm processing.');
+                            }).catch(() => console.warn('Contradiction detector dispatch interrupted.'));
+                            (globalThis as typeof globalThis & { EdgeRuntime?: { waitUntil(p: Promise<void>): void } })
+                                .EdgeRuntime?.waitUntil(detector);
+
                         }
                     } catch (claimErr: any) {
                         console.warn('⚠️ Error processing LBD claims:', claimErr.message);
@@ -857,43 +785,39 @@ Retourne JSON strict selon le format spécifié.`;
                 console.warn('⚠️ Graph persistence failed:', graphError.message);
             }
 
-            // Mark job as completed
-            await supabase
-                .from('hypothesis_generation_jobs')
-                .update({
-                    status: 'completed',
-                    hypothesis_id: savedHyp.id,
-                    progress_percentage: 100,
-                    progress_message: 'Hypothèse ULTRA V3 générée avec succès!'
-                })
-                .eq('id', job.id);
-
-            console.log(`✅ Job ${job.id} completed successfully`);
-
-            return new Response(JSON.stringify({
-                success: true,
-                job_id: job.id,
-                hypothesis_id: savedHyp.id
-            }), {
+            const result = {
+                success: true, job_id: job.id, hypothesis_id: savedHyp.id, hypothesis: h,
+            };
+            await updateBackgroundJobRecord(supabase, job.id, {
+                status: 'completed', provider_status: 'completed',
+                completed_at: new Date().toISOString(),
+                progress_percentage: 100, progress_message: 'Hypothèse ULTRA V3 générée avec succès!',
+                result_payload: result, error_message: null,
+            });
+            return new Response(JSON.stringify(result), {
                 headers: { ...corsHeaders, 'Content-Type': 'application/json' },
             });
 
-        } catch (processingError: any) {
-            console.error(`❌ Job ${job.id} failed: `, processingError);
-            await supabase
-                .from('hypothesis_generation_jobs')
-                .update({
-                    status: 'failed',
-                    error_message: processingError.message
-                })
-                .eq('id', job.id);
-
-            return new Response(JSON.stringify({
-                error: processingError.message,
-                job_id: job.id
-            }), {
-                headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-                status: 500
+        } catch (processingError: unknown) {
+            if (publishing && providerResponseId) {
+                // Persistence is retryable against the same provider response;
+                // deterministic IDs make a lost DB acknowledgment harmless.
+                await updateBackgroundJobRecord(supabase, job.id, {
+                    provider_status: 'in_progress',
+                    progress_message: 'Reprise de la sauvegarde du résultat IA conservé.',
+                }).catch(() => console.warn('Hypothesis publication awaits lease recovery.'));
+                return new Response(JSON.stringify({ accepted: true, job_id: job.id, status: 'processing' }), {
+                    headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 202,
+                });
+            }
+            const message = processingError instanceof Error ? processingError.message : 'La génération a échoué.';
+            console.error(`Hypothesis job ${job.id} could not be finalized.`);
+            await updateBackgroundJobRecord(supabase, job.id, {
+                status: 'failed', error_message: message, completed_at: new Date().toISOString(),
+                progress_message: 'La génération n’a pas produit de résultat validé.',
+            });
+            return new Response(JSON.stringify({ error: message, job_id: job.id }), {
+                headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 500,
             });
         }
 
@@ -901,7 +825,6 @@ Retourne JSON strict selon le format spécifié.`;
         console.error('❌ CRITICAL Processor Error:', error);
         return new Response(JSON.stringify({
             error: error.message,
-            stack: error.stack,
             type: 'CRITICAL_PROCESSOR_ERROR'
         }), {
             headers: { ...corsHeaders, 'Content-Type': 'application/json' },

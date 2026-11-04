@@ -31,7 +31,7 @@ import {
     FileCheck,
     FolderOpen,
 } from 'lucide-react';
-import { supabase } from '@/integrations/supabase/client';
+import { supabase, aiFetch } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 import DocumentUploader from './DocumentUploader';
 import ExtractedDataReview from './ExtractedDataReview';
@@ -157,7 +157,7 @@ export default function PatientDocuments({ patientId }: PatientDocumentsProps) {
 
             const { data: { session } } = await supabase.auth.getSession();
 
-            const response = await fetch(
+            const response = await aiFetch(
                 `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/document-analyzer`,
                 {
                     method: 'POST',

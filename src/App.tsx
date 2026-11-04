@@ -11,6 +11,7 @@ import { AIProvider } from "@/contexts/AIContext";
 import ProtectedRoute from "@/components/auth/ProtectedRoute";
 import PageTransition from "@/components/layout/PageTransition";
 import Index from "./pages/Index";
+import AIActivityPanel from "@/components/ai/AIActivityPanel";
 
 const Auth = lazy(() => import("./pages/Auth"));
 const Dashboard = lazy(() => import("./pages/Dashboard"));
@@ -31,7 +32,7 @@ const SMARTLaunch = lazy(() => import("./pages/smart/Launch"));
 const SMARTCallback = lazy(() => import("./pages/smart/Callback"));
 const PopulateData = lazy(() => import("./pages/PopulateData"));
 
-const queryClient = new QueryClient({ defaultOptions: { queries: { refetchOnWindowFocus: false } } });
+const queryClient = new QueryClient({ defaultOptions: { queries: { refetchOnWindowFocus: false, refetchOnReconnect: false } } });
 
 const RouteFallback = () => (
   <div className="min-h-screen bg-background" aria-busy="true" aria-live="polite" />
@@ -86,6 +87,7 @@ const App = () => (
               <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
                 <AuthProvider>
                   <AnimatedRoutes />
+                  <AIActivityPanel />
                 </AuthProvider>
               </BrowserRouter>
             </TooltipProvider>

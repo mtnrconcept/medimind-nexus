@@ -2,6 +2,8 @@ import { useState, useEffect, useRef, createContext, useContext, ReactNode } fro
 import { User, Session } from '@supabase/supabase-js';
 import { supabase } from '@/integrations/supabase/client';
 import { sanitizeSignupMetadata } from '@/components/auth/access-policy';
+import { roleAfterRefresh, userAfterSessionEvent, type ValidatedRoleState } from '@/lib/authContinuity';
+import { clearAIJobReferences } from '@/lib/aiJobRecovery';
 
 type AppRole = 'admin' | 'researcher' | 'doctor';
 
@@ -25,21 +27,24 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const [loading, setLoading] = useState(true);
   const [roleLoading, setRoleLoading] = useState(false);
   const roleRequestVersion = useRef(0);
+  const validatedRole = useRef<ValidatedRoleState>({ role: null, validated: false });
 
   const fetchUserRole = async (userId: string, version: number) => {
     try {
-      const { data, error } = await supabase
+      const { data, error, status } = await supabase
         .from('user_roles')
         .select('role')
         .eq('user_id', userId)
         .limit(1);
 
       if (version !== roleRequestVersion.current) return;
-      if (error) throw error;
-      setRole(data && data.length > 0 ? (data[0].role as AppRole) : null);
+      if (error) throw Object.assign(new Error(error.message), error, { status });
+      validatedRole.current = roleAfterRefresh(validatedRole.current, data && data.length > 0 ? (data[0].role as AppRole) : null);
+      setRole(validatedRole.current.role);
     } catch (err) {
       if (version === roleRequestVersion.current) {
-        setRole(null);
+        validatedRole.current = roleAfterRefresh(validatedRole.current, null, err);
+        setRole(validatedRole.current.role);
         console.error('Error fetching user role:', err);
       }
     } finally {
@@ -52,15 +57,17 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     const requestVersion = roleRequestVersion;
     let identity: string | null | undefined;
     let authEventReceived = false;
-    const applySession = (nextSession: Session | null) => {
+    const applySession = (nextSession: Session | null, event?: string) => {
       if (!mounted) return;
       const userId = nextSession?.user.id ?? null;
       const identityChanged = identity !== userId;
+      if (identity && identityChanged) clearAIJobReferences(identity);
       identity = userId;
       const version = ++roleRequestVersion.current;
       setSession(nextSession);
-      setUser(nextSession?.user ?? null);
+      setUser(previous => userAfterSessionEvent(previous, nextSession?.user ?? null, event));
       if (identityChanged) {
+        validatedRole.current = { role: null, validated: false };
         setRole(null);
         setRoleLoading(Boolean(userId));
       }
@@ -75,9 +82,9 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       }
     };
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      (_event, nextSession) => {
+      (event, nextSession) => {
         authEventReceived = true;
-        applySession(nextSession);
+        applySession(nextSession, event);
       }
     );
     supabase.auth.getSession()
@@ -115,6 +122,8 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
 
   const signOut = async () => {
     await supabase.auth.signOut();
+    if (user?.id) clearAIJobReferences(user.id);
+    validatedRole.current = { role: null, validated: false };
     setUser(null);
     setSession(null);
     setRole(null);

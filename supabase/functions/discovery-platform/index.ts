@@ -1,6 +1,8 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { streamAI } from "../_shared/ai-client.ts";
+import { startBackgroundJobMonitor } from "../_shared/background-job-monitor.ts";
+import { buildHypothesisMirror } from "../_shared/hypothesis-jobs.ts";
 
 const corsHeaders = {
     "Access-Control-Allow-Origin": "*",
@@ -652,6 +654,24 @@ serve(async (req) => {
         // ACTION: GENERATE HYPOTHESES (ASYNC JOB)
         // ===================================
         if (action === 'generate_hypotheses') {
+            const token = (req.headers.get('authorization') || '').replace(/^Bearer\s+/i, '').trim();
+            if (!token) {
+                return new Response(JSON.stringify({ error: 'Authentication required' }), {
+                    headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 401,
+                });
+            }
+            const { data: auth, error: authError } = await supabase.auth.getUser(token);
+            if (authError || !auth?.user?.id) {
+                return new Response(JSON.stringify({ error: 'Invalid session' }), {
+                    headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 401,
+                });
+            }
+            if (typeof query !== 'string' || !query.trim() || query.length > 20_000 ||
+                !Number.isInteger(maxResults) || maxResults < 1 || maxResults > 100) {
+                return new Response(JSON.stringify({ error: 'Invalid query or maxResults' }), {
+                    headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 400,
+                });
+            }
             try {
                 // 1. Fetch Papers
                 const [pubMedPapers, pmcPapers, trialsPapers] = await Promise.all([
@@ -683,20 +703,24 @@ serve(async (req) => {
                     throw new Error('Failed to create job: ' + (jobError?.message || 'Unknown error'));
                 }
 
-                // 4. Trigger background processor (invoke the function)
-                try {
-                    // Fire and forget - don't wait for response
-                    fetch(`${supabaseUrl}/functions/v1/hypothesis-processor`, {
-                        method: 'POST',
-                        headers: {
-                            'Authorization': `Bearer ${supabaseKey}`,
-                            'Content-Type': 'application/json'
-                        },
-                        body: JSON.stringify({ job_id: job.id })
-                    }).catch(e => console.warn('Background trigger failed:', e));
-                } catch (e) {
-                    console.warn('Failed to trigger background processor:', e);
+                // The private mirror stores ownership and the durable execution
+                // state. Clinical evidence stays in the existing legacy record.
+                const { error: mirrorError } = await supabase.from('ai_analysis_jobs')
+                    .insert(buildHypothesisMirror(job.id, auth.user.id));
+                if (mirrorError) {
+                    await supabase.from('hypothesis_generation_jobs').update({
+                        status: 'failed', completed_at: new Date().toISOString(),
+                        error_message: 'Impossible de préparer le suivi durable de cette hypothèse.',
+                    }).eq('id', job.id);
+                    throw new Error('Impossible de préparer le suivi durable de cette hypothèse.');
                 }
+
+                // waitUntil protects this dispatch after the HTTP response. The
+                // service watchdog claims workers and relays without a browser.
+                startBackgroundJobMonitor({
+                    supabase, supabaseUrl, serviceRoleKey: supabaseKey,
+                    functionName: 'hypothesis-processor', corsHeaders, allowLegacyToken: false,
+                }, job.id);
 
                 // 5. Return job info immediately
                 return new Response(JSON.stringify({

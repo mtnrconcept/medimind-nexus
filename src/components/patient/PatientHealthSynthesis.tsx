@@ -133,7 +133,7 @@ const PatientHealthSynthesis = ({ patientId }: PatientHealthSynthesisProps) => {
                 'patient-health-synthesis',
                 data,
                 {
-                    maxWaitMs: 1_200_000,
+                    maxWaitMs: 3_600_000,
                     onProgress: setJobProgress,
                 },
             );

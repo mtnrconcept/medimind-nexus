@@ -35,3 +35,6 @@ verify_jwt = true
 
 [functions.scientific-evidence]
 verify_jwt = true
+
+[functions.ai-tool-jobs]
+verify_jwt = true

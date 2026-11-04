@@ -7,7 +7,7 @@ import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { useAutoTranslation } from '@/contexts/TranslationContext';
-import { supabase } from '@/integrations/supabase/client';
+import { supabase, aiFetch } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 import {
     Link2, Trash2, Loader2, Brain, ArrowRight, Sparkles,
@@ -129,7 +129,7 @@ const LinkAnalysisPanel = ({ onAnalyze, refreshTrigger }: LinkAnalysisPanelProps
             const { data: { session } } = await supabase.auth.getSession();
             if (!session) throw new Error('Non connecté');
 
-            const response = await fetch(
+            const response = await aiFetch(
                 `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/analyze-user-links`,
                 {
                     method: 'POST',
@@ -174,7 +174,7 @@ const LinkAnalysisPanel = ({ onAnalyze, refreshTrigger }: LinkAnalysisPanelProps
 
             const edgeIds = edges.map(e => e.id);
 
-            const response = await fetch(
+            const response = await aiFetch(
                 `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/analyze-kg-links`,
                 {
                     method: 'POST',

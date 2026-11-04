@@ -4,7 +4,7 @@ import { Canvas, useFrame, ThreeEvent } from '@react-three/fiber';
 import { OrbitControls, Html, Line } from '@react-three/drei';
 import * as THREE from 'three';
 import { X, Play, Pause, RotateCcw, Sparkles, Loader2, MessageSquare, ExternalLink, Plus, GitBranch, Search, Save, FolderOpen, MousePointer2, Lasso, Circle as CircleIcon, Square, EyeOff, GripHorizontal } from 'lucide-react';
-import { supabase } from '@/integrations/supabase/client';
+import { supabase, aiFetch } from '@/integrations/supabase/client';
 import { useAI } from '@/contexts/AIContext';
 import { RingNode, RingEdge, MicroSignal, RadialRingsData } from '@/types/graph';
 import type { SourceStatus } from '../../../supabase/functions/deep-research-graph/sources';
@@ -5276,7 +5276,7 @@ IMPORTANT: Retourne UNIQUEMENT les IDs des nœuds qui forment le schéma thérap
 
             // Worker function to fetch and stream a single pathology graph
             const fetchPathologyStream = async (pathology: string) => {
-                const response = await fetch(`${supabaseUrl}/functions/v1/deep-research-graph`, {
+                const response = await aiFetch(`${supabaseUrl}/functions/v1/deep-research-graph`, {
                     headers: {
                         'Content-Type': 'application/json',
                         'Authorization': `Bearer ${token}`,

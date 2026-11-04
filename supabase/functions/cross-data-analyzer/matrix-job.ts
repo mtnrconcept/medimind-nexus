@@ -1,5 +1,6 @@
 import type { createClient, SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { startBackgroundAI, retrieveBackgroundAI } from '../_shared/ai-client.ts';
+import { BACKGROUND_MONITOR_WINDOW_MS, BACKGROUND_WORKER_LEASE_MS, nextBackgroundTokenBudget } from '../_shared/background-job-monitor.ts';
 import { detectHighRiskContext, applyClinicalSafetyContract } from '../_shared/clinical-brain.ts';
 import {
   buildEvidenceLinks, buildPairCandidates, buildPairHash, buildSelectedElements, ensureAnalysisShape,
@@ -9,13 +10,30 @@ import {
 import { pendingPairs, readCells, type MatrixCells } from './matrix-progress.ts';
 
 const mode = 'progressive_matrix';
-const leaseMs = 120_000;
-const projection = 'id,status,progress_percentage,progress_message,error_message,result_payload,updated_at,request_payload';
+const leaseMs = BACKGROUND_WORKER_LEASE_MS;
+// A continuation may need a waiting invocation plus its worker, with up to two
+// attempts each. Ten seconds leaves room within the shared 30 calls / 60s trace.
+const workIntervalMs = 10_000;
+const controlLeaseMs = 60_000;
+const controlWaitSliceMs = 35_000;
+const projection = 'id,status,progress_percentage,progress_message,error_message,result_payload,updated_at,request_payload,provider_response_id';
 type Client = SupabaseClient;
 type Research = { title: string; url: string; abstract: string };
 type Search = (pair: PairCandidate) => Promise<Research[]>;
 type State = { elements: SelectedElement[]; cells: MatrixCells; batchSize: number; analysis: AnalysisResult };
 type Selection = Record<string, string[] | { id: string; name: string }[]>;
+type MatrixRuntime = {
+  windowStartedAt: number;
+  retries: number;
+  maxOutputTokens?: number;
+  creationPending?: boolean;
+  paused?: boolean;
+  lastProviderStatus?: string;
+  incompleteReason?: string;
+  nextWorkAt?: number;
+  controlLease?: string | null;
+  controlUntil?: number;
+};
 const fields = [
   ['pathologyIds', 'externalPathologies', 'pathologies', 'id,name,severity'],
   ['symptomIds', 'externalSymptoms', 'symptoms', 'id,name'],
@@ -61,12 +79,13 @@ async function snapshot(client: Client, body: Record<string, unknown>) {
 }
 
 type MatrixRow = {
-  id: string; status: string; updated_at: string; request_payload: { selection: Selection };
+  id: string; status: string; updated_at: string; request_payload: { selection: Selection; _matrix_runtime?: MatrixRuntime };
+  provider_response_id?: string | null;
   progress_message: string | null; progress_percentage: number; error_message: string | null; result_payload: State;
 };
 function expose(job: MatrixRow | null) {
   if (!job) return null;
-  const { request_payload, ...rest } = job;
+  const { request_payload, provider_response_id: _providerId, ...rest } = job;
   return { ...rest, selection: request_payload.selection,
     stalled: ['queued', 'processing'].includes(job.status) && Date.now() - Date.parse(job.updated_at) > leaseMs };
 }
@@ -83,19 +102,21 @@ export async function handleMatrix(req: Request, body: Record<string, unknown>, 
   const json = (data: unknown, status = 200) => new Response(JSON.stringify(data), { status, headers: {
     'Access-Control-Allow-Origin': '*', 'Content-Type': 'application/json',
   } });
-  const kick = async (id: string) => {
+  const kick = async (id: string, controlLease?: string) => {
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
         const response = await fetch(url + '/functions/v1/cross-data-analyzer', {
           method: 'POST', headers: { Authorization: 'Bearer ' + key, apikey: key, 'Content-Type': 'application/json' },
-          body: JSON.stringify({ action: 'matrix.work', jobId: id }), signal: AbortSignal.timeout(15_000),
+          body: JSON.stringify({ action: 'matrix.work', jobId: id, ...(controlLease ? { _matrixControlLease: controlLease } : {}) }),
+          signal: AbortSignal.timeout(6000),
         });
-        if (!response.ok) throw new Error('Le relais du worker est indisponible.');
+        const accepted = response.ok;
+        await response.body?.cancel();
+        if (!accepted) throw new Error('Le relais du worker est indisponible.');
         return;
       } catch (error) {
         if (attempt > 0) throw error;
-        const retryAfter = Number((error as { retryAfterMs?: number })?.retryAfterMs) || 1000;
-        await new Promise(resolve => setTimeout(resolve, Math.min(60_000, retryAfter)));
+        await new Promise(resolve => setTimeout(resolve, 500));
       }
     }
   };
@@ -104,16 +125,47 @@ export async function handleMatrix(req: Request, body: Record<string, unknown>, 
     (globalThis as typeof globalThis & { EdgeRuntime?: { waitUntil(p: Promise<void>): void } }).EdgeRuntime?.waitUntil(guarded);
   };
 
-  async function work(id: string) {
-    const { data: job, error } = await jobs().select('*').eq('id', id).eq('analysis_mode', mode).single();
+  async function work(id: string, incomingControlLease?: string) {
+    const { data: job, error } = await jobs().select('*').eq('id', id).eq('function_name', 'cross-data-analyzer').eq('analysis_mode', mode).single();
     if (error || !job || !['queued', 'processing'].includes(job.status)) return;
     if (job.status === 'processing' && Date.now() - Date.parse(job.updated_at) < leaseMs) return;
+    const runtime: MatrixRuntime = { ...(job.request_payload._matrix_runtime || { windowStartedAt: Date.now(), retries: 0 }) };
+    // A relay token is consumed by its next successful reservation. A duplicate
+    // delivery cannot create another waiting chain after the first has advanced.
+    if (incomingControlLease && incomingControlLease !== runtime.controlLease) return;
+    if (runtime.controlLease && (runtime.controlUntil ?? 0) > Date.now() && incomingControlLease !== runtime.controlLease) return;
+    const expectedControlLease = runtime.controlLease;
+    const reserve = (patch: Record<string, unknown>) => {
+      let query = jobs().update(patch).eq('id', id).eq('function_name', 'cross-data-analyzer').eq('analysis_mode', mode)
+        .eq('updated_at', job.updated_at).eq('status', job.status);
+      query = expectedControlLease ? query.eq('request_payload->_matrix_runtime->>controlLease', expectedControlLease)
+        : query.is('request_payload->_matrix_runtime->>controlLease', null);
+      return query.select('id').maybeSingle();
+    };
+    if ((runtime.nextWorkAt ?? 0) > Date.now()) {
+      const controlLease = crypto.randomUUID();
+      runtime.controlLease = controlLease;
+      runtime.controlUntil = Date.now() + controlLeaseMs;
+      const reserved = await reserve({ updated_at: new Date().toISOString(),
+        request_payload: { ...job.request_payload, _matrix_runtime: runtime } });
+      if (reserved.error || !reserved.data) return;
+      // The fresh worker receives its full execution budget. This invocation
+      // only waits and relays; repeated/lost acknowledgments share one token.
+      await new Promise(resolve => setTimeout(resolve, Math.min(controlWaitSliceMs, Math.max(0, runtime.nextWorkAt! - Date.now()))));
+      await kick(id, controlLease);
+      return;
+    }
     const lease = crypto.randomUUID();
-    const claim = await jobs().update({ status: 'processing', provider_status: lease, updated_at: new Date().toISOString() })
-      .eq('id', id).eq('updated_at', job.updated_at).eq('status', job.status).select('id').maybeSingle();
+    runtime.nextWorkAt = Date.now() + workIntervalMs;
+    runtime.controlLease = null;
+    runtime.controlUntil = 0;
+    const claim = await reserve({ status: 'processing', provider_status: lease, updated_at: new Date().toISOString(),
+      request_payload: { ...job.request_payload, _matrix_runtime: runtime } });
     if (claim.error || !claim.data) return;
     const save = async (patch: Record<string, unknown>) => {
-      const changed = await jobs().update(patch).eq('id', id).eq('provider_status', lease).eq('status', 'processing').select('id').single();
+      const changed = await jobs().update({ ...patch, updated_at: new Date().toISOString(),
+        request_payload: { ...job.request_payload, _matrix_runtime: runtime } })
+        .eq('id', id).eq('function_name', 'cross-data-analyzer').eq('provider_status', lease).eq('status', 'processing').select('id').single();
       if (changed.error || !changed.data) throw new Error('La tâche a changé de propriétaire.');
     };
     const state = job.result_payload as State;
@@ -121,9 +173,27 @@ export async function handleMatrix(req: Request, body: Record<string, unknown>, 
     const batch = pending.slice(0, state.batchSize);
     const risk = job.request_payload.risk;
     let responseId = job.provider_response_id as string | null;
+    let readingProvider = false;
+    const relay = () => kick(id).catch(() => console.error('[CrossDataAnalyzer] Relais temporairement indisponible ; étape conservée.'));
     try {
+      if (Date.now() - runtime.windowStartedAt >= BACKGROUND_MONITOR_WINDOW_MS) {
+        runtime.paused = true;
+        await save({ status: 'failed', provider_response_id: responseId,
+          error_message: 'La synchronisation automatique a atteint 60 minutes. Vous pouvez reprendre la réponse enregistrée.',
+          progress_message: 'Étape conservée. Reprenez la synchronisation pour continuer.' });
+        return;
+      }
       const synthesis = !batch.length;
       if (!responseId) {
+        if (runtime.creationPending) {
+          await save({ status: 'failed', error_message: 'Le lancement OpenAI n’a pas pu être confirmé. Aucune seconde génération automatique n’a été créée.',
+            progress_message: 'Lancement non confirmé. Une reprise explicite est nécessaire.' });
+          return;
+        }
+        // Persist the creation intent before the POST. If its acknowledgement is
+        // lost, a recovered worker must not silently start a paid duplicate.
+        runtime.creationPending = true;
+        await save({ result_payload: state });
         if (!synthesis) {
           const sources = await Promise.all(batch.map(async pair => ({ pair, articles: await search(pair) })));
           for (const { pair, articles } of sources) {
@@ -132,9 +202,10 @@ export async function handleMatrix(req: Request, body: Record<string, unknown>, 
           }
           const response = await startBackgroundAI(prompt, JSON.stringify({ selection: state.elements, pairs: sources }), {
             responseFormat: { type: 'json_object' }, clinicalRiskAssessment: risk, elementCount: state.elements.length,
-            maxTokens: state.batchSize === 1 ? 24000 : 12000,
+            maxTokens: runtime.maxOutputTokens ?? (state.batchSize === 1 ? 24000 : 12000),
           });
           responseId = response.id;
+          runtime.maxOutputTokens = response.maxOutputTokens;
         } else {
           // The synthesis references the audited matrix without asking the model
           // to regenerate its cells. Prioritize high-risk links in dense matrices.
@@ -147,26 +218,37 @@ export async function handleMatrix(req: Request, body: Record<string, unknown>, 
             'Distingue preuves, hypothèses et limites. Les liens fournis peuvent constituer un sous-ensemble. ' +
             'Retourne un objet JSON avec summary (texte), warnings et recommendations (listes de textes).',
             JSON.stringify({ selection: state.elements, findings, totalLinks: state.analysis.causalLinks.length }),
-            { responseFormat: { type: 'json_object' }, clinicalRiskAssessment: risk, maxTokens: 24000 });
+            { responseFormat: { type: 'json_object' }, clinicalRiskAssessment: risk, maxTokens: runtime.maxOutputTokens ?? 24000 });
           responseId = response.id;
+          runtime.maxOutputTokens = response.maxOutputTokens;
         }
+        runtime.creationPending = false;
         await save({ provider_response_id: responseId, provider_started_at: new Date().toISOString(), result_payload: state });
-      } else if (Date.now() - Date.parse(job.provider_started_at) > 20 * 60_000) {
-        responseId = null;
-        throw new Error('Réponse IA incomplète après 20 minutes.');
       }
-      const deadline = Date.now() + 30_000;
-      let provider = await retrieveBackgroundAI(responseId);
+      const deadline = Date.now() + 20_000;
+      readingProvider = true;
+      let provider = await retrieveBackgroundAI(responseId, { timeoutMs: 15_000 });
       while (['queued', 'in_progress'].includes(provider.status) && Date.now() < deadline) {
         await new Promise(resolve => setTimeout(resolve, 2500));
-        provider = await retrieveBackgroundAI(responseId);
+        provider = await retrieveBackgroundAI(responseId, { timeoutMs: 15_000 });
       }
+      readingProvider = false;
       if (['queued', 'in_progress'].includes(provider.status)) {
         await save({ status: 'queued', updated_at: new Date().toISOString() });
-        await kick(id);
+        await relay();
         return;
       }
-      responseId = null;
+      runtime.lastProviderStatus = provider.status;
+      runtime.incompleteReason = provider.incompleteReason;
+      const nextBudget = nextBackgroundTokenBudget(runtime, provider);
+      if (nextBudget !== null) {
+        runtime.retries++;
+        runtime.maxOutputTokens = nextBudget;
+        await save({ status: 'queued', provider_response_id: null, result_payload: state,
+          progress_message: 'Reprise du lot avec un budget de génération augmenté.' });
+        await relay();
+        return;
+      }
       if (provider.status !== 'completed') throw new Error(provider.status === 'incomplete' ?
         'Réponse IA incomplète (budget de tokens).' : 'Le fournisseur IA a interrompu le lot.');
       const parsed = JSON.parse(provider.text || '');
@@ -196,26 +278,30 @@ export async function handleMatrix(req: Request, body: Record<string, unknown>, 
         state.analysis = applyClinicalSafetyContract(state.analysis, risk);
         state.analysis.schemaComparison = ensureSchemaComparison(state.analysis);
       }
+      runtime.retries = 0;
+      runtime.lastProviderStatus = undefined;
+      runtime.incompleteReason = undefined;
       await save({ status: complete ? 'completed' : 'queued', provider_response_id: null, error_message: null,
         progress_message: done === total && !complete ? message + ' Synthèse en cours.' : message, progress_percentage: complete ? 100 : Math.floor(95 * done / total), result_payload: state,
         updated_at: new Date().toISOString(), completed_at: complete ? new Date().toISOString() : null });
-      if (!complete) await kick(id);
+      if (!complete) await relay();
     } catch (err) {
-      const split = !responseId && batch.length > 1;
-      if (!responseId) state.batchSize = 1;
-      await save({ status: split ? 'queued' : 'failed', result_payload: state, provider_response_id: responseId,
-        updated_at: new Date().toISOString(), error_message: split ? null : 'Lot interrompu. Les cellules enregistrées sont conservées.',
-        progress_message: split ? 'Reprise avec une paire par appel.' :
+      // GET errors retry the same response, including after a browser suspension.
+      // A POST error or a terminal incomplete result never discards its identity.
+      const retryRead = Boolean(readingProvider && responseId);
+      await save({ status: retryRead ? 'queued' : 'failed', result_payload: state, provider_response_id: responseId,
+        error_message: retryRead ? null : 'Lot interrompu. Les cellules et la réponse du fournisseur sont conservées.',
+        progress_message: retryRead ? 'Reconnexion à la réponse IA enregistrée.' :
           (err instanceof SyntaxError || (err instanceof Error && /incomplète/.test(err.message)) ?
             'Réponse IA incomplète. Vous pouvez reprendre cette étape.' : 'Analyse interrompue.') });
-      if (split) await kick(id);
+      if (retryRead) await relay();
     }
   }
 
   const authorization = req.headers.get('authorization') || '';
   if (body.action === 'matrix.work') {
     if (authorization !== 'Bearer ' + key || typeof body.jobId !== 'string') return json({ error: 'Interdit.' }, 403);
-    background(work(body.jobId));
+    background(work(body.jobId, typeof body._matrixControlLease === 'string' ? body._matrixControlLease : undefined));
     return json({ accepted: true }, 202);
   }
   const client = makeClient(url, Deno.env.get('SUPABASE_ANON_KEY')!, { global: { headers: { Authorization: authorization } } });
@@ -230,22 +316,32 @@ export async function handleMatrix(req: Request, body: Record<string, unknown>, 
   if (body.action === 'matrix.start') {
     const { selection, risk, state } = await snapshot(client, body);
     const { data, error } = await jobs().insert({ function_name: 'cross-data-analyzer', analysis_mode: mode, requested_by: user.id,
-      request_payload: { scope, selection, risk }, result_payload: state, status: 'queued', progress_message: 'Préparation de la matrice.' })
+      request_payload: { scope, selection, risk, _matrix_runtime: { windowStartedAt: Date.now(), retries: 0 } },
+      result_payload: state, status: 'queued', progress_message: 'Préparation de la matrice.' })
       .select(projection).single();
     if (error) throw error;
     background(kick(data.id));
     return json({ job: expose(data) }, 202);
   }
   if (body.action !== 'matrix.latest' && body.action !== 'matrix.resume') return json({ error: 'Action inconnue.' }, 400);
-  let query = jobs().select(projection).eq('requested_by', user.id).eq('analysis_mode', mode).eq('request_payload->>scope', scope);
+  let query = jobs().select(projection).eq('function_name', 'cross-data-analyzer').eq('requested_by', user.id).eq('analysis_mode', mode).eq('request_payload->>scope', scope);
   if (typeof body.jobId === 'string') query = query.eq('id', body.jobId);
   const { data: job, error } = await query.order('created_at', { ascending: false }).limit(1).maybeSingle();
   if (error) throw error;
   if (job && body.action === 'matrix.resume' && (job.status === 'failed' || expose(job)?.stalled)) {
-    const { data, error: updateError } = await jobs().update({ status: 'queued', error_message: null, updated_at: new Date().toISOString() })
+    const runtime = job.request_payload._matrix_runtime as MatrixRuntime | undefined;
+    const regenerate = runtime?.lastProviderStatus === 'incomplete' && runtime.incompleteReason === 'max_output_tokens';
+    const nextState = job.result_payload as State;
+    if (regenerate) nextState.batchSize = 1;
+    const { data, error: updateError } = await jobs().update({ status: 'queued', error_message: null, updated_at: new Date().toISOString(),
+      provider_response_id: regenerate ? null : job.provider_response_id,
+      result_payload: nextState,
+      request_payload: { ...job.request_payload, _matrix_runtime: { ...runtime,
+        windowStartedAt: Date.now(), paused: false, retries: 0, creationPending: false } } })
       .eq('id', job.id).eq('updated_at', job.updated_at).select(projection).maybeSingle();
     if (updateError) throw updateError;
     if (data) { background(kick(data.id)); return json({ job: expose(data) }); }
   }
+  if (job && body.action === 'matrix.latest' && (job.status === 'queued' || expose(job)?.stalled)) background(kick(job.id));
   return json({ job: expose(job) });
 }

@@ -1,6 +1,11 @@
+import {
+  BACKGROUND_JOB_TTL_MS, prepareBackgroundJobPayload, prepareBackgroundJobRequest,
+  retrieveBackgroundForWorker, startBackgroundJobMonitor, stripBackgroundJobControls, updateBackgroundJobRecord,
+} from '../_shared/background-job-monitor.ts';
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { callAI, cleanJsonString, retrieveBackgroundAI, startBackgroundAI } from "../_shared/ai-client.ts";
+import { callAI, cleanJsonString, startBackgroundAI } from "../_shared/ai-client.ts";
+import { MAX_DIRECT_AI_TIMEOUT_MS } from "../_shared/ai-policy.ts";
 import {
   applyClinicalSafetyContract,
   buildClinicalSystemPrompt,
@@ -36,8 +41,6 @@ const corsHeaders = {
 
 const PUBMED_FETCH_TIMEOUT_MS = 6_000;
 const MAX_PUBMED_QUERIES = 4;
-const INTERACTIVE_AI_TIMEOUT_MS = 45_000;
-const BACKGROUND_AI_TIMEOUT_MS = 110_000;
 const FUNCTION_NAME = 'cross-data-analyzer';
 
 interface CausalLink {
@@ -132,6 +135,8 @@ type AnalysisJobPayload = {
   jobId?: string;
   jobToken?: string;
   providerResponseId?: string;
+  _workerLease?: string;
+  _backgroundMaxTokens?: number;
   pathologyIds?: string[];
   symptomIds?: string[];
   treatmentIds?: string[];
@@ -171,39 +176,16 @@ function jsonResponse(payload: unknown, status = 200): Response {
 }
 
 function sanitizeJobPayload(payload: AnalysisJobPayload): AnalysisJobPayload {
-  const {
-    action: _action,
-    async: _async,
-    runJob: _runJob,
-    jobId: _jobId,
-    jobToken: _jobToken,
-    providerResponseId: _providerResponseId,
-    ...requestPayload
-  } = payload;
-  return requestPayload;
-}
-
-function isOpenAIBackgroundPending(status: string | undefined | null): boolean {
-  return status === 'queued' || status === 'in_progress';
+  return stripBackgroundJobControls(payload);
 }
 
 async function updateAnalysisJob(
   supabase: any,
   jobId: string | undefined,
   patch: Record<string, unknown>,
+  maxOutputTokens?: number,
 ): Promise<void> {
-  if (!jobId) return;
-  const { error } = await supabase
-    .from('ai_analysis_jobs')
-    .update({
-      ...patch,
-      updated_at: new Date().toISOString(),
-    })
-    .eq('id', jobId);
-
-  if (error) {
-    console.error('[CrossDataAnalyzer] Job update failed:', error);
-  }
+  await updateBackgroundJobRecord(supabase, jobId, patch, maxOutputTokens);
 }
 
 function startBackgroundJob(
@@ -211,52 +193,8 @@ function startBackgroundJob(
   supabaseUrl: string,
   serviceRoleKey: string,
   jobId: string,
-  publicToken: string,
-  payload: AnalysisJobPayload,
 ): void {
-  const processorPayload: AnalysisJobPayload = {
-    ...sanitizeJobPayload(payload),
-    ...(payload.providerResponseId ? { providerResponseId: payload.providerResponseId } : {}),
-    runJob: true,
-    jobId,
-    jobToken: publicToken,
-  };
-
-  const processor = fetch(`${supabaseUrl}/functions/v1/${FUNCTION_NAME}`, {
-    method: 'POST',
-    headers: {
-      apikey: serviceRoleKey,
-      Authorization: `Bearer ${serviceRoleKey}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify(processorPayload),
-  }).then(async (response) => {
-    if (!response.ok) {
-      const errorText = await response.text().catch(() => '');
-      await updateAnalysisJob(supabase, jobId, {
-        status: 'failed',
-        progress_percentage: 100,
-        progress_message: 'Echec du worker cross-data.',
-        error_message: `Worker returned ${response.status}: ${errorText}`,
-        completed_at: new Date().toISOString(),
-      });
-    }
-  }).catch(async (error) => {
-    await updateAnalysisJob(supabase, jobId, {
-      status: 'failed',
-      progress_percentage: 100,
-      progress_message: 'Echec du lancement du worker cross-data.',
-      error_message: getErrorMessage(error),
-      completed_at: new Date().toISOString(),
-    });
-  });
-
-  const edgeRuntime = (globalThis as any).EdgeRuntime;
-  if (edgeRuntime?.waitUntil) {
-    edgeRuntime.waitUntil(processor);
-  } else {
-    processor.catch((error) => console.error('[CrossDataAnalyzer] Background job error:', error));
-  }
+  startBackgroundJobMonitor({ supabase, supabaseUrl, serviceRoleKey, functionName: FUNCTION_NAME }, jobId);
 }
 
 async function fetchWithTimeout(url: string, timeoutMs: number): Promise<Response> {
@@ -939,7 +877,7 @@ serve(async (req) => {
   let activeRunJob = false;
 
   try {
-    const payload = await req.json().catch(() => ({})) as AnalysisJobPayload;
+    let payload = await req.json().catch(() => ({})) as AnalysisJobPayload;
 
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
     const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
@@ -952,10 +890,15 @@ serve(async (req) => {
     }
     const supabase = createClient(supabaseUrl, supabaseKey);
     activeSupabase = supabase;
+
+    const control = await prepareBackgroundJobRequest(req, payload, {
+      supabase, supabaseUrl, serviceRoleKey: supabaseKey, functionName: FUNCTION_NAME, corsHeaders,
+    });
+    if (control.response) return control.response;
+    payload = control.payload;
+    const actor = control.actor;
     const {
-      action,
       jobId,
-      jobToken,
       providerResponseId,
       async: requestedAsync = false,
       runJob = false,
@@ -978,107 +921,6 @@ serve(async (req) => {
       return jsonResponse({ error: 'Worker execution requires service authorization' }, 403);
     }
 
-    if (action === 'status') {
-      if (!jobId || !jobToken) {
-        return jsonResponse({ error: 'jobId and jobToken are required' }, 400);
-      }
-
-      const { data: job, error: jobError } = await supabase
-        .from('ai_analysis_jobs')
-        .select('id, status, progress_percentage, progress_message, request_payload, result_payload, error_message, model, reasoning_effort, degraded, degraded_reason, provider_name, provider_response_id, provider_status, provider_started_at, provider_completed_at, created_at, started_at, completed_at, updated_at')
-        .eq('id', jobId)
-        .eq('public_token', jobToken)
-        .neq('analysis_mode', 'progressive_matrix')
-        .maybeSingle();
-
-      if (jobError) {
-        return jsonResponse({ error: jobError.message }, 500);
-      }
-
-      if (!job) {
-        return jsonResponse({ error: 'Job not found' }, 404);
-      }
-
-      if (
-        job.status === 'processing' &&
-        job.provider_name === 'openai' &&
-        job.provider_response_id &&
-        job.provider_status !== 'finalizing'
-      ) {
-        const providerResult = await retrieveBackgroundAI(job.provider_response_id, {
-          model: typeof job.model === 'string' ? job.model : undefined,
-          reasoningEffort: job.reasoning_effort,
-          timeoutMs: 15_000,
-        });
-
-        if (isOpenAIBackgroundPending(providerResult.status)) {
-          const nextProgress = Math.max(Number(job.progress_percentage || 0), 80);
-          const nextMessage = 'Modele OpenAI en cours de raisonnement.';
-          await updateAnalysisJob(supabase, job.id, {
-            provider_status: providerResult.status,
-            progress_percentage: nextProgress,
-            progress_message: nextMessage,
-          });
-
-          return jsonResponse({
-            job: {
-              ...job,
-              provider_status: providerResult.status,
-              progress_percentage: nextProgress,
-              progress_message: nextMessage,
-            },
-          });
-        }
-
-        if (providerResult.status === 'completed' && providerResult.text?.trim()) {
-          const nextMessage = 'Reponse OpenAI recue. Finalisation clinique.';
-          await updateAnalysisJob(supabase, job.id, {
-            provider_status: 'finalizing',
-            provider_completed_at: new Date().toISOString(),
-            progress_percentage: 90,
-            progress_message: nextMessage,
-          });
-
-          startBackgroundJob(supabase, supabaseUrl, supabaseKey, job.id, jobToken, {
-            ...(job.request_payload || {}),
-            providerResponseId: job.provider_response_id,
-          });
-
-          return jsonResponse({
-            job: {
-              ...job,
-              provider_status: 'finalizing',
-              progress_percentage: 90,
-              progress_message: nextMessage,
-            },
-          });
-        }
-
-        const errorMessage = providerResult.errorMessage || `OpenAI background response ended with status ${providerResult.status}`;
-        await updateAnalysisJob(supabase, job.id, {
-          status: 'failed' satisfies AnalysisJobStatus,
-          provider_status: providerResult.status,
-          progress_percentage: 100,
-          progress_message: 'Analyse OpenAI echouee.',
-          error_message: errorMessage,
-          completed_at: new Date().toISOString(),
-        });
-
-        return jsonResponse({
-          job: {
-            ...job,
-            status: 'failed',
-            provider_status: providerResult.status,
-            progress_percentage: 100,
-            progress_message: 'Analyse OpenAI echouee.',
-            error_message: errorMessage,
-          },
-        });
-      }
-
-      return jsonResponse({ job });
-    }
-
     if (requestedAsync && !runJob) {
       const { data: job, error: createJobError } = await supabase
         .from('ai_analysis_jobs')
@@ -1088,7 +930,9 @@ serve(async (req) => {
           status: 'queued' satisfies AnalysisJobStatus,
           progress_percentage: 0,
           progress_message: 'Analyse cross-data en file d attente.',
-          request_payload: sanitizeJobPayload(payload),
+          request_payload: prepareBackgroundJobPayload(sanitizeJobPayload(payload)),
+          requested_by: actor.userId,
+          expires_at: new Date(Date.now() + BACKGROUND_JOB_TTL_MS).toISOString(),
         })
         .select('id, public_token, status, progress_percentage, progress_message, created_at')
         .single();
@@ -1097,7 +941,7 @@ serve(async (req) => {
         return jsonResponse({ error: createJobError.message }, 500);
       }
 
-      startBackgroundJob(supabase, supabaseUrl, supabaseKey, job.id, job.public_token, payload);
+      startBackgroundJob(supabase, supabaseUrl, supabaseKey, job.id);
 
       return jsonResponse({
         job: {
@@ -1562,9 +1406,6 @@ FORMAT JSON STRICT:
         hasExternalEvidence,
       }, clinicalModelEnv);
       const schemaPromptWithClinicalContract = buildClinicalSystemPrompt(schemaPrompt, riskAssessment);
-      const schemaTimeoutMs = runJob
-        ? Math.min(schemaRoute.timeoutMs, BACKGROUND_AI_TIMEOUT_MS)
-        : Math.min(schemaRoute.timeoutMs, INTERACTIVE_AI_TIMEOUT_MS);
 
       const schemaUserPrompt = `## PATHOLOGIES
 ${selectedPathologiesContext || 'Aucune'}
@@ -1606,12 +1447,13 @@ Génère uniquement le JSON des schémas thérapeutiques alternatifs.`;
           forceModel: true,
           reasoningEffort: schemaRoute.reasoningEffort || OPENAI_CROSS_DATA_REASONING_EFFORT,
           responseFormat: { type: 'json_object' },
-          maxTokens: 6000,
-          timeoutMs: schemaTimeoutMs,
+          maxTokens: payload._backgroundMaxTokens ?? 6000,
+          timeoutMs: MAX_DIRECT_AI_TIMEOUT_MS,
         };
 
         if (runJob && providerResponseId) {
-          const providerResult = await retrieveBackgroundAI(providerResponseId, schemaCallOptions);
+          const providerResult = await retrieveBackgroundForWorker(supabase, jobId, providerResponseId, schemaCallOptions);
+          if (!providerResult) return jsonResponse({ status: 'processing', jobId }, 202);
           if (providerResult.status !== 'completed') {
             await updateAnalysisJob(supabase, jobId, {
               provider_status: providerResult.status,
@@ -1642,7 +1484,7 @@ Génère uniquement le JSON des schémas thérapeutiques alternatifs.`;
             progress_message: 'Modele OpenAI en cours de raisonnement.',
             model: backgroundResponse.model,
             reasoning_effort: backgroundResponse.reasoningEffort,
-          });
+          }, backgroundResponse.maxOutputTokens);
 
           return jsonResponse({
             status: 'processing',
@@ -1966,9 +1808,6 @@ Réponds UNIQUEMENT en français avec le JSON demandé. Génère uniquement les 
       progress_percentage: 65,
       progress_message: 'Synthese clinique par le modele IA.',
     });
-    const analysisTimeoutMs = runJob
-      ? Math.min(fullRoute.timeoutMs, BACKGROUND_AI_TIMEOUT_MS)
-      : Math.min(fullRoute.timeoutMs, INTERACTIVE_AI_TIMEOUT_MS);
 
     const fullSystemPrompt = buildClinicalSystemPrompt(systemPrompt, riskAssessment);
     const fullUserPrompt = userPrompt + "\n\nGénère maintenant le JSON final. Raisonne sur chaque paire, conserve seulement les liens directement justifiés, puis produis une synthèse clinique exploitable.";
@@ -1977,14 +1816,15 @@ Réponds UNIQUEMENT en français avec le JSON demandé. Génère uniquement les 
       forceModel: true,
       reasoningEffort: fullRoute.reasoningEffort || OPENAI_CROSS_DATA_REASONING_EFFORT,
       responseFormat: { type: 'json_object' },
-      maxTokens: 8000,
-      timeoutMs: analysisTimeoutMs,
+      maxTokens: payload._backgroundMaxTokens ?? 8000,
+      timeoutMs: MAX_DIRECT_AI_TIMEOUT_MS,
     };
 
     let aiResult: Awaited<ReturnType<typeof callAI>> | null = null;
 
     if (runJob && providerResponseId) {
-      const providerResult = await retrieveBackgroundAI(providerResponseId, fullCallOptions);
+      const providerResult = await retrieveBackgroundForWorker(supabase, jobId, providerResponseId, fullCallOptions);
+      if (!providerResult) return jsonResponse({ status: 'processing', jobId }, 202);
       if (providerResult.status !== 'completed') {
         await updateAnalysisJob(supabase, jobId, {
           provider_status: providerResult.status,
@@ -2011,7 +1851,7 @@ Réponds UNIQUEMENT en français avec le JSON demandé. Génère uniquement les 
         progress_message: 'Modele OpenAI en cours de raisonnement.',
         model: backgroundResponse.model,
         reasoning_effort: backgroundResponse.reasoningEffort,
-      });
+      }, backgroundResponse.maxOutputTokens);
 
       return jsonResponse({
         status: 'processing',

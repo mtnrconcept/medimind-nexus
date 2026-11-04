@@ -3,7 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { useAutoTranslation } from '@/contexts/TranslationContext';
-import { supabase } from '@/integrations/supabase/client';
+import { supabase, aiFetch } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 import {
     AlertTriangle, CheckCircle2, XCircle, Clock,
@@ -45,7 +45,7 @@ const DiscoveryCard = ({ data, onUpdateStatus, onRefresh }: DiscoveryCardProps) 
             const { data: { session } } = await supabase.auth.getSession();
             if (!session) throw new Error('Non connecté');
 
-            const response = await fetch(
+            const response = await aiFetch(
                 `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/validate-hypothesis`,
                 {
                     method: 'POST',

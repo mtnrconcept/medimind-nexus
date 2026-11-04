@@ -17,7 +17,8 @@ import {
     Clock, Star, Target, Zap, Network, BarChart3, FileDown, Lightbulb, Bell,
     Link as LinkIcon
 } from 'lucide-react';
-import { supabase } from '@/integrations/supabase/client';
+import { supabase, aiFetch, aiTransport } from '@/integrations/supabase/client';
+import { useAuth } from '@/hooks/useAuth';
 import { useAI } from '@/contexts/AIContext';
 import { toast } from 'sonner';
 import RadialRingsModal from '@/components/cde/RadialRingsModal';
@@ -2760,6 +2761,8 @@ const NexusStatusBar = () => {
 const DiscoveryPlatform = () => {
     const { t } = useAutoTranslation();
     const { theme } = useTheme();
+    const { user } = useAuth();
+    const hypothesisObservation = useRef<AbortController | null>(null);
 
 
     // State
@@ -2787,6 +2790,15 @@ const DiscoveryPlatform = () => {
 
     // OpenAI Streaming Modal State
     const [streamingContent, setStreamingContent] = useState<string>('');
+
+    useEffect(() => {
+        setIsGeneratingHypotheses(false);
+        setStreamingContent('');
+        return () => {
+            hypothesisObservation.current?.abort();
+            hypothesisObservation.current = null;
+        };
+    }, [user?.id]);
 
     // Evidence Pack State (enriched data from hypothesis generation)
     const [evidencePack, setEvidencePack] = useState<{
@@ -3125,229 +3137,107 @@ const DiscoveryPlatform = () => {
         }
     }, [lastSearchAbstracts, searchResults]);
 
-    // Generate hypotheses handler
+    // Observe the private server job; leaving this page only detaches its observer.
     const handleGenerateHypotheses = async (query: string) => {
         if (!query.trim()) {
             toast.error('Effectuez d\'abord une recherche pour générer des hypothèses');
             return;
         }
-
+        if (hypothesisObservation.current) {
+            setIsGeneratingHypotheses(true);
+            toast.info('Une génération est déjà en cours. Son résultat reste accessible dans Activité IA.');
+            return;
+        }
+        const controller = new AbortController();
+        hypothesisObservation.current = controller;
         setIsGeneratingHypotheses(true);
-        setStreamingContent(''); // Reset streaming content
+        setStreamingContent('');
 
         try {
-            toast.info('Création du job de génération...');
-
             const { data: { session } } = await supabase.auth.getSession();
-            if (!session) throw new Error('Non authentifié');
-
-            const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
-            const functionUrl = `${supabaseUrl}/functions/v1/discovery-platform`;
-
-            // Call Edge Function to create job
-            const response = await fetch(functionUrl, {
+            if (!session || session.user.id !== user?.id) throw new Error('Votre session a changé. Reconnectez-vous.');
+            if (controller.signal.aborted) return;
+            const response = await aiFetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/discovery-platform`, {
                 method: 'POST',
-                headers: {
-                    'Authorization': `Bearer ${session.access_token}`,
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({
-                    action: 'generate_hypotheses',
-                    query,
-                    maxResults: 60
-                })
+                headers: { 'Authorization': `Bearer ${session.access_token}`, 'Content-Type': 'application/json' },
+                body: JSON.stringify({ action: 'generate_hypotheses', query, maxResults: 60 }),
+                signal: controller.signal,
             });
-
-            if (!response.ok) {
-                const text = await response.text();
-                throw new Error(`Erreur API: ${text}`);
-            }
-
+            if (!response.ok) throw new Error('Le serveur n’a pas confirmé la génération.');
             const jobData = await response.json();
-            const jobId = jobData.job_id;
+            if (!jobData.job_id) throw new Error('Aucun identifiant de tâche reçu.');
+            if (controller.signal.aborted) return;
 
-            if (!jobId) {
-                throw new Error('Aucun job_id reçu');
-            }
+            const result = await aiTransport.observe<{ hypothesis_id: string }>(jobData.job_id, {
+                owner: session.user.id,
+                signal: controller.signal,
+                onProgress: job => {
+                    if (!controller.signal.aborted) setStreamingContent([
+                        job.stalled ? 'Suivi interrompu, résultat à vérifier dans Activité IA.' : job.progress_message || 'Génération en arrière-plan…',
+                        `${Math.round(job.progress_percentage ?? 0)} %`,
+                    ].join('\n'));
+                },
+            });
+            if (controller.signal.aborted) return;
+            if (!result.hypothesis_id) throw new Error('La référence du résultat est indisponible. Consultez Activité IA.');
+            const { data: hypothesis, error: hypError } = await (supabase
+                .from('discovery_hypotheses' as any)
+                .select('*').eq('id', result.hypothesis_id).single()) as any;
+            if (controller.signal.aborted) return;
+            const current = await supabase.auth.getSession();
+            if (current.data.session?.user.id !== session.user.id || controller.signal.aborted) return;
+            if (hypError || !hypothesis) throw new Error('Le résultat est enregistré mais son affichage est indisponible. Consultez Activité IA.');
 
-            toast.success('Job créé ! Génération en arrière-plan...');
-
-            // Trigger the background processor explicitly from the client 
-            // to ensure it starts even if the fire-and-forget fetch in the edge function fails
-            invokeAI('hypothesis-processor', {
-                job_id: jobId
-            }).catch(e => console.warn('Client-side processor trigger warning:', e));
-
-            // Subscribe to BROADCAST channel for live streaming text
-            const streamChannel = supabase
-                .channel(`hypothesis-stream-${jobId}`)
-                .on('broadcast', { event: 'chunk' }, (payload: any) => {
-                    // Append streaming text in real-time
-                    setStreamingContent(prev => prev + payload.payload.text);
-                })
-                .on('broadcast', { event: 'stream_complete' }, () => {
-                    console.log('✅ Stream broadcast complete');
-                })
-                .subscribe((status) => {
-                    if (status === 'SUBSCRIBED') {
-                        console.log('🔴 Subscribed to live stream');
-                    }
-                });
-
-            // Subscribe to job updates via Realtime
-            const jobChannel = supabase
-                .channel(`job-${jobId}`)
-                .on(
-                    'postgres_changes',
-                    {
-                        event: 'UPDATE',
-                        schema: 'public',
-                        table: 'hypothesis_generation_jobs',
-                        filter: `id=eq.${jobId}`
-                    },
-                    async (payload: any) => {
-                        const job = payload.new;
-                        handleJobUpdate(job);
-                    }
-                )
-                .subscribe((status) => {
-                    if (status === 'SUBSCRIBED') {
-                        console.log('Subscribed to job updates');
-                    }
-                });
-
-            // Polling fallback (in case Realtime misses events)
-            const pollInterval = setInterval(async () => {
-                const { data: job, error } = await (supabase
-                    .from('hypothesis_generation_jobs' as any)
-                    .select('*')
-                    .eq('id', jobId)
-                    .single()) as any;
-
-                if (!error && job) {
-                    handleJobUpdate(job);
-                }
-            }, 2000);
-
-            // Consolidated update handler
-            const handleJobUpdate = async (job: any) => {
-                console.log('Job update:', job);
-
-                // Update progress message
-                if (job.progress_message) {
-                    setStreamingContent(prev => {
-                        const content = job.progress_message;
-
-                        // Skip generic waiting messages to save space/tokens and focus on reasoning
-                        if (content.includes('En attente de traitement')) {
-                            // Only show it if it's the very first message
-                            if (!prev) return `[${new Date().toLocaleTimeString()}] ${content}`;
-                            return prev;
-                        }
-
-                        // Check if the last log entry already contains this message content
-                        // (ignoring the timestamp part to prevent duplication)
-                        const lastLines = prev.slice(-200); // Check recent context
-                        if (lastLines.includes(content)) {
-                            return prev;
-                        }
-
-                        // Simply append significant status updates
-                        const message = `\n[${new Date().toLocaleTimeString()}] [${job.progress_percentage}%] ${job.progress_message}`;
-                        return prev + message;
-                    });
-                }
-
-                // Handle completion
-                if (job.status === 'completed' && job.hypothesis_id) {
-                    clearInterval(pollInterval);
-                    streamChannel.unsubscribe();
-                    jobChannel.unsubscribe();
-
-                    // Fetch the generated hypothesis
-                    const { data: hypothesis, error: hypError } = await (supabase
-                        .from('discovery_hypotheses' as any)
-                        .select('*')
-                        .eq('id', job.hypothesis_id)
-                        .single()) as any;
-
-                    if (hypError || !hypothesis) {
-                        toast.error('Erreur lors de la récupération de l\'hypothèse');
-                        setIsGeneratingHypotheses(false);
-                        return;
-                    }
-
-                    // Add hypothesis to state - including causal graph fields
-                    const newHypothesis: Hypothesis = {
-                        id: hypothesis.id,
-                        hypothesis_id: hypothesis.hypothesis_id || `H-${Date.now()}`,
-                        statement: hypothesis.statement || '',
-                        executive_summary: hypothesis.executive_summary,
-                        clinical_scope: hypothesis.clinical_scope,
-                        rival_hypotheses: hypothesis.rival_hypotheses,
-                        evidence_snapshot: hypothesis.evidence_snapshot,
-                        mechanistic_model: hypothesis.mechanistic_model,
-                        risks_monitoring: hypothesis.risks_monitoring,
-                        detailed_analysis: hypothesis.detailed_analysis,
-                        // Causal Graph & Cascade Fields - CRITICAL for graph visualization
-                        causal_graph: hypothesis.causal_graph,
-                        systemic_cascade: hypothesis.systemic_cascade,
-                        therapeutic_resolution_chains: hypothesis.therapeutic_resolution_chains,
-                        etiology_depth: hypothesis.etiology_depth,
-                        mermaid_graph: hypothesis.mermaid_graph,
-                        is_complete_resolution: hypothesis.is_complete_resolution,
-                        contradictions: hypothesis.contradictions || [],
-                        // Existing fields
-                        drug_repurposing_candidates: hypothesis.drug_repurposing_candidates || [],
-                        predictions: hypothesis.predictions || [],
-                        minimal_tests: hypothesis.minimal_tests || [],
-                        risks_confounders: hypothesis.risks_confounders || [],
-                        evidence_citations: hypothesis.evidence_citations || [],
-                        scores: hypothesis.scores || { novelty: 0, plausibility: 0, strength: 0, feasibility: 0, impact: 0, total: 0 },
-                        status: (hypothesis.status === 'accepted' ? 'validated' : hypothesis.status) as 'pending' | 'validated' | 'rejected',
-                        created_at: hypothesis.created_at || new Date().toISOString()
-                    };
-
-                    setHypotheses(prev => {
-                        const existingIds = new Set(prev.map(h => h.hypothesis_id));
-                        if (existingIds.has(newHypothesis.hypothesis_id)) {
-                            return prev;
-                        }
-                        return [newHypothesis, ...prev];
-                    });
-
-                    setStats(prev => ({ ...prev, hypotheses: prev.hypotheses + 1 }));
-                    toast.success('Hypothèse générée avec succès !');
-                    setSelectedHypothesis(newHypothesis);
-                    setIsReportModalOpen(true);
-                    setIsGeneratingHypotheses(false);
-                }
-
-                // Handle failure
-                if (job.status === 'failed') {
-                    clearInterval(pollInterval);
-                    streamChannel.unsubscribe();
-                    jobChannel.unsubscribe();
-                    toast.error(`Erreur: ${job.error_message || 'Génération échouée'}`);
-                    setIsGeneratingHypotheses(false);
-                }
+            // Add hypothesis to state - including causal graph fields
+            const newHypothesis: Hypothesis = {
+                id: hypothesis.id,
+                hypothesis_id: hypothesis.hypothesis_id || `H-${Date.now()}`,
+                statement: hypothesis.statement || '',
+                executive_summary: hypothesis.executive_summary,
+                clinical_scope: hypothesis.clinical_scope,
+                rival_hypotheses: hypothesis.rival_hypotheses,
+                evidence_snapshot: hypothesis.evidence_snapshot,
+                mechanistic_model: hypothesis.mechanistic_model,
+                risks_monitoring: hypothesis.risks_monitoring,
+                detailed_analysis: hypothesis.detailed_analysis,
+                // Causal Graph & Cascade Fields - CRITICAL for graph visualization
+                causal_graph: hypothesis.causal_graph,
+                systemic_cascade: hypothesis.systemic_cascade,
+                therapeutic_resolution_chains: hypothesis.therapeutic_resolution_chains,
+                etiology_depth: hypothesis.etiology_depth,
+                mermaid_graph: hypothesis.mermaid_graph,
+                is_complete_resolution: hypothesis.is_complete_resolution,
+                contradictions: hypothesis.contradictions || [],
+                // Existing fields
+                drug_repurposing_candidates: hypothesis.drug_repurposing_candidates || [],
+                predictions: hypothesis.predictions || [],
+                minimal_tests: hypothesis.minimal_tests || [],
+                risks_confounders: hypothesis.risks_confounders || [],
+                evidence_citations: hypothesis.evidence_citations || [],
+                scores: hypothesis.scores || { novelty: 0, plausibility: 0, strength: 0, feasibility: 0, impact: 0, total: 0 },
+                status: (hypothesis.status === 'accepted' ? 'validated' : hypothesis.status) as 'pending' | 'validated' | 'rejected',
+                created_at: hypothesis.created_at || new Date().toISOString()
             };
 
-            // Set a timeout in case job never completes
-            setTimeout(() => {
-                clearInterval(pollInterval);
-                streamChannel.unsubscribe();
-                jobChannel.unsubscribe();
-                if (isGeneratingHypotheses) {
-                    setIsGeneratingHypotheses(false);
-                    toast.warning('Timeout: Vérifiez l\'état du job manuellement');
+            setHypotheses(prev => {
+                const existingIds = new Set(prev.map(h => h.hypothesis_id));
+                if (existingIds.has(newHypothesis.hypothesis_id)) {
+                    return prev;
                 }
-            }, 300000); // 5 minutes timeout
+                return [newHypothesis, ...prev];
+            });
 
-        } catch (err: any) {
-            console.error('Hypothesis generation error:', err);
-            toast.error('Erreur lors de la génération: ' + (err.message || 'Erreur inconnue'));
-            setIsGeneratingHypotheses(false);
+            setStats(prev => ({ ...prev, hypotheses: prev.hypotheses + 1 }));
+            toast.success('Hypothèse générée avec succès !');
+            setSelectedHypothesis(newHypothesis);
+            setIsReportModalOpen(true);
+        } catch (error) {
+            if (!controller.signal.aborted) toast.error(error instanceof Error ? error.message : 'La génération est indisponible. Consultez Activité IA.');
+        } finally {
+            if (hypothesisObservation.current === controller) {
+                hypothesisObservation.current = null;
+                setIsGeneratingHypotheses(false);
+            }
         }
     };
 

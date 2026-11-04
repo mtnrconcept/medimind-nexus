@@ -43,14 +43,29 @@ jobs:
       - name: Typecheck clinical workspace and navigation
         run: npm run typecheck:workspace
 
+      - name: Typecheck AI continuity, recovery and activity panel
+        run: npx tsc -p tsconfig.ai-continuity.json --pretty false
+
       - name: Typecheck anatomical atlas viewer
         run: npx tsc -p tsconfig.anatomical-twin.json --pretty false
 
       - name: Edge signal-detector syntax and local imports
         run: npm run check:signal-edge
 
-      - name: Typecheck scientific research and cross-data Edge Functions
-        run: npx --yes deno@2.9.6 check --no-lock --node-modules-dir=manual supabase/functions/scientific-evidence/index.ts supabase/functions/deep-research-graph/index.ts supabase/functions/cross-data-analyzer/index.ts
+      - name: Typecheck scientific research and durable AI Edge Functions
+        run: >-
+          npx --yes deno@2.9.6 check --no-lock --node-modules-dir=manual
+          supabase/functions/scientific-evidence/index.ts
+          supabase/functions/deep-research-graph/index.ts
+          supabase/functions/cross-data-analyzer/index.ts
+          supabase/functions/ai-tool-jobs/index.ts
+          supabase/functions/causal-reasoning/index.ts
+          supabase/functions/deep-research/index.ts
+          supabase/functions/cde-analyze/index.ts
+          supabase/functions/cde-systematic-analyze/index.ts
+          supabase/functions/patient-health-synthesis/index.ts
+          supabase/functions/discovery-platform/index.ts
+          supabase/functions/hypothesis-processor/index.ts
 
       - name: Lint
         run: npm run lint
@@ -108,3 +123,9 @@ jobs:
 
       - name: Assert evidence write isolation
         run: psql -v ON_ERROR_STOP=1 -f tests/discovery-evidence-security-assertions.sql
+
+      - name: Apply private AI transport events migration
+        run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261104214546_durable_ai_transport.sql
+
+      - name: Assert private AI transport event access and replay constraints
+        run: psql -v ON_ERROR_STOP=1 -f tests/ai-transport-security-assertions.sql

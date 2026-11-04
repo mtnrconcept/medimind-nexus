@@ -15,6 +15,7 @@ const corsHeaders = {
 
 interface CausalQuery {
     query?: string; // For AI-powered explanation
+    stream?: boolean;
     context?: {
         sourceNode?: string;
         targetNode?: string;
@@ -73,6 +74,28 @@ interface RiskSummary {
     urgent_alerts: number;
     routine_alerts: number;
     key_concerns: string[];
+}
+
+function normalizeExplanationContext(value: unknown): NonNullable<CausalQuery['context']> | null {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+    const context = { ...value } as NonNullable<CausalQuery['context']>;
+    for (const field of ['sourceNode', 'targetNode', 'pathology', 'relationship', 'evidence_grade'] as const) {
+        const text = context[field];
+        if (text != null && typeof text !== 'string') return null;
+        context[field] = typeof text === 'string' ? text.trim() : undefined;
+    }
+    return context;
+}
+
+function hasLinkExplanationContext(context: CausalQuery['context']): boolean {
+    return typeof context?.sourceNode === 'string' && context.sourceNode.trim().length > 0
+        && typeof context?.targetNode === 'string' && context.targetNode.trim().length > 0;
+}
+
+function invalidExplanationRequest(): Response {
+    return new Response(JSON.stringify({ error: 'La demande doit contenir un texte et un contexte valides. Une explication de lien nécessite deux concepts non vides.' }), {
+        status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    });
 }
 
 // ============================================
@@ -211,6 +234,7 @@ serve(async (req) => {
 
     try {
         const query: CausalQuery = await req.json();
+        if (!query || typeof query !== 'object' || Array.isArray(query)) return invalidExplanationRequest();
 
         const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
         const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -219,18 +243,19 @@ serve(async (req) => {
         // ============================================
         // MODE 1: AI-powered link explanation / graph analysis
         // ============================================
-        if (query.query && query.context) {
-            const explanationQuery = query.query;
-            const explanationContext = query.context;
+        if (query.query !== undefined || query.context !== undefined) {
+            const explanationContext = normalizeExplanationContext(query.context);
+            if (typeof query.query !== 'string' || !query.query.trim() || !explanationContext) return invalidExplanationRequest();
+            const explanationQuery = query.query.trim();
+            // Pathology is optional; a valid pair still requires the explanation response format.
+            const isLinkExplanation = hasLinkExplanationContext(explanationContext);
+            const isMultiNodeAnalysis = Boolean(explanationContext.multiNodes && explanationContext.multiNodes.length > 2);
+            const requestsPair = query.context?.sourceNode !== undefined || query.context?.targetNode !== undefined;
+            if (requestsPair && !isLinkExplanation && !isMultiNodeAnalysis) return invalidExplanationRequest();
 
             // If stream: false is requested, return JSON directly
-            if ((query as any).stream === false) {
+            if (query.stream === false) {
                 try {
-                    // Check if this is a link explanation request (has source/target/pathology)
-                    const isLinkExplanation = explanationContext.sourceNode && explanationContext.targetNode && explanationContext.pathology;
-                    // Check if this is a multi-node analysis (more than 2 nodes)
-                    const isMultiNodeAnalysis = explanationContext.multiNodes && explanationContext.multiNodes.length > 2;
-
                     if (isLinkExplanation || isMultiNodeAnalysis) {
                         if (isMultiNodeAnalysis) {
                             console.log(`[CAUSAL-REASONING] Generating MULTI-NODE analysis for ${explanationContext.multiNodes!.length} nodes`);
@@ -340,11 +365,11 @@ Règles:
 
                         const userPrompt = `Analyse de la relation: ${explanationQuery}
 Contexte:
-- Source: ${explanationContext.sourceNode}
-- Cible: ${explanationContext.targetNode}
-- Relation: ${explanationContext.relationship}
-- Niveau de preuve: ${explanationContext.evidence_grade}
-- Pathologie concernée: ${explanationContext.pathology}`;
+- Source: ${explanationContext.sourceNode || 'Non spécifié'}
+- Cible: ${explanationContext.targetNode || 'Non spécifié'}
+- Relation: ${explanationContext.relationship || 'Non spécifié'}
+- Niveau de preuve: ${explanationContext.evidence_grade || 'Non spécifié'}
+- Pathologie concernée: ${explanationContext.pathology || 'Non spécifié'}`;
 
                         await streamAI(
                             systemPrompt,

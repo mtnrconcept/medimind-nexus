@@ -1010,7 +1010,7 @@ serve(async (req) => {
           for (const symptom of extractedData.symptoms) {
             if (!symptom.name) continue;
 
-            // Vérifier si le symptôme existe déj�
+            // Vérifier si le symptôme existe déjà
             const { data: existingSymptom } = await supabase
               .from('symptoms')
               .select('id')

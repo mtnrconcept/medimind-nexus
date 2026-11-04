@@ -1,12 +1,16 @@
+import {
+  BACKGROUND_JOB_TTL_MS, prepareBackgroundJobPayload, prepareBackgroundJobRequest,
+  retrieveBackgroundForWorker, startBackgroundJobMonitor, stripBackgroundJobControls, updateBackgroundJobRecord,
+} from '../_shared/background-job-monitor.ts';
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import {
   callAI,
   cleanJsonString,
-  retrieveBackgroundAI,
   startBackgroundAI,
   streamAI,
 } from "../_shared/ai-client.ts";
+import { MAX_DIRECT_AI_TIMEOUT_MS } from "../_shared/ai-policy.ts";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -15,8 +19,6 @@ const corsHeaders = {
 
 const FUNCTION_NAME = 'deep-research';
 const PUBMED_FETCH_TIMEOUT_MS = 6_000;
-const INTERACTIVE_AI_TIMEOUT_MS = 45_000;
-const BACKGROUND_AI_TIMEOUT_MS = 110_000;
 
 interface WebSource {
   title: string;
@@ -63,6 +65,8 @@ type DeepResearchPayload = {
   jobId?: string;
   jobToken?: string;
   providerResponseId?: string;
+  _workerLease?: string;
+  _backgroundMaxTokens?: number;
   symptomNames?: string[];
   symptomIds?: string[];
   stream?: boolean;
@@ -97,16 +101,7 @@ function normalizeStringArray(value: unknown): string[] {
 }
 
 function sanitizeJobPayload(payload: DeepResearchPayload): DeepResearchPayload {
-  const {
-    action: _action,
-    async: _async,
-    runJob: _runJob,
-    jobId: _jobId,
-    jobToken: _jobToken,
-    providerResponseId: _providerResponseId,
-    ...requestPayload
-  } = payload;
-  return requestPayload;
+  return stripBackgroundJobControls(payload);
 }
 
 function isOpenAIBackgroundPending(status: string | undefined | null): boolean {
@@ -133,19 +128,9 @@ async function updateDeepResearchJob(
   supabase: any,
   jobId: string | undefined,
   patch: Record<string, unknown>,
+  maxOutputTokens?: number,
 ): Promise<void> {
-  if (!jobId) return;
-  const { error } = await supabase
-    .from('ai_analysis_jobs')
-    .update({
-      ...patch,
-      updated_at: new Date().toISOString(),
-    })
-    .eq('id', jobId);
-
-  if (error) {
-    console.error('[DeepResearch] Job update failed:', error);
-  }
+  await updateBackgroundJobRecord(supabase, jobId, patch, maxOutputTokens);
 }
 
 function startDeepResearchWorker(
@@ -153,52 +138,8 @@ function startDeepResearchWorker(
   supabaseUrl: string,
   serviceRoleKey: string,
   jobId: string,
-  publicToken: string,
-  payload: DeepResearchPayload,
 ): void {
-  const processorPayload: DeepResearchPayload = {
-    ...sanitizeJobPayload(payload),
-    ...(payload.providerResponseId ? { providerResponseId: payload.providerResponseId } : {}),
-    runJob: true,
-    jobId,
-    jobToken: publicToken,
-  };
-
-  const processor = fetch(`${supabaseUrl}/functions/v1/${FUNCTION_NAME}`, {
-    method: 'POST',
-    headers: {
-      apikey: serviceRoleKey,
-      Authorization: `Bearer ${serviceRoleKey}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify(processorPayload),
-  }).then(async (response) => {
-    if (!response.ok) {
-      const errorText = await response.text().catch(() => '');
-      await updateDeepResearchJob(supabase, jobId, {
-        status: 'failed',
-        progress_percentage: 100,
-        progress_message: 'Echec du worker deep research.',
-        error_message: `Worker returned ${response.status}: ${errorText}`,
-        completed_at: new Date().toISOString(),
-      });
-    }
-  }).catch(async (error) => {
-    await updateDeepResearchJob(supabase, jobId, {
-      status: 'failed',
-      progress_percentage: 100,
-      progress_message: 'Echec du lancement du worker deep research.',
-      error_message: getErrorMessage(error),
-      completed_at: new Date().toISOString(),
-    });
-  });
-
-  const edgeRuntime = (globalThis as any).EdgeRuntime;
-  if (edgeRuntime?.waitUntil) {
-    edgeRuntime.waitUntil(processor);
-  } else {
-    processor.catch((error) => console.error('[DeepResearch] Background worker error:', error));
-  }
+  startBackgroundJobMonitor({ supabase, supabaseUrl, serviceRoleKey, functionName: FUNCTION_NAME }, jobId);
 }
 
 async function searchPubMed(query: string, maxResults: number = 5, apiKey?: string): Promise<WebSource[]> {
@@ -512,9 +453,10 @@ async function runAnalysis(params: {
   runJob: boolean;
   jobId?: string;
   providerResponseId?: string;
+  backgroundMaxTokens?: number;
   emit?: (event: StreamEvent) => void;
 }): Promise<{ responsePayload?: { result: DeepResearchResult }; providerPending?: boolean }> {
-  const { supabase, symptomNames, symptomIds, wantStream, runJob, jobId, providerResponseId, emit } = params;
+  const { supabase, symptomNames, symptomIds, wantStream, runJob, jobId, providerResponseId, backgroundMaxTokens, emit } = params;
   const { dbPathologies, sources } = await buildResearchContext(supabase, symptomNames, symptomIds, emit);
 
   await updateDeepResearchJob(supabase, runJob ? jobId : undefined, {
@@ -526,9 +468,9 @@ async function runAnalysis(params: {
   const callOptions = {
     model: 'gpt-5.5',
     reasoningEffort: 'high' as const,
-    maxTokens: 8000,
+    maxTokens: backgroundMaxTokens ?? 8000,
     temperature: 0.3,
-    timeoutMs: runJob ? BACKGROUND_AI_TIMEOUT_MS : INTERACTIVE_AI_TIMEOUT_MS,
+    timeoutMs: MAX_DIRECT_AI_TIMEOUT_MS,
     hasExternalEvidence: sources.length > 0,
   };
 
@@ -538,11 +480,12 @@ async function runAnalysis(params: {
   emit?.({ type: 'step_update', step: { id: 3, status: 'running', details: 'Analyse OpenAI...', source: 'OpenAI' } });
 
   if (runJob && providerResponseId) {
-    const providerResult = await retrieveBackgroundAI(providerResponseId, {
+    const providerResult = await retrieveBackgroundForWorker(supabase, jobId, providerResponseId, {
       ...callOptions,
       timeoutMs: 15_000,
     });
 
+    if (!providerResult) return { providerPending: true };
     if (isOpenAIBackgroundPending(providerResult.status)) {
       await updateDeepResearchJob(supabase, jobId, {
         provider_status: providerResult.status,
@@ -571,7 +514,7 @@ async function runAnalysis(params: {
         provider_status: backgroundResponse.status,
         provider_started_at: new Date().toISOString(),
         degraded: false,
-      });
+      }, backgroundResponse.maxOutputTokens);
       return { providerPending: true };
     } catch (error) {
       degradedReason = getErrorMessage(error);
@@ -627,7 +570,7 @@ serve(async (req) => {
   let activeRunJob = false;
 
   try {
-    const payload = await req.json().catch(() => ({})) as DeepResearchPayload;
+    let payload = await req.json().catch(() => ({})) as DeepResearchPayload;
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
     const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
     if (!supabaseUrl || !supabaseKey) {
@@ -637,9 +580,15 @@ serve(async (req) => {
     const supabase = createClient(supabaseUrl, supabaseKey);
     activeSupabase = supabase;
 
+    const control = await prepareBackgroundJobRequest(req, payload, {
+      supabase, supabaseUrl, serviceRoleKey: supabaseKey, functionName: FUNCTION_NAME, corsHeaders,
+    });
+    if (control.response) return control.response;
+    payload = control.payload;
+    const actor = control.actor;
+
     const action = payload.action;
     const jobId = payload.jobId;
-    const jobToken = payload.jobToken;
     const providerResponseId = payload.providerResponseId;
     const runJob = Boolean(payload.runJob);
     const wantStream = payload.stream === true;
@@ -652,105 +601,6 @@ serve(async (req) => {
 
     if (runJob && !isServiceInvocation) {
       return jsonResponse({ error: 'Worker execution requires service authorization' }, 403);
-    }
-
-    if (action === 'status') {
-      if (!jobId || !jobToken) {
-        return jsonResponse({ error: 'jobId and jobToken are required' }, 400);
-      }
-
-      const { data: job, error: jobError } = await supabase
-        .from('ai_analysis_jobs')
-        .select('id, status, progress_percentage, progress_message, request_payload, result_payload, error_message, model, reasoning_effort, degraded, degraded_reason, provider_name, provider_response_id, provider_status, provider_started_at, provider_completed_at, created_at, started_at, completed_at, updated_at')
-        .eq('id', jobId)
-        .eq('public_token', jobToken)
-        .maybeSingle();
-
-      if (jobError) return jsonResponse({ error: jobError.message }, 500);
-      if (!job) return jsonResponse({ error: 'Job not found' }, 404);
-
-      if (
-        job.status === 'processing' &&
-        job.provider_name === 'openai' &&
-        job.provider_response_id &&
-        job.provider_status !== 'finalizing'
-      ) {
-        const providerResult = await retrieveBackgroundAI(job.provider_response_id, {
-          model: typeof job.model === 'string' ? job.model : undefined,
-          reasoningEffort: job.reasoning_effort,
-          timeoutMs: 15_000,
-        });
-
-        if (isOpenAIBackgroundPending(providerResult.status)) {
-          const nextProgress = Math.max(Number(job.progress_percentage || 0), 80);
-          const nextMessage = 'Modele OpenAI en cours de raisonnement.';
-          await updateDeepResearchJob(supabase, job.id, {
-            provider_status: providerResult.status,
-            progress_percentage: nextProgress,
-            progress_message: nextMessage,
-          });
-
-          return jsonResponse({
-            job: {
-              ...job,
-              provider_status: providerResult.status,
-              progress_percentage: nextProgress,
-              progress_message: nextMessage,
-            },
-          });
-        }
-
-        if (providerResult.status === 'completed' && providerResult.text?.trim()) {
-          const nextMessage = 'Reponse OpenAI recue. Finalisation clinique.';
-          await updateDeepResearchJob(supabase, job.id, {
-            provider_status: 'finalizing',
-            provider_completed_at: new Date().toISOString(),
-            progress_percentage: 90,
-            progress_message: nextMessage,
-          });
-
-          startDeepResearchWorker(supabase, supabaseUrl, supabaseKey, job.id, jobToken, {
-            ...(job.request_payload || {}),
-            providerResponseId: job.provider_response_id,
-          });
-
-          return jsonResponse({
-            job: {
-              ...job,
-              provider_status: 'finalizing',
-              progress_percentage: 90,
-              progress_message: nextMessage,
-            },
-          });
-        }
-
-        const errorMessage = providerResult.errorMessage || `OpenAI background response ended with status ${providerResult.status}`;
-        await updateDeepResearchJob(supabase, job.id, {
-          provider_status: 'finalizing',
-          progress_percentage: 90,
-          progress_message: 'OpenAI indisponible. Finalisation en mode degrade.',
-          degraded: true,
-          degraded_reason: errorMessage,
-        });
-
-        startDeepResearchWorker(supabase, supabaseUrl, supabaseKey, job.id, jobToken, {
-          ...(job.request_payload || {}),
-          providerResponseId: job.provider_response_id,
-        });
-
-        return jsonResponse({
-          job: {
-            ...job,
-            provider_status: 'finalizing',
-            progress_percentage: 90,
-            progress_message: 'OpenAI indisponible. Finalisation en mode degrade.',
-            degraded: true,
-            degraded_reason: errorMessage,
-          },
-        });
-      }
-
-      return jsonResponse({ job });
     }
 
     if (symptomNames.length === 0) {
@@ -766,14 +616,16 @@ serve(async (req) => {
           status: 'queued' satisfies DeepResearchJobStatus,
           progress_percentage: 0,
           progress_message: 'Deep Research en file d attente.',
-          request_payload: sanitizeJobPayload(payload),
+          request_payload: prepareBackgroundJobPayload(sanitizeJobPayload(payload)),
+          requested_by: actor.userId,
+          expires_at: new Date(Date.now() + BACKGROUND_JOB_TTL_MS).toISOString(),
         })
         .select('id, public_token, status, progress_percentage, progress_message, created_at')
         .single();
 
       if (createJobError) return jsonResponse({ error: createJobError.message }, 500);
 
-      startDeepResearchWorker(supabase, supabaseUrl, supabaseKey, job.id, job.public_token, payload);
+      startDeepResearchWorker(supabase, supabaseUrl, supabaseKey, job.id);
 
       return jsonResponse({
         job: {
@@ -810,6 +662,7 @@ serve(async (req) => {
       runJob,
       jobId,
       providerResponseId,
+      backgroundMaxTokens: payload._backgroundMaxTokens,
       emit: wantStream ? emit : undefined,
     });
 
