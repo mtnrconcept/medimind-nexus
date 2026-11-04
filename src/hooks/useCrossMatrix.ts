@@ -27,7 +27,10 @@ export function useCrossMatrix<T>(patientId: string | undefined, enabled: boolea
     });
     if (failure) {
       const details = await failure.context?.json?.().catch(() => null);
-      throw Object.assign(new Error(details?.error || failure.message), { status: failure.context?.status });
+      // Preserve the SDK transport type so a disconnected status read can resume.
+      throw Object.assign(new Error(details?.error || failure.message), {
+        name: failure.name, status: failure.context?.status, cause: failure,
+      });
     }
     if (!data || !('job' in data)) throw new Error('Le service de matrice progressive est indisponible.');
     return data.job as MatrixJob<T> | null;

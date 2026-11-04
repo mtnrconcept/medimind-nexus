@@ -59,6 +59,7 @@ jobs:
           supabase/functions/deep-research-graph/index.ts
           supabase/functions/cross-data-analyzer/index.ts
           supabase/functions/ai-tool-jobs/index.ts
+          supabase/functions/causal-reasoning/index.ts
           supabase/functions/deep-research/index.ts
           supabase/functions/cde-analyze/index.ts
           supabase/functions/cde-systematic-analyze/index.ts
@@ -124,7 +125,7 @@ jobs:
         run: psql -v ON_ERROR_STOP=1 -f tests/discovery-evidence-security-assertions.sql
 
       - name: Apply private AI transport events migration
-        run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261104132505_durable_ai_transport.sql
+        run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261104214546_durable_ai_transport.sql
 
       - name: Assert private AI transport event access and replay constraints
         run: psql -v ON_ERROR_STOP=1 -f tests/ai-transport-security-assertions.sql

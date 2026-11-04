@@ -318,14 +318,39 @@ function childEntry(state: ScraperBatchState, index: number, child: ToolJob): Sc
 export async function runScraperBatch(runtime: ScraperBatchRuntime, id: string): Promise<void> {
   const now = clock(runtime);
   const start = now();
-  let job = await runtime.store.get(id);
+  // An accepted relay can lose its first metadata read or the acknowledgement
+  // of its initial claim before entering the owned-worker finally block. Keep
+  // a successor alive, but wait out the entire possible lease before retrying.
+  // The delayed HTTP controller drops stale/finished work and paid children
+  // still require their existing deterministic identity and one-time claim.
+  const retryInitialization = () => runtime.relayMonitor(id, SCRAPER_BATCH_LEASE_MS).catch(() => undefined);
+  let job: ToolJob | null;
+  try { job = await runtime.store.get(id); }
+  catch { await retryInitialization(); return; }
   if (!job || terminal(job)) return;
   let state = stateOf(job);
   if (state.leaseId && state.leaseUntil > now()) return;
   const leaseId = uuid(runtime);
-  const claimed = await checkpoint(runtime, job, { ...state, leaseId, leaseUntil: now() + SCRAPER_BATCH_LEASE_MS },
-    summary(state, entriesOf(job)), { status: 'processing', started_at: new Date(now()).toISOString() });
-  if (!claimed) return;
+  let claimed: ToolJob | null;
+  try {
+    claimed = await checkpoint(runtime, job, { ...state, leaseId, leaseUntil: now() + SCRAPER_BATCH_LEASE_MS },
+      summary(state, entriesOf(job)), { status: 'processing', started_at: new Date(now()).toISOString() });
+  } catch { await retryInitialization(); return; }
+  if (!claimed) {
+    // A stop or admission can win the revision CAS without installing another
+    // monitor. Re-read before scheduling recovery: duplicate relay deliveries
+    // must not create waiting chains while a real competing monitor owns it.
+    try {
+      const current = await runtime.store.get(id);
+      if (!current || terminal(current)) return;
+      const live = stateOf(current);
+      if (live.leaseId && live.leaseUntil > now()) return;
+    } catch (error) {
+      if (error instanceof ScraperBatchError) throw error;
+    }
+    await retryInitialization();
+    return;
+  }
   job = claimed;
   state = stateOf(claimed);
   let relayDelay = 0;

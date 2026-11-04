@@ -241,6 +241,97 @@ test('a lost child acknowledgement never repeats its provider operation and is f
   assert.equal(resultOf(completed).success, false);
 });
 
+test('a transient first metadata read keeps a server relay alive without a browser', async () => {
+  const f = fixture();
+  const job = await startScraperBatch(f.runtime, manifest(3), owner, requestId);
+  const get = f.runtime.store.get;
+  let failed = false;
+  f.runtime.store.get = async id => {
+    if (!failed) { failed = true; throw new Error('Temporary database read failure'); }
+    return get(id);
+  };
+
+  await runScraperBatch(f.runtime, job.id);
+  assert.equal(f.calls.length, 0, 'Unconfirmed metadata cannot admit a paid operation');
+  assert.equal(f.relays.length, 1, 'The accepted import retains an independent successor');
+  const next = f.relays.shift()!;
+  assert.ok(next.delay >= SCRAPER_BATCH_LEASE_MS, 'The successor waits out any uncertain lease');
+  f.advance(next.at - f.time());
+  const completed = await f.drain(next.id);
+  assert.equal(completed.status, 'completed');
+  assert.deepEqual(f.calls.map(call => call.index), [0, 1, 2]);
+});
+
+test('a lost first claim acknowledgement resumes after its committed lease without duplicating children', async () => {
+  const f = fixture();
+  const job = await startScraperBatch(f.runtime, manifest(3), owner, requestId);
+  f.hooks.afterCAS = async (_id, patch) => {
+    const next = (patch.request_payload as { batch?: ScraperBatchState } | undefined)?.batch;
+    if (next?.leaseId && patch.status === 'processing') {
+      f.hooks.afterCAS = undefined;
+      throw new Error('Initial lease committed, acknowledgement lost');
+    }
+  };
+
+  await runScraperBatch(f.runtime, job.id);
+  assert.equal(f.rows.get(job.id)?.status, 'processing');
+  assert.equal(f.calls.length, 0);
+  assert.equal(f.relays.length, 1);
+  const next = f.relays.shift()!;
+  const held = f.rows.get(job.id)!.request_payload.batch as ScraperBatchState;
+  assert.ok(next.at >= held.leaseUntil, 'A replacement may not steal the ambiguous lease');
+  f.advance(next.at - f.time());
+  const completed = await f.drain(next.id);
+  assert.equal(completed.status, 'completed');
+  assert.deepEqual(f.calls.map(call => call.index), [0, 1, 2]);
+});
+
+test('a first claim conflict with a non-monitor revision change cannot orphan an import', async () => {
+  const f = fixture();
+  const job = await startScraperBatch(f.runtime, manifest(3), owner, requestId);
+  f.hooks.beforeCAS = async (id, patch) => {
+    const next = (patch.request_payload as { batch?: ScraperBatchState } | undefined)?.batch;
+    if (next?.leaseId && patch.status === 'processing') {
+      f.hooks.beforeCAS = undefined;
+      // A concurrent stop/progress write can invalidate the revision without
+      // starting any replacement monitor to continue this accepted manifest.
+      (f.rows.get(id)!.request_payload.batch as ScraperBatchState).revision = crypto.randomUUID();
+    }
+  };
+
+  await runScraperBatch(f.runtime, job.id);
+  assert.equal(f.calls.length, 0);
+  assert.equal(f.relays.length, 1);
+  const next = f.relays.shift()!;
+  f.advance(next.at - f.time());
+  const completed = await f.drain(next.id);
+  assert.equal(completed.status, 'completed');
+  assert.deepEqual(f.calls.map(call => call.index), [0, 1, 2]);
+});
+
+test('stopping during initial claim recovery prevents every not-yet-admitted child', async () => {
+  const f = fixture();
+  const job = await startScraperBatch(f.runtime, manifest(3), owner, requestId);
+  f.hooks.afterCAS = async (_id, patch) => {
+    const next = (patch.request_payload as { batch?: ScraperBatchState } | undefined)?.batch;
+    if (next?.leaseId && patch.status === 'processing') {
+      f.hooks.afterCAS = undefined;
+      throw new Error('Initial lease acknowledgement lost');
+    }
+  };
+
+  await runScraperBatch(f.runtime, job.id);
+  await stopScraperBatch(f.runtime, job.id, owner);
+  assert.equal(f.relays.length, 1);
+  const next = f.relays.shift()!;
+  f.advance(next.at - f.time());
+  const stopped = await f.drain(next.id);
+  assert.equal(stopped.status, 'failed');
+  assert.equal(resultOf(stopped).stopped, true);
+  assert.equal(resultOf(stopped).skipped, 3);
+  assert.equal(f.calls.length, 0);
+});
+
 test('failed lease release relays no earlier than its lease expiry, allowing a replacement monitor to continue', async () => {
   const f = fixture();
   f.hooks.duration = 60_000;

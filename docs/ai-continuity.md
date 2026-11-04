@@ -77,10 +77,10 @@ Références : [limites des Edge Functions](https://supabase.com/docs/guides/fun
 
 ## Déploiement coordonné
 
-Cette PR ne modifie pas la production et ne doit pas être fusionnée automatiquement. Le frontend dépend de la nouvelle fonction et de la migration ; préparer leur mise en service avant de publier le frontend.
+Le frontend dépend de la nouvelle fonction et de la migration ; mettre le backend en service avant de publier le frontend. La migration porte la version `20261104214546`, attribuée lors de son application au projet Medicore le 4 novembre 2026. Le fichier du dépôt suit cette version pour éviter un second passage lors du déploiement automatique.
 
 1. Vérifier les contrôles CI, notamment les assertions d'autorisation sur PostgreSQL 17 et le contrôle Deno des fonctions modifiées.
-2. Appliquer `supabase/migrations/20261104132505_durable_ai_transport.sql` sur le projet `kparxcfspgoonqttduyk`, puis contrôler les droits/RLS et les journaux. La migration ajoute une table privée et un index ; elle ne supprime aucun résultat.
+2. Appliquer `supabase/migrations/20261104214546_durable_ai_transport.sql` sur le projet `kparxcfspgoonqttduyk`, puis contrôler les droits/RLS et les journaux. La migration ajoute une table privée et un index ; elle ne supprime aucun résultat.
 3. Déployer `ai-tool-jobs` avec `verify_jwt = true`.
 4. Redéployer les trente-six fonctions ci-dessous : un import partagé est inclus dans chaque bundle déployé, donc déployer seulement la nouvelle fonction ne mettrait pas à jour les budgets et le client OpenAI des autres outils.
 5. Publier le frontend du même commit, après validation de l'environnement de prévisualisation Vercel et un essai autorisé avec un compte de test.
@@ -148,6 +148,10 @@ npm run lint
 npm run build
 node scripts/audit-production.mjs
 ```
+
+Les explications de liens conservent la compatibilité du backend déjà déployé : deux concepts suffisent, même sans pathologie renseignée. Le contexte absent est indiqué comme « Non spécifié » ; un échec du fournisseur ne produit pas une explication clinique de remplacement.
+
+Le suivi de matrice conserve le type des erreurs Supabase : une coupure réseau reprend la lecture du même job, tandis qu’un refus d’autorisation confirmé efface le résultat inaccessible et arrête le suivi.
 
 Les tests couvrent les coupures et réponses tardives, les soumissions concurrentes, la conservation des flux partiels, la non-duplication après reprise, la séparation des comptes, les réponses OpenAI incomplètes, les baux de traitement et les autorisations SQL. Le contrôle Deno et les assertions PostgreSQL 17 sont exécutés par `.github/workflows/ci.yml`.
 
