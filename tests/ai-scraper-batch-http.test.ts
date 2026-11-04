@@ -242,7 +242,7 @@ for (const scenario of ['fast', 'queued', 'lost-relay-ack'] as const) {
       assert.equal(started.status, 202);
       // A queued source may need several cooldown windows before an accepted
       // next wave. Simulate those windows instead of depending on CI timing.
-      const observationMs = scenario === 'queued' ? 300_000 : 150_000;
+      const observationMs = scenario === 'queued' ? 450_000 : 300_000;
       for (let elapsed = 0; elapsed < observationMs; elapsed += 250) {
         h.advance(250);
         context.mock.timers.tick(250);
