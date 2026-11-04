@@ -16,6 +16,7 @@ import { Search as SearchIcon, Activity, ChevronRight, X, Sparkles, Database, Gl
 import DeepResearchPanel from '@/components/search/DeepResearchPanel';
 import SymptomQuestionnaireModal from '@/components/search/SymptomQuestionnaireModal';
 import { COMMON_MEDICAL_SYMPTOMS, BODY_SYSTEMS } from '@/data/medicalSymptoms';
+import { matchesMedicalText } from '../../supabase/functions/_shared/medical-terminology';
 
 interface Symptom {
   id: string;
@@ -145,7 +146,7 @@ const Search = () => {
     if (searchFilter) {
       const filter = searchFilter.toLowerCase();
       filtered = filtered.filter(s =>
-        s.name.toLowerCase().includes(filter) ||
+        matchesMedicalText(s.name, filter) ||
         s.body_system?.toLowerCase().includes(filter)
       );
     }

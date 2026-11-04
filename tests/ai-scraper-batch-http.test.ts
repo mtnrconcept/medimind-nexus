@@ -240,7 +240,10 @@ for (const scenario of ['fast', 'queued', 'lost-relay-ack'] as const) {
         urls: Array.from({ length: 30 }, (_, index) => `https://example.org/selected/${index}`) };
       const started = await h.handler.handle(request('batch.start', 'admin', selected));
       assert.equal(started.status, 202);
-      for (let elapsed = 0; elapsed < 150_000; elapsed += 250) {
+      // A queued source may need several cooldown windows before an accepted
+      // next wave. Simulate those windows instead of depending on CI timing.
+      const observationMs = scenario === 'queued' ? 300_000 : 150_000;
+      for (let elapsed = 0; elapsed < observationMs; elapsed += 250) {
         h.advance(250);
         context.mock.timers.tick(250);
         await yieldTasks();
@@ -257,7 +260,7 @@ for (const scenario of ['fast', 'queued', 'lost-relay-ack'] as const) {
       else assert.ok(h.upstream.length > 3);
       context.diagnostic(`${scenario}: peak ${peak.length}/60s ${JSON.stringify(counts)}`);
     } finally {
-      // The 150s observation intentionally ends while server work is active.
+      // The bounded observation intentionally ends while server work may be active.
       // Stop this fixture and settle every waitUntil before Node restores real
       // timers; otherwise a late digest/stream continuation can start an endless
       // real relay with the fixture's clock frozen at its final simulated time.

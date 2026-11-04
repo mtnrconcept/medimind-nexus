@@ -29,6 +29,7 @@ export interface SourceResult {
 export interface EvidenceReport {
   schemaVersion: 1;
   query: ResearchQuery;
+  resolvedTerm?: string;
   retrievedAt: string;
   sources: SourceResult[];
 }

@@ -34,3 +34,14 @@ Le chemin automatisé de MediCore utilise des API publiques et le serveur MCP pu
 - Pour la revue locale, exécuter les tests du dépôt, le contrôle `typecheck:workspace` et le build. La CI vérifie également les deux points d’entrée Edge avec Deno.
 - Avant d’exposer le nouveau client dans un environnement, déployer les fonctions `scientific-evidence` et `deep-research-graph` **sur le projet Supabase de cet environnement** avec la vérification JWT activée. Vérifier le refus d’une requête anonyme, puis interroger une source avec une session de test. La CI de migrations ne déploie pas les fonctions.
 - Un retour arrière restaure le client et la précédente version de `deep-research-graph`. Le nouveau point d’entrée de lecture peut être retiré après le retour arrière du client. Aucun changement de données n’est requis.
+
+
+## Bibliothèque bilingue et analyse croisée (novembre 2026)
+
+La page de découverte affiche une bibliothèque des **notices scientifiques** enregistrées, consultables par titre, revue et PMID. La recherche normalise les accents et résout les synonymes médicaux français/anglais connus sans modifier la donnée clinique d'origine. Les documents externes sont de simples références : leur présence ne valide ni diagnostic, ni causalité, ni sécurité thérapeutique. Les « compétences » proposées sont des fiches méthodologiques de recherche, et non des plugins installés ou des analyses exécutées.
+
+Un corpus initial de 499 notices distinctes a été récupéré de l'API publique Europe PMC, limité aux identifiants PubMed valides et aux dates 2023–2026. Les originaux et leurs URLs PubMed sont conservés ; certaines traductions de titres sont automatiques, non validées et signalées. Si le fournisseur de traduction refuse une demande, le titre anglais reste affiché et interrogeable, sans inventer de traduction. Les sources sont attribuées à 21 domaines, avec des libellés thématiques français.
+
+L'analyse croisée cherche désormais chaque paire de concepts dans PubMed puis Europe PMC en cas d'échec, et conserve les statuts « résultats », « aucun résultat pour la requête » ou « source indisponible ». Les références retrouvées sont visibles dans la matrice même sans lien causal confirmé. Les noms complets et voies d'administration d'origine ne sont jamais remplacés par les termes de recherche normalisés. Une matrice sans relation documentée n'affiche pas de score bénéfice/risque artificiel. Les résultats doivent être revus cliniquement.
+
+**Déploiement :** appliquer la migration `20261104225342_searchable_french_literature.sql` au projet Medicore, déployer les fonctions `cross-data-analyzer` et `scientific-evidence` (JWT obligatoire), puis ajouter les notices sous rôle serveur avec conflit PMID ignoré. La migration ne modifie pas les dossiers patients. Vérifier les lectures authentifiées, le rejet anonyme et les URLs PubMed. Les anciens traitements IA restent consultables et doivent être relancés pour profiter du nouveau moteur.

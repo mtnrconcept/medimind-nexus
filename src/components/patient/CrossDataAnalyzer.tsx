@@ -1,3 +1,5 @@
+import { canDisplayRiskScore } from './crossDataDisplay';
+import { ensureAnalysisShape } from '../../../supabase/functions/cross-data-analyzer/analysis-utils';
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { Virtuoso } from 'react-virtuoso';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
@@ -89,6 +91,9 @@ interface WebSource {
 
 interface WebResearch {
   query: string;
+  pairHash?: string;
+  status?: 'matched' | 'empty' | 'unavailable';
+  retrievedAt?: string;
   findings: string[];
   sources: WebSource[];
 }
@@ -140,13 +145,13 @@ interface SchemaStats {
 }
 
 interface SchemaComparison {
-  currentScore: number;
-  proposedScore: number;
-  improvementPercent: number;
+  currentScore: number | null;
+  proposedScore: number | null;
+  improvementPercent: number | null;
   currentStats: SchemaStats;
   proposedStats: SchemaStats;
   proposedChanges: ProposedChange[];
-  benefitRiskRatio: { current: number; proposed: number };
+  benefitRiskRatio: { current: number | null; proposed: number | null };
   clinicalSummary: string;
 }
 
@@ -177,7 +182,7 @@ interface AnalysisResult {
   summary: string;
   warnings: string[];
   recommendations: string[];
-  webResearch: WebResearch[];
+  webResearch?: WebResearch[];
   alternatives?: Alternative[];
   schemaComparison?: SchemaComparison;
   treatmentSchemas?: TreatmentSchema[];
@@ -1115,7 +1120,7 @@ const CrossDataAnalyzer = ({ patientData }: CrossDataAnalyzerProps) => {
               selectedTreatmentIds={selectedTreatments}
               selectedMedicationIds={selectedMedications}
               analysisResultFromParent={result}
-              onAnalysisResultChange={setResult}
+              onAnalysisResultChange={incoming => setResult(ensureAnalysisShape(incoming as unknown as Parameters<typeof ensureAnalysisShape>[0]))}
               onGenerateTreatmentSchemas={runTreatmentSchemaGeneration}
               isGeneratingTreatmentSchemas={generatingTreatmentSchemas}
             />
@@ -1738,10 +1743,10 @@ const CrossDataAnalyzer = ({ patientData }: CrossDataAnalyzerProps) => {
                     </div>
 
                     {result.schemaComparison && (
-                      <SchemaComparisonPanel comparison={result.schemaComparison} />
+                      <SchemaComparisonPanel comparison={result.schemaComparison} hasEvidence={canDisplayRiskScore(result.causalLinks, result.schemaComparison.currentScore)} />
                     )}
 
-                    {(!matrix.job || matrix.job.status === 'completed') && <TreatmentSchemaGenerator
+                    {result.causalLinks.length > 0 && (!matrix.job || matrix.job.status === 'completed') && <TreatmentSchemaGenerator
                       hasSchemas={(result.treatmentSchemas?.length || 0) > 0}
                       isGenerating={generatingTreatmentSchemas}
                       onGenerate={runTreatmentSchemaGeneration}
@@ -1760,7 +1765,7 @@ const CrossDataAnalyzer = ({ patientData }: CrossDataAnalyzerProps) => {
                       <div className="space-y-3">
                         <h4 className="font-medium flex items-center gap-2">
                           <Link2 className="h-4 w-4" />
-                          Liens de causalité détectés
+                          Relations documentées à valider
                         </h4>
                         <div className="space-y-3">
                           {result.causalLinks.map((link, index) => (
@@ -1775,12 +1780,18 @@ const CrossDataAnalyzer = ({ patientData }: CrossDataAnalyzerProps) => {
                       <div className="space-y-3">
                         <h4 className="font-medium flex items-center gap-2 text-blue-600 dark:text-blue-400">
                           <BookOpen className="h-4 w-4" />
-                          Recherche scientifique (PubMed)
+                          Recherche scientifique · PubMed / Europe PMC
                         </h4>
                         <div className="space-y-3">
                           {result.webResearch.map((research, index) => (
                             <div key={index} className="p-3 border rounded-lg bg-muted/30">
-                              <p className="text-sm font-medium mb-2">Recherche : "{research.query}"</p>
+                              <p className="text-sm font-medium mb-2">Requête : {research.query.includes('|') ? 'Ancienne recherche non traçable — relancez l’analyse' : research.query}</p>
+                              <p className="text-xs text-muted-foreground mb-2">
+                                {research.status === 'unavailable' ? 'Source indisponible : aucune conclusion possible.' : research.sources?.length
+                                  ? `${research.sources.length} référence(s) récupérée(s). Leur pertinence doit être examinée.`
+                                  : research.status === 'empty' ? 'Aucune publication exploitable pour cette requête. Cela ne prouve pas l’absence de lien.'
+                                  : 'Aucune référence vérifiable enregistrée. Relancez la recherche.'}
+                              </p>
                               {research.findings && research.findings.length > 0 && (
                                 <ul className="space-y-1 mb-2">
                                   {research.findings.map((finding, fIndex) => (
@@ -1930,8 +1941,9 @@ const getSymptomFrequencyLabel = (frequency?: CausalLink['symptomFrequency']) =>
   }
 };
 
-function SchemaComparisonPanel({ comparison }: { comparison: SchemaComparison }) {
-  const improvement = comparison.improvementPercent > 0 ? `+${comparison.improvementPercent}%` : `${comparison.improvementPercent}%`;
+function SchemaComparisonPanel({ comparison, hasEvidence }: { comparison: SchemaComparison; hasEvidence: boolean }) {
+  if (!hasEvidence) return <div role="status" className="rounded-lg border bg-muted/40 p-4 text-sm"><strong>Bénéfice / risque : non évaluable.</strong> Aucune relation documentée ne permet de calculer un indice. L’absence de données ne signifie pas l’absence de risque.</div>;
+  const improvement = (comparison.improvementPercent ?? 0) > 0 ? `+${comparison.improvementPercent}%` : `${comparison.improvementPercent}%`;
 
   return (
     <div className="rounded-lg border bg-card p-4 space-y-4">
@@ -1939,12 +1951,12 @@ function SchemaComparisonPanel({ comparison }: { comparison: SchemaComparison })
         <div>
           <h4 className="font-medium flex items-center gap-2">
             <Activity className="h-4 w-4 text-primary" />
-            Score bénéfice/risque
+            Indice exploratoire des relations
           </h4>
-          <p className="text-sm text-muted-foreground mt-1">{comparison.clinicalSummary}</p>
+          <p className="text-sm text-muted-foreground mt-1">{comparison.clinicalSummary} Indice heuristique non validé : ce n’est ni une probabilité ni un score clinique de sécurité.</p>
         </div>
         <Badge className="bg-green-500/20 text-green-700 dark:text-green-300 border-green-500/30">
-          {improvement} amélioration
+          {improvement} variation de l’indice
         </Badge>
       </div>
 

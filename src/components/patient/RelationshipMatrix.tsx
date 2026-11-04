@@ -19,6 +19,7 @@ import {
     Info,
 } from 'lucide-react';
 import {
+    matrixEvidenceLabel,
     isAppropriatenessSuccess,
     isAppropriatenessWarning,
     supportsAppropriatenessBadge,
@@ -74,6 +75,7 @@ interface AnalysisResult {
     warnings?: string[];
     recommendations?: string[];
     sources?: string[];
+    webResearch?: { query: string; pairHash?: string; status?: 'matched' | 'empty' | 'unavailable'; sources?: { title: string; url: string }[] }[];
 }
 
 import { buildPairHash, typedElementKey, type SelectedElement } from '../../../supabase/functions/cross-data-analyzer/analysis-utils';
@@ -124,6 +126,7 @@ export function RelationshipMatrix({
     // État pour le dialog de détails du lien
     const [selectedLink, setSelectedLink] = useState<CausalLink | null>(null);
     const [showLinkDialog, setShowLinkDialog] = useState(false);
+    const [selectedResearch, setSelectedResearch] = useState<{ query: string; sources: { title: string; url: string }[] } | null>(null);
 
     // Normaliser les noms pour comparaison
     const normalizeForComparison = (name: string): string => {
@@ -436,6 +439,8 @@ export function RelationshipMatrix({
                                             {allElements.map((colElement) => {
                                                 const pill = getPillForIntersection(rowElement, colElement);
                                                 const isDiagonal = rowElement.id === colElement.id;
+                                                const research = analysisResult?.webResearch?.find(r => (r.pairHash ?? r.query) ===
+                                                    buildPairHash(rowElement.name, rowElement.type, colElement.name, colElement.type));
 
                                                 return (
                                                     <TableCell
@@ -473,10 +478,16 @@ export function RelationshipMatrix({
                                                                     </div>
                                                                 </TooltipContent>
                                                             </Tooltip>
+                                                        ) : research?.sources?.length ? (
+                                                            <button type="button" className="rounded-md border border-primary/30 px-2 py-1 text-[11px] text-primary hover:bg-primary/10"
+                                                                title="Publications de contexte, relation clinique non établie"
+                                                                onClick={() => setSelectedResearch({ query: research.query, sources: research.sources! })}>
+                                                                {research.sources.length} réf. à examiner
+                                                            </button>
                                                         ) : (
                                                             <span className="text-xs text-muted-foreground">{snapshot ?
-                                                                (buildPairHash(rowElement.name, rowElement.type, colElement.name, colElement.type) in snapshot.cells ?
-                                                                    'Lien non établi' : 'En attente') : '—'}</span>
+                                                                matrixEvidenceLabel(research,
+                                                                    buildPairHash(rowElement.name, rowElement.type, colElement.name, colElement.type) in snapshot.cells) : '-'}</span>
                                                         )}
                                                     </TableCell>
                                                 );
@@ -490,6 +501,31 @@ export function RelationshipMatrix({
                     </ScrollArea>
                 </CardContent>
             </Card>
+
+            <Dialog open={selectedResearch !== null} onOpenChange={open => { if (!open) setSelectedResearch(null); }}>
+                <DialogContent className="max-w-xl">
+                    <DialogHeader>
+                        <DialogTitle>Publications à examiner · relation non établie</DialogTitle>
+                    </DialogHeader>
+                    <p className="break-words text-xs text-muted-foreground">
+                        Requête scientifique : {selectedResearch?.query}
+                    </p>
+                    <p className="text-sm text-muted-foreground">
+                        Ces références peuvent être contextuelles ou hors sujet. Elles ne constituent pas une preuve
+                        d'interaction, de causalité, de sécurité ou d'efficacité.
+                    </p>
+                    <ol className="max-h-80 space-y-3 overflow-y-auto">
+                        {selectedResearch?.sources.map(source => (
+                            <li key={source.url} className="rounded-lg border p-3 text-sm">
+                                <a href={source.url} target="_blank" rel="noopener noreferrer"
+                                    className="break-words text-primary underline underline-offset-2">
+                                    {source.title}
+                                </a>
+                            </li>
+                        ))}
+                    </ol>
+                </DialogContent>
+            </Dialog>
 
             {/* Dialog des détails du lien (même design que RiskNetworkGraph) */}
             <Dialog open={showLinkDialog} onOpenChange={setShowLinkDialog}>

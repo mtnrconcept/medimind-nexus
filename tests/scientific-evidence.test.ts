@@ -75,3 +75,13 @@ test('clinical citation identifiers are not resolved as gene or disease synonyms
     assert.deepEqual(report.sources.map(source => source.name), ['Citations']);
   }
 });
+
+test('a known French disease term is sent to bibliographic providers in English while its original remains visible', async () => {
+  let queried = '';
+  const report = await collectEvidence({ mode: 'disease', term: 'syndrome néphrotique' },
+    [{ name: 'Probe', modes: ['disease'], search: async input => { queried = input.term; return []; } }],
+    noNetwork);
+  assert.equal(queried, 'nephrotic syndrome');
+  assert.equal(report.query.term, 'syndrome néphrotique');
+  assert.equal(report.resolvedTerm, 'nephrotic syndrome');
+});

@@ -52,13 +52,14 @@ export interface SchemaStats {
 }
 
 export interface SchemaComparison {
-  currentScore: number;
-  proposedScore: number;
-  improvementPercent: number;
+  currentScore: number | null;
+  proposedScore: number | null;
+  improvementPercent: number | null;
   currentStats: SchemaStats;
   proposedStats: SchemaStats;
   proposedChanges: ProposedChange[];
-  benefitRiskRatio: { current: number; proposed: number };
+  benefitRiskRatio: { current: number | null; proposed: number | null };
+  assessmentStatus?: 'insufficient_evidence' | 'heuristic';
   clinicalSummary: string;
 }
 
@@ -94,6 +95,10 @@ export interface AnalysisResult {
   treatmentSchemas?: TreatmentSchema[];
   webResearch: {
     query: string;
+    pairHash?: string;
+    status?: 'matched' | 'empty' | 'unavailable';
+    retrievedAt?: string;
+    providers?: { name: string; status: 'matched' | 'empty' | 'unavailable'; count?: number; error?: string }[];
     findings: string[];
     sources: { title: string; url: string }[];
   }[];
@@ -102,6 +107,8 @@ export interface AnalysisResult {
 export interface SelectedElement {
   name: string;
   type: MedicalEntityType;
+  substance?: string;
+  atcCode?: string;
 }
 
 interface BuildEvidenceLinksInput {
@@ -385,6 +392,14 @@ function ratioFromStats(stats: SchemaStats): number {
 
 export function ensureSchemaComparison(analysis: AnalysisResult): SchemaComparison {
   const currentStats = computeSchemaStats(analysis.causalLinks || []);
+  if (!analysis.causalLinks?.length) {
+    return {
+      currentScore: null, proposedScore: null, improvementPercent: null,
+      currentStats, proposedStats: { ...currentStats }, proposedChanges: [],
+      benefitRiskRatio: { current: null, proposed: null }, assessmentStatus: 'insufficient_evidence',
+      clinicalSummary: 'Non évaluable : aucune relation documentée. L’absence de données ne démontre pas l’absence de risque.',
+    };
+  }
   const fallbackChanges = (analysis.causalLinks || []).map(buildFallbackChange).filter((change): change is ProposedChange => Boolean(change));
   const modelChanges = analysis.schemaComparison?.proposedChanges || [];
   const proposedChanges = modelChanges.length > 0 ? modelChanges : fallbackChanges;
@@ -403,6 +418,7 @@ export function ensureSchemaComparison(analysis: AnalysisResult): SchemaComparis
   const improvementPercent = currentScore > 0 ? Number((((proposedScore - currentScore) / currentScore) * 100).toFixed(1)) : proposedScore;
 
   return {
+    assessmentStatus: 'heuristic',
     currentScore: analysis.schemaComparison?.currentScore ?? currentScore,
     proposedScore,
     improvementPercent: analysis.schemaComparison?.improvementPercent ?? improvementPercent,
@@ -438,7 +454,10 @@ export function buildSelectedElements(pathologies: any[], symptoms: any[], treat
     ...pathologies.map((item) => ({ name: item.name, type: 'pathology' as const })),
     ...symptoms.map((item) => ({ name: item.name, type: 'symptom' as const })),
     ...treatments.map((item) => ({ name: item.name, type: 'treatment' as const })),
-    ...medications.map((item) => ({ name: item.name, type: 'medication' as const })),
+    ...medications.map((item) => ({ name: item.name, type: 'medication' as const,
+      ...(typeof item.substance === 'string' && item.substance.trim() ? { substance: item.substance } : {}),
+      ...(typeof item.atc_code === 'string' && item.atc_code.trim() ? { atcCode: item.atc_code } : {}),
+    })),
   ].filter((element) => Boolean(element.name));
 }
 
