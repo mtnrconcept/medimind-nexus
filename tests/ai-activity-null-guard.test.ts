@@ -8,9 +8,8 @@ test('AI activity selection checks for a non-null detail before accessing job on
 });
 
 test('AI activity selection remains null for a missing detail while owner is undefined', () => {
-  const detail: { owner: string; job: { id: string } } | null = null;
-  const owner: string | undefined = undefined;
-  const selectedId: string | null = null;
-  const selected = detail !== null && detail.owner === owner && detail.job.id === selectedId ? detail.job : null;
-  assert.equal(selected, null);
+  const select = (detail: { owner: string; job: { id: string } } | null, owner: string | undefined, selectedId: string | null) =>
+    detail !== null && detail.owner === owner && detail.job.id === selectedId ? detail.job : null;
+  assert.equal(select(null, undefined, null), null);
+  assert.deepEqual(select({ owner: 'account-a', job: { id: 'job-a' } }, 'account-a', 'job-a'), { id: 'job-a' });
 });
