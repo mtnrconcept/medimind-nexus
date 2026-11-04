@@ -1,5 +1,5 @@
 import {
-  prepareScraperBatchChild, runScraperBatch, startScraperBatch, stopScraperBatch,
+  prepareScraperBatchChild, runScraperBatch, shouldRelayScraperBatch, startScraperBatch, stopScraperBatch,
   type ScraperBatchRuntime,
 } from './batch.ts';
 import { executeTool, type TransportDependencies } from './handler.ts';
@@ -82,7 +82,11 @@ export function createScraperBatchHTTP(
               const target = now() + delay;
               keepAlive((async () => {
                 await new Promise<void>(resolve => setTimeout(resolve, Math.min(delay, 45_000)));
-                await runtime.relayMonitor(input.jobId!, Math.max(0, target - now()));
+                // A failed metadata read cannot prove that another controller
+                // took over. Preserve the existing relay in that case.
+                if (await shouldRelayScraperBatch(runtime, input.jobId!, target).catch(() => true)) {
+                  await runtime.relayMonitor(input.jobId!, Math.max(0, target - now()));
+                }
               })());
             } else keepAlive(runScraperBatch(runtime, input.jobId!));
           } else {

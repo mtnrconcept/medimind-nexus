@@ -294,3 +294,70 @@ test('slow conflicting admission and stop requests stay below their total contro
   assert.equal(f.time() - startedAt, 31_600);
   assert.equal(f.calls.length, 0);
 });
+
+test('fast batches reserve at most three child attempts per thirty seconds across server relays', async () => {
+  const f = fixture();
+  const attempts: number[] = [];
+  const dispatch = f.runtime.dispatchChild;
+  f.hooks.duration = 250;
+  f.runtime.dispatchChild = async (id, index) => {
+    attempts.push(f.time());
+    await dispatch(id, index);
+  };
+  const job = await startScraperBatch(f.runtime, manifest(12, 'fast'), owner, requestId);
+  const completed = await f.drain(job.id);
+  assert.equal(completed.status, 'completed');
+  assert.equal(f.calls.length, 12);
+  assert.equal(f.peak(), 3);
+  for (const start of attempts) {
+    assert.ok(attempts.filter(at => at >= start && at < start + 30_000).length <= 3,
+      'The persisted quota includes both new URLs and queued retries');
+  }
+});
+
+test('an unavailable child admission consumes its reservation without causing a retry burst', async () => {
+  const f = fixture();
+  const attempts: number[] = [];
+  f.runtime.dispatchChild = async () => { attempts.push(f.time()); throw new Error('Lost child acknowledgement'); };
+  const job = await startScraperBatch(f.runtime, manifest(3, 'fast'), owner, requestId);
+  for (let invocation = 0; invocation < 3; invocation++) await runScraperBatch(f.runtime, job.id);
+  assert.ok(attempts.length >= 6, 'A successor eventually retries the still queued children');
+  for (const start of attempts) {
+    assert.ok(attempts.filter(at => at >= start && at < start + 30_000).length <= 3);
+  }
+  assert.equal(f.calls.length, 0);
+  assert.equal(f.rows.get(job.id)?.status, 'processing');
+  assert.equal(f.relays.length, 3, 'Rate protection keeps the server relay alive');
+});
+
+test('an optional dispatch history must be bounded and ordered before it can control a saved job', async () => {
+  for (const invalid of [null, 'invalid', [-1], [2, 1], [1, 2, 3, 4], [Number.NaN]]) {
+    const f = fixture();
+    const job = await startScraperBatch(f.runtime, manifest(3), owner, requestId);
+    const state = f.rows.get(job.id)!.request_payload.batch as ScraperBatchState;
+    state.dispatches = invalid as number[];
+    await assert.rejects(runScraperBatch(f.runtime, job.id), { status: 409 });
+    assert.equal(f.calls.length, 0);
+  }
+});
+
+test('one grouped dispatch reservation leaves the parent handoff within the Free worker budget', async () => {
+  const f = fixture();
+  const job = await startScraperBatch(f.runtime, manifest(3, 'fast'), owner, requestId);
+  f.runtime.dispatchChild = async () => {};
+  await runScraperBatch(f.runtime, job.id);
+  f.advance(31_000);
+  const get = f.runtime.store.get;
+  const cas = f.runtime.store.compareAndSwap;
+  f.runtime.store.get = async id => { f.advance(7900); return get(id); };
+  f.runtime.store.compareAndSwap = async (id, revision, patch) => { f.advance(7900); return cas(id, revision, patch); };
+  f.runtime.isAdmin = async () => { f.advance(7900); return true; };
+  let attempts = 0;
+  f.runtime.dispatchChild = async () => { attempts++; f.advance(5900); throw new Error('Internal HTTP timeout'); };
+  f.runtime.relayMonitor = async () => { f.advance(12_500); };
+  const began = f.time();
+  await runScraperBatch(f.runtime, job.id);
+  assert.equal(attempts, 3);
+  assert.ok(f.time() - began < 140_000, `Elapsed ${f.time() - began} ms`);
+  assert.equal((f.rows.get(job.id)!.request_payload.batch as ScraperBatchState).leaseId, null);
+});

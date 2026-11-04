@@ -8,6 +8,10 @@ import {
   type BackgroundMonitorRuntime,
 } from '../supabase/functions/_shared/background-job-monitor.ts';
 import type { AIBackgroundPollResult } from '../supabase/functions/_shared/ai-client.ts';
+import {
+  emptySystematicResult, executeSystematicStep, systematicCandidates,
+  type SystematicRunResult, type SystematicRunState,
+} from '../supabase/functions/cde-systematic-analyze/durable-run.ts';
 
 const id = '11111111-1111-4111-8111-111111111111';
 const token = '22222222-2222-4222-8222-222222222222';
@@ -67,6 +71,93 @@ function harness(initial = row()) {
   };
   return { store, calls, runtime, setRetrieve(fn: typeof behavior) { behavior = fn; }, advance(ms: number) { clock += ms; } };
 }
+
+function cachedSystematicHarness(workerDurationMs: number) {
+  const state: SystematicRunState = {
+    version: 1, runId: id, owner: 'owner-a', targetPathology: null, index: 0,
+    entities: Array.from({ length: 120 }, (_, index) => ({
+      id: `synthetic-${index}`, name: `Synthetic ${index}`, source: 'local', node_type: 'substance',
+    })),
+  };
+  const h = harness(row({
+    function_name: 'cde-systematic-analyze', analysis_mode: 'systematic_run', status: 'queued',
+    provider_response_id: null, provider_status: null,
+    request_payload: prepareBackgroundJobPayload({ _systematic: state } as Parameters<typeof prepareBackgroundJobPayload>[0], startTime, true),
+    result_payload: emptySystematicResult(state),
+  }));
+  const invocations: Array<{ kind: 'monitor' | 'worker'; at: number }> = [];
+  const relays: Array<{ at: number; nextDispatchAt?: number; notBefore?: number }> = [];
+  const publish = (next: SystematicRunState, result: SystematicRunResult, completed: boolean) => {
+    const job = h.store.current;
+    h.store.current = {
+      ...job, status: completed ? 'completed' : 'processing', result_payload: structuredClone(result),
+      request_payload: { ...job.request_payload, _systematic: structuredClone(next), _background_monitor: {
+        ...readBackgroundMonitorState(job), revision: crypto.randomUUID(), phase: completed ? 'finished' : 'queued',
+        workerLease: null, workerUntil: 0, workerClaimed: false,
+      } },
+    };
+  };
+  h.runtime.dispatch = async (job, lease, finalize) => {
+    assert.equal(finalize, false, 'cached windows do not require a provider finalizer');
+    invocations.push({ kind: 'worker', at: h.runtime.now!() });
+    assert.ok(await claimBackgroundWorker(h.store, job.id, job.public_token, lease, h.runtime.now!()));
+    h.advance(workerDurationMs);
+    await executeSystematicStep({
+      state: h.store.current.request_payload._systematic as SystematicRunState,
+      result: h.store.current.result_payload as SystematicRunResult,
+    }, {
+      async loadCatalog() { assert.fail('The catalog is already frozen.'); },
+      async prepareBatch(current) {
+        const candidates = systematicCandidates(current.entities!.length, current.index);
+        return { index: current.index, candidates, pending: [], cached: candidates.length, documented: 0 };
+      },
+      async checkpoint(current) { h.store.current.request_payload._systematic = structuredClone(current); },
+      async start() { assert.fail('Cached windows must not create a paid provider request.'); },
+      async retrieve() { assert.fail('Cached windows have no provider response.'); },
+      async rememberProvider() { assert.fail('Cached windows have no provider response.'); },
+      async savePairs() { assert.fail('Cached results are already persisted.'); },
+      async advance(next, result) { publish(next, result, false); },
+      async finish(next, result) { publish(next, result, true); },
+    });
+  };
+  h.runtime.retrieve = async () => { assert.fail('The monitor must not poll a provider for cached windows.'); };
+  h.runtime.relay = async (_id, _deadline, notBefore) => {
+    h.calls.relay += 1;
+    relays.push({ at: h.runtime.now!(), notBefore, nextDispatchAt: readBackgroundMonitorState(h.store.current).nextDispatchAt });
+  };
+  const runMonitor = async () => {
+    const notBefore = relays.at(-1)?.notBefore ?? 0;
+    if (notBefore > h.runtime.now!()) h.advance(notBefore - h.runtime.now!());
+    invocations.push({ kind: 'monitor', at: h.runtime.now!() });
+    await monitorBackgroundJob(id, h.runtime);
+  };
+  return { ...h, invocations, relays, runMonitor };
+}
+
+test('all 119 cached CDE windows stay below 30 nested worker and monitor calls in every 60-second interval', async t => {
+  const h = cachedSystematicHarness(250);
+  for (let invocation = 0; h.store.current.status !== 'completed' && invocation < 100; invocation++) await h.runMonitor();
+  assert.equal(h.store.current.status, 'completed');
+  const result = h.store.current.result_payload as SystematicRunResult;
+  assert.equal(result.steps.length, 119);
+  assert.equal(result.pairs_processed, 470);
+  assert.equal(result.pairs_analyzed, 0);
+  assert.equal(h.invocations.filter(call => call.kind === 'worker').length, 119);
+  const maximum = Math.max(...h.invocations.map(start => h.invocations.filter(call => call.at >= start.at && call.at < start.at + 60_000).length));
+  assert.ok(maximum <= 30, `Observed ${maximum} nested invocations inside 60 seconds.`);
+  t.diagnostic(`${h.invocations.length} total invocations, maximum ${maximum}/60 s, elapsed ${h.runtime.now!() - startTime} ms`);
+});
+
+test('a new monitor preserves the pending dispatch cadence across a cached CDE continuation and relay', async () => {
+  const h = cachedSystematicHarness(3600);
+  await h.runMonitor();
+  const firstRelay = h.relays[0];
+  assert.ok(firstRelay.nextDispatchAt! > firstRelay.at, 'the first monitor must yield while its saved cadence is still pending');
+  const before = h.invocations.filter(call => call.kind === 'worker').length;
+  await h.runMonitor();
+  const nextWorker = h.invocations.filter(call => call.kind === 'worker')[before];
+  assert.ok(nextWorker.at >= firstRelay.nextDispatchAt!, 'a new invocation must not reset the saved dispatch deadline');
+});
 
 test('a server watchdog finishes the provider response without any browser status request', async () => {
   const h = harness();
@@ -395,12 +486,13 @@ test('a worker lease is consumable once and unknown/client-supplied control stat
   ]);
   assert.equal(claims.filter(Boolean).length, 1);
   const safe = prepareBackgroundJobPayload({ runJob: true, _workerLease: 'injected', providerResponseId: 'injected', _backgroundMaxTokens: 999999,
-    _monitorNotBefore: Number.MAX_SAFE_INTEGER, symptomNames: ['fixture'] });
+    _monitorNotBefore: Number.MAX_SAFE_INTEGER, _monitorControlToken: token, symptomNames: ['fixture'] });
   assert.equal(safe.runJob, undefined);
   assert.equal(safe._workerLease, undefined);
   assert.equal(safe.providerResponseId, undefined);
   assert.equal(safe._backgroundMaxTokens, undefined);
   assert.equal(safe._monitorNotBefore, undefined);
+  assert.equal(safe._monitorControlToken, undefined);
   assert.equal(nextBackgroundTokenBudget(readBackgroundMonitorState(job), provider('failed', { errorMessage: 'timeout' })), null);
 });
 
@@ -450,7 +542,7 @@ test('temporary auth service errors preserve retryability without accepting an i
   }
 });
 
-function database(store: MemoryStore) {
+function database(store: MemoryStore, observe?: { read?: () => void; afterWrite?: (patch: Record<string, unknown>) => void }) {
   return {
     from() {
       const filters = new Map<string, unknown>();
@@ -468,7 +560,10 @@ function database(store: MemoryStore) {
             return actual === value;
           });
           if (!matches) return { data: null, error: null };
-          if (patch) store.current = { ...store.current, ...structuredClone(patch) } as BackgroundJobRow;
+          if (patch) {
+            store.current = { ...store.current, ...structuredClone(patch) } as BackgroundJobRow;
+            observe?.afterWrite?.(patch);
+          } else observe?.read?.();
           return { data: structuredClone(store.current), error: null };
         },
       };
@@ -537,7 +632,7 @@ test('a compatibility projection can use only the time left in its canonical dat
   assert.match(String(errors.mock.calls[0].arguments[0]), /Projection de compatibilité/);
 });
 
-test('a deferred control relay uses separate short waiting invocations before resuming its monitor', async t => {
+test('a deferred control relay uses separate short waiting invocations and stops when the job has finished', async t => {
   t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: startTime });
   const pending: Promise<void>[] = [];
   const global = globalThis as typeof globalThis & { EdgeRuntime?: { waitUntil(work: Promise<void>): void } };
@@ -549,28 +644,135 @@ test('a deferred control relay uses separate short waiting invocations before re
     forwarded.push(JSON.parse(String(init?.body)));
     return Response.json({ accepted: true }, { status: 202 });
   });
-  let reads = 0;
-  const query = {
-    select() { return this; }, eq() { return this; }, abortSignal() { return this; },
-    async maybeSingle() { reads += 1; return { data: row({ status: 'completed' }), error: null }; },
-  };
-  const supabase = { from: () => query } as unknown as Parameters<typeof prepareBackgroundJobRequest>[2]['supabase'];
+  const store = new MemoryStore(row());
+  const supabase = database(store);
   const options = { supabase, supabaseUrl: 'https://project.invalid', serviceRoleKey: 'service-secret', functionName: 'deep-research' };
-  const incoming = { action: 'monitor', jobId: id, _monitorNotBefore: startTime + 100_000 };
+  let incoming: Parameters<typeof prepareBackgroundJobRequest>[1] = { action: 'monitor', jobId: id, _monitorNotBefore: startTime + 100_000 };
   const invoke = () => prepareBackgroundJobRequest(new Request('https://project.invalid', {
     headers: { authorization: 'Bearer service-secret' },
   }), incoming, options);
   for (const delay of [35_000, 35_000, 30_000]) {
     assert.equal((await invoke()).response?.status, 202);
-    assert.equal(reads, 0);
+    for (let step = 0; step < 50; step++) await Promise.resolve();
     t.mock.timers.tick(delay);
     await pending.at(-1);
-    assert.deepEqual(forwarded.at(-1), incoming);
+    const next = forwarded.at(-1)!;
+    assert.equal(next._monitorNotBefore, startTime + 100_000);
+    assert.equal(typeof next._monitorControlToken, 'string');
+    assert.notEqual(next._monitorControlToken, incoming._monitorControlToken);
+    assert.equal(store.current.provider_response_id, 'resp_original');
+    incoming = next;
   }
+  store.current.status = 'completed';
   assert.equal((await invoke()).response?.status, 202);
   await pending.at(-1);
-  assert.equal(reads, 1);
   assert.equal(forwarded.length, 3);
+});
+
+test('lost control-CAS acknowledgments recognize the committed reservation and its one-time consumer', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: startTime });
+  const pending: Promise<void>[] = [];
+  const global = globalThis as typeof globalThis & { EdgeRuntime?: { waitUntil(work: Promise<void>): void } };
+  const originalRuntime = global.EdgeRuntime;
+  global.EdgeRuntime = { waitUntil: work => { pending.push(work); } };
+  t.after(() => { global.EdgeRuntime = originalRuntime; });
+  const store = new MemoryStore(row());
+  Object.assign(readBackgroundMonitorState(store.current), { watchdogId: 'existing-controller', watchdogUntil: startTime + 60_000 });
+  let reservations = 0, consumers = 0, readsAfterConsumption = 0;
+  const supabase = database(store, {
+    read() { if (readBackgroundMonitorState(store.current).relayClaimedBy) readsAfterConsumption += 1; },
+    afterWrite() {
+      const state = readBackgroundMonitorState(store.current);
+      if (state.relayClaimedBy) {
+        consumers += 1;
+        if (consumers === 1) throw new Error('Consumption committed before the database connection closed.');
+      } else if (state.relayToken) {
+        reservations += 1;
+        if (reservations === 1) throw new Error('Reservation committed before the database connection closed.');
+      }
+    },
+  });
+  const forwarded: Array<Record<string, unknown>> = [];
+  t.mock.method(globalThis, 'fetch', async (_url: string | URL | Request, init?: RequestInit) => {
+    forwarded.push(JSON.parse(String(init?.body)));
+    return Response.json({ accepted: true }, { status: 202 });
+  });
+  const options = { supabase, supabaseUrl: 'https://project.invalid', serviceRoleKey: 'service-secret', functionName: 'deep-research' };
+  const invoke = (body: Parameters<typeof prepareBackgroundJobRequest>[1]) => prepareBackgroundJobRequest(new Request('https://project.invalid', {
+    headers: { authorization: 'Bearer service-secret' },
+  }), body, options);
+  await invoke({ action: 'monitor', jobId: id, _monitorNotBefore: startTime + 1000 });
+  for (let step = 0; step < 100; step++) await Promise.resolve();
+  t.mock.timers.tick(1000);
+  await pending.at(-1);
+  assert.equal(reservations, 1, 'a lost database acknowledgment must not reserve a second token');
+  assert.equal(forwarded.length, 1);
+  assert.equal(forwarded[0]._monitorControlToken, readBackgroundMonitorState(store.current).relayToken);
+  await invoke(forwarded[0]);
+  await pending.at(-1);
+  assert.equal(consumers, 1);
+  assert.ok(readsAfterConsumption >= 2, 'the committed consumer must be recognized and allowed to enter the normal monitor');
+  const consumer = readBackgroundMonitorState(store.current).relayClaimedBy;
+  await invoke(forwarded[0]); // duplicate HTTP delivery after the committed consumption
+  await pending.at(-1);
+  assert.equal(consumers, 1);
+  assert.equal(readBackgroundMonitorState(store.current).relayClaimedBy, consumer);
+  assert.equal(forwarded.length, 1);
+  assert.equal(store.current.provider_response_id, 'resp_original');
+});
+
+test('repeated initial claim conflicts keep deferred control calls below the nested invocation rate limit', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: startTime });
+  const pending: Promise<void>[] = [];
+  const global = globalThis as typeof globalThis & { EdgeRuntime?: { waitUntil(work: Promise<void>): void } };
+  const originalRuntime = global.EdgeRuntime;
+  global.EdgeRuntime = { waitUntil: work => { pending.push(work); } };
+  t.after(() => { global.EdgeRuntime = originalRuntime; });
+  const job = row();
+  let claims = 0;
+  const supabase = {
+    from() {
+      let patch: Record<string, unknown> | undefined;
+      const filters = new Map<string, unknown>();
+      const query = {
+        select() { return query; }, abortSignal() { return query; },
+        eq(key: string, value: unknown) { filters.set(key, value); return query; },
+        is(key: string, value: unknown) { filters.set(key, value); return query; },
+        update(value: Record<string, unknown>) { patch = value; return query; },
+        async maybeSingle() {
+          const matches = [...filters].every(([key, value]) => {
+            const actual = key === 'request_payload->_background_monitor->>revision' ? readBackgroundMonitorState(job).revision : job[key];
+            return actual === value;
+          });
+          if (!matches) return { data: null, error: null };
+          if (patch) {
+            const nextState = readBackgroundMonitorState({ ...job, ...patch } as BackgroundJobRow);
+            if (nextState.watchdogId) { claims += 1; return { data: null, error: null }; }
+            Object.assign(job, structuredClone(patch));
+          }
+          return { data: structuredClone(job), error: null };
+        },
+      };
+      return query;
+    },
+  } as unknown as Parameters<typeof prepareBackgroundJobRequest>[2]['supabase'];
+  const options = { supabase, supabaseUrl: 'https://project.invalid', serviceRoleKey: 'service-secret', functionName: 'deep-research' };
+  const invoke = (body: Parameters<typeof prepareBackgroundJobRequest>[1]) => prepareBackgroundJobRequest(new Request('https://project.invalid', {
+    headers: { authorization: 'Bearer service-secret' },
+  }), body, options);
+  const calls: number[] = [];
+  t.mock.method(globalThis, 'fetch', async (_url: string | URL | Request, init?: RequestInit) => {
+    calls.push(Date.now() - startTime);
+    if (Date.now() - startTime >= 60_000) return Response.json({ accepted: true }, { status: 202 });
+    return (await invoke(JSON.parse(String(init?.body)))).response!;
+  });
+  const settle = async () => { for (let step = 0; step < 150; step++) await Promise.resolve(); };
+  await invoke({ action: 'monitor', jobId: id });
+  await settle();
+  for (let tick = 0; tick < 24; tick++) { t.mock.timers.tick(2500); await settle(); }
+  await Promise.all(pending);
+  assert.ok(claims >= 4, 'the server must keep retrying control without any browser request');
+  assert.ok(calls.filter(at => at < 60_000).length <= 30, `Observed ${calls.length} control invocations in 60 seconds.`);
 });
 
 test('a durable continuation atomically saves outputs, resets only the next step budget, and fences the old worker', async t => {
@@ -579,6 +781,7 @@ test('a durable continuation atomically saves outputs, resets only the next step
   Object.assign(readBackgroundMonitorState(job), {
     phase: 'finalizing', workerLease: 'sequence-lease', workerUntil: startTime + 60_000,
     workerClaimed: false, retries: 2, maxOutputTokens: 128_000, deadlineAt: startTime + 1000,
+    nextDispatchAt: startTime + 4000,
   });
   const store = new MemoryStore(job);
   const supabase = database(store);
@@ -599,6 +802,7 @@ test('a durable continuation atomically saves outputs, resets only the next step
   assert.equal(state.maxOutputTokens, undefined);
   assert.equal(state.workerLease, null);
   assert.equal(state.deadlineAt, startTime + BACKGROUND_MONITOR_WINDOW_MS);
+  assert.equal(state.nextDispatchAt, startTime + 4000);
   await assert.rejects(updateBackgroundJobRecord(supabase, id, { result_payload: { stale: true } }), /ne possède plus/);
   assert.deepEqual(store.current.result_payload, { saved: 4 });
 });

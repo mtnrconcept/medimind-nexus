@@ -22,6 +22,8 @@ La progression avance seulement après réception d'une réponse complète couvr
 
 L'import administratif envoie un seul manifeste, limité aux 500 URL sélectionnées et aux trois modes existants. Un administrateur authentifié est requis. Le serveur conserve les lots de trois URL et les délais de 45, 25 ou 12 secondes choisis dans l'interface. Les enfants ont un identifiant déterministe et une prise d'exécution unique ; un accusé perdu ne relance pas un appel OpenAI ou Firecrawl.
 
+Un historique persisté limite également l'import à trois tentatives de lancement d'enfants par fenêtre glissante de trente secondes. Chaque tentative réserve son budget avant l'appel et le conserve après un échec ou un accusé perdu ; un enfant peut lui-même appeler l'outil d'import. Cette protection peut ajouter une attente aux délais du mode choisi. Les relais devenus obsolètes après un nouveau bail, une nouvelle échéance ou la fin du lot ne transmettent plus le travail.
+
 **Masquer le suivi** détache seulement l'interface. **Arrêter l'import** enregistre une demande d'arrêt qui interdit toute nouvelle admission ; les opérations déjà acceptées peuvent terminer. L'arrêt reste disponible dans Activité IA après un retour dans l'application. Les réussites, erreurs et URL non lancées sont comptées séparément. Un lot avec des erreurs ou un arrêt conserve ses résultats sans être déclaré entièrement réussi.
 
 La délégation serveur est limitée aux trois actions `scrape`, `scrape-medication` et `scrape-molecule`. Leur contenu est reconstruit depuis le manifeste privé autorisé ; un appel HTTP de worker ne peut pas fournir une autre URL ou un autre outil. Aucun JWT utilisateur n'est stocké pour faire tourner la file. Le rôle administrateur est revérifié avant les admissions.
@@ -41,6 +43,9 @@ Les budgets sont des plafonds de sortie par appel, comprenant le raisonnement du
 | Lecture d'une réponse OpenAI existante | 30 secondes par GET |
 | Fenêtre de surveillance d'une réponse native | 60 minutes, puis réponse conservée et suivi reprenable |
 | Bail exclusif d'un worker natif | 8 minutes, sans deuxième finaliseur concurrent |
+| Cadence des réservations de workers natifs | Au moins 4 secondes entre réservations, échéance conservée en base entre étapes et relais |
+| Cadence des workers de la matrice | Au moins 10 secondes entre réservations ; une seule attente de contrôle peut transmettre chaque étape |
+| Admission des enfants d'un import | Au plus 3 tentatives par fenêtre glissante de 30 secondes, y compris les tentatives dont l'accusé est perdu |
 | Observation navigateur | 60 minutes de temps visible et connecté ; suspension et hors-ligne exclus |
 | Travail du transport générique | 130 secondes au maximum, puis marge pour enregistrer l'interruption avant la limite du worker |
 | Requête générique | 12 Mio au maximum |
@@ -53,7 +58,11 @@ Une nouvelle génération automatique est permise uniquement lorsqu'OpenAI confi
 
 Le projet Medicore est sur l'offre Supabase Free au moment de cette modification. Le plafond de durée d'un worker est de 150 secondes ; un timeout JavaScript ne permet pas de le dépasser. Les tâches natives longues utilisent donc des relais. Les autres outils conservent la durée bornée de leur invocation : le transport les protège de la fermeture du navigateur, mais ne transforme pas une fonction arbitraire en workflow illimité.
 
-Références : [limites des Edge Functions](https://supabase.com/docs/guides/functions/limits), [réponses OpenAI en arrière-plan](https://developers.openai.com/api/docs/guides/background), [budget de raisonnement](https://developers.openai.com/api/docs/guides/reasoning).
+Supabase limite également une chaîne d'appels internes à trente invocations par fenêtre de soixante secondes. La cadence de quatre secondes s'applique aussi aux fenêtres CDE entièrement mises en cache : la rapidité du worker ne peut pas provoquer une rafale d'appels. L'attente reste bornée par le budget du moniteur, et l'échéance enregistrée n'est remise à zéro ni par une continuation ni par un relais. Un conflit lors de la réservation du moniteur déclenche un contrôle différé de dix secondes, pour que les invocations d'attente et de contrôle restent elles aussi espacées. Ces relais différés réservent un jeton de contrôle persisté dans leur invocation fraîche : la transmission suivante le consomme et les livraisons en double sont ignorées. Un accusé perdu après l'enregistrement du jeton peut être reconnu par relecture, sans créer un second contrôleur. Le temps de cette réservation entre dans le budget global de l'invocation. Le polling OpenAI conserve sa cadence propre ; ses GET externes ne consomment pas cette limite d'appels entre fonctions.
+
+Le relais indépendant de la matrice espace ses réservations de dix secondes, même si un GET OpenAI échoue immédiatement ou si un petit lot termine très vite. Un bail de contrôle de soixante secondes autorise une seule attente ; son token est consommé par la réservation suivante. La perte d'un accusé de réception ne peut donc pas multiplier les chaînes d'attente. L'invocation d'attente transmet le traitement à un worker neuf, sans réduire son budget d'exécution. L'identifiant OpenAI existant et le bail de worker de huit minutes restent conservés.
+
+Références : [limites des Edge Functions](https://supabase.com/docs/guides/functions/limits), [appels imbriqués entre fonctions](https://supabase.com/docs/guides/functions/recursive-functions), [réponses OpenAI en arrière-plan](https://developers.openai.com/api/docs/guides/background), [budget de raisonnement](https://developers.openai.com/api/docs/guides/reasoning).
 
 ## Isolation, concurrence et conservation
 
@@ -141,5 +150,7 @@ node scripts/audit-production.mjs
 ```
 
 Les tests couvrent les coupures et réponses tardives, les soumissions concurrentes, la conservation des flux partiels, la non-duplication après reprise, la séparation des comptes, les réponses OpenAI incomplètes, les baux de traitement et les autorisations SQL. Le contrôle Deno et les assertions PostgreSQL 17 sont exécutés par `.github/workflows/ci.yml`.
+
+Les tests de cadence comptent les appels HTTP entre fonctions, y compris les moniteurs, les attentes, les relances et les appels d'un enfant à l'outil d'import. Ils couvrent les fenêtres CDE déjà en cache, les lots rapides, les GET qui échouent immédiatement et les accusés perdus après acceptation.
 
 Pour revenir en arrière, publier le commit applicatif précédent et redéployer ses fonctions coordonnées. Conserver la table d'événements et les résultats des tâches : aucune suppression n'est nécessaire pour désactiver le transport. Les jobs déjà acceptés doivent être suivis jusqu'à leur fin ou explicitement examinés avant d'arrêter leur moniteur. Une éventuelle suppression ultérieure des structures doit faire l'objet d'une migration compensatrice séparée, après conservation des résultats utiles.

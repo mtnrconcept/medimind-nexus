@@ -11,6 +11,11 @@ import { pendingPairs, readCells, type MatrixCells } from './matrix-progress.ts'
 
 const mode = 'progressive_matrix';
 const leaseMs = BACKGROUND_WORKER_LEASE_MS;
+// A continuation may need a waiting invocation plus its worker, with up to two
+// attempts each. Ten seconds leaves room within the shared 30 calls / 60s trace.
+const workIntervalMs = 10_000;
+const controlLeaseMs = 60_000;
+const controlWaitSliceMs = 35_000;
 const projection = 'id,status,progress_percentage,progress_message,error_message,result_payload,updated_at,request_payload,provider_response_id';
 type Client = SupabaseClient;
 type Research = { title: string; url: string; abstract: string };
@@ -25,6 +30,9 @@ type MatrixRuntime = {
   paused?: boolean;
   lastProviderStatus?: string;
   incompleteReason?: string;
+  nextWorkAt?: number;
+  controlLease?: string | null;
+  controlUntil?: number;
 };
 const fields = [
   ['pathologyIds', 'externalPathologies', 'pathologies', 'id,name,severity'],
@@ -94,14 +102,17 @@ export async function handleMatrix(req: Request, body: Record<string, unknown>, 
   const json = (data: unknown, status = 200) => new Response(JSON.stringify(data), { status, headers: {
     'Access-Control-Allow-Origin': '*', 'Content-Type': 'application/json',
   } });
-  const kick = async (id: string) => {
+  const kick = async (id: string, controlLease?: string) => {
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
         const response = await fetch(url + '/functions/v1/cross-data-analyzer', {
           method: 'POST', headers: { Authorization: 'Bearer ' + key, apikey: key, 'Content-Type': 'application/json' },
-          body: JSON.stringify({ action: 'matrix.work', jobId: id }), signal: AbortSignal.timeout(6000),
+          body: JSON.stringify({ action: 'matrix.work', jobId: id, ...(controlLease ? { _matrixControlLease: controlLease } : {}) }),
+          signal: AbortSignal.timeout(6000),
         });
-        if (!response.ok) throw new Error('Le relais du worker est indisponible.');
+        const accepted = response.ok;
+        await response.body?.cancel();
+        if (!accepted) throw new Error('Le relais du worker est indisponible.');
         return;
       } catch (error) {
         if (attempt > 0) throw error;
@@ -114,15 +125,43 @@ export async function handleMatrix(req: Request, body: Record<string, unknown>, 
     (globalThis as typeof globalThis & { EdgeRuntime?: { waitUntil(p: Promise<void>): void } }).EdgeRuntime?.waitUntil(guarded);
   };
 
-  async function work(id: string) {
+  async function work(id: string, incomingControlLease?: string) {
     const { data: job, error } = await jobs().select('*').eq('id', id).eq('function_name', 'cross-data-analyzer').eq('analysis_mode', mode).single();
     if (error || !job || !['queued', 'processing'].includes(job.status)) return;
     if (job.status === 'processing' && Date.now() - Date.parse(job.updated_at) < leaseMs) return;
+    const runtime: MatrixRuntime = { ...(job.request_payload._matrix_runtime || { windowStartedAt: Date.now(), retries: 0 }) };
+    // A relay token is consumed by its next successful reservation. A duplicate
+    // delivery cannot create another waiting chain after the first has advanced.
+    if (incomingControlLease && incomingControlLease !== runtime.controlLease) return;
+    if (runtime.controlLease && (runtime.controlUntil ?? 0) > Date.now() && incomingControlLease !== runtime.controlLease) return;
+    const expectedControlLease = runtime.controlLease;
+    const reserve = (patch: Record<string, unknown>) => {
+      let query = jobs().update(patch).eq('id', id).eq('function_name', 'cross-data-analyzer').eq('analysis_mode', mode)
+        .eq('updated_at', job.updated_at).eq('status', job.status);
+      query = expectedControlLease ? query.eq('request_payload->_matrix_runtime->>controlLease', expectedControlLease)
+        : query.is('request_payload->_matrix_runtime->>controlLease', null);
+      return query.select('id').maybeSingle();
+    };
+    if ((runtime.nextWorkAt ?? 0) > Date.now()) {
+      const controlLease = crypto.randomUUID();
+      runtime.controlLease = controlLease;
+      runtime.controlUntil = Date.now() + controlLeaseMs;
+      const reserved = await reserve({ updated_at: new Date().toISOString(),
+        request_payload: { ...job.request_payload, _matrix_runtime: runtime } });
+      if (reserved.error || !reserved.data) return;
+      // The fresh worker receives its full execution budget. This invocation
+      // only waits and relays; repeated/lost acknowledgments share one token.
+      await new Promise(resolve => setTimeout(resolve, Math.min(controlWaitSliceMs, Math.max(0, runtime.nextWorkAt! - Date.now()))));
+      await kick(id, controlLease);
+      return;
+    }
     const lease = crypto.randomUUID();
-    const claim = await jobs().update({ status: 'processing', provider_status: lease, updated_at: new Date().toISOString() })
-      .eq('id', id).eq('updated_at', job.updated_at).eq('status', job.status).select('id').maybeSingle();
+    runtime.nextWorkAt = Date.now() + workIntervalMs;
+    runtime.controlLease = null;
+    runtime.controlUntil = 0;
+    const claim = await reserve({ status: 'processing', provider_status: lease, updated_at: new Date().toISOString(),
+      request_payload: { ...job.request_payload, _matrix_runtime: runtime } });
     if (claim.error || !claim.data) return;
-    const runtime: MatrixRuntime = job.request_payload._matrix_runtime || { windowStartedAt: Date.now(), retries: 0 };
     const save = async (patch: Record<string, unknown>) => {
       const changed = await jobs().update({ ...patch, updated_at: new Date().toISOString(),
         request_payload: { ...job.request_payload, _matrix_runtime: runtime } })
@@ -262,7 +301,7 @@ export async function handleMatrix(req: Request, body: Record<string, unknown>, 
   const authorization = req.headers.get('authorization') || '';
   if (body.action === 'matrix.work') {
     if (authorization !== 'Bearer ' + key || typeof body.jobId !== 'string') return json({ error: 'Interdit.' }, 403);
-    background(work(body.jobId));
+    background(work(body.jobId, typeof body._matrixControlLease === 'string' ? body._matrixControlLease : undefined));
     return json({ accepted: true }, 202);
   }
   const client = makeClient(url, Deno.env.get('SUPABASE_ANON_KEY')!, { global: { headers: { Authorization: authorization } } });

@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { setImmediate as yieldTasks } from 'node:timers/promises';
 import { createScraperBatchHTTP } from '../supabase/functions/ai-tool-jobs/batch-http.ts';
 import { type ScraperBatchRuntime, type ScraperBatchState, type ScraperBatchStore } from '../supabase/functions/ai-tool-jobs/batch.ts';
 import { type JobStore, type TransportDependencies } from '../supabase/functions/ai-tool-jobs/handler.ts';
@@ -85,7 +86,7 @@ function setup() {
     },
   };
   const handler = createScraperBatchHTTP(runtime, transport, service);
-  return { store, work, relays, upstream, handler, now: () => clock, advance: (ms: number) => { clock += ms; } };
+  return { store, work, relays, upstream, handler, runtime, transport, now: () => clock, advance: (ms: number) => { clock += ms; } };
 }
 
 test('batch start requires a real admin and deduplicates accepted manifests', async () => {
@@ -145,12 +146,131 @@ test('accepted scraper work finishes without browser requests and cannot overrid
 test('a 90-second lease cooldown is handed off by a fresh invocation after at most 45 seconds', async context => {
   context.mock.timers.enable({ apis: ['setTimeout'] });
   const h = setup();
-  const response = await h.handler.handle(request('batch.monitor', service, { jobId: requestId, notBefore: h.now() + 90_000 }));
+  const { job } = await (await h.handler.handle(request('batch.start', 'admin', manifest))).json();
+  const parent = h.store.jobs.get(job.id)!;
+  Object.assign(parent.request_payload.batch as ScraperBatchState, { leaseId: crypto.randomUUID(), leaseUntil: h.now() + 90_000 });
+  h.relays.length = 0;
+  const response = await h.handler.handle(request('batch.monitor', service, { jobId: job.id, notBefore: h.now() + 90_000 }));
   assert.equal(response.status, 202);
   assert.equal(h.relays.length, 0);
   h.advance(45_000);
   context.mock.timers.tick(45_000);
   await Promise.all(h.work);
-  assert.deepEqual(h.relays, [{ id: requestId, delay: 45_000 }]);
+  assert.deepEqual(h.relays, [{ id: job.id, delay: 45_000 }]);
   assert.equal(h.upstream.length, 0);
 });
+
+test('an obsolete delayed control request does not create another monitor chain', async context => {
+  context.mock.timers.enable({ apis: ['setTimeout'] });
+  for (const scenario of ['new-lease', 'new-cooldown', 'terminal', 'read-unavailable']) {
+    const h = setup();
+    const { job } = await (await h.handler.handle(request('batch.start', 'admin', manifest))).json();
+    const parent = h.store.jobs.get(job.id)!;
+    const state = parent.request_payload.batch as ScraperBatchState;
+    h.relays.length = 0;
+    await h.handler.handle(request('batch.monitor', service, { jobId: job.id, notBefore: h.now() + 10_000 }));
+    if (scenario === 'new-lease') Object.assign(state, { leaseId: crypto.randomUUID(), leaseUntil: h.now() + 90_000 });
+    if (scenario === 'new-cooldown') state.nextBatchAt = h.now() + 20_000;
+    if (scenario === 'terminal') parent.status = 'completed';
+    if (scenario === 'read-unavailable') h.runtime.store.get = async () => { throw new Error('Temporary read failure'); };
+    h.advance(10_000);
+    context.mock.timers.tick(10_000);
+    await Promise.all(h.work);
+    assert.equal(h.relays.length, scenario === 'read-unavailable' ? 1 : 0, scenario);
+    assert.equal(h.upstream.length, 0);
+  }
+});
+
+for (const scenario of ['fast', 'queued', 'lost-relay-ack'] as const) {
+  test(`the ${scenario} HTTP chain stays below thirty internal Edge calls per minute`, async context => {
+    context.mock.timers.enable({ apis: ['setTimeout', 'setInterval'] });
+    const h = setup();
+    const startedAt = h.now();
+    const calls: Array<{ at: number; kind: 'monitor' | 'child' | 'scraper' }> = [];
+    const pending = new Set<Promise<void>>();
+    let closing = false;
+    h.transport.waitUntil = work => {
+      h.work.push(work);
+      pending.add(work);
+      void work.then(() => pending.delete(work), () => pending.delete(work));
+    };
+    const record = (kind: 'monitor' | 'child' | 'scraper') => calls.push({ at: h.now() - startedAt, kind });
+    const sleep = (ms: number) => closing ? Promise.resolve() : new Promise<void>(resolve => setTimeout(resolve, ms));
+    h.runtime.sleep = sleep;
+    const dispatch = h.runtime.dispatchChild;
+    h.runtime.dispatchChild = async (id, index) => {
+      if (closing) return;
+      record('child');
+      await dispatch(id, index);
+    };
+    const upstream = h.transport.upstream;
+    h.transport.upstream = async input => {
+      record('scraper');
+      await sleep(250);
+      return upstream(input);
+    };
+    if (scenario === 'queued') {
+      const cas = h.store.compareAndSwap.bind(h.store);
+      h.store.compareAndSwap = async (id, revision, patch) => {
+        const next = (patch.request_payload as { batch?: ScraperBatchState } | undefined)?.batch;
+        const current = h.store.jobs.get(id)?.request_payload.batch as ScraperBatchState | undefined;
+        if (next && current && next.admitted.length > current.admitted.length) return null;
+        return cas(id, revision, patch);
+      };
+    }
+    h.runtime.relayMonitor = async (id, delay) => {
+      const post = async () => {
+        if (closing) return;
+        record('monitor');
+        const response = await h.handler.handle(request('batch.monitor', service, {
+          jobId: id, notBefore: h.now() + delay,
+        }));
+        assert.equal(response.status, 202);
+      };
+      await post();
+      if (scenario === 'lost-relay-ack' && !closing) {
+        // Both calls are accepted. The first acknowledgment is lost until the
+        // real adapter's six-second timeout plus its 500ms retry delay.
+        await sleep(6500);
+        await post();
+      }
+    };
+    try {
+      const selected = { ...manifest, rateLimitMode: 'fast',
+        urls: Array.from({ length: 30 }, (_, index) => `https://example.org/selected/${index}`) };
+      const started = await h.handler.handle(request('batch.start', 'admin', selected));
+      assert.equal(started.status, 202);
+      for (let elapsed = 0; elapsed < 150_000; elapsed += 250) {
+        h.advance(250);
+        context.mock.timers.tick(250);
+        await yieldTasks();
+      }
+      let peak: typeof calls = [];
+      for (const first of calls) {
+        const window = calls.filter(call => call.at >= first.at && call.at < first.at + 60_000);
+        if (window.length > peak.length) peak = window;
+      }
+      const counts = Object.fromEntries(['monitor', 'child', 'scraper'].map(kind => [kind, peak.filter(call => call.kind === kind).length]));
+      assert.ok(peak.length <= 30, `${scenario}: ${peak.length} calls/60s ${JSON.stringify(counts)}`);
+      assert.ok(calls.filter(call => call.kind === 'child').length > 3, 'The chain continues beyond its first wave');
+      if (scenario === 'queued') assert.equal(h.upstream.length, 0);
+      else assert.ok(h.upstream.length > 3);
+      context.diagnostic(`${scenario}: peak ${peak.length}/60s ${JSON.stringify(counts)}`);
+    } finally {
+      // The 150s observation intentionally ends while server work is active.
+      // Stop this fixture and settle every waitUntil before Node restores real
+      // timers; otherwise a late digest/stream continuation can start an endless
+      // real relay with the fixture's clock frozen at its final simulated time.
+      closing = true;
+      for (const job of h.store.jobs.values()) job.status = 'failed';
+      const teardownDeadline = performance.now() + 5_000;
+      while (pending.size && performance.now() < teardownDeadline) {
+        h.advance(5_000);
+        context.mock.timers.tick(5_000);
+        await yieldTasks();
+      }
+      assert.equal(pending.size, 0, 'All simulated server tasks must settle before restoring timers');
+      await Promise.allSettled(h.work);
+    }
+  });
+}

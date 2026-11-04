@@ -13,6 +13,12 @@ const MONITOR_SLICE_MS = 35_000;
 const MONITOR_INVOCATION_MS = 140_000;
 const STORE_OPERATION_TIMEOUT_MS = 5_000;
 const WORKER_DISPATCH_TIMEOUT_MS = 75_000;
+// Function-to-function calls share Supabase's 30 calls / 60s trace budget.
+// Cached sequence steps need pacing too; provider latency cannot enforce it.
+const MIN_WORKER_DISPATCH_INTERVAL_MS = 4_000;
+// A deferred recheck adds both a waiting invocation and its next monitor.
+const MONITOR_CLAIM_RETRY_DELAY_MS = 10_000;
+const MONITOR_CONTROL_LEASE_MS = 60_000;
 const RELAY_ATTEMPT_TIMEOUT_MS = 6_000;
 const RELAY_RETRY_DELAY_MS = 500;
 const RELAY_BUDGET_MS = 2 * RELAY_ATTEMPT_TIMEOUT_MS + RELAY_RETRY_DELAY_MS;
@@ -54,6 +60,12 @@ export type BackgroundMonitorState = {
   workerLease?: string | null;
   workerUntil?: number;
   workerClaimed?: boolean;
+  /** Earliest next reservation, retained across continuations and relays. */
+  nextDispatchAt?: number;
+  relayToken?: string | null;
+  relayNotBefore?: number;
+  relayUntil?: number;
+  relayClaimedBy?: string | null;
   pauseReason?: 'monitor_budget';
   resumePhase?: Exclude<Phase, 'paused'>;
   aggregateProgress?: boolean;
@@ -72,6 +84,8 @@ export interface BackgroundMonitorRuntime {
   now?: () => number;
   sleep?: (ms: number) => Promise<void>;
   randomId?: () => string;
+  /** Includes a fresh invocation's control-claim time in its worker budget. */
+  startedAt?: number;
 }
 
 export type NativeJobPayload = {
@@ -84,6 +98,7 @@ export type NativeJobPayload = {
   _workerLease?: string;
   _backgroundMaxTokens?: number;
   _monitorNotBefore?: number;
+  _monitorControlToken?: string;
 };
 
 type Actor = { service: boolean; userId: string | null };
@@ -103,7 +118,7 @@ const wait = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms
 
 export function stripBackgroundJobControls<T extends NativeJobPayload>(payload: T): T {
   const safe = { ...payload } as Record<string, unknown>;
-  for (const key of ['action', 'async', 'runJob', 'jobId', 'jobToken', 'providerResponseId', '_workerLease', '_backgroundMaxTokens', '_monitorNotBefore', MONITOR_KEY]) {
+  for (const key of ['action', 'async', 'runJob', 'jobId', 'jobToken', 'providerResponseId', '_workerLease', '_backgroundMaxTokens', '_monitorNotBefore', '_monitorControlToken', MONITOR_KEY]) {
     delete safe[key];
   }
   return safe as T;
@@ -214,7 +229,7 @@ export async function monitorBackgroundJob(id: string, runtime: BackgroundMonito
   const now = runtime.now ?? Date.now;
   const sleep = runtime.sleep ?? wait;
   const randomId = runtime.randomId ?? (() => crypto.randomUUID());
-  const startedAt = now();
+  const startedAt = runtime.startedAt ?? now();
   const sliceDeadline = startedAt + MONITOR_SLICE_MS;
   const invocationDeadline = startedAt + MONITOR_INVOCATION_MS;
   const hasWorkBudget = (duration = 0) => now() + duration + HANDOFF_RESERVE_MS <= invocationDeadline;
@@ -246,7 +261,7 @@ export async function monitorBackgroundJob(id: string, runtime: BackgroundMonito
     // A worker progress update may win this CAS without another watchdog
     // claiming the job. Schedule another control pass instead of assuming that
     // a successor already exists.
-    await runtime.relay(id, invocationDeadline, now() + 2500);
+    await runtime.relay(id, invocationDeadline, now() + MONITOR_CLAIM_RETRY_DELAY_MS);
     return;
   }
   let relay = true;
@@ -258,10 +273,17 @@ export async function monitorBackgroundJob(id: string, runtime: BackgroundMonito
   const dispatchWorker = async (current: BackgroundJobRow, finalize: boolean): Promise<boolean> => {
     if (!canDispatch(true)) return false;
     const previous = readBackgroundMonitorState(current, now());
+    if ((previous.nextDispatchAt ?? 0) > now()) {
+      await pause(previous.nextDispatchAt! - now());
+      // Re-read ownership, expiry and the persisted response after waiting.
+      // Provider GET polling has its own cadence and never waits on this gate.
+      return true;
+    }
     const lease = randomId();
     const claimed = await transition(store, current, {
       phase: finalize ? 'finalizing' : 'starting', workerLease: lease,
       workerUntil: now() + BACKGROUND_WORKER_LEASE_MS, workerClaimed: false,
+      nextDispatchAt: now() + MIN_WORKER_DISPATCH_INTERVAL_MS,
     }, finalize ? {
       provider_status: 'finalizing', provider_completed_at: new Date(now()).toISOString(),
       progress_percentage: previous.aggregateProgress ? Number(current.progress_percentage || 0) : 90,
@@ -366,14 +388,16 @@ export async function monitorBackgroundJob(id: string, runtime: BackgroundMonito
           if (finished) { relay = false; break; }
           continue;
         }
-        if (!canDispatch(true)) {
+        if (!canDispatch(true) || (state.nextDispatchAt ?? 0) > now()) {
           // Persist completion when GET consumed this slice. The successor can
           // dispatch immediately; the worker still validates the saved response
-          // with its own GET. Repeated slow reads cannot starve finalization.
+          // with its own GET. Repeated slow reads or dispatch pacing cannot
+          // cause unnecessary repeated provider GETs before finalization.
           await transition(store, job, { phase: 'polling' }, {
             provider_status: 'completed', provider_completed_at: new Date(now()).toISOString(),
           }, now(), randomId);
-          break;
+          if (!canDispatch(true)) break;
+          continue;
         }
       }
       if (!await dispatchWorker(job, true)) break;
@@ -497,7 +521,7 @@ function keepAlive(task: Promise<void>): void {
 }
 
 async function relayMonitor(
-  options: JobOptions, id: string, deadlineAt = Date.now() + RELAY_BUDGET_MS, notBefore?: number,
+  options: JobOptions, id: string, deadlineAt = Date.now() + RELAY_BUDGET_MS, notBefore?: number, controlToken?: string,
 ): Promise<void> {
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
@@ -506,7 +530,8 @@ async function relayMonitor(
       await withTimedSignal(Math.min(RELAY_ATTEMPT_TIMEOUT_MS, remaining), async signal => {
         const response = await fetch(`${options.supabaseUrl}/functions/v1/${options.functionName}`, {
           method: 'POST', headers: { Authorization: `Bearer ${options.serviceRoleKey}`, apikey: options.serviceRoleKey, 'Content-Type': 'application/json' },
-          body: JSON.stringify({ action: 'monitor', jobId: id, ...(notBefore ? { _monitorNotBefore: notBefore } : {}) }), signal,
+          body: JSON.stringify({ action: 'monitor', jobId: id, ...(notBefore ? { _monitorNotBefore: notBefore } : {}),
+            ...(controlToken ? { _monitorControlToken: controlToken } : {}) }), signal,
         });
         const accepted = response.ok;
         await response.body?.cancel();
@@ -540,8 +565,9 @@ export function startBackgroundJobMonitor(options: JobOptions, id: string, resum
   })());
 }
 
-function createRuntime(options: JobOptions): BackgroundMonitorRuntime {
+function createRuntime(options: JobOptions, startedAt?: number): BackgroundMonitorRuntime {
   return {
+    startedAt,
     store: createStore(options.supabase, options.functionName, options.syncJob, true),
     retrieve: job => retrieveBackgroundAI(job.provider_response_id!, { model: job.model ?? undefined,
       reasoningEffort: job.reasoning_effort }),
@@ -561,17 +587,69 @@ function createRuntime(options: JobOptions): BackgroundMonitorRuntime {
   };
 }
 
-async function runScheduledMonitor(options: JobOptions, id: string, notBefore: number): Promise<void> {
-  const remaining = notBefore - Date.now();
-  if (remaining > 0) {
+async function reserveScheduledMonitor(
+  options: JobOptions, id: string, notBefore: number, incomingToken: string | undefined,
+  startedAt: number, deferred: boolean,
+): Promise<string | null> {
+  const store = createStore(options.supabase, options.functionName, options.syncJob);
+  const owner = crypto.randomUUID();
+  const token = deferred ? owner : incomingToken ?? owner;
+  const claimedBy = deferred ? null : owner;
+  const owns = (state: BackgroundMonitorState) => state.relayToken === token && (state.relayClaimedBy ?? null) === claimedBy;
+  const eligible = (job: BackgroundJobRow) => ['queued', 'processing'].includes(job.status)
+    && readBackgroundMonitorState(job).phase !== 'paused'
+    && (!job.expires_at || Date.parse(job.expires_at) > Date.now());
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const job = await store.load(id);
+      if (!job || !eligible(job)) return null;
+      const state = readBackgroundMonitorState(job);
+      // A previous CAS may have succeeded even though its HTTP acknowledgment
+      // was lost. Only this invocation can recognize its fresh random owner.
+      if (owns(state)) return token;
+      if (incomingToken) {
+        if (state.relayToken !== incomingToken || state.relayClaimedBy) return null;
+      } else if (state.relayToken) {
+        const active = (state.relayUntil ?? 0) > Date.now();
+        if ((state.relayNotBefore ?? 0) >= notBefore && (active || state.relayClaimedBy)) return null;
+        if (active && !state.relayClaimedBy) return null;
+      }
+      const saved = await transition(store, job, {
+        relayToken: token, relayNotBefore: notBefore, relayClaimedBy: claimedBy,
+        relayUntil: deferred ? Date.now() + MONITOR_CONTROL_LEASE_MS : startedAt + MONITOR_INVOCATION_MS,
+      });
+      if (saved) return token;
+    } catch {
+      // Retry this control reservation, never a provider operation. The next
+      // read recognizes our committed token before attempting another CAS.
+    }
+  }
+  // Also reconcile the final CAS if only its acknowledgment was lost.
+  try {
+    const job = await store.load(id);
+    if (job && eligible(job) && owns(readBackgroundMonitorState(job))) return token;
+  } catch { /* A later authenticated wake-up can recover persisted state. */ }
+  return null;
+}
+
+async function runScheduledMonitor(options: JobOptions, id: string, notBefore: number, incomingToken?: string): Promise<void> {
+  const startedAt = Date.now();
+  if (!notBefore && !incomingToken) {
+    await monitorBackgroundJob(id, createRuntime(options, startedAt));
+    return;
+  }
+  const deferred = notBefore > startedAt;
+  const controlToken = await reserveScheduledMonitor(options, id, notBefore, incomingToken, startedAt, deferred);
+  if (!controlToken) return;
+  if (deferred) {
     // Waiting never consumes the next real monitor's wall-clock budget. Relay
     // even when this wait reaches notBefore so processing starts in a fresh
     // invocation with its entire hand-off reserve available.
-    await wait(Math.min(MONITOR_SLICE_MS, remaining));
-    await relayMonitor(options, id, undefined, notBefore);
+    await wait(Math.min(MONITOR_SLICE_MS, Math.max(0, notBefore - Date.now())));
+    await relayMonitor(options, id, undefined, notBefore, controlToken);
     return;
   }
-  await monitorBackgroundJob(id, createRuntime(options));
+  await monitorBackgroundJob(id, createRuntime(options, startedAt));
 }
 
 export async function prepareBackgroundJobRequest<T extends NativeJobPayload>(
@@ -601,7 +679,9 @@ export async function prepareBackgroundJobRequest<T extends NativeJobPayload>(
     if (!id || !UUID.test(id)) return stop(json({ error: 'Invalid jobId' }, 400));
     const notBefore = typeof incoming._monitorNotBefore === 'number' && Number.isFinite(incoming._monitorNotBefore)
       ? Math.min(incoming._monitorNotBefore, Date.now() + WATCHDOG_LEASE_MS) : 0;
-    keepAlive(runScheduledMonitor(options, id, notBefore));
+    const controlToken = typeof incoming._monitorControlToken === 'string' ? incoming._monitorControlToken : undefined;
+    if (controlToken && !UUID.test(controlToken)) return stop(json({ error: 'Invalid monitor control token' }, 400));
+    keepAlive(runScheduledMonitor(options, id, notBefore, controlToken));
     return stop(json({ accepted: true }, 202));
   }
   if (incoming.action === 'status') {

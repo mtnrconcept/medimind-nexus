@@ -7,6 +7,11 @@ export const SCRAPER_BATCH_TTL_MS = 24 * 60 * 60_000;
 export const SCRAPER_BATCH_LEASE_MS = 90_000;
 export const SCRAPER_BATCH_MONITOR_MS = 35_000;
 export const SCRAPER_CHILD_STALE_MS = 8 * 60_000;
+// Each accepted child costs two internal Edge calls: batch.child then the
+// medical-scraper endpoint. Six attempts per minute leave eighteen of the
+// platform's thirty recursive calls for monitor relays and their retries.
+export const SCRAPER_DISPATCH_WINDOW_MS = 30_000;
+export const SCRAPER_DISPATCH_LIMIT = 3;
 const CONTROL_BUDGET_MS = 40_000;
 const DB_OPERATION_MS = 8_000;
 export const SCRAPER_BATCH_DELAYS = { slow: 45_000, normal: 25_000, fast: 12_000 } as const;
@@ -47,6 +52,8 @@ export interface ScraperBatchState extends ScraperBatchManifest {
   nextIndex: number;
   active: number[];
   admitted: number[];
+  /** Reserved attempts, including failed/lost child acknowledgements. */
+  dispatches?: number[];
   nextBatchAt: number;
   leaseId: string | null;
   leaseUntil: number;
@@ -138,6 +145,10 @@ function stateOf(job: ToolJob): ScraperBatchState {
     || state.active.length > SCRAPER_BATCH_CONCURRENCY || new Set(state.active).size !== state.active.length
     || state.admitted.length > SCRAPER_BATCH_MAX_URLS || new Set(state.admitted).size !== state.admitted.length
     || state.admitted.some(index => !Number.isSafeInteger(index) || index < 0 || index >= state.nextIndex)
+    || (state.dispatches !== undefined && (!Array.isArray(state.dispatches)
+      || state.dispatches.length > SCRAPER_DISPATCH_LIMIT
+      || state.dispatches.some((at, index) => !Number.isFinite(at) || at < 0
+        || (index > 0 && at < state.dispatches![index - 1]))))
     || state.active.some(index => !Number.isSafeInteger(index) || index < 0 || index >= state.nextIndex)) {
     throw new ScraperBatchError('Le manifeste enregistré est invalide.', 409);
   }
@@ -223,6 +234,17 @@ export async function stopScraperBatch(runtime: ScraperBatchRuntime, id: string,
     if (saved) return saved;
   }
   throw new ScraperBatchError('La demande d’arrêt n’a pas encore été confirmée. Réessayez.', 409);
+}
+
+/** A delayed control request can be duplicated after its HTTP acknowledgement is lost. */
+export async function shouldRelayScraperBatch(runtime: ScraperBatchRuntime, id: string, target: number): Promise<boolean> {
+  const job = await runtime.store.get(id);
+  if (!job || terminal(job)) return false;
+  const state = stateOf(job);
+  // Keep waiting for the original unreleased lease, but do not spawn another
+  // chain once a replacement monitor owns the job or completed a newer wave.
+  return !(state.leaseId && state.leaseUntil > Math.max(target, clock(runtime)()))
+    && state.nextBatchAt <= target;
 }
 
 async function ensureChild(runtime: ScraperBatchRuntime, parent: ToolJob, state: ScraperBatchState, index: number) {
@@ -326,6 +348,7 @@ export async function runScraperBatch(runtime: ScraperBatchRuntime, id: string):
       if (state.active.length) {
         const children = await Promise.all(state.active.map(index => ensureChild(runtime, job!, state, index)));
         let waiting = false;
+        const ready: number[] = [];
         for (let offset = 0; offset < state.active.length; offset++) {
           const index = state.active[offset];
           let child = children[offset];
@@ -347,14 +370,24 @@ export async function runScraperBatch(runtime: ScraperBatchRuntime, id: string):
           } else {
             waiting = true;
             if (child.status === 'queued' && (!state.stopRequested || state.admitted.includes(index)) && !expired) {
-              // Retrying this internal dispatch is safe: the child route claims queued -> processing once.
-              await runtime.dispatchChild(id, index).catch(() => undefined);
+              ready.push(index);
             }
           }
         }
         if (waiting) {
-          const saved = await checkpoint(runtime, job, state, summary(state, entries));
-          if (saved) job = saved;
+          const reservedAt = now();
+          const recent = (state.dispatches ?? []).filter(at => at > reservedAt - SCRAPER_DISPATCH_WINDOW_MS);
+          const dispatch = ready.slice(0, Math.max(0, SCRAPER_DISPATCH_LIMIT - recent.length));
+          // Reserve the whole permitted wave atomically before sending any
+          // child request. Admission/stop use this same parent revision, and
+          // no failed or ambiguous acknowledgment ever refunds these slots.
+          const next = dispatch.length ? { ...state, dispatches: [...recent, ...dispatch.map(() => reservedAt)] } : state;
+          const saved = await checkpoint(runtime, job, next, summary(next, entries));
+          if (saved) {
+            job = saved;
+            state = stateOf(saved);
+            for (const index of dispatch) await runtime.dispatchChild(id, index).catch(() => undefined);
+          }
           await wait(runtime, Math.min(2_500, Math.max(0, SCRAPER_BATCH_MONITOR_MS - (now() - start))));
           continue;
         }
