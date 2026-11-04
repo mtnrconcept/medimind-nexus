@@ -29,7 +29,7 @@ jobs:
         run: npm ci
 
       - name: Tests
-        run: npm test
+        run: npx tsx --test --test-concurrency=2 tests/*.test.ts
 
       - name: Focused clinical typecheck
         run: npm run typecheck
@@ -126,6 +126,9 @@ jobs:
 
       - name: Assert evidence write isolation
         run: psql -v ON_ERROR_STOP=1 -f tests/discovery-evidence-security-assertions.sql
+
+      - name: Prepare bibliographic fixture columns
+        run: psql -v ON_ERROR_STOP=1 -f tests/medical-library-bootstrap.sql
 
       - name: Apply searchable French literature migration
         run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261104225342_searchable_french_literature.sql
