@@ -33,13 +33,14 @@ import {
 } from "./analysis-utils.ts";
 
 import { handleMatrix } from './matrix-job.ts';
+import { buildPairSearchQuery, createLiteratureSearch } from './pubmed-research.ts';
+const searchLiterature = createLiteratureSearch({ apiKey: Deno.env.get('NCBI_API_KEY') });
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
-const PUBMED_FETCH_TIMEOUT_MS = 6_000;
 const MAX_PUBMED_QUERIES = 4;
 const FUNCTION_NAME = 'cross-data-analyzer';
 
@@ -90,15 +91,15 @@ interface SchemaStats {
 }
 
 interface SchemaComparison {
-  currentScore: number;     // 0-100 benefit/risk score
-  proposedScore: number;    // 0-100 benefit/risk score
-  improvementPercent: number;
+  currentScore: number | null;     // 0-100 benefit/risk score
+  proposedScore: number | null;    // 0-100 benefit/risk score
+  improvementPercent: number | null;
   currentStats: SchemaStats;
   proposedStats: SchemaStats;
   proposedChanges: ProposedChange[];
   benefitRiskRatio: {
-    current: number;  // Benefits / Risks ratio
-    proposed: number;
+    current: number | null;  // Benefits / Risks ratio
+    proposed: number | null;
   };
   clinicalSummary: string; // Summary of proposed changes
 }
@@ -197,71 +198,10 @@ function startBackgroundJob(
   startBackgroundJobMonitor({ supabase, supabaseUrl, serviceRoleKey, functionName: FUNCTION_NAME }, jobId);
 }
 
-async function fetchWithTimeout(url: string, timeoutMs: number): Promise<Response> {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), timeoutMs);
-
-  try {
-    return await fetch(url, { signal: controller.signal });
-  } catch (error) {
-    if (error instanceof Error && error.name === 'AbortError') {
-      throw new Error(`PubMed request timed out after ${timeoutMs}ms`);
-    }
-    throw error;
-  } finally {
-    clearTimeout(timeout);
-  }
-}
-
-
-// Fonction pour rechercher sur PubMed
-// Fonction pour rechercher sur PubMed avec API Key et Abstracts complets
-async function searchPubMed(query: string, maxResults: number = 5, apiKey?: string): Promise<PubMedArticle[]> {
-  try {
-    let searchUrl = `https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=pubmed&term=${encodeURIComponent(query)}&retmax=${maxResults}&retmode=json&sort=relevance`;
-    if (apiKey) searchUrl += `&api_key=${apiKey}`;
-
-    const searchResponse = await fetchWithTimeout(searchUrl, PUBMED_FETCH_TIMEOUT_MS);
-    if (!searchResponse.ok) throw new Error(`PubMed search failed with ${searchResponse.status}`);
-    const searchData = await searchResponse.json();
-    const ids = searchData?.esearchresult?.idlist || [];
-
-    if (ids.length === 0) return [];
-
-    let fetchUrl = `https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=pubmed&id=${ids.join(",")}&retmode=xml`;
-    if (apiKey) fetchUrl += `&api_key=${apiKey}`;
-
-    const fetchResponse = await fetchWithTimeout(fetchUrl, PUBMED_FETCH_TIMEOUT_MS);
-    if (!fetchResponse.ok) throw new Error(`PubMed fetch failed with ${fetchResponse.status}`);
-    const xmlText = await fetchResponse.text();
-
-    const articles: PubMedArticle[] = [];
-    const xmlArticles = xmlText.split('</PubmedArticle>');
-
-    for (const articleXml of xmlArticles) {
-      if (!articleXml.includes('<PubmedArticle>')) continue;
-
-      const idMatch = articleXml.match(/<PMID[^>]*>(.*?)<\/PMID>/);
-      const id = idMatch ? idMatch[1] : '';
-      if (!id) continue;
-
-      const titleMatch = articleXml.match(/<ArticleTitle>(.*?)<\/ArticleTitle>/);
-      const title = titleMatch ? titleMatch[1] : "Sans titre";
-
-      const abstractMatches = [...articleXml.matchAll(/<AbstractText[^>]*>(.*?)<\/AbstractText>/g)];
-      const abstract = abstractMatches.map(m => m[1]).join(" ");
-
-      articles.push({
-        title: title,
-        url: `https://pubmed.ncbi.nlm.nih.gov/${id}/`,
-        abstract: abstract || "Résumé non disponible."
-      });
-    }
-    return articles;
-  } catch (error) {
-    console.error('PubMed search error:', error);
-    return [];
-  }
+async function searchPubMed(query: string, maxResults = 5, _apiKey?: string): Promise<PubMedArticle[]> {
+  const result = await searchLiterature(query, maxResults);
+  if (result.status === 'unavailable') throw new Error('Recherche bibliographique indisponible. Aucune conclusion négative ne peut être tirée.');
+  return result.articles;
 }
 
 function buildDeterministicAnalysis(
@@ -346,32 +286,6 @@ function pairHashFromLink(link: Pick<CausalLink, 'from' | 'fromType' | 'to' | 't
   return buildPairHash(link.from, link.fromType, link.to, link.toType);
 }
 
-function buildPairSearchQuery(pair: PairCandidate): string {
-  const left = pair.left;
-  const right = pair.right;
-
-  if (left.type === 'medication' && right.type === 'medication') {
-    return `${left.name} ${right.name} interaction contre-indication`;
-  }
-
-  if (left.type === 'pathology' && right.type === 'medication') {
-    return `${left.name} ${right.name} indication contre-indication traitement`;
-  }
-
-  if (left.type === 'medication' && right.type === 'pathology') {
-    return `${right.name} ${left.name} indication contre-indication traitement`;
-  }
-
-  if (left.type === 'pathology' && right.type === 'symptom') {
-    return `${left.name} ${right.name} symptome causalite`;
-  }
-
-  if (left.type === 'symptom' && right.type === 'pathology') {
-    return `${right.name} ${left.name} symptome causalite`;
-  }
-
-  return `${left.name} ${right.name} relation clinique interaction`;
-}
 
 function uniqueElements(elements: { name: string; type: string }[]): { name: string; type: string }[] {
   const seen = new Set<string>();
@@ -886,7 +800,7 @@ serve(async (req) => {
     }
     if (payload.action?.startsWith('matrix.')) {
       return await handleMatrix(req, payload, supabaseUrl, supabaseKey, pair =>
-        searchPubMed(buildPairSearchQuery(pair), 2, Deno.env.get('NCBI_API_KEY')), createClient);
+        searchLiterature(pair, 5), createClient);
     }
     const supabase = createClient(supabaseUrl, supabaseKey);
     activeSupabase = supabase;
@@ -1162,7 +1076,7 @@ serve(async (req) => {
     // Limiter les recherches externes pour garder la fonction dans le budget interactif.
     const limitedQueries = webSearchQueries.slice(0, MAX_PUBMED_QUERIES);
 
-    console.log('Exécution des recherches PubMed:', limitedQueries);
+    console.log('[CrossDataAnalyzer] Requêtes bibliographiques :', limitedQueries.length);
 
     // Exécuter les recherches PubMed en parallèle
     const ncbiApiKey = Deno.env.get("NCBI_API_KEY");

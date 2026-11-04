@@ -1,0 +1,17 @@
+{
+  "extends": "./tsconfig.app.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "allowImportingTsExtensions": true
+  },
+  "include": [
+    "src/vite-env.d.ts",
+    "src/components/patient/CrossDataAnalyzer.tsx",
+    "src/components/patient/RelationshipMatrix.tsx",
+    "src/components/patient/RiskNetworkGraph.tsx",
+    "src/components/patient/crossDataDisplay.ts",
+    "tests/cross-research.test.ts",
+    "src/components/nexus/MedicalLibraryPanel.tsx",
+    "src/lib/medicalLibrary.ts"
+  ]
+}

@@ -6,6 +6,7 @@ import { supabase } from '@/integrations/supabase/client';
 import ResearchNotebook from '@/components/nexus/ResearchNotebook';
 import { createNotebook, downloadJson, MAX_NOTEBOOK_ITEMS, notebookReducer, recordKey } from '@/lib/researchNotebook';
 import SpecialistResources from '@/components/nexus/SpecialistResources';
+import MedicalLibraryPanel from '@/components/nexus/MedicalLibraryPanel';
 import type { EvidenceRecord, EvidenceReport, ResearchMode, ResearchQuery } from '../../../supabase/functions/scientific-evidence/contract';
 
 const modes: Record<ResearchMode, { label: string; example: string }> = {
@@ -46,6 +47,7 @@ function ReportView({ report, onSearch, retained, onRetain }: {
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
           <h3 className="break-words text-lg font-semibold">{modes[report.query.mode].label} · {report.query.term}</h3>
+          {report.resolvedTerm && <p className="text-xs text-muted-foreground">Terme de recherche normalisé : <strong>{report.resolvedTerm}</strong>. Le terme original est conservé.</p>}
           <p className="text-sm text-muted-foreground">Sources interrogées le <time dateTime={report.retrievedAt}>{new Date(report.retrievedAt).toLocaleString('fr-CH')}</time></p>
         </div>
         <Button variant="outline" size="sm" onClick={() => downloadJson(report, `medicore-recherche-${report.query.mode}-${report.retrievedAt.slice(0, 10)}.json`)}>
@@ -204,6 +206,7 @@ export default function ScientificEvidencePanel() {
       <a href="#research-notebook-heading" className="mt-3 inline-block text-sm text-primary hover:underline">Voir le carnet d’hypothèse ({notebook.items.length})</a>
       {report && <ReportView key={report.retrievedAt} report={report} onSearch={search} retained={new Set(notebook.items.map(item => item.key))}
         onRetain={record => dispatch({ type: 'retain', report, record })} />}
+      <MedicalLibraryPanel onResearch={query => { void search(query); }} />
       <ResearchNotebook notebook={notebook} dispatch={dispatch} />
       <SpecialistResources />
     </section>

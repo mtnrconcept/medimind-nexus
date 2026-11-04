@@ -1,5 +1,6 @@
 import { readBoundedJson } from '../_shared/bounded-json.ts';
 import { corsHeaders } from '../_shared/cors.ts';
+import { medicalSearchTerms, normalizeSearchText } from '../_shared/medical-terminology.ts';
 import type { EvidenceReport, Provider, ReadJson, ResearchQuery, SourceResult } from './contract.ts';
 
 const MAX_RECORDS = 12;
@@ -43,6 +44,9 @@ export async function fetchPublicJson(url: URL, init?: RequestInit): Promise<unk
 
 export async function collectEvidence(query: ResearchQuery, providers: Provider[], read: ReadJson, callerSignal?: AbortSignal): Promise<EvidenceReport> {
   const citation = /^(?:NCT\d{8}|PMID: *[1-9]\d{0,8})$/i.test(query.term);
+  const searchTerm = !citation && query.mode !== 'gene' ? medicalSearchTerms({ name: query.term, type: query.mode === 'drug' ? 'medication' : 'pathology' })[0] : undefined;
+  const resolvedTerm = searchTerm && normalizeSearchText(searchTerm) !== normalizeSearchText(query.term) ? searchTerm : undefined;
+  const sourceQuery = resolvedTerm ? { ...query, term: resolvedTerm } : query;
   const selected = providers.filter(provider => provider.modes.includes(query.mode) &&
     (!citation || provider.citationLookup) && (provider.accepts?.(query) ?? true));
   const budget = AbortSignal.timeout(REPORT_TIMEOUT_MS);
@@ -58,7 +62,7 @@ export async function collectEvidence(query: ResearchQuery, providers: Provider[
       const boundedRead: ReadJson = (url, init) => read(url, { ...init, signal });
       try {
         signal.throwIfAborted();
-        const candidates = await provider.search(query, boundedRead);
+        const candidates = await provider.search(sourceQuery, boundedRead);
         const unique = new Map(candidates.map(record => [record.id, record]));
         const records = Array.from(unique.values()).slice(0, MAX_RECORDS);
         sources[index] = { name: provider.name, status: records.length ? 'matched' : 'empty', records };
@@ -68,7 +72,7 @@ export async function collectEvidence(query: ResearchQuery, providers: Provider[
     }
   }
   await Promise.all(Array.from({ length: Math.min(CONCURRENCY, selected.length) }, worker));
-  return { schemaVersion: 1, query, retrievedAt: new Date().toISOString(), sources };
+  return { schemaVersion: 1, query, ...(resolvedTerm ? { resolvedTerm } : {}), retrievedAt: new Date().toISOString(), sources };
 }
 
 const response = (body: unknown, status: number) => new Response(JSON.stringify(body), {

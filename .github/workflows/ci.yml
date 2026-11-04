@@ -46,6 +46,9 @@ jobs:
       - name: Typecheck AI continuity, recovery and activity panel
         run: npx tsc -p tsconfig.ai-continuity.json --pretty false
 
+      - name: Typecheck scientific library and matrix UI
+        run: npx tsc -p tsconfig.scientific-library.json --pretty false
+
       - name: Typecheck anatomical atlas viewer
         run: npx tsc -p tsconfig.anatomical-twin.json --pretty false
 
@@ -123,6 +126,12 @@ jobs:
 
       - name: Assert evidence write isolation
         run: psql -v ON_ERROR_STOP=1 -f tests/discovery-evidence-security-assertions.sql
+
+      - name: Apply searchable French literature migration
+        run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261104225342_searchable_french_literature.sql
+
+      - name: Assert bilingual bibliographic search is role restricted
+        run: psql -v ON_ERROR_STOP=1 -f tests/medical-library-security-assertions.sql
 
       - name: Apply private AI transport events migration
         run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261104214546_durable_ai_transport.sql

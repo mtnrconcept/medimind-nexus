@@ -1,3 +1,4 @@
+import { canDisplayRiskScore } from './crossDataDisplay';
 import { useCallback, useState, useMemo, useEffect } from 'react';
 import {
     ReactFlow,
@@ -149,13 +150,13 @@ interface SchemaStats {
 }
 
 interface SchemaComparison {
-    currentScore: number;
-    proposedScore: number;
-    improvementPercent: number;
+    currentScore: number | null;
+    proposedScore: number | null;
+    improvementPercent: number | null;
     currentStats: SchemaStats;
     proposedStats: SchemaStats;
     proposedChanges: ProposedChange[];
-    benefitRiskRatio: { current: number; proposed: number };
+    benefitRiskRatio: { current: number | null; proposed: number | null };
     clinicalSummary: string;
 }
 
@@ -3139,12 +3140,12 @@ export function RiskNetworkGraph({
             )}
 
             {/* Panneau de Comparaison de Schéma - Affiche avec schemaComparison OU proposedNodes */}
-            {(analysisResult?.schemaComparison || proposedNodes.length > 0) && (
+            {canDisplayRiskScore(analysisResult?.causalLinks, analysisResult?.schemaComparison?.currentScore) && (
                 <Card className="mt-4 border-l-4 border-l-cyan-500">
                     <CardHeader className="pb-2">
                         <CardTitle className="text-sm flex items-center gap-2">
                             <Activity className="h-4 w-4 text-cyan-500" />
-                            Comparaison Schéma Actuel vs Proposé
+                            Comparaison exploratoire — indice non validé
                             <Badge
                                 variant="secondary"
                                 className={`ml-2 ${(analysisResult?.schemaComparison?.improvementPercent || 0) > 0 ? 'bg-green-100 text-green-700' : 'bg-gray-100'}`}
@@ -3178,14 +3179,14 @@ export function RiskNetworkGraph({
                                 <p className="text-xs font-medium text-green-600 mb-1">Schéma Proposé</p>
                                 <div className="flex items-center gap-2">
                                     <span className="text-2xl font-bold text-green-700 dark:text-green-400">
-                                        {analysisResult?.schemaComparison?.proposedScore ?? Math.min(100, liveScore + 20)}
+                                        {analysisResult?.schemaComparison?.proposedScore ?? 'Non évalué'}
                                     </span>
                                     <span className="text-xs text-green-500">/100</span>
                                 </div>
                                 <div className="mt-2 h-2 bg-green-200 dark:bg-green-800 rounded-full overflow-hidden">
                                     <div
                                         className="h-full bg-green-500 transition-all duration-500"
-                                        style={{ width: `${analysisResult?.schemaComparison?.proposedScore ?? Math.min(100, liveScore + 20)}%` }}
+                                        style={{ width: `${analysisResult?.schemaComparison?.proposedScore ?? 'Non évalué'}%` }}
                                     />
                                 </div>
                             </div>

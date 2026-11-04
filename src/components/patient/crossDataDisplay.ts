@@ -27,3 +27,14 @@ export function getAppropriatenessBadgeLabel(link: CrossDataDisplayLink): string
   if (!supportsAppropriatenessBadge(link)) return null;
   return link.isAppropriate ? 'Adapté' : 'Contre-indiqué';
 }
+
+export interface PairResearchDisplay { status?: 'matched' | 'empty' | 'unavailable'; sources?: unknown[] }
+export function matrixEvidenceLabel(research: PairResearchDisplay | undefined, examined: boolean): string {
+  if (research?.status === 'unavailable') return 'Source indisponible';
+  if (!examined) return 'En attente';
+  if (!research?.sources?.length) return 'Preuves insuffisantes';
+  return 'Lien non conclu';
+}
+export function canDisplayRiskScore(links: unknown[] | undefined, score: number | null | undefined): boolean {
+  return Boolean(links?.length) && typeof score === 'number' && Number.isFinite(score);
+}
