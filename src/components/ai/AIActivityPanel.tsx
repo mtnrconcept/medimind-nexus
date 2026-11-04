@@ -54,7 +54,7 @@ export default function AIActivityPanel() {
   const [detailLoading, setDetailLoading] = useState(false);
   const [stoppingId, setStoppingId] = useState<string | null>(null);
   const jobs = list.owner === owner ? list.jobs : [];
-  const selected = detail?.owner === owner && detail.job.id === selectedId ? detail.job : null;
+  const selected = detail !== null && detail.owner === owner && detail.job.id === selectedId ? detail.job : null;
   const pending = jobs.filter(job => !terminal(job) && !job.stalled).length;
   const display = useMemo(() => selected?.result_payload?.body ? describeAIResult(selected.result_payload) : null, [selected]);
   const selectedBatch = selected?.analysis_mode === 'scraper_batch' && typeof display?.structured[0] === 'object'
