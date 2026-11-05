@@ -11,8 +11,10 @@ import {
 } from './analysis-utils.ts';
 import { buildPairSearchQuery, type PairResearchResult } from './pubmed-research.ts';
 import { pendingPairs, readCells, readPairAssessments, type MatrixCells } from './matrix-progress.ts';
+import { createAgentState, nextAgentStep, buildAgentRequest, applyAgentResult, agentProgress,
+  type AgentMatrixState, type AgentRuntimeState } from './agent-orchestrator.ts';
+import { ASTRA_MODEL } from './agent-contract.ts';
 
-const mode = 'progressive_matrix';
 const leaseMs = BACKGROUND_WORKER_LEASE_MS;
 // A continuation may need a waiting invocation plus its worker, with up to two
 // attempts each. Ten seconds leaves room within the shared 30 calls / 60s trace.
@@ -23,7 +25,7 @@ const projection = 'id,status,progress_percentage,progress_message,error_message
 type Client = SupabaseClient;
 type Research = { title: string; url: string; abstract: string; publicationTypes?: string[]; year?: string };
 type Search = (pair: PairCandidate) => Promise<Research[] | PairResearchResult>;
-type State = { elements: SelectedElement[]; cells: MatrixCells; localEvidence?: MatrixCells; pendingEvidence?: Record<string,EvidenceSource[]>; batchSize: number; analysis: AnalysisResult };
+type State = { elements: SelectedElement[]; cells: MatrixCells; localEvidence?: MatrixCells; pendingEvidence?: Record<string,EvidenceSource[]>; batchSize: number; analysis: AnalysisResult; agent?: AgentRuntimeState };
 type Selection = Record<string, string[] | { id: string; name: string }[]>;
 type MatrixRuntime = {
   windowStartedAt: number;
@@ -33,9 +35,12 @@ type MatrixRuntime = {
   paused?: boolean;
   lastProviderStatus?: string;
   incompleteReason?: string;
+  regenerationRequired?: boolean;
+  lastRejectedResponseId?: string;
   nextWorkAt?: number;
   controlLease?: string | null;
   controlUntil?: number;
+  lastError?: { status?: number; code?: string; param?: string; type?: string };
 };
 const fields = [
   ['pathologyIds', 'externalPathologies', 'pathologies', 'id,name,severity'],
@@ -44,7 +49,7 @@ const fields = [
   ['medicationIds', 'externalMedications', 'medications', 'id,name,substance,atc_code,side_effects(name,severity,frequency),contraindications(condition,severity,description),drug_interactions(interacting_drug,severity,description)'],
 ] as const;
 
-async function snapshot(client: Client, body: Record<string, unknown>) {
+async function snapshot(client: Client, body: Record<string, unknown>, agentMode = false) {
   const selection: Selection = {};
   let count = 0;
   for (const [idsKey, extKey] of fields) {
@@ -73,7 +78,7 @@ async function snapshot(client: Client, body: Record<string, unknown>) {
   if (elements.length < 2) throw new Error('La matrice nécessite deux éléments distincts.');
   const localLinks = buildEvidenceLinks({ pathologies, symptoms, treatments, medications, symptomLinks: associations || [] });
   return { selection, risk: detectHighRiskContext({ pathologies, symptoms, treatments, medications, selectedElementCount: elements.length }),
-    state: createMatrixInitialState(elements, localLinks) };
+    state: agentMode ? createAgentState(elements) : createMatrixInitialState(elements, localLinks) };
 }
 
 /** DB relations are model context, never a substitute for OpenAI examination. */
@@ -97,7 +102,7 @@ type MatrixRow = {
 export function exposeMatrixJob(job: MatrixRow | null) {
   if (!job) return null;
   const { request_payload, provider_response_id: _providerId, ...rest } = job;
-  const { pendingEvidence: _internalEvidence, ...savedState } = rest.result_payload || {
+  const { pendingEvidence: _internalEvidence, agent: _agentRuntime, ...savedState } = rest.result_payload || {
     elements: [], cells: {}, batchSize: 3, analysis: ensureAnalysisShape(null),
   };
   const legacy = savedState.analysis?.engineVersion !== RELATION_ENGINE_VERSION;
@@ -134,7 +139,11 @@ Une publication animale, une étude in vitro, un cas isolé ou une association d
 Les données locales et recherches élargies sont des indices à vérifier, pas des faits approuvés. Ne génère aucun isAppropriate, effectType, score, posologie, fréquence inventée, ni proposition d’arrêt/remplacement/augmentation d’un traitement.
 Retourne uniquement {"cells":[...],"warnings":[],"recommendations":[],"alternatives":[]} en JSON valide.`;
 
-export async function handleMatrix(req: Request, body: Record<string, unknown>, url: string, key: string, search: Search, makeClient: typeof createClient) {
+export async function handleMatrix(req: Request, body: Record<string, unknown>, url: string, key: string, search: Search, makeClient: typeof createClient,
+  functionName = 'cross-data-analyzer') {
+  const agentMode = typeof body.action === 'string' && body.action.startsWith('agent.');
+  const mode = agentMode ? 'astra_cross_matrix' : 'progressive_matrix';
+  if (agentMode) body = { ...body, action: String(body.action).replace(/^agent\./, 'matrix.') };
   const db = makeClient(url, key);
   const jobs = () => db.from('ai_analysis_jobs');
   const json = (data: unknown, status = 200) => new Response(JSON.stringify(data), { status, headers: {
@@ -143,9 +152,9 @@ export async function handleMatrix(req: Request, body: Record<string, unknown>, 
   const kick = async (id: string, controlLease?: string) => {
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
-        const response = await fetch(url + '/functions/v1/cross-data-analyzer', {
+        const response = await fetch(url + '/functions/v1/' + functionName, {
           method: 'POST', headers: { Authorization: 'Bearer ' + key, apikey: key, 'Content-Type': 'application/json' },
-          body: JSON.stringify({ action: 'matrix.work', jobId: id, ...(controlLease ? { _matrixControlLease: controlLease } : {}) }),
+          body: JSON.stringify({ action: agentMode ? 'agent.work' : 'matrix.work', jobId: id, ...(controlLease ? { _matrixControlLease: controlLease } : {}) }),
           signal: AbortSignal.timeout(6000),
         });
         const accepted = response.ok;
@@ -164,7 +173,7 @@ export async function handleMatrix(req: Request, body: Record<string, unknown>, 
   };
 
   async function work(id: string, incomingControlLease?: string) {
-    const { data: job, error } = await jobs().select('*').eq('id', id).eq('function_name', 'cross-data-analyzer').eq('analysis_mode', mode).single();
+    const { data: job, error } = await jobs().select('*').eq('id', id).eq('function_name', functionName).eq('analysis_mode', mode).single();
     if (error || !job || !['queued', 'processing'].includes(job.status)) return;
     if (job.status === 'processing' && Date.now() - Date.parse(job.updated_at) < leaseMs) return;
     const runtime: MatrixRuntime = { ...(job.request_payload._matrix_runtime || { windowStartedAt: Date.now(), retries: 0 }) };
@@ -174,7 +183,7 @@ export async function handleMatrix(req: Request, body: Record<string, unknown>, 
     if (runtime.controlLease && (runtime.controlUntil ?? 0) > Date.now() && incomingControlLease !== runtime.controlLease) return;
     const expectedControlLease = runtime.controlLease;
     const reserve = (patch: Record<string, unknown>) => {
-      let query = jobs().update(patch).eq('id', id).eq('function_name', 'cross-data-analyzer').eq('analysis_mode', mode)
+      let query = jobs().update(patch).eq('id', id).eq('function_name', functionName).eq('analysis_mode', mode)
         .eq('updated_at', job.updated_at).eq('status', job.status);
       query = expectedControlLease ? query.eq('request_payload->_matrix_runtime->>controlLease', expectedControlLease)
         : query.is('request_payload->_matrix_runtime->>controlLease', null);
@@ -203,10 +212,15 @@ export async function handleMatrix(req: Request, body: Record<string, unknown>, 
     const save = async (patch: Record<string, unknown>) => {
       const changed = await jobs().update({ ...patch, updated_at: new Date().toISOString(),
         request_payload: { ...job.request_payload, _matrix_runtime: runtime } })
-        .eq('id', id).eq('function_name', 'cross-data-analyzer').eq('provider_status', lease).eq('status', 'processing').select('id').single();
+        .eq('id', id).eq('function_name', functionName).eq('provider_status', lease).eq('status', 'processing').select('id').single();
       if (changed.error || !changed.data) throw new Error('La tâche a changé de propriétaire.');
     };
     const state = job.result_payload as State;
+    const agentState = agentMode && state.agent ? state as AgentMatrixState : null;
+    if (agentMode && !agentState) {
+      await save({ status: 'failed', error_message: 'État de l’agent absent. Lancez une nouvelle analyse.' });
+      return;
+    }
     if (state.analysis?.engineVersion !== RELATION_ENGINE_VERSION) {
       await save({ status: 'failed', error_message: 'Ancien moteur : lancez une nouvelle analyse pour réexaminer les relations.',
         progress_message: 'Réévaluation requise ; résultats précédents conservés.' });
@@ -217,6 +231,12 @@ export async function handleMatrix(req: Request, body: Record<string, unknown>, 
     const risk = job.request_payload.risk;
     let responseId = job.provider_response_id as string | null;
     let readingProvider = false;
+    // Only pure response validation belongs here. Persistence failures must
+    // preserve a valid provider response for another read, never regenerate it.
+    const validateProviderOutput = <T>(validate: () => T): T => {
+      try { return validate(); }
+      catch (error) { runtime.regenerationRequired = true; throw error; }
+    };
     const relay = () => kick(id).catch(() => console.error('[CrossDataAnalyzer] Relais temporairement indisponible ; étape conservée.'));
     try {
       if (Date.now() - runtime.windowStartedAt >= BACKGROUND_MONITOR_WINDOW_MS) {
@@ -227,13 +247,24 @@ export async function handleMatrix(req: Request, body: Record<string, unknown>, 
         return;
       }
       const synthesis = !batch.length;
+      const agentStep = agentState ? nextAgentStep(agentState) : null;
+      const agentRequest = agentState && agentStep ? buildAgentRequest(agentState, agentStep) : null;
       if (!responseId) {
         if (runtime.creationPending) {
           await save({ status: 'failed', error_message: 'Le lancement OpenAI n’a pas pu être confirmé. Aucune seconde génération automatique n’a été créée.',
             progress_message: 'Lancement non confirmé. Une reprise explicite est nécessaire.' });
           return;
         }
-        if (!synthesis) {
+        if (agentRequest) {
+          runtime.creationPending = true;
+          await save({ result_payload: state });
+          const response = await startBackgroundAI(agentRequest.system, agentRequest.user, {
+            ...agentRequest.options, clinicalRiskAssessment: risk,
+            maxTokens: runtime.maxOutputTokens ?? agentRequest.options.maxTokens,
+          });
+          responseId = response.id;
+          runtime.maxOutputTokens = response.maxOutputTokens;
+        } else if (!synthesis) {
           const sources = await Promise.all(batch.map(async pair => {
             try {
               const found = await search(pair);
@@ -304,14 +335,16 @@ export async function handleMatrix(req: Request, body: Record<string, unknown>, 
           runtime.maxOutputTokens = response.maxOutputTokens;
         }
         runtime.creationPending = false;
-        await save({ provider_response_id: responseId, provider_started_at: new Date().toISOString(), result_payload: state });
+        await save({ provider_response_id: responseId, provider_started_at: new Date().toISOString(), result_payload: state,
+          ...(agentMode ? { model: ASTRA_MODEL, reasoning_effort: agentRequest?.options.reasoningEffort } : {}) });
       }
       const deadline = Date.now() + 20_000;
       readingProvider = true;
-      let provider = await retrieveBackgroundAI(responseId, { timeoutMs: 15_000 });
+      const pollingOptions = { ...(agentRequest?.options || {}), timeoutMs: 15_000 };
+      let provider = await retrieveBackgroundAI(responseId, pollingOptions);
       while (['queued', 'in_progress'].includes(provider.status) && Date.now() < deadline) {
         await new Promise(resolve => setTimeout(resolve, 2500));
-        provider = await retrieveBackgroundAI(responseId, { timeoutMs: 15_000 });
+        provider = await retrieveBackgroundAI(responseId, pollingOptions);
       }
       readingProvider = false;
       if (['queued', 'in_progress'].includes(provider.status)) {
@@ -330,19 +363,54 @@ export async function handleMatrix(req: Request, body: Record<string, unknown>, 
         await relay();
         return;
       }
-      if (provider.status !== 'completed') throw new Error(provider.status === 'incomplete' ?
-        'Réponse IA incomplète (budget de tokens).' : 'Le fournisseur IA a interrompu le lot.');
-      const parsed = JSON.parse(provider.text || '');
+      if (provider.status !== 'completed') {
+        if (agentMode) runtime.regenerationRequired = true;
+        throw new Error(provider.status === 'incomplete' ?
+          'Réponse IA incomplète (budget de tokens).' : 'Le fournisseur IA a interrompu le lot.');
+      }
+      const parsed = validateProviderOutput(() => JSON.parse(provider.text || ''));
+      if (agentState && agentStep) {
+        // A failed DB write must not retain an advanced stage alongside the
+        // preceding response ID. Commit the reviewed state only with that ID's
+        // successful removal; the catch can still persist the original state.
+        const reviewedState = structuredClone(agentState);
+        const complete = validateProviderOutput(() => {
+          if (provider.model !== ASTRA_MODEL && !provider.model.startsWith(ASTRA_MODEL + '-'))
+            throw new Error('Le modèle OpenAI retourné ne correspond pas à GPT-6 Astra.');
+          return applyAgentResult(reviewedState, agentStep, parsed, provider.webSources || [], provider.webSearchCalls || 0);
+        });
+        if (provider.webSourcesTruncated) reviewedState.analysis.warnings.push('La liste des sources consultées a atteint sa limite ; seules les URL conservées sont utilisables comme références.');
+        if (complete) reviewedState.analysis = applyClinicalSafetyContract(reviewedState.analysis, risk);
+        const progress = agentProgress(reviewedState);
+        runtime.retries = 0;
+        runtime.lastProviderStatus = undefined;
+        runtime.incompleteReason = undefined;
+        runtime.regenerationRequired = false;
+        runtime.maxOutputTokens = undefined;
+        // The 60-minute watchdog bounds a single stalled step, not a successful
+        // exhaustive analysis with many independently persisted batches.
+        runtime.windowStartedAt = Date.now();
+        await save({ status: complete ? 'completed' : 'queued', provider_response_id: null, error_message: null,
+          progress_message: progress.message, progress_percentage: progress.percentage, result_payload: reviewedState,
+          completed_at: complete ? new Date().toISOString() : null, model: provider.model });
+        if (!complete) await relay();
+        return;
+      }
       if (synthesis) {
-        if (typeof parsed.summary !== 'string' || !parsed.summary.trim()) throw new Error('Synthèse incomplète.');
-        state.analysis.summary = parsed.summary;
+        state.analysis.summary = validateProviderOutput(() => {
+          if (typeof parsed.summary !== 'string' || !parsed.summary.trim()) throw new Error('Synthèse incomplète.');
+          return parsed.summary;
+        });
       } else {
-        const valid = readCells(parsed.cells, batch, state.pendingEvidence || {});
-        const assessments = readPairAssessments(parsed.cells, batch);
-        if (!Object.keys(valid).length) throw new Error('Réponse IA sans cellule complète.');
-        // Save valid partial assessments while malformed cells remain pending.
-        const reviewed = Object.entries(valid).filter(([hash]) => Boolean(assessments[hash]));
-        if (!reviewed.length) throw new Error('Réponse IA sans analyse justifiée pour les paires.');
+        const { reviewed, assessments } = validateProviderOutput(() => {
+          const valid = readCells(parsed.cells, batch, state.pendingEvidence || {});
+          const assessments = readPairAssessments(parsed.cells, batch);
+          if (!Object.keys(valid).length) throw new Error('Réponse IA sans cellule complète.');
+          // Save valid partial assessments while malformed cells remain pending.
+          const reviewed = Object.entries(valid).filter(([hash]) => Boolean(assessments[hash]));
+          if (!reviewed.length) throw new Error('Réponse IA sans analyse justifiée pour les paires.');
+          return { reviewed, assessments };
+        });
         for (const [hash, links] of reviewed) {
           const assessment = assessments[hash];
           const citedLinks = assessment.verdict === 'cited_relation' ? links : [];
@@ -397,20 +465,39 @@ export async function handleMatrix(req: Request, body: Record<string, unknown>, 
       runtime.retries = 0;
       runtime.lastProviderStatus = undefined;
       runtime.incompleteReason = undefined;
+      runtime.regenerationRequired = false;
       await save({ status: complete ? 'completed' : 'queued', provider_response_id: null, error_message: null,
         progress_message: done === total && !complete ? message + ' Synthèse en cours.' : message, progress_percentage: complete ? 100 : Math.floor(95 * done / total), result_payload: state,
         updated_at: new Date().toISOString(), completed_at: complete ? new Date().toISOString() : null });
       if (!complete) await relay();
     } catch (err) {
+      let requestStatus: number | undefined;
+      if (agentMode && err instanceof Error) {
+        // Keep diagnostic codes, never the provider's potentially clinical body.
+        const matched = err.message.match(/OpenAI .*request failed \((\d+)\): ([\s\S]*)/);
+        if (matched) {
+          requestStatus = Number(matched[1]);
+          runtime.lastError = { status: requestStatus };
+          try {
+            const failure = JSON.parse(matched[2])?.error;
+            for (const name of ['code', 'param', 'type'] as const) {
+              if (typeof failure?.[name] === 'string' && /^[a-zA-Z0-9_.[\]-]{1,120}$/.test(failure[name]))
+                runtime.lastError[name] = failure[name];
+            }
+          } catch { /* No raw error payload is retained. */ }
+        }
+      }
       // GET errors retry the same response, including after a browser suspension.
-      // A POST error or a terminal incomplete result never discards its identity.
-      const retryRead = Boolean(readingProvider && responseId);
-      // An explicitly resumed malformed *completed* response should be
-      // regenerable; never blindly create another paid response during retry.
-      const malformedCompleted = Boolean(!readingProvider && responseId &&
-        err instanceof Error && /Réponse IA sans|Unexpected token|JSON/.test(err.message));
+      // Authentication/request corrections preserve the response. A missing or
+      // malformed successful response needs explicit regeneration, never an
+      // automatic paid POST. Ambiguous creations remain creationPending.
+      const invalidRead = agentMode && readingProvider && err instanceof Error &&
+        (err instanceof SyntaxError || /returned an empty response|returned an invalid response|^OpenAI response completed:/.test(err.message));
+      if (readingProvider && responseId && (invalidRead || requestStatus === 404)) runtime.regenerationRequired = true;
+      const terminalRead = invalidRead || agentMode && [400, 401, 403, 404].includes(requestStatus ?? 0);
+      const retryRead = Boolean(readingProvider && responseId && !terminalRead);
       await save({ status: retryRead ? 'queued' : 'failed', result_payload: state,
-        provider_response_id: malformedCompleted ? null : responseId,
+        provider_response_id: responseId,
         error_message: retryRead ? null : 'Lot interrompu. Les cellules et la réponse du fournisseur sont conservées.',
         progress_message: retryRead ? 'Reconnexion à la réponse IA enregistrée.' :
           (err instanceof SyntaxError || (err instanceof Error && /incomplète/.test(err.message)) ?
@@ -435,30 +522,37 @@ export async function handleMatrix(req: Request, body: Record<string, unknown>, 
     if (!data) return json({ error: 'Dossier inaccessible.' }, 403);
   }
   if (body.action === 'matrix.start') {
-    const { selection, risk, state } = await snapshot(client, body);
-    const { data, error } = await jobs().insert({ function_name: 'cross-data-analyzer', analysis_mode: mode, requested_by: user.id,
+    const { selection, risk, state } = await snapshot(client, body, agentMode);
+    const { data, error } = await jobs().insert({ function_name: functionName, analysis_mode: mode, requested_by: user.id,
       request_payload: { scope, selection, risk, _matrix_runtime: { windowStartedAt: Date.now(), retries: 0 } },
-      result_payload: state, status: 'queued', progress_message: 'Préparation de la matrice.' })
+      result_payload: state, status: 'queued', progress_message: agentMode ? 'Préparation de l’agent GPT-6 Astra et des recherches spécialisées.' : 'Préparation de la matrice.',
+      ...(agentMode ? { model: ASTRA_MODEL, reasoning_effort: 'high' } : {}) })
       .select(projection).single();
     if (error) throw error;
     background(kick(data.id));
     return json({ job: exposeMatrixJob(data) }, 202);
   }
   if (body.action !== 'matrix.latest' && body.action !== 'matrix.resume') return json({ error: 'Action inconnue.' }, 400);
-  let query = jobs().select(projection).eq('function_name', 'cross-data-analyzer').eq('requested_by', user.id).eq('analysis_mode', mode).eq('request_payload->>scope', scope);
+  let query = jobs().select(projection).eq('function_name', functionName).eq('requested_by', user.id).eq('analysis_mode', mode).eq('request_payload->>scope', scope);
   if (typeof body.jobId === 'string') query = query.eq('id', body.jobId);
   const { data: job, error } = await query.order('created_at', { ascending: false }).limit(1).maybeSingle();
   if (error) throw error;
   if (job && body.action === 'matrix.resume' && (job.status === 'failed' || exposeMatrixJob(job)?.stalled)) {
     const runtime = job.request_payload._matrix_runtime as MatrixRuntime | undefined;
-    const regenerate = runtime?.lastProviderStatus === 'incomplete' && runtime.incompleteReason === 'max_output_tokens';
+    const regenerate = runtime?.regenerationRequired === true ||
+      runtime?.lastProviderStatus === 'incomplete' && runtime.incompleteReason === 'max_output_tokens';
     const nextState = job.result_payload as State;
     if (regenerate) nextState.batchSize = 1;
+    const progressMessage = agentMode && nextState.agent && nextState.analysis.agentReview
+      ? agentProgress(nextState as AgentMatrixState).message : 'Reprise de l’analyse en cours.';
     const { data, error: updateError } = await jobs().update({ status: 'queued', error_message: null, updated_at: new Date().toISOString(),
+      progress_message: progressMessage,
       provider_response_id: regenerate ? null : job.provider_response_id,
       result_payload: nextState,
       request_payload: { ...job.request_payload, _matrix_runtime: { ...runtime,
-        windowStartedAt: Date.now(), paused: false, retries: 0, creationPending: false } } })
+        ...(regenerate ? { lastProviderStatus: undefined, incompleteReason: undefined,
+          ...(job.provider_response_id ? { lastRejectedResponseId: job.provider_response_id } : {}) } : {}),
+        windowStartedAt: Date.now(), paused: false, retries: 0, creationPending: false, regenerationRequired: false } } })
       .eq('id', job.id).eq('updated_at', job.updated_at).select(projection).maybeSingle();
     if (updateError) throw updateError;
     if (data) { background(kick(data.id)); return json({ job: exposeMatrixJob(data) }); }

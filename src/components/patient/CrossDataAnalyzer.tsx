@@ -47,6 +47,9 @@ import { resolveAIJob, type AIJobProgress } from '@/lib/aiJobs';
 import { VideoLoader } from './VideoLoader';
 import { RelationshipMatrix } from './RelationshipMatrix';
 import { RiskNetworkGraph } from './RiskNetworkGraph';
+import { reconcileGraphSelectionRequest, snapshotExternalEntities, snapshotSelectionIds,
+  type GraphEntity } from './crossGraphGroups';
+import { AgentCrossAnalysisPanel, type AgentReview } from './AgentCrossAnalysisPanel';
 import useMedicalStats from '@/hooks/useMedicalStats';
 import {
   getAppropriatenessBadgeLabel,
@@ -76,6 +79,7 @@ interface Treatment {
   name: string;
   pathology_id: string;
   type: string | null;
+  isExternal?: boolean;
 }
 
 interface Medication {
@@ -180,6 +184,7 @@ interface TreatmentSchema {
 }
 
 interface AnalysisResult {
+  agentReview?: AgentReview;
   engineVersion?: number;
   requiresReanalysis?: boolean;
   causalLinks: CausalLink[];
@@ -217,9 +222,18 @@ interface NCBIConcept {
 const CrossDataAnalyzer = ({ patientData }: CrossDataAnalyzerProps) => {
   const { invokeAI } = useAI();
   const matrix = useCrossMatrix<AnalysisResult>(patientData?.id, true);
+  const scopeKey = patientData?.id ?? 'general';
+  const graphScope = useRef(scopeKey);
+  const retiredScopeJob = useRef<string | null>(null);
+  if (graphScope.current !== scopeKey) {
+    retiredScopeJob.current = matrix.job?.id ?? null;
+    graphScope.current = scopeKey;
+  }
+  // A job from the previous patient is never displayed while the hook reloads.
+  const displayedJob = matrix.job?.id === retiredScopeJob.current ? null : matrix.job;
   const invokeCrossCloud = (name: string, body: unknown) => supabase.functions.invoke(name, { body });
-  const matrixActive = matrix.job && !matrix.job.stalled && ['processing', 'queued'].includes(matrix.job.status);
-  const matrixResume = matrix.job && (matrix.job.stalled || matrix.job.status === 'failed');
+  const matrixActive = displayedJob && !displayedJob.stalled && ['processing', 'queued'].includes(displayedJob.status);
+  const matrixResume = displayedJob && (displayedJob.stalled || displayedJob.status === 'failed');
   const [pathologies, setPathologies] = useState<Pathology[]>([]);
   const [symptoms, setSymptoms] = useState<Symptom[]>([]);
   const [treatments, setTreatments] = useState<Treatment[]>([]);
@@ -230,17 +244,52 @@ const CrossDataAnalyzer = ({ patientData }: CrossDataAnalyzerProps) => {
   const [generatingTreatmentSchemas, setGeneratingTreatmentSchemas] = useState(false);
   const [analysisProgress, setAnalysisProgress] = useState<AIJobProgress | null>(null);
   const [isAutoSelecting, setIsAutoSelecting] = useState(false);
-  const [result, setResult] = useState<AnalysisResult | null>(null);
+  const [storedResult, setResult] = useState<AnalysisResult | null>(null);
+  const resultJob = useRef<string | null>(null);
+  const result = displayedJob && resultJob.current === displayedJob.id ? storedResult : displayedJob?.result_payload.analysis ?? null;
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
-    setResult(matrix.job?.result_payload.analysis ?? null);
-  }, [matrix.job]);
+    resultJob.current = displayedJob?.id ?? null;
+    setResult(displayedJob?.result_payload.analysis ?? null);
+  }, [displayedJob]);
   const [viewMode, setViewMode] = useState<'list' | 'network'>('list');
 
-  const [selectedPathologies, setSelectedPathologies] = useState<string[]>([]);
-  const [selectedSymptoms, setSelectedSymptoms] = useState<string[]>([]);
-  const [selectedTreatments, setSelectedTreatments] = useState<string[]>([]);
-  const [selectedMedications, setSelectedMedications] = useState<string[]>([]);
+  const [selectionScope, setSelectionScope] = useState(scopeKey);
+  const [storedPathologies, setSelectedPathologies] = useState<string[]>([]);
+  const [storedSymptoms, setSelectedSymptoms] = useState<string[]>([]);
+  const [storedTreatments, setSelectedTreatments] = useState<string[]>([]);
+  const [storedMedications, setSelectedMedications] = useState<string[]>([]);
+  const selectedPathologies = selectionScope === scopeKey ? storedPathologies : [];
+  const selectedSymptoms = selectionScope === scopeKey ? storedSymptoms : [];
+  const selectedTreatments = selectionScope === scopeKey ? storedTreatments : [];
+  const selectedMedications = selectionScope === scopeKey ? storedMedications : [];
+  const restoredSelectionJob = useRef<string | null>(null);
+  const [graphMatchesSnapshot, setGraphMatchesSnapshot] = useState(true);
+  useEffect(() => {
+    restoredSelectionJob.current = null;
+    setSelectionScope(scopeKey);
+    setSelectedPathologies([]); setSelectedSymptoms([]); setSelectedTreatments([]); setSelectedMedications([]);
+    setGraphMatchesSnapshot(true);
+  }, [scopeKey]);
+  useEffect(() => {
+    if (!displayedJob || loading || restoredSelectionJob.current === displayedJob.id) return;
+    restoredSelectionJob.current = displayedJob.id;
+    const selection = snapshotSelectionIds(displayedJob.selection);
+    const external = snapshotExternalEntities(displayedJob.selection);
+    setSelectedPathologies(selection.pathologyIds); setSelectedSymptoms(selection.symptomIds);
+    setSelectedTreatments(selection.treatmentIds); setSelectedMedications(selection.medicationIds);
+    // Catalogue loading has finished. Restore external concepts once, without
+    // replacing the user's draft on the next progress poll.
+    setPathologies(previous => [...new Map([...previous, ...external.filter(e => e.type === 'pathology')
+      .map(e => ({ ...e, category: 'NCBI', specialty: null, severity: null, isExternal: true }))].map(e => [e.id, e])).values()]);
+    setSymptoms(previous => [...new Map([...previous, ...external.filter(e => e.type === 'symptom')
+      .map(e => ({ ...e, body_system: 'NCBI', isExternal: true }))].map(e => [e.id, e])).values()]);
+    setTreatments(previous => [...new Map([...previous, ...external.filter(e => e.type === 'treatment')
+      .map(e => ({ ...e, pathology_id: '', type: null, isExternal: true }))].map(e => [e.id, e])).values()]);
+    setMedications(previous => [...new Map([...previous, ...external.filter(e => e.type === 'medication')
+      .map(e => ({ ...e, atc_code: null, substance: null, isExternal: true }))].map(e => [e.id, e])).values()]);
+    setGraphMatchesSnapshot(true);
+  }, [displayedJob, loading]);
 
   // Filtres de recherche texte
   const [searchPathologies, setSearchPathologies] = useState('');
@@ -543,7 +592,7 @@ const CrossDataAnalyzer = ({ patientData }: CrossDataAnalyzerProps) => {
 
   // Pré-sélection automatique des données patient
   useEffect(() => {
-    if (!patientData || loading || pathologies.length === 0) return;
+    if (!patientData || displayedJob || loading || pathologies.length === 0) return;
 
     const autoSelectPatientData = async () => {
       setIsAutoSelecting(true);
@@ -777,7 +826,7 @@ const CrossDataAnalyzer = ({ patientData }: CrossDataAnalyzerProps) => {
     };
 
     autoSelectPatientData();
-  }, [patientData, loading, pathologies, treatments, medications]);
+  }, [patientData, loading, pathologies, treatments, medications, displayedJob]);
 
   const toggleSelection = (
     id: string,
@@ -843,14 +892,17 @@ const CrossDataAnalyzer = ({ patientData }: CrossDataAnalyzerProps) => {
     const extMedications = chosenMedications
       .map(id => medications.find(m => m.id === id && !m.atc_code))
       .filter(Boolean);
+    const dbTreatmentIds = chosenTreatments.filter(id => !treatments.find(item => item.id === id && item.isExternal));
+    const extTreatments = chosenTreatments.map(id => treatments.find(item => item.id === id && item.isExternal)).filter(Boolean);
 
     return {
       pathologyIds: dbPathologyIds,
       symptomIds: dbSymptomIds,
-      treatmentIds: chosenTreatments,
+      treatmentIds: dbTreatmentIds,
       medicationIds: dbMedicationIds,
       externalPathologies: extPathologies,
       externalSymptoms: extSymptoms,
+      externalTreatments: extTreatments,
       externalMedications: extMedications
     };
   };
@@ -860,12 +912,20 @@ const CrossDataAnalyzer = ({ patientData }: CrossDataAnalyzerProps) => {
   const runAnalysis = async (visibleIds?: {
     pathologyIds?: string[]; symptomIds?: string[];
     treatmentIds?: string[]; medicationIds?: string[];
+    elements?: GraphEntity[];
   }) => {
     if (matrix.busy || matrixActive) return;
-    const request = buildAnalysisRequestBody(visibleIds);
+    const catalogue: GraphEntity[] = [
+      ...pathologies.map(item => ({ ...item, type: 'pathology' as const })),
+      ...symptoms.map(item => ({ ...item, type: 'symptom' as const })),
+      ...treatments.map(item => ({ ...item, type: 'treatment' as const })),
+      ...medications.map(item => ({ ...item, type: 'medication' as const })),
+    ];
+    const initialRequest = buildAnalysisRequestBody(visibleIds);
+    const request = visibleIds?.elements ? reconcileGraphSelectionRequest(initialRequest, visibleIds.elements, catalogue) : initialRequest;
     const count = (request.pathologyIds.length + request.externalPathologies.length +
       request.symptomIds.length + request.externalSymptoms.length +
-      request.treatmentIds.length + request.medicationIds.length + request.externalMedications.length);
+      request.treatmentIds.length + request.externalTreatments.length + request.medicationIds.length + request.externalMedications.length);
     if (count < 2) {
       toast.error('Sélectionnez au moins 2 éléments pour une analyse OpenAI');
       return;
@@ -886,7 +946,7 @@ const CrossDataAnalyzer = ({ patientData }: CrossDataAnalyzerProps) => {
 
     try {
       const { data, error: fnError } = await invokeCrossCloud('cross-data-analyzer', {
-        ...(matrix.job?.selection ?? buildAnalysisRequestBody()),
+        ...(displayedJob?.selection ?? buildAnalysisRequestBody()),
         analysisMode: 'treatment_schemas',
         currentAnalysis: result,
         async: true,
@@ -1028,7 +1088,7 @@ const CrossDataAnalyzer = ({ patientData }: CrossDataAnalyzerProps) => {
               </CardTitle>
               <div className="flex items-center gap-2 mt-1 text-sm text-muted-foreground">
                 <Globe className="h-4 w-4" />
-                {t('Analyse les liens de causalité en croisant vos données patients et la littérature médicale')} (PubMed)
+                {t('GPT-6 Astra recherche les relations entre tous les éléments sélectionnés dans les sources médicales spécialisées')}
                 {medicalStats && (
                   <Badge variant="outline" className="ml-2 bg-blue-50 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300 border-blue-200 dark:border-blue-800">
                     <Database className="h-3 w-3 mr-1" />
@@ -1086,9 +1146,27 @@ const CrossDataAnalyzer = ({ patientData }: CrossDataAnalyzerProps) => {
           </div>
         </CardHeader>
         <CardContent className="space-y-6">
+          {displayedJob && (
+            <div className="rounded-md border p-3 space-y-2">
+              <p className="text-xs font-medium">Analyse enregistrée · {displayedJob.result_payload.elements.length} éléments</p>
+              <p role="status">{displayedJob.progress_message}</p>
+              {displayedJob.error_message && <p>{displayedJob.error_message}</p>}
+              <p className="text-xs text-muted-foreground">Recherche web spécialisée · chaque paire examinée dans les deux sens · alternatives recroisées avant la revue finale. Les propositions nécessitent une validation médicale.</p>
+              {result?.requiresReanalysis && <Button disabled={matrix.busy || Boolean(matrixActive)}
+                onClick={() => matrix.submit('matrix.start', displayedJob!.selection)}>
+                Réanalyser la sélection avec le moteur corrigé
+              </Button>}
+              {matrixResume && !result?.requiresReanalysis && <Button disabled={matrix.busy} onClick={() => matrix.submit('matrix.resume', { jobId: displayedJob.id })}>
+                Reprendre l’analyse
+              </Button>}
+            </div>
+          )}
+          {matrix.error && <p role="alert" className="text-destructive">{matrix.error}</p>}
+          {result?.agentReview && (viewMode !== 'network' || graphMatchesSnapshot) && <AgentCrossAnalysisPanel review={result.agentReview} />}
           {/* Mode Graphique en Réseau */}
           {viewMode === 'network' ? (
             <RiskNetworkGraph
+              key={scopeKey}
               externalPathologies={pathologies}
               externalSymptoms={symptoms}
               externalTreatments={treatments}
@@ -1098,6 +1176,8 @@ const CrossDataAnalyzer = ({ patientData }: CrossDataAnalyzerProps) => {
               selectedTreatmentIds={selectedTreatments}
               selectedMedicationIds={selectedMedications}
               analysisResultFromParent={result}
+              analysisSnapshot={displayedJob ? { jobId: displayedJob.id, elements: displayedJob.result_payload.elements, selection: displayedJob.selection } : null}
+              onSnapshotMatchChange={setGraphMatchesSnapshot}
               onAnalysisResultChange={incoming => setResult(ensureAnalysisShape(incoming as unknown as Parameters<typeof ensureAnalysisShape>[0]))}
               onAnalyzeWithOpenAI={runAnalysis}
               onGenerateTreatmentSchemas={undefined}
@@ -1642,7 +1722,7 @@ const CrossDataAnalyzer = ({ patientData }: CrossDataAnalyzerProps) => {
               {/* Bouton d'analyse */}
               < div className="flex items-center justify-between" >
                 <p className="text-sm text-muted-foreground">
-                  {matrix.job ? `${matrix.job.result_payload.elements.length} éléments dans l’analyse affichée · ` : ''}{getTotalSelected()} dans la nouvelle sélection
+                  {displayedJob ? `${displayedJob.result_payload.elements.length} éléments dans l’analyse affichée · ` : ''}{getTotalSelected()} dans la nouvelle sélection
                 </p>
                 <Button
                   onClick={() => { void runAnalysis(); }}
@@ -1656,28 +1736,12 @@ const CrossDataAnalyzer = ({ patientData }: CrossDataAnalyzerProps) => {
                   ) : (
                     <>
                       <Brain className="h-4 w-4 mr-2" />
-                      Analyser avec OpenAI
+                      Analyser avec GPT-6 Astra
                     </>
                   )}
                 </Button>
               </div >
 
-              {matrix.job && (
-                <div className="rounded-md border p-3 space-y-2">
-                  <p role="status">{matrix.job.progress_message}</p>
-                  {matrix.job.error_message && <p>{matrix.job.error_message}</p>}
-                  <p className="text-xs text-muted-foreground">Les sources retrouvées, les relations contextuelles et les effets démontrés sont distincts. Aucun score de sécurité ni décision de traitement n’est calculé.</p>
-                  {result?.requiresReanalysis && <Button disabled={matrix.busy || Boolean(matrixActive)}
-                    onClick={() => matrix.submit('matrix.start', matrix.job!.selection)}>
-                    Réanalyser la sélection avec le moteur corrigé
-                  </Button>}
-
-                  {matrixResume && !result?.requiresReanalysis && <Button disabled={matrix.busy} onClick={() => matrix.submit('matrix.resume', { jobId: matrix.job.id })}>
-                    Reprendre l’analyse
-                  </Button>}
-                </div>
-              )}
-              {matrix.error && <p role="alert" className="text-destructive">{matrix.error}</p>}
               {analysisProgress && (
                 <div className="rounded-md border bg-muted/30 p-3 text-sm text-muted-foreground">
                   <div className="flex items-center justify-between gap-3">
@@ -1713,7 +1777,7 @@ const CrossDataAnalyzer = ({ patientData }: CrossDataAnalyzerProps) => {
                 selectedSymptoms={selectedSymptoms}
                 selectedTreatments={selectedTreatments}
                 selectedMedications={selectedMedications}
-                snapshot={matrix.job?.result_payload}
+                snapshot={displayedJob?.result_payload}
                 analysisResult={result}
               />
 
@@ -1727,21 +1791,21 @@ const CrossDataAnalyzer = ({ patientData }: CrossDataAnalyzerProps) => {
                       <p className="text-sm text-muted-foreground">{result.summary}</p>
                     </div>
 
-                    {result.schemaComparison && (
+                    {!result.agentReview && result.schemaComparison && (
                       <SchemaComparisonPanel comparison={result.schemaComparison} hasEvidence={canDisplayRiskScore(result.causalLinks, result.schemaComparison.currentScore)} />
                     )}
 
-                    {canDisplayRiskScore(result.causalLinks, result.schemaComparison?.currentScore) && <TreatmentSchemaGenerator
+                    {!result.agentReview && canDisplayRiskScore(result.causalLinks, result.schemaComparison?.currentScore) && <TreatmentSchemaGenerator
                       hasSchemas={(result.treatmentSchemas?.length || 0) > 0}
                       isGenerating={generatingTreatmentSchemas}
                       onGenerate={runTreatmentSchemaGeneration}
                     />}
 
-                    {result.treatmentSchemas && result.treatmentSchemas.length > 0 && (
+                    {!result.agentReview && result.treatmentSchemas && result.treatmentSchemas.length > 0 && (
                       <TreatmentSchemasPanel schemas={result.treatmentSchemas} />
                     )}
 
-                    {result.alternatives && result.alternatives.length > 0 && (
+                    {!result.agentReview && result.alternatives && result.alternatives.length > 0 && (
                       <AlternativesPanel alternatives={result.alternatives} />
                     )}
 
@@ -1790,7 +1854,7 @@ const CrossDataAnalyzer = ({ patientData }: CrossDataAnalyzerProps) => {
                       <div className="space-y-3">
                         <h4 className="font-medium flex items-center gap-2 text-blue-600 dark:text-blue-400">
                           <BookOpen className="h-4 w-4" />
-                          Recherche scientifique · PubMed / Europe PMC
+                          {result.agentReview ? 'Recherche spécialisée · notices, recommandations et littérature médicale' : 'Recherche scientifique · PubMed / Europe PMC'}
                         </h4>
                         <div className="space-y-3">
                           {result.webResearch.map((research, index) => (
