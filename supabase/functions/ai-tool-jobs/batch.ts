@@ -8,9 +8,11 @@ export const SCRAPER_BATCH_LEASE_MS = 90_000;
 export const SCRAPER_BATCH_MONITOR_MS = 35_000;
 export const SCRAPER_CHILD_STALE_MS = 8 * 60_000;
 // Each accepted child costs two internal Edge calls: batch.child then the
-// medical-scraper endpoint. Six attempts per minute leave eighteen of the
-// platform's thirty recursive calls for monitor relays and their retries.
-export const SCRAPER_DISPATCH_WINDOW_MS = 30_000;
+// medical-scraper endpoint. Reserve no more than three child starts in any
+// sliding minute (six calls), leaving twenty-four for monitor relays, duplicate
+// acknowledgements and recovery. A 30s window could create six child starts
+// (twelve calls) and breached the 30/min quota in real CI lost-ack scenarios.
+export const SCRAPER_DISPATCH_WINDOW_MS = 60_000;
 export const SCRAPER_DISPATCH_LIMIT = 3;
 const CONTROL_BUDGET_MS = 40_000;
 const DB_OPERATION_MS = 8_000;
