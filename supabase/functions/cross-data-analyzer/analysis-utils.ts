@@ -85,8 +85,18 @@ export interface TreatmentSchema {
   confidence: Probability;
 }
 
+/** OpenAI interpretations are not independently validated medical evidence. */
+export interface PairAssessment {
+  pairHash: string;
+  verdict: 'cited_relation' | 'hypothesis' | 'insufficient';
+  explanation: string;
+  limitations: string;
+  source: 'openai';
+}
+
 export interface AnalysisResult {
   causalLinks: CausalLink[];
+  pairAssessments?: PairAssessment[];
   summary: string;
   warnings: string[];
   recommendations: string[];
@@ -577,6 +587,12 @@ export function buildEvidenceLinks(input: BuildEvidenceLinksInput): CausalLink[]
 export function ensureAnalysisShape(rawAnalysis: Partial<AnalysisResult> | null | undefined): AnalysisResult {
   return {
     causalLinks: Array.isArray(rawAnalysis?.causalLinks) ? rawAnalysis.causalLinks as CausalLink[] : [],
+    pairAssessments: Array.isArray(rawAnalysis?.pairAssessments)
+      ? rawAnalysis.pairAssessments.filter((item): item is PairAssessment =>
+        Boolean(item && typeof item.pairHash === 'string' &&
+        (item.verdict === 'cited_relation' || item.verdict === 'hypothesis' || item.verdict === 'insufficient') &&
+        typeof item.explanation === 'string' && item.source === 'openai'))
+      : [],
     summary: coerceString(rawAnalysis?.summary, "Analyse terminee. Les liens affiches ont ete controles par les regles de validation clinique."),
     warnings: Array.isArray(rawAnalysis?.warnings) ? rawAnalysis.warnings.filter((value): value is string => typeof value === 'string') : [],
     recommendations: Array.isArray(rawAnalysis?.recommendations) ? rawAnalysis.recommendations.filter((value): value is string => typeof value === 'string') : [],

@@ -386,7 +386,7 @@ test('slow conflicting admission and stop requests stay below their total contro
   assert.equal(f.calls.length, 0);
 });
 
-test('fast batches reserve at most three child attempts per thirty seconds across server relays', async () => {
+test('fast batches reserve at most three child attempts per sliding minute across server relays', async () => {
   const f = fixture();
   const attempts: number[] = [];
   const dispatch = f.runtime.dispatchChild;
@@ -401,7 +401,7 @@ test('fast batches reserve at most three child attempts per thirty seconds acros
   assert.equal(f.calls.length, 12);
   assert.equal(f.peak(), 3);
   for (const start of attempts) {
-    assert.ok(attempts.filter(at => at >= start && at < start + 30_000).length <= 3,
+    assert.ok(attempts.filter(at => at >= start && at < start + 60_000).length <= 3,
       'The persisted quota includes both new URLs and queued retries');
   }
 });
@@ -414,7 +414,7 @@ test('an unavailable child admission consumes its reservation without causing a 
   for (let invocation = 0; invocation < 3; invocation++) await runScraperBatch(f.runtime, job.id);
   assert.ok(attempts.length >= 6, 'A successor eventually retries the still queued children');
   for (const start of attempts) {
-    assert.ok(attempts.filter(at => at >= start && at < start + 30_000).length <= 3);
+    assert.ok(attempts.filter(at => at >= start && at < start + 60_000).length <= 3);
   }
   assert.equal(f.calls.length, 0);
   assert.equal(f.rows.get(job.id)?.status, 'processing');

@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import test, { type TestContext } from 'node:test';
-import { buildPairCandidates, ensureAnalysisShape, type SelectedElement } from '../supabase/functions/cross-data-analyzer/analysis-utils.ts';
-import { readCells, pendingPairs } from '../supabase/functions/cross-data-analyzer/matrix-progress.ts';
+import { buildPairCandidates, buildPairHash, ensureAnalysisShape, normalizeCausalLink, type SelectedElement } from '../supabase/functions/cross-data-analyzer/analysis-utils.ts';
+import { readCells, pendingPairs, readPairAssessments } from '../supabase/functions/cross-data-analyzer/matrix-progress.ts';
+import { createMatrixInitialState } from '../supabase/functions/cross-data-analyzer/matrix-job.ts';
 import { detectHighRiskContext } from '../supabase/functions/_shared/clinical-brain.ts';
 
 const elements: SelectedElement[] = [
@@ -16,6 +17,32 @@ test('an explicit empty cell is audited, a missing or malformed cell is pending 
   ], pairs);
   assert.deepEqual(cells, { [first.pairHash]: [] });
   assert.deepEqual(pendingPairs(elements, cells), pairs.slice(1));
+});
+
+test('local clinical relationships are preserved for OpenAI context, never pre-audited', () => {
+  const localLink = normalizeCausalLink({
+    from: 'Alpha', fromType: 'pathology', to: 'Beta', toType: 'symptom',
+    relationship: 'Association locale à examiner', evidence: 'Mention locale', webSources: [],
+  }, elements);
+  assert.ok(localLink);
+  const state = createMatrixInitialState(elements, [localLink!]);
+  assert.deepEqual(state.cells, {});
+  assert.equal(state.localEvidence?.[buildPairHash('Alpha', 'pathology', 'Beta', 'symptom')]?.length, 1);
+  assert.equal(pendingPairs(state.elements, state.cells).length, 3);
+  assert.deepEqual(state.analysis.causalLinks, []);
+});
+
+test('OpenAI assessments are required, explicit, and cannot target another pair', () => {
+  const hash = pairs[0].pairHash;
+  const raw = [{ pairHash: hash, assessment: {
+    verdict: 'hypothesis', explanation: 'Hypothèse à examiner cliniquement',
+    limitations: 'Sans preuve bibliographique directe',
+  }}];
+  const parsed = readPairAssessments(raw, [pairs[0]]);
+  assert.equal(parsed[hash].source, 'openai');
+  assert.equal(parsed[hash].verdict, 'hypothesis');
+  assert.deepEqual(readPairAssessments([{ pairHash: pairs[1].pairHash, assessment: raw[0].assessment }], [pairs[0]]), {});
+  assert.deepEqual(readPairAssessments([{ pairHash: hash, assessment: { verdict: 'cited_relation', explanation: 'x' } }], [pairs[0]]), {});
 });
 
 test('a response cannot fill another pair or silently discard an invalid link', () => {
@@ -73,7 +100,10 @@ test('server continues without a polling browser and resumes a truncated batch w
       const id = 'ai-' + submissions.length;
       // First group returns one explicit cell. The next group exhausts its
       // larger bounded budgets, then the clinician resumes the remaining cells.
-      const result = hashes.length ? { cells: hashes.slice(0, 1).map((pairHash: string) => ({ pairHash, links: [] })) } :
+      const result = hashes.length ? { cells: hashes.slice(0, 1).map((pairHash: string) => ({ pairHash, links: [], assessment: {
+        verdict: 'insufficient', explanation: 'Aucune relation vérifiée par la recherche',
+        limitations: 'Absence de données externes pertinentes',
+      } })) } :
         { summary: 'Synthèse du test.' };
       const fail = truncate && submissions.length > 1;
       provider.set(id, fail ? { status: 'incomplete', incomplete_details: { reason: 'max_output_tokens' }, max_output_tokens: request.max_output_tokens } :
@@ -113,7 +143,8 @@ test('server continues without a polling browser and resumes a truncated batch w
   globals.Deno = { env: { get: () => 'test-value' } };
   t.after(() => { globals.EdgeRuntime = oldRuntime; globals.Deno = oldDeno; });
   async function dispatch(body: Record<string, unknown>, token = 'owner') {
-    return handleMatrix(new Request(url, { headers: { Authorization: 'Bearer ' + token } }), body, url, service, async () => [], createClient);
+    return handleMatrix(new Request(url, { headers: { Authorization: 'Bearer ' + token } }), body, url, service,
+      async () => { throw new Error('Simulated PubMed and Europe PMC outage'); }, createClient);
   }
   const drain = () => drainMatrixTasks(tasks, t);
   await dispatch({ action: 'matrix.start', externalPathologies: elements.map((e, i) => ({ id: String(i), name: e.name })) });
@@ -133,6 +164,8 @@ test('server continues without a polling browser and resumes a truncated batch w
   assert.equal(job.status, 'completed');
   assert.equal(job.result_payload.analysis.summary, 'Synthèse du test.');
   assert.equal(Object.keys(job.result_payload.cells).length, 3);
+  assert.equal((job.result_payload.analysis as { pairAssessments?: unknown[] }).pairAssessments?.length, 3);
+  assert.ok(submissions.length >= 3, 'OpenAI must examine pairs even when PubMed is offline');
   assert.equal(submissions.slice(1).flat().includes(first), false);
   assert.equal((await (await dispatch({ action: 'matrix.latest' })).json()).job.id, job.id);
 });
@@ -186,7 +219,10 @@ async function runMatrixCadenceFixture(t: TestContext, failReads: boolean, loseA
       posts += 1;
       const body = await request.json();
       const payload = JSON.parse(body.input[1].content);
-      const result = payload.pairs ? { cells: payload.pairs.map(({ pair }: { pair: { pairHash: string } }) => ({ pairHash: pair.pairHash, links: [] })) }
+      const result = payload.pairs ? { cells: payload.pairs.map(({ pair }: { pair: { pairHash: string } }) => ({ pairHash: pair.pairHash, links: [], assessment: {
+        verdict: 'hypothesis', explanation: 'Analyse OpenAI: association possible non vérifiée',
+        limitations: 'Sans source bibliographique directe',
+      } })) }
         : { summary: 'Synthetic complete matrix.' };
       const responseId = `resp_${posts}`;
       providers.set(responseId, { id: responseId, status: 'completed', output_text: JSON.stringify(result) });
