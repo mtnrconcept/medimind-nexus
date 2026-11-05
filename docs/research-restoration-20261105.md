@@ -41,7 +41,7 @@ L’agent croisé conserve la couverture de toutes les paires sélectionnées, d
 
 Le graphe conserve les relations de types ou directions différents entre les mêmes concepts. Les références proposées par le modèle ne sont retenues que si elles correspondent aux sources effectivement récupérées ou à sa trace de recherche native. Une référence liée ne devient pas un grade de preuve élevé. Les sources indisponibles, résumés abrégés, limites de taille et questions non résolues restent visibles.
 
-Le contrat Astra est appliqué aux 24 autres fonctions de synthèse recensées, ainsi qu’aux branches historiques de l’analyse croisée encore accessibles. Les réponses déjà créées avec un ancien modèle restent finalisables avec leur modèle réel ; leur reprise ne déclenche pas une nouvelle génération. Les étapes de traduction ou d’extraction conservent leur rôle distinct.
+Le contrat Astra est appliqué aux 25 autres fonctions de synthèse recensées, ainsi qu’aux branches historiques de l’analyse croisée encore accessibles. Cela inclut le worker de recherche systématique `cde-systematic-analyze/durable-run.ts`, dont la création de réponse ne se trouve pas dans son point d’entrée. Les réponses déjà créées avec un ancien modèle restent finalisables avec leur modèle réel ; leur reprise ne déclenche pas une nouvelle génération. Les étapes de traduction ou d’extraction conservent leur rôle distinct.
 
 Le chat du graphe reçoit les descriptions, relations directionnelles, justifications, références bibliographiques et limites. Son budget de contexte est de 200 000 caractères JSON ; les raccourcis et omissions sont comptés et affichés. Une référence fournie par le navigateur reste explicitement non vérifiée dans cet échange.
 
@@ -77,7 +77,7 @@ Contrôles locaux exécutés sur la version candidate :
 
 | Contrôle | Résultat |
 | --- | --- |
-| `node --import tsx --test --test-concurrency=1 tests/*.test.ts` | 544 tests réussis, aucun échec ni test ignoré. |
+| `node --import tsx --test --test-concurrency=1 tests/*.test.ts` | 546 tests réussis, aucun échec ni test ignoré. |
 | `npm run typecheck`, `typecheck:microsignals`, `typecheck:patient-matching`, `typecheck:workspace` | Réussis. |
 | `npx tsc -p tsconfig.ai-continuity.json --pretty false` | Réussi. |
 | `npx tsc -p tsconfig.scientific-library.json --pretty false` | Réussi. |
@@ -91,13 +91,13 @@ Contrôles locaux exécutés sur la version candidate :
 
 Les cas de régression couvrent la transmission réelle du contexte aux requêtes de synthèse, les références non inventées, les directions et types de relations, les métadonnées bibliographiques, les réponses historiques, la reprise après interruption, les doubles soumissions, les changements de compte et les accès de deux utilisateurs à des patients distincts. Les fournisseurs et données cliniques de ces tests sont synthétiques.
 
-Le contrôle Deno local n’a pas pu télécharger `esm.sh` et `deno.land` : la connexion est refusée dans l’environnement d’exécution. La CI de la [PR #39](https://github.com/mtnrconcept/medimind-nexus/pull/39) vérifie 29 points d’entrée Edge, en plus des tests, du build et des assertions PostgreSQL 17. Le premier passage distant a confirmé les tests et les assertions PostgreSQL, puis identifié une incompatibilité de type générique dans l’adaptateur Supabase du graphe. L’adaptateur utilise désormais le type `SupabaseClient` explicite ; la PR expose le résultat des contrôles sur chaque révision.
+Le contrôle Deno local n’a pas pu télécharger `esm.sh` et `deno.land` : la connexion est refusée dans l’environnement d’exécution. Le premier passage distant a identifié une incompatibilité de type générique dans l’adaptateur Supabase du graphe. Après utilisation du type `SupabaseClient` explicite, les deux jobs de la [CI 42102295471](https://github.com/mtnrconcept/medimind-nexus/actions/runs/42102295471), sur le commit `27ab0119b00c4a5218a2ce1cc8d0e5ed2d42aa14`, ont réussi : tests, huit contrôles TypeScript, 29 points d’entrée Edge sous Deno, lint, build, audit des dépendances et assertions PostgreSQL 17. Les contrôles sont rejoués pour chaque révision de la [PR #39](https://github.com/mtnrconcept/medimind-nexus/pull/39), notamment le dernier alignement du worker de recherche systématique.
 
 L’aperçu Vercel du premier commit a atteint l’état READY et son accueil a été ouvert dans un navigateur distant. Aucune erreur de chargement de l’application n’a été observée. Le parcours authentifié n’a pas été exercé. Les composants bibliographiques ont été vérifiés par rendu et assertions, et les interfaces par TypeScript et compilation. Aucune mesure comparative avec des appels réels à Astra ni validation de pertinence médicale n’est revendiquée.
 
 ## Inventaire des fichiers modifiés
 
-72 fichiers de la version candidate :
+76 fichiers de la version candidate :
 
 ### Interface et continuité du graphe
 
@@ -124,6 +124,8 @@ L’aperçu Vercel du premier commit a atteint l’état READY et son accueil a 
 - `supabase/functions/analyze-user-links/index.ts`
 - `supabase/functions/causal-reasoning/index.ts`
 - `supabase/functions/cde-analyze/index.ts`
+- `supabase/functions/cde-systematic-analyze/durable-run.ts`
+- `supabase/functions/cde-systematic-analyze/index.ts`
 - `supabase/functions/cross-data-analyzer/agent-contract.ts`
 - `supabase/functions/cross-data-analyzer/agent-orchestrator.ts`
 - `supabase/functions/cross-data-analyzer/analysis-utils.ts`
@@ -161,6 +163,8 @@ L’aperçu Vercel du premier commit a atteint l’état READY et son accueil a 
 - `tests/ai-transport.test.ts`
 - `tests/astra-cross-worker.test.ts`
 - `tests/causal-reasoning-routing.test.ts`
+- `tests/cde-systematic-failure.test.ts`
+- `tests/cde-systematic-server.test.ts`
 - `tests/cross-canonical-context.test.ts`
 - `tests/cross-graph-integration.test.ts`
 - `tests/cross-matrix.test.ts`

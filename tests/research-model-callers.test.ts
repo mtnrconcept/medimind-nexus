@@ -77,6 +77,24 @@ test('both legacy matrix creation branches use the research policy while the nat
   assert.equal(agentCalls, 1);
 });
 
+test('systematic research inside the durable helper also uses the explicit research policy', () => {
+  const filename = 'supabase/functions/cde-systematic-analyze/durable-run.ts';
+  const source = ts.createSourceFile(filename, readFileSync(filename, 'utf8'), ts.ScriptTarget.Latest, true);
+  let creations = 0;
+  const visit = (node: ts.Node) => {
+    if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression)
+      && node.expression.getText(source) === 'runtime.start') {
+      creations++;
+      const options = node.arguments.at(-1);
+      assert.ok(options && ts.isCallExpression(options) && ts.isIdentifier(options.expression)
+        && options.expression.text === 'researchAIOptions', 'the non-index worker must not silently fall back to generic routing');
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(source);
+  assert.equal(creations, 1);
+});
+
 test('patient synthesis retrieval carries the same research model policy as its background creation', () => {
   const filename = 'supabase/functions/patient-health-synthesis/index.ts';
   const source = ts.createSourceFile(filename, readFileSync(filename, 'utf8'), ts.ScriptTarget.Latest, true);

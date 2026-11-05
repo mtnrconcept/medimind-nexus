@@ -1,6 +1,7 @@
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { startBackgroundAI } from '../_shared/ai-client.ts';
+import { researchAIOptions } from '../_shared/research-model.ts';
 import {
   BACKGROUND_JOB_TTL_MS, continueBackgroundJobRecord, prepareBackgroundJobPayload,
   prepareBackgroundJobRequest, readBackgroundMonitorState, retrieveBackgroundForWorker,
@@ -191,7 +192,12 @@ serve(async req => {
       prepareBatch,
       checkpoint: current => updateBackgroundJobRecord(supabase, jobId, { request_payload: { _systematic: current } }),
       start: startBackgroundAI,
-      retrieve: responseId => retrieveBackgroundForWorker(supabase, jobId, responseId),
+      retrieve: responseId => retrieveBackgroundForWorker(supabase, jobId, responseId, {
+        ...researchAIOptions({ maxTokens: payload?._backgroundMaxTokens }),
+        // GET must keep the metadata of an existing pre-Astra response too.
+        ...(typeof stored.model === 'string' ? { model: stored.model } : {}),
+        ...(stored.reasoning_effort ? { reasoningEffort: (stored as BackgroundJobRow).reasoning_effort } : {}),
+      }),
       rememberProvider: response => updateBackgroundJobRecord(supabase, jobId, {
         provider_name: 'openai', provider_response_id: response.id, provider_status: response.status,
         provider_started_at: new Date().toISOString(), model: response.model, reasoning_effort: response.reasoningEffort,

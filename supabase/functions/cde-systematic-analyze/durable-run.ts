@@ -1,4 +1,5 @@
 import type { AIBackgroundPollResult, AIBackgroundResponse, AICallOptions } from '../_shared/ai-client.ts';
+import { researchAIOptions } from '../_shared/research-model.ts';
 import type { MedicationCatalogItem } from './medication-catalog.ts';
 import { buildPathologyPrompt, buildPathologyUserPrompt, type PathologyMapping } from './pathology-filter.ts';
 
@@ -186,10 +187,10 @@ export async function executeSystematicStep(
 
   if (pending.length) {
     if (!payload.providerResponseId) {
-      const response = await runtime.start(systemPrompt, userPrompt, {
-        model: 'gpt-5.5', reasoningEffort: 'medium', maxTokens: payload.maxOutputTokens ?? 32_768,
-        enforceClinicalContract: true, elementCount: pending.length + 1, hasExternalEvidence: true,
-      });
+      const response = await runtime.start(systemPrompt, userPrompt, researchAIOptions({
+        maxTokens: payload.maxOutputTokens ?? 32_768,
+        elementCount: pending.length + 1, hasExternalEvidence: true,
+      }));
       await runtime.rememberProvider(response);
       return 'polling';
     }
