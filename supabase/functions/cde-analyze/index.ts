@@ -1,3 +1,4 @@
+import { researchAIOptions, RESEARCH_MODEL } from '../_shared/research-model.ts';
 import {
   BACKGROUND_JOB_TTL_MS, prepareBackgroundJobPayload, prepareBackgroundJobRequest,
   retrieveBackgroundForWorker, startBackgroundJobMonitor, stripBackgroundJobControls, updateBackgroundJobRecord,
@@ -566,19 +567,16 @@ async function runAnalysis(params: {
   });
 
   const { systemPrompt, userPrompt } = buildPrompts(context);
-  const callOptions = {
-    model: "gpt-5.5",
-    reasoningEffort: "high" as const,
+  const callOptions = researchAIOptions({
     maxTokens: backgroundMaxTokens ?? 7000,
     temperature: 0.2,
     timeoutMs: MAX_DIRECT_AI_TIMEOUT_MS,
     elementCount: context.nodes.length + context.edges.length,
     hasExternalEvidence: context.drugInteractions.length > 0 || context.edges.length > 0,
-    enforceClinicalContract: true,
-  };
+  });
 
   let content = "";
-  let model = "gpt-5.5";
+  let model: string = RESEARCH_MODEL;
   let degradedReason: string | null = null;
 
   if (runJob && providerResponseId) {

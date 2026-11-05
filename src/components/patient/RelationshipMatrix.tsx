@@ -1,6 +1,7 @@
 import { relationPresentation, type RelationMetadata } from '../../../supabase/functions/cross-data-analyzer/relation-contract';
 import { frenchMedicalLabel } from '../../../supabase/functions/_shared/medical-terminology';
 import { useMemo, useState } from 'react';
+import { ResearchSourceList, ResearchTraceDetails, type ResearchCitation, type ResearchTrace } from './ResearchSourceList';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
@@ -78,7 +79,7 @@ interface AnalysisResult {
     recommendations?: string[];
     sources?: string[];
     pairAssessments?: PairAssessment[];
-    webResearch?: { query: string; pairHash?: string; status?: 'matched' | 'empty' | 'unavailable'; sources?: { title: string; url: string }[] }[];
+    webResearch?: (ResearchTrace & { query: string; pairHash?: string; status?: 'matched' | 'empty' | 'unavailable'; sources?: ResearchCitation[] })[];
 }
 
 import { buildPairHash, typedElementKey, type PairAssessment, type SelectedElement } from '../../../supabase/functions/cross-data-analyzer/analysis-utils';
@@ -130,7 +131,7 @@ export function RelationshipMatrix({
     const [selectedLink, setSelectedLink] = useState<CausalLink | null>(null);
     const [showLinkDialog, setShowLinkDialog] = useState(false);
     const [selectedAssessment, setSelectedAssessment] = useState<{ left: string; right: string; item: PairAssessment } | null>(null);
-    const [selectedResearch, setSelectedResearch] = useState<{ query: string; sources: { title: string; url: string }[] } | null>(null);
+    const [selectedResearch, setSelectedResearch] = useState<(ResearchTrace & { query: string; sources: ResearchCitation[] }) | null>(null);
 
     // Normaliser les noms pour comparaison
     const normalizeForComparison = (name: string): string => {
@@ -363,7 +364,7 @@ export function RelationshipMatrix({
                                                         ) : research?.sources?.length ? (
                                                             <button type="button" className="rounded-md border border-primary/30 px-2 py-1 text-[11px] text-primary hover:bg-primary/10"
                                                                 title="Publications de contexte, relation clinique non établie"
-                                                                onClick={() => setSelectedResearch({ query: research.query, sources: research.sources! })}>
+                                                                onClick={() => setSelectedResearch({ ...research, sources: research.sources! })}>
                                                                 {research.sources.length} sources · analyse à terminer
                                                             </button>
                                                         ) : (
@@ -410,16 +411,8 @@ export function RelationshipMatrix({
                         Ces références peuvent être contextuelles ou hors sujet. Elles ne constituent pas une preuve
                         d'interaction, de causalité, de sécurité ou d'efficacité.
                     </p>
-                    <ol className="max-h-80 space-y-3 overflow-y-auto">
-                        {selectedResearch?.sources.map(source => (
-                            <li key={source.url} className="rounded-lg border p-3 text-sm">
-                                <a href={source.url} target="_blank" rel="noopener noreferrer"
-                                    className="break-words text-primary underline underline-offset-2">
-                                    {source.title}
-                                </a>
-                            </li>
-                        ))}
-                    </ol>
+                    <ResearchTraceDetails providers={selectedResearch?.providers} scopeNotes={selectedResearch?.scopeNotes} />
+                    <ResearchSourceList sources={selectedResearch?.sources ?? []} className="max-h-80 overflow-y-auto" />
                 </DialogContent>
             </Dialog>
 

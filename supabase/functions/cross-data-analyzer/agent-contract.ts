@@ -1,17 +1,11 @@
 import { normalizeMedicalName, typedElementKey, type CausalLink, type PairAssessment, type PairCandidate, type SelectedElement } from './analysis-utils.ts';
 import { RELATION_ENGINE_VERSION, RELATION_KINDS, relationPresentation, type RelationKind } from './relation-contract.ts';
+import { RESEARCH_MODEL, MEDICAL_WEB_DOMAINS } from '../_shared/research-model.ts';
 type MatrixCells = Record<string, CausalLink[]>;
 
-export const ASTRA_MODEL = 'gpt-6-astra';
+export const ASTRA_MODEL = RESEARCH_MODEL;
 export const AGENT_VERSION = 1;
-export const MEDICAL_WEB_DOMAINS = [
-  'swissmedic.ch', 'swissmedicinfo-pro.ch', 'swissmedicinfo.ch', 'compendium.ch',
-  'ema.europa.eu', 'fda.gov', 'accessdata.fda.gov', 'dailymed.nlm.nih.gov',
-  'pubmed.ncbi.nlm.nih.gov', 'pmc.ncbi.nlm.nih.gov', 'europepmc.org',
-  'nice.org.uk', 'has-sante.fr', 'ansm.sante.fr', 'base-donnees-publique.medicaments.gouv.fr',
-  'who.int', 'cdc.gov', 'clinicaltrials.gov', 'kdigo.org', 'escardio.org',
-  'eular.org', 'ginasthma.org', 'hug.ch', 'hcuge.ch', 'atcddd.fhi.no',
-] as const;
+export { MEDICAL_WEB_DOMAINS };
 
 export interface AgentSource { title: string; url: string }
 export type AgentStage = 'pairs' | 'plan' | 'candidate_pairs' | 'final' | 'completed';

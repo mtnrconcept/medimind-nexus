@@ -1,3 +1,4 @@
+import { researchAIOptions } from '../_shared/research-model.ts';
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { callAI, streamAI, cleanJsonString } from "../_shared/ai-client.ts";
@@ -209,11 +210,9 @@ Produis une synthèse exhaustive et médicalement rigoureuse de cette relation.`
         const aiResponse = await callAI(
             systemPrompt,
             userPrompt,
-            {
-                model: 'gpt-5.5',
-                reasoningEffort: 'high',
+            researchAIOptions({
                 maxTokens: isMultiNode ? 4000 : 2000 // More tokens for multi-node analysis
-            }
+            })
         );
 
         return aiResponse.text || 'Analyse non disponible.';
@@ -292,12 +291,11 @@ Règles STRICTES:
                     const aiResponse = await callAI(
                         systemPrompt,
                         userPrompt,
-                        {
-                            model: "gpt-5.5",
-                            reasoningEffort: "high",
+                        researchAIOptions({
+                            clinicalTask: 'treatment_complex',
                             maxTokens: 2000,
                             temperature: 0.1
-                        }
+                        })
                     );
 
                     // Try to parse JSON from response
@@ -377,12 +375,10 @@ Contexte:
                             (chunk) => {
                                 sendEvent({ type: 'text', content: chunk });
                             },
-                            {
-                                model: "gpt-5.5",
-                                reasoningEffort: "high",
+                            researchAIOptions({
                                 maxTokens: 4000,
                                 temperature: 0.1
-                            }
+                            })
                         );
                         sendEvent({ type: 'done' });
                     } catch (e) {

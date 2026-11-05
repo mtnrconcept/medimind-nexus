@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { build } from 'esbuild';
+import type { AICallOptions } from '../supabase/functions/_shared/ai-client.ts';
+import { RESEARCH_MODEL } from '../supabase/functions/_shared/research-model.ts';
 
 test('the real systematic endpoint finishes every planned window without a browser and isolates the owner', async t => {
   t.mock.method(console, 'error', () => undefined);
@@ -72,8 +74,8 @@ test('the real systematic endpoint finishes every planned window without a brows
     handler?: (request: Request) => Promise<Response>;
     database: typeof databases;
     catalog: typeof entities;
-    start: (system: string, prompt: string, options: { maxTokens?: number }) => Promise<Record<string, unknown>>;
-    retrieve: (id: string) => Promise<Record<string, unknown>>;
+    start: (system: string, prompt: string, options: AICallOptions) => Promise<Record<string, unknown>>;
+    retrieve: (id: string, options?: AICallOptions) => Promise<Record<string, unknown>>;
   };
   const globals = globalThis as typeof globalThis & { __systematicServer?: Fixture; Deno?: unknown; EdgeRuntime?: unknown };
   const oldDeno = globals.Deno, oldRuntime = globals.EdgeRuntime;
@@ -82,6 +84,8 @@ test('the real systematic endpoint finishes every planned window without a brows
   globals.EdgeRuntime = { waitUntil: (promise: Promise<void>) => work.push(promise) };
   t.after(() => { globals.Deno = oldDeno; globals.EdgeRuntime = oldRuntime; delete globals.__systematicServer; });
   const responses = new Map<string, Record<string, unknown>>();
+  const creationOptions: AICallOptions[] = [];
+  const retrievalOptions: Array<AICallOptions | undefined> = [];
   let creations = 0;
   let incomplete = false;
   let ambiguous = false;
@@ -90,9 +94,11 @@ test('the real systematic endpoint finishes every planned window without a brows
     database: databases, catalog: entities,
     async start(_system, prompt, options) {
       creations += 1;
+      creationOptions.push(options);
       const id = `response-${creations}`;
       const names = [...prompt.matchAll(/^\d+\. \[[^\]]+\] (.+)$/gm)].map(match => match[1]);
-      const metadata = { id, provider: 'openai', status: 'queued', model: 'synthetic-model', maxOutputTokens: options.maxTokens ?? 32_768 };
+      const metadata = { id, provider: 'openai', status: 'queued', model: options.model,
+        reasoningEffort: options.reasoningEffort, maxOutputTokens: options.maxTokens ?? 32_768 };
       responses.set(id, { ...metadata, status: incomplete ? 'incomplete' : 'completed',
         ...(incomplete ? { incompleteReason: 'max_output_tokens', partialText: '{"pairs":[' } : {
           text: JSON.stringify({ pairs: names.map(name => ({ entity_b_name: name, is_documented: false,
@@ -102,7 +108,7 @@ test('the real systematic endpoint finishes every planned window without a brows
       if (ambiguous) throw new Error('Network failure after provider accepted POST');
       return metadata;
     },
-    retrieve: async id => responses.get(id)!,
+    retrieve: async (id, options) => { retrievalOptions.push(options); return responses.get(id)!; },
   };
   globals.__systematicServer = fixture;
   const bundle = await build({
@@ -116,7 +122,7 @@ test('the real systematic endpoint finishes every planned window without a brows
       plugin.onLoad({ filter: /.*/, namespace: 'fixture' }, ({ path }) => ({ contents: {
         server: 'export const serve = handler => { globalThis.__systematicServer.handler = handler; };',
         database: 'export const createClient = () => globalThis.__systematicServer.database();',
-        provider: 'export const startBackgroundAI = (...args) => globalThis.__systematicServer.start(...args); export const retrieveBackgroundAI = id => globalThis.__systematicServer.retrieve(id);',
+        provider: 'export const startBackgroundAI = (...args) => globalThis.__systematicServer.start(...args); export const retrieveBackgroundAI = (...args) => globalThis.__systematicServer.retrieve(...args);',
         catalog: 'export const buildMedicationCatalog = async () => globalThis.__systematicServer.catalog; export const isInteractionDocumented = async () => false;',
       }[path]!, loader: 'js' }));
     } }],
@@ -135,8 +141,24 @@ test('the real systematic endpoint finishes every planned window without a brows
   const request = (body: unknown, owner = 'owner-a-jwt') => fixture.handler!(new Request('https://project.invalid/functions/v1/cde-systematic-analyze', {
     method: 'POST', headers: { authorization: `Bearer ${owner}`, 'Content-Type': 'application/json' }, body: JSON.stringify(body),
   }));
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 1_800_000_000_000 });
   let observed = 0;
-  const drain = async () => { while (observed < work.length) await work[observed++]; };
+  const drain = async () => {
+    let ticks = 0;
+    while (observed < work.length) {
+      const task = work[observed++];
+      let settled = false;
+      void task.then(() => { settled = true; }, () => { settled = true; });
+      while (!settled) {
+        for (let step = 0; step < 150; step++) await Promise.resolve();
+        if (!settled) {
+          assert.ok(ticks++ < 10_000, 'The synthetic systematic monitor must settle within its simulated budget');
+          t.mock.timers.tick(100);
+        }
+      }
+      await task;
+    }
+  };
 
   const started = await request({ action: 'start' });
   assert.equal(started.status, 202);
@@ -145,6 +167,11 @@ test('the real systematic endpoint finishes every planned window without a brows
   const job = rows.get('ai_analysis_jobs')!.find(row => row.id === receipt.job.id)!;
   assert.equal(job.status, 'completed');
   assert.equal(creations, 5);
+  assert.ok(creationOptions.every(options => options.model === RESEARCH_MODEL && options.forceModel && options.reasoningEffort === 'high'));
+  assert.ok(retrievalOptions.length > 0 && retrievalOptions.every(options => options?.model === RESEARCH_MODEL && options.reasoningEffort === 'high'),
+    'monitor and finalizer retrieval must keep the model and reasoning metadata of the saved provider response');
+  assert.equal(job.model, RESEARCH_MODEL);
+  assert.equal(job.reasoning_effort, 'high');
   assert.equal(job.result_payload.total_pairs, 14);
   assert.equal(job.result_payload.pairs_processed, 14);
   assert.equal(job.result_payload.pairs_analyzed, 14);

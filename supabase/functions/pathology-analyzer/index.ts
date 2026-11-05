@@ -1,11 +1,18 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { callAI, streamAI } from "../_shared/ai-client.ts";
+import { researchAIOptions } from "../_shared/research-model.ts";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
+
+function jsonError(error: string, status: number): Response {
+  return new Response(JSON.stringify({ error }), {
+    status, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+  });
+}
 
 interface StreamEvent {
   type: 'step_update' | 'text' | 'analysis' | 'done';
@@ -20,28 +27,30 @@ serve(async (req: Request) => {
   }
 
   try {
-    const { pathologyId } = await req.json();
+    const token = req.headers.get('Authorization')?.match(/^Bearer\s+(\S+)$/i)?.[1];
+    if (!token) return jsonError('Authentication required', 401);
+    const supabaseUrl = Deno.env.get('SUPABASE_URL');
+    const supabaseKey = Deno.env.get('SUPABASE_ANON_KEY');
+    if (!supabaseUrl || !supabaseKey) return jsonError('Authentication unavailable', 503);
 
-    if (!pathologyId) {
-      return new Response(
-        JSON.stringify({ error: 'pathologyId is required' }),
-        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
-    }
-
-    const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
-    const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
-
-    // Fix: Force Service Role to bypass RLS, same as in embed-data
+    // Keep catalog and patient reads under the verified caller's RLS policies.
     const supabase = createClient(supabaseUrl, supabaseKey, {
       auth: {
         autoRefreshToken: false,
         persistSession: false
       },
       global: {
-        headers: { Authorization: `Bearer ${supabaseKey}` }
+        headers: { Authorization: `Bearer ${token}` }
       }
     });
+    const auth = await supabase.auth.getUser(token).catch(() => null);
+    if (!auth || (auth.error && (!auth.error.status || auth.error.status >= 500 || auth.error.status === 429))) {
+      return jsonError('Authentication unavailable', 503);
+    }
+    if (auth.error || !auth.data?.user?.id) return jsonError('Authentication required', 401);
+
+    const { pathologyId } = await req.json();
+    if (!pathologyId) return jsonError('pathologyId is required', 400);
 
     const encoder = new TextEncoder();
     const stream = new ReadableStream({
@@ -112,12 +121,10 @@ Effectue l'analyse complète.`;
             (chunk) => {
               sendEvent({ type: 'text', content: chunk });
             },
-            {
-              model: "gpt-5.5",
-              reasoningEffort: "high",
+            researchAIOptions({
               maxTokens: 4000,
               temperature: 0.2
-            }
+            })
           );
 
           const fullText = aiResult.text;

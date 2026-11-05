@@ -7,6 +7,7 @@ import {
   type SystematicRunState, type SystematicWorkerRuntime,
 } from '../supabase/functions/cde-systematic-analyze/durable-run.ts';
 import type { AIBackgroundPollResult, AICallOptions } from '../supabase/functions/_shared/ai-client.ts';
+import { RESEARCH_MODEL } from '../supabase/functions/_shared/research-model.ts';
 
 const entities: SystematicEntity[] = Array.from({ length: 6 }, (_, index) => ({
   id: `synthetic-${index}`, name: `Synthetic substance ${index}`, source: 'local', node_type: 'substance',
@@ -241,12 +242,33 @@ test('strict pair validation rejects missing, duplicate, foreign and invalid-sco
   assert.deepEqual(accepted.pairs.map(pair => pair.entity_b_name), expected.map(entity => entity.name));
 });
 
-test('a resumed output-budget retry preserves its increased budget and the existing model choice', async () => {
+test('a resumed output-budget retry preserves its increased budget and uses Astra with the clinical research contract', async () => {
   const h = harness();
   await executeSystematicStep({ ...h.payload(), maxOutputTokens: 128_000 }, h.runtime);
   assert.equal(h.calls.starts[0].maxTokens, 128_000);
-  assert.equal(h.calls.starts[0].model, 'gpt-5.5');
-  assert.equal(h.calls.starts[0].reasoningEffort, 'medium');
+  assert.equal(h.calls.starts[0].model, RESEARCH_MODEL);
+  assert.equal(h.calls.starts[0].reasoningEffort, 'high');
+  assert.equal(h.calls.starts[0].forceModel, true);
+  assert.equal(h.calls.starts[0].enforceClinicalContract, true);
+  assert.equal(h.calls.starts[0].clinicalTask, 'research_synthesis');
+  assert.equal(h.calls.starts[0].elementCount, 5);
+  assert.equal(h.calls.starts[0].hasExternalEvidence, true);
+});
+
+test('a completed pre-Astra systematic response finalizes without another provider creation', async () => {
+  const state = stateFor(2);
+  state.batch = { index: 0, candidates: [1], pending: [1], cached: 0, documented: 0 };
+  const h = harness(state);
+  h.runtime.retrieve = async responseId => {
+    h.calls.retrieves.push(responseId);
+    return { id: responseId, provider: 'openai', model: 'gpt-5.5', reasoningEffort: 'medium',
+      status: 'completed', text: JSON.stringify(analysisFor(state)) };
+  };
+  assert.equal(await executeSystematicStep({ ...h.payload(), providerResponseId: 'resp_historical' }, h.runtime), 'completed');
+  assert.equal(h.calls.starts.length, 0);
+  assert.deepEqual(h.calls.retrieves, ['resp_historical']);
+  assert.equal(h.saved().result?.pairs_analyzed, 1);
+  assert.equal(h.calls.finishes, 1);
 });
 
 test('completed long clinical fields are preserved through validation and persistence input', () => {

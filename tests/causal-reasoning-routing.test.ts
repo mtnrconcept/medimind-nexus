@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import { runInNewContext } from 'node:vm';
 import ts from 'typescript';
+import * as researchModel from '../supabase/functions/_shared/research-model.ts';
 
 const explanation = 'Explication synthétique du fournisseur de test.';
 const treatment = { optimal_node_ids: ['node-a'], treatment_summary: 'Résumé de test.', rationale: 'Raisonnement de test.' };
@@ -38,6 +39,7 @@ function endpoint(failProvider = false) {
         from: () => { throw new Error('Unexpected database access in an explanation request.'); },
       }) };
       if (name === '../_shared/ai-client.ts') return provider;
+      if (name === '../_shared/research-model.ts') return researchModel;
       throw new Error('Unexpected endpoint dependency: ' + name);
     },
   }, { filename: 'causal-reasoning/index.ts' });

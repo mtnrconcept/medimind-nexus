@@ -2,11 +2,18 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { getOpenFDAComprehensiveData } from "./openfda-api.ts";
 import { callAI } from "../_shared/ai-client.ts";
+import { researchAIOptions } from "../_shared/research-model.ts";
 
 const corsHeaders = {
     "Access-Control-Allow-Origin": "*",
     "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
+
+function jsonError(error: string, status: number): Response {
+    return new Response(JSON.stringify({ error }), {
+        status, headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+}
 
 interface LabResult {
     id: string;
@@ -110,6 +117,21 @@ serve(async (req) => {
     }
 
     try {
+        const token = req.headers.get("Authorization")?.match(/^Bearer\s+(\S+)$/i)?.[1];
+        if (!token) return jsonError("Authentication required", 401);
+        const supabaseUrl = Deno.env.get("SUPABASE_URL");
+        const supabaseAnonKey = Deno.env.get("SUPABASE_ANON_KEY");
+        if (!supabaseUrl || !supabaseAnonKey) return jsonError("Authentication unavailable", 503);
+        const supabase = createClient(supabaseUrl, supabaseAnonKey, {
+            auth: { autoRefreshToken: false, persistSession: false },
+            global: { headers: { Authorization: `Bearer ${token}` } },
+        });
+        const auth = await supabase.auth.getUser(token).catch(() => null);
+        if (!auth || (auth.error && (!auth.error.status || auth.error.status >= 500 || auth.error.status === 429))) {
+            return jsonError("Authentication unavailable", 503);
+        }
+        if (auth.error || !auth.data?.user?.id) return jsonError("Authentication required", 401);
+
         const { patient_id, force_analysis = false } = await req.json();
 
         if (!patient_id) {
@@ -119,10 +141,14 @@ serve(async (req) => {
             );
         }
 
-        // Initialize Supabase client with service role for full access
-        const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
-        const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-        const supabase = createClient(supabaseUrl, supabaseServiceKey);
+        // This endpoint creates patient alerts, so require the existing write grant
+        // before reading clinical data; the caller's RLS also governs every query.
+        const access = await Promise.resolve(supabase.rpc("has_patient_access", {
+            p_patient_id: patient_id,
+            p_require_write: true,
+        })).catch(() => null);
+        if (!access || access.error) return jsonError("Patient access verification unavailable", 503);
+        if (access.data !== true) return jsonError("Patient access denied", 403);
 
         // 1. Fetch patient lab results (last 6 months)
         const sixMonthsAgo = new Date();
@@ -263,11 +289,9 @@ Réponds UNIQUEMENT en JSON valide avec ce format:
         const aiResult = await callAI(
             systemPrompt,
             analysisPrompt,
-            {
-                model: "gpt-5.5",
-                reasoningEffort: "medium",
+            researchAIOptions({
                 maxTokens: 2000,
-            }
+            })
         );
 
         const aiResponseText = aiResult.text;

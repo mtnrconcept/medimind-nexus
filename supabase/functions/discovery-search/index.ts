@@ -1,3 +1,4 @@
+import { researchAIOptions } from '../_shared/research-model.ts';
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { callAI, streamAI } from "../_shared/ai-client.ts";
@@ -440,12 +441,10 @@ RAPPEL: Tu DOIS citer chaque source (PMID/NCT). Aucune affirmation sans preuve. 
                         (chunk) => {
                             sendEvent({ type: 'text', content: chunk });
                         },
-                        {
-                            model: "gpt-5.5",
-                            reasoningEffort: "medium",
+                        researchAIOptions({
                             maxTokens: 12000,
                             temperature: 0.1,
-                        }
+                        })
                     );
 
                     const textContent = aiResult.text;

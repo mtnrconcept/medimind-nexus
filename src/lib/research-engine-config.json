@@ -1,28 +1,25 @@
 {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
-    "version": "1.0.0",
+    "version": "1.1.0",
     "name": "MediMind Research Engine",
     "description": "Configuration du moteur de recherche médicale IA multi-modal",
     "model": {
         "provider": "openai",
-        "primary": "gpt-5.5",
-        "fallback": "gpt-5.5",
-        "fast": "gpt-5.4-mini",
+        "primary": "gpt-6-astra",
+        "fallback": "gpt-6-astra",
+        "fast": "gpt-6-luna",
         "parameters": {
             "targeted": {
-                "temperature": 0.3,
-                "max_tokens": 8000,
-                "top_p": 0.9
+                "reasoning_effort": "high",
+                "max_tokens": 32768
             },
             "systematic": {
-                "temperature": 0.2,
-                "max_tokens": 16000,
-                "top_p": 0.95
+                "reasoning_effort": "high",
+                "max_tokens": 32768
             },
             "live": {
-                "temperature": 0.4,
-                "max_tokens": 12000,
-                "top_p": 0.9,
+                "reasoning_effort": "high",
+                "max_tokens": 32768,
                 "web_search_enabled": true
             }
         }

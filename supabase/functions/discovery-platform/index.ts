@@ -1,3 +1,4 @@
+import { researchAIOptions } from '../_shared/research-model.ts';
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { streamAI } from "../_shared/ai-client.ts";
@@ -563,11 +564,9 @@ Retourne JSON strict selon le format spécifié.`;
             (text) => {
                 if (onChunk) onChunk(text);
             },
-            {
-                model: "gpt-5.5",
-                reasoningEffort: "medium",
+            researchAIOptions({
                 maxTokens: 30000
-            }
+            })
         );
 
         let content = aiResponse.text;

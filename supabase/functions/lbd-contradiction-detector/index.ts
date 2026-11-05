@@ -1,3 +1,4 @@
+import { researchAIOptions } from '../_shared/research-model.ts';
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.3";
 import { corsHeaders } from "../_shared/cors.ts";
@@ -75,13 +76,11 @@ Return a JSON array of objects:
 
         const userPrompt = `Analyze these claims for contradictions:\n\n${claimsList}`;
 
-        // Use GPT-5.5 for contradiction analysis with strong reasoning.
-        const aiResponse = await callAI(systemPrompt, userPrompt, {
-            model: 'gpt-5.5',
-            reasoningEffort: 'high',
+        // Use the explicit research route for contradiction analysis.
+        const aiResponse = await callAI(systemPrompt, userPrompt, researchAIOptions({
             maxTokens: 10000,
             temperature: 0.2
-        });
+        }));
 
         let contradictions: any[] = [];
         try {

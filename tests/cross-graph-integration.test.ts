@@ -7,6 +7,7 @@ import * as grouping from '../src/components/patient/crossGraphGroups.ts';
 import * as contract from '../supabase/functions/cross-data-analyzer/relation-contract.ts';
 import * as display from '../src/components/patient/crossDataDisplay.ts';
 import * as analysisUtils from '../supabase/functions/cross-data-analyzer/analysis-utils.ts';
+import * as researchSources from '../src/components/patient/ResearchSourceList.tsx';
 
 type Tree = { type: unknown; props: Record<string, unknown> };
 type Hook = { value?: unknown; setter?: (next: unknown) => void; deps?: unknown[]; cleanup?: () => void };
@@ -84,6 +85,7 @@ function mountGraph(initialProps: Record<string, unknown>, options: {
       if (name.endsWith('.css')) return {};
       if (name === './crossGraphGroups') return grouping;
       if (name === './crossDataDisplay') return display;
+      if (name === './ResearchSourceList') return researchSources;
       if (name.endsWith('/relation-contract')) return contract;
       if (name.endsWith('/analysis-utils')) return analysisUtils;
       if (name === './RiskNetworkGraph') return { RiskNetworkGraph: 'RiskNetworkGraph' };

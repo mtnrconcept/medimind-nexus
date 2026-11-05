@@ -1,5 +1,6 @@
 import type { AIBackgroundPollResult, AIBackgroundResponse } from './ai-client.ts';
 import { MAX_AI_OUTPUT_TOKENS } from './ai-policy.ts';
+import { RESEARCH_MODEL } from './research-model.ts';
 import { BACKGROUND_JOB_TTL_MS, prepareBackgroundJobPayload } from './background-job-monitor.ts';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -35,7 +36,7 @@ export function buildHypothesisMirror(id: string, ownerId: string, now = Date.no
     status: 'queued', progress_percentage: 0, progress_message: 'En attente de traitement...',
     request_payload: prepareBackgroundJobPayload({ async: true, legacyJobId: id }, now),
     requested_by: ownerId, expires_at: new Date(now + BACKGROUND_JOB_TTL_MS).toISOString(),
-    model: 'gpt-5.5', reasoning_effort: 'high',
+    model: RESEARCH_MODEL, reasoning_effort: 'high',
   };
 }
 

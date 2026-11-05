@@ -1,3 +1,4 @@
+import { researchAIOptions } from '../_shared/research-model.ts';
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { callAI } from "../_shared/ai-client.ts";
 
@@ -89,11 +90,9 @@ Analyse critique en JSON:`;
         const aiResponse = await callAI(
             systemPrompt,
             userPrompt,
-            {
-                model: "gpt-5.5",
-                reasoningEffort: "medium",
+            researchAIOptions({
                 maxTokens: 2048
-            }
+            })
         );
 
         const content = aiResponse.text || '';

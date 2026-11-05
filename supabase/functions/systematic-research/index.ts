@@ -1,3 +1,4 @@
+import { researchAIOptions, RESEARCH_MODEL } from '../_shared/research-model.ts';
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { callAI } from "../_shared/ai-client.ts";
@@ -451,13 +452,13 @@ function detectNovelty(analysisText: string): { isNovel: boolean; noveltyScore: 
 function selectModelStrategy(isNovel: boolean): { model: string; maxTokens: number; rationale: string } {
     if (isNovel) {
         return {
-            model: "gpt-5.5",
+            model: RESEARCH_MODEL,
             maxTokens: 40000,
             rationale: "High novelty detected - using OpenAI with extended tokens for comprehensive analysis"
         };
     } else {
         return {
-            model: "gpt-5.5",
+            model: RESEARCH_MODEL,
             maxTokens: 4000,
             rationale: "Standard comparison - using OpenAI with minimal tokens for efficiency"
         };
@@ -675,12 +676,10 @@ Cite TOUTES les sources (PMID, NCT, Guidelines).
                     const initialAIResponse = await callAI(
                         SYSTEM_PROMPT,
                         comprehensiveContext,
-                        {
-                            model: initialStrategy.model,
-                            reasoningEffort: "high",
+                        researchAIOptions({
                             maxTokens: initialStrategy.maxTokens,
                             temperature: 0.2
-                        }
+                        })
                     );
 
                     let textContent = initialAIResponse.text || "";
@@ -709,12 +708,10 @@ Cite TOUTES les sources (PMID, NCT, Guidelines).
                             const upgradeAIResponse = await callAI(
                                 SYSTEM_PROMPT,
                                 comprehensiveContext,
-                                {
-                                    model: upgradeStrategy.model,
-                                    reasoningEffort: "high",
+                                researchAIOptions({
                                     maxTokens: upgradeStrategy.maxTokens,
                                     temperature: 0.2
-                                }
+                                })
                             );
 
                             if (upgradeAIResponse.text) {

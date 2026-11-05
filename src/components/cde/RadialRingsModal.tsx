@@ -4,12 +4,16 @@ import { Canvas, useFrame, ThreeEvent } from '@react-three/fiber';
 import { OrbitControls, Html, Line } from '@react-three/drei';
 import * as THREE from 'three';
 import { X, Play, Pause, RotateCcw, Sparkles, Loader2, MessageSquare, ExternalLink, Plus, GitBranch, Search, Save, FolderOpen, MousePointer2, Lasso, Circle as CircleIcon, Square, EyeOff, GripHorizontal } from 'lucide-react';
-import { supabase, aiFetch } from '@/integrations/supabase/client';
+import { supabase, aiTransport } from '@/integrations/supabase/client';
+import { runGraphResearch } from '@/lib/graphResearch';
+import { createOwnerBoundGraphInvoke } from '@/lib/graphResearchSession';
+import type { AIJobProgress } from '@/lib/aiJobs';
+import ReactMarkdown from 'react-markdown';
 import { useAI } from '@/contexts/AIContext';
 import { RingNode, RingEdge, MicroSignal, RadialRingsData } from '@/types/graph';
 import type { SourceStatus } from '../../../supabase/functions/deep-research-graph/sources';
 import { RING_COLORS, LANE_COLORS, NODE_TYPE_COLORS, EDGE_TYPE_COLORS, TIMING } from '@/config/graphSemantics';
-import { isWebGLAvailable, getSemanticEdgeColor, isNodeType, transformNode, transformEdge, getEdgeKey, dedupeEdges } from '@/utils/graphUtils';
+import { isWebGLAvailable, getSemanticEdgeColor, isNodeType, transformNode, transformEdge, getEdgeKey, dedupeEdges, mergeRadialResearchGraph, getNodeConceptKey } from '@/utils/graphUtils';
 import DraggablePanel from './DraggablePanel';
 import { PanelRegistryProvider } from './PanelRegistry';
 import { NeuralNodeAnimation } from './NeuralNodeAnimation';
@@ -159,158 +163,20 @@ function MatrixBackground() {
 
 // [SECTION:LOADING]
 // [SUB:LOADING.STEPS]
-const LOADING_STEPS = [
-    { label: "Connexion à l'API OpenAI", icon: "🔌", duration: 1500 },
-    { label: "Analyse sémantique de la pathologie", icon: "🧠", duration: 2000 },
-    { label: "Extraction des entités médicales", icon: "🔬", duration: 2500 },
-    { label: "Identification des médicaments associés", icon: "💊", duration: 2000 },
-    { label: "Recherche des symptômes corrélés", icon: "🩺", duration: 1800 },
-    { label: "Analyse des interactions médicamenteuses", icon: "⚠️", duration: 2200 },
-    { label: "Détection des contre-indications", icon: "🚫", duration: 1500 },
-    { label: "Construction des liens sémantiques", icon: "🔗", duration: 2000 },
-    { label: "Calcul des scores de pertinence", icon: "📊", duration: 1800 },
-    { label: "Optimisation de la topologie du graphe", icon: "🌐", duration: 2000 },
-    { label: "Génération des positions des nœuds", icon: "📍", duration: 1500 },
-    { label: "Finalisation du Knowledge Graph", icon: "✨", duration: 1000 },
-];
-
-// [SUB:LOADING.PROGRESS]
-function LoadingProgressBar() {
-    const [currentStep, setCurrentStep] = useState(0);
-    const [progress, setProgress] = useState(0);
-
-    useEffect(() => {
-        // Progress animation - smooth continuous progress
-        const progressInterval = setInterval(() => {
-            setProgress(prev => {
-                if (prev >= 100) return 100;
-                // Slow down as we approach 100%
-                const increment = prev < 70 ? 1.5 : prev < 90 ? 0.8 : 0.3;
-                return Math.min(100, prev + increment);
-            });
-        }, 100);
-
-        // Step cycling - change step every 2-3 seconds
-        const stepInterval = setInterval(() => {
-            setCurrentStep(prev => (prev + 1) % LOADING_STEPS.length);
-        }, 1500);
-
-        return () => {
-            clearInterval(progressInterval);
-            clearInterval(stepInterval);
-        };
-    }, []);
-
-    const step = LOADING_STEPS[currentStep];
-
+function LoadingProgressBar({ job }: { job: AIJobProgress | null }) {
+    const progress = Math.max(0, Math.min(100, job?.progress ?? 0));
     return (
-        <div className="absolute bottom-[-80px] left-1/2 transform -translate-x-1/2 w-[320px]">
-            {/* Title */}
-            <p className="text-purple-400 font-medium tracking-wider text-center mb-3 animate-pulse">
-                Construction du Knowledge Graph
+        <div className="absolute bottom-[-80px] left-1/2 -translate-x-1/2 w-[min(360px,85vw)] text-center">
+            <p className="text-purple-300 font-medium mb-3">Recherche médicale approfondie</p>
+            <div role="progressbar" aria-label="Progression de la recherche" aria-valuemin={0}
+                aria-valuemax={100} aria-valuenow={progress} className="h-2 bg-gray-800 rounded-full overflow-hidden">
+                <div className="h-full rounded-full bg-gradient-to-r from-cyan-500 to-purple-500 transition-all"
+                    style={{ width: progress + '%' }} />
+            </div>
+            <p role="status" aria-live="polite" className="mt-3 text-cyan-200 text-sm">
+                {job?.message || 'Préparation des sources et du raisonnement.'}
             </p>
-
-            {/* Futuristic Progress Bar Container */}
-            <div className="relative">
-                {/* Background track */}
-                <div className="h-2 bg-gray-800/80 rounded-full overflow-hidden border border-cyan-500/20">
-                    {/* Animated gradient background */}
-                    <div
-                        className="absolute inset-0 opacity-30"
-                        style={{
-                            background: 'linear-gradient(90deg, transparent 0%, rgba(6, 182, 212, 0.3) 50%, transparent 100%)',
-                            animation: 'shimmer 2s infinite linear',
-                            backgroundSize: '200% 100%'
-                        }}
-                    />
-
-                    {/* Main progress fill */}
-                    <div
-                        className="h-full rounded-full relative overflow-hidden transition-all duration-300 ease-out"
-                        style={{
-                            width: `${progress}%`,
-                            background: 'linear-gradient(90deg, #06b6d4 0%, #a855f7 50%, #22d3ee 100%)',
-                            boxShadow: '0 0 20px rgba(6, 182, 212, 0.5), 0 0 40px rgba(168, 85, 247, 0.3)'
-                        }}
-                    >
-                        {/* Glowing pulse effect on the progress bar */}
-                        <div
-                            className="absolute inset-0"
-                            style={{
-                                background: 'linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.4) 50%, transparent 100%)',
-                                animation: 'progressPulse 1.5s infinite'
-                            }}
-                        />
-                    </div>
-
-                    {/* Leading edge glow */}
-                    <div
-                        className="absolute top-0 h-full w-4 rounded-full"
-                        style={{
-                            left: `calc(${progress}% - 8px)`,
-                            background: 'radial-gradient(circle, rgba(34, 211, 238, 0.8) 0%, transparent 70%)',
-                            filter: 'blur(2px)',
-                            transition: 'left 0.3s ease-out'
-                        }}
-                    />
-                </div>
-
-                {/* Percentage indicator */}
-                <div className="absolute -right-12 top-1/2 -translate-y-1/2 text-cyan-400 font-mono text-xs font-bold">
-                    {Math.round(progress)}%
-                </div>
-            </div>
-
-            {/* Step description */}
-            <div className="mt-3 flex items-center justify-center gap-2 h-6">
-                <span className="text-lg" style={{ animation: 'bounce 1s infinite' }}>
-                    {step.icon}
-                </span>
-                <p
-                    className="text-cyan-400/80 text-sm font-mono"
-                    style={{
-                        animation: 'fadeInOut 2.5s infinite',
-                        textShadow: '0 0 10px rgba(6, 182, 212, 0.5)'
-                    }}
-                >
-                    {step.label}
-                </p>
-            </div>
-
-            {/* Step counter */}
-            <div className="mt-2 flex justify-center gap-1">
-                {LOADING_STEPS.map((_, i) => (
-                    <div
-                        key={i}
-                        className={`w-1.5 h-1.5 rounded-full transition-all duration-300 ${i === currentStep
-                            ? 'bg-cyan-400 scale-125 shadow-lg shadow-cyan-400/50'
-                            : i < currentStep
-                                ? 'bg-purple-500/60'
-                                : 'bg-gray-600/40'
-                            }`}
-                    />
-                ))}
-            </div>
-
-            {/* CSS Animations */}
-            <style>{`
-                @keyframes shimmer {
-                    0% { background-position: -200% 0; }
-                    100% { background-position: 200% 0; }
-                }
-                @keyframes progressPulse {
-                    0%, 100% { opacity: 0.3; transform: translateX(-100%); }
-                    50% { opacity: 0.8; transform: translateX(100%); }
-                }
-                @keyframes fadeInOut {
-                    0%, 100% { opacity: 0.6; }
-                    50% { opacity: 1; }
-                }
-                @keyframes bounce {
-                    0%, 100% { transform: translateY(0); }
-                    50% { transform: translateY(-3px); }
-                }
-            `}</style>
+            <p className="mt-2 text-xs text-gray-400">Le suivi reprend après fermeture de cette vue.</p>
         </div>
     );
 }
@@ -716,8 +582,9 @@ function SVGFallback({
             // 1. Check ID collision
             if (seenIds.has(node.id)) return false;
 
-            // 2. Check Name collision (Semantic duplicate)
-            const normalizedName = node.name.toLowerCase().trim();
+            // A shared medicine can belong to multiple disease groups. Only
+            // deduplicate the same type, name and parent pathology together.
+            const normalizedName = getNodeConceptKey(node);
             if (seenNames.has(normalizedName)) {
                 // Duplicate found! Map this node's ID to the existing one
                 const keptId = seenNames.get(normalizedName)!;
@@ -731,10 +598,11 @@ function SVGFallback({
         });
 
         // Filter by active pathologies (comorbidity mode)
-        let filteredNodes = activePathologies && activePathologies.size > 0
+        let filteredNodes = activePathologies
             ? deduplicatedNodes.filter(node => {
-                // Always show nodes without parent_pathology, or nodes whose parent is active
-                if (!node.parent_pathology) return true;
+                if (!activePathologies.size) return false;
+                // Cross-condition findings must not disappear from both groups.
+                if (!node.parent_pathology || node.parent_pathology === 'COMORBIDITY') return true;
                 return activePathologies.has(node.parent_pathology);
             })
             : deduplicatedNodes;
@@ -901,6 +769,10 @@ function SVGFallback({
                 const nodesByParent = new Map<string, RingNode[]>();
                 catNodes.forEach(n => {
                     let parentId = 'unknown';
+                    if (n.parent_pathology === 'COMORBIDITY') {
+                        parentId = 'COMORBIDITY';
+                        foci.set(parentId, defaultCenter);
+                    }
                     if (n.parent_pathology) {
                         const parent = centerNodes.find(c => c.name === n.parent_pathology);
                         if (parent && foci.has(parent.id)) parentId = parent.id;
@@ -1578,8 +1450,6 @@ function SVGFallback({
                         const totalEdges = data.knowledge_graph.edges.length;
 
                         // Deduplicate edges by normalized key AND re-map using idRedirects
-                        const seenEdges = new Set<string>();
-
                         // First, remap all edges to use the KEPT node IDs (if a node was merged)
                         const mappedEdges = data.knowledge_graph.edges.map(edge => ({
                             ...edge,
@@ -1587,12 +1457,7 @@ function SVGFallback({
                             target: idRedirects.get(edge.target) || edge.target
                         })).filter(edge => edge.source !== edge.target); // Remove self-loops created by merge
 
-                        let uniqueEdges = mappedEdges.filter(edge => {
-                            const key = [edge.source, edge.target].sort().join('-');
-                            if (seenEdges.has(key)) return false;
-                            seenEdges.add(key);
-                            return true;
-                        });
+                        let uniqueEdges = dedupeEdges(mappedEdges);
 
                         // Apply edge filter based on mode
                         if (edgeFilterMode === 'central-only' && centralNodeId) {
@@ -1614,6 +1479,13 @@ function SVGFallback({
                             });
                         }
 
+                        // Offset parallel relations geometrically only. This does
+                        // not merge their distinct direction, explanation or type.
+                        const parallelEdges = new Map<string, string[]>();
+                        for (const edge of uniqueEdges) {
+                            const pair = JSON.stringify([edge.source, edge.target].sort());
+                            parallelEdges.set(pair, [...(parallelEdges.get(pair) ?? []), getEdgeKey(edge)]);
+                        }
                         uniqueEdges.forEach((edge, edgeIndex) => {
                             const basePosA = nodePositions.get(edge.source);
                             const basePosB = nodePositions.get(edge.target);
@@ -1630,13 +1502,23 @@ function SVGFallback({
                             const customPosA = customNodePositions.get(edge.source);
                             const customPosB = customNodePositions.get(edge.target);
 
-                            const posA = (!ignoreCustomPositions && customPosA)
+                            let posA = (!ignoreCustomPositions && customPosA)
                                 ? { x: customPosA.x + dragOffsetA.x, y: customPosA.y + dragOffsetA.y }
                                 : { x: basePosA.x + dragOffsetA.x, y: basePosA.y + dragOffsetA.y };
 
-                            const posB = (!ignoreCustomPositions && customPosB)
+                            let posB = (!ignoreCustomPositions && customPosB)
                                 ? { x: customPosB.x + dragOffsetB.x, y: customPosB.y + dragOffsetB.y }
                                 : { x: basePosB.x + dragOffsetB.x, y: basePosB.y + dragOffsetB.y };
+
+                            const siblings = parallelEdges.get(JSON.stringify([edge.source, edge.target].sort()))!;
+                            const lane = siblings.indexOf(getEdgeKey(edge)) - (siblings.length - 1) / 2;
+                            const deltaX = posB.x - posA.x, deltaY = posB.y - posA.y;
+                            const distance = Math.hypot(deltaX, deltaY) || 1;
+                            const orientation = edge.source < edge.target ? 1 : -1;
+                            const offsetX = -deltaY / distance * lane * 14 * orientation;
+                            const offsetY = deltaX / distance * lane * 14 * orientation;
+                            posA = { x: posA.x + offsetX, y: posA.y + offsetY };
+                            posB = { x: posB.x + offsetX, y: posB.y + offsetY };
 
 
                             // Check visibility (both nodes must be visible)
@@ -1688,6 +1570,7 @@ function SVGFallback({
 
                             allEdges.push(
                                 <g key={`edge-${edgeIndex}-${edge.id}`}>
+                                    <title>{nodeA.name + ' → ' + nodeB.name + ' : ' + edge.relationship}</title>
                                     {/* Background line (drawn progressively) */}
                                     <line
                                         x1={posA.x} y1={posA.y}
@@ -1708,6 +1591,9 @@ function SVGFallback({
                                             />
                                         )}
                                     </line>
+
+                                    <path d="M -6 -4 L 6 0 L -6 4 Z" fill={color} opacity={opacity}
+                                        transform={'translate(' + (posA.x + dx * 0.68) + ' ' + (posA.y + dy * 0.68) + ') rotate(' + (Math.atan2(dy, dx) * 180 / Math.PI) + ')'} />
 
                                     {/* DANGEROUS EDGE: Pulsing glow effect - CSS animated */}
                                     {isDangerousEdge && edgeProgress >= 1 && (
@@ -3666,15 +3552,19 @@ interface LinkModalProps {
     sourceNode: RingNode | null;
     targetNode: RingNode | null;
     multiNodes?: RingNode[]; // All nodes for multi-node analysis
+    relatedEdges?: RingEdge[];
+    research?: RadialRingsData['research'];
     pathology: string;
     onSetCentral?: (nodeId: string) => void;
 }
 
-function LinkExplanationModal({ isOpen, onClose, edge, sourceNode, targetNode, multiNodes, pathology, onSetCentral }: LinkModalProps) {
+function LinkExplanationModal({ isOpen, onClose, edge, sourceNode, targetNode, multiNodes, relatedEdges = [], research, pathology, onSetCentral }: LinkModalProps) {
     const { invokeAI } = useAI();
     const [explanation, setExplanation] = useState<string>('');
     const [isLoading, setIsLoading] = useState(false);
     const [fromCache, setFromCache] = useState(false);
+
+    const explanationRequest = useRef(0);
 
     // Chat state
     const [chatMessages, setChatMessages] = useState<{ role: 'user' | 'assistant', content: string }[]>([]);
@@ -3714,6 +3604,14 @@ function LinkExplanationModal({ isOpen, onClose, edge, sourceNode, targetNode, m
                 message: userMessage,
                 context: {
                     analysisContent: explanation,
+                    references: edge?.references ?? [],
+                    rationale: edge?.rationale ?? null,
+                    researchLimitations: research?.limitations ?? [],
+                    researchCoverage: research ? {
+                        result_status: research.result_status,
+                        source_statuses: research.source_statuses,
+                        unresolved_questions: research.unresolved_questions,
+                    } : undefined,
                     sourceNode: sourceNode?.name,
                     targetNode: targetNode?.name,
                     pathology,
@@ -3723,7 +3621,8 @@ function LinkExplanationModal({ isOpen, onClose, edge, sourceNode, targetNode, m
 
             if (error) throw error;
 
-            setChatMessages(prev => [...prev, { role: 'assistant', content: data.message || 'Désolé, je n\'ai pas pu générer une réponse.' }]);
+            setChatMessages(prev => [...prev, { role: 'assistant', content: appendChatCoverage(
+                data.message || 'Désolé, je n\'ai pas pu générer une réponse.', data.contextCoverage) }]);
         } catch (err) {
             console.error('Chat error:', err);
             setChatMessages(prev => [...prev, { role: 'assistant', content: '❌ Erreur de communication avec l\'assistant. Veuillez réessayer.' }]);
@@ -3742,6 +3641,7 @@ function LinkExplanationModal({ isOpen, onClose, edge, sourceNode, targetNode, m
         if (isOpen && edge && sourceNode && targetNode) {
             fetchExplanation();
         }
+        return () => { explanationRequest.current += 1; };
     }, [isOpen, edge, sourceNode, targetNode, multiNodes]);
 
     const fetchExplanation = async () => {
@@ -3751,37 +3651,18 @@ function LinkExplanationModal({ isOpen, onClose, edge, sourceNode, targetNode, m
         setExplanation('');
         setFromCache(false);
 
-        // Normalize node names for consistent cache lookup
-        // For multi-node analysis, create a unique cache key from all node names sorted alphabetically
-        const allNodesToAnalyze = isMultiNodeAnalysis && multiNodes
-            ? multiNodes.map(n => n.name).sort()
-            : [sourceNode.name, targetNode.name].sort();
-        const cacheKey = allNodesToAnalyze.join('|');
-        const [normSource, normTarget] = [allNodesToAnalyze[0], allNodesToAnalyze[allNodesToAnalyze.length - 1]];
+        const requestVersion = ++explanationRequest.current;
+        // Use the explanation attached to this exact directed relation. The old
+        // shared pair-name cache mixed different effects and source revisions.
+        if (!isMultiNodeAnalysis && edge.rationale?.trim()) {
+            setExplanation(edge.rationale);
+            setFromCache(true);
+            setIsLoading(false);
+            return;
+        }
 
         try {
-            // Step 1: Check cache first
-            // For multi-node, we use source_name to store the full cache key
-            const { data: cached, error: cacheError } = await supabase
-                .from('link_explanations_cache' as any)
-                .select('id, explanation')
-                .eq('source_name', isMultiNodeAnalysis ? cacheKey : normSource)
-                .eq('target_name', isMultiNodeAnalysis ? 'MULTI_NODE' : normTarget)
-                .eq('pathology', pathology)
-                .maybeSingle();
-
-            if (cached && !cacheError) {
-                // Cache hit! Use cached explanation
-                setExplanation((cached as any).explanation);
-                setFromCache(true);
-                setIsLoading(false);
-
-                // Increment hit count in background (fire and forget)
-                supabase.rpc('increment_link_cache_hit' as any, { cache_id: (cached as any).id }).then(() => { }, () => { });
-                return;
-            }
-
-            // Step 2: Cache miss - call AI
+            // Older graphs and multi-concept selections need a new contextual review.
             // Build query based on whether this is multi-node or standard 2-node analysis
             const queryPrompt = isMultiNodeAnalysis
                 ? `Analyse en détail les relations thérapeutiques et cliniques entre TOUS ces concepts médicaux dans le contexte de "${pathology}":
@@ -3816,11 +3697,23 @@ Fournis:
                     multiNodes: isMultiNodeAnalysis ? multiNodes!.map(n => ({ name: n.name, type: n.node_type })) : undefined,
                     relationship: edge.relationship,
                     evidence_grade: edge.evidence_grade,
+                    rationale: edge.rationale ?? null,
+                    references: edge.references ?? [],
+                    nodes: (isMultiNodeAnalysis ? multiNodes! : [sourceNode, targetNode]).map(node => ({
+                        id: node.id, name: node.name, type: node.node_type, description: node.properties.description,
+                        parent_pathology: node.parent_pathology, references: node.properties.references ?? [],
+                    })),
+                    known_relationships: relatedEdges.filter(link => {
+                        const selectedIds = new Set((isMultiNodeAnalysis ? multiNodes! : [sourceNode, targetNode]).map(node => node.id));
+                        return selectedIds.has(link.source) && selectedIds.has(link.target);
+                    }),
+                    source_limitations: research?.limitations ?? ['Provenance historique à vérifier.'],
                     pathology
                 }
             });
 
             if (response.error) throw response.error;
+            if (requestVersion !== explanationRequest.current) return;
 
             let aiExplanation = response.data?.analysis ||
                 response.data?.explanation ||
@@ -3884,35 +3777,18 @@ Fournis:
             }
 
             if (!aiExplanation) {
-                console.error('[LINK-ANALYSIS] Unexpected format:', response);
+                console.warn('[LINK-ANALYSIS] No usable explanation returned.');
                 aiExplanation = `Analyse non disponible. (Format reçu: ${typeof response.data === 'object' ? JSON.stringify(response.data).slice(0, 100) + '...' : typeof response.data})`;
             }
             setExplanation(aiExplanation);
 
-            // Step 3: Save to cache for future use (fire and forget)
-            // For multi-node analysis, use cacheKey as source_name and 'MULTI_NODE' as target_name
-            supabase
-                .from('link_explanations_cache' as any)
-                .upsert({
-                    source_name: isMultiNodeAnalysis ? cacheKey : normSource,
-                    target_name: isMultiNodeAnalysis ? 'MULTI_NODE' : normTarget,
-                    pathology: pathology,
-                    relationship: isMultiNodeAnalysis ? `Multi-node analysis (${allNodesToAnalyze.length} nodes)` : edge.relationship,
-                    evidence_grade: edge.evidence_grade,
-                    explanation: aiExplanation
-                }, {
-                    onConflict: 'source_name,target_name,pathology'
-                })
-                .then(
-                    () => console.log('Cache saved successfully'),
-                    () => console.log('Cache save skipped')
-                );
 
         } catch (err) {
-            console.error('Link explanation error:', err);
+            if (requestVersion !== explanationRequest.current) return;
+            console.warn('Link explanation unavailable.');
             setExplanation(`**Connexion: ${sourceNode.name} → ${targetNode.name}**\n\nRelation: ${edge.relationship}\nGrade: ${edge.evidence_grade}\n\n_L'analyse IA détaillée n'a pas pu être chargée. Consultez les références du graphe pour vérifier cette relation proposée._`);
         } finally {
-            setIsLoading(false);
+            if (requestVersion === explanationRequest.current) setIsLoading(false);
         }
     };
 
@@ -3968,7 +3844,7 @@ Fournis:
                         )}
                         {fromCache && (
                             <span className="px-2 py-1 bg-cyan-900/50 text-cyan-400 border border-cyan-500/30 rounded text-xs ml-auto">
-                                ⚡ Cache
+                                Analyse enregistrée
                             </span>
                         )}
                     </div>
@@ -3976,6 +3852,14 @@ Fournis:
 
                 {/* Content */}
                 <div className="p-4 overflow-y-auto flex-1 min-h-0">
+                    <div className="mb-4 rounded-lg border border-gray-700 bg-gray-800/50 p-3 text-xs text-gray-300">
+                        <p>{edge.references?.length ? 'Sources reliées à cette relation ; interprétation clinique à valider.' : 'Hypothèse de recherche : aucune référence inspectable n’est attachée à cette relation.'}</p>
+                        {(edge.references ?? []).map(reference => (
+                            <a key={reference.url} href={reference.url} target="_blank" rel="noopener noreferrer"
+                                className="mt-2 block break-words text-cyan-300 underline">{reference.title}</a>
+                        ))}
+                    </div>
+
                     {isLoading ? (
                         <div className="flex items-center justify-center py-12">
                             <div className="text-center">
@@ -4042,31 +3926,9 @@ Fournis:
                                                     }`}
                                             >
                                                 {msg.role === 'assistant' ? (
-                                                    <div
-                                                        className="prose prose-sm prose-invert max-w-none leading-relaxed"
-                                                        style={{
-                                                            whiteSpace: 'pre-wrap',
-                                                            lineHeight: '1.7'
-                                                        }}
-                                                        dangerouslySetInnerHTML={{
-                                                            __html: msg.content
-                                                                // Convert markdown bold **text** to <strong>
-                                                                .replace(/\*\*([^*]+)\*\*/g, '<strong class="text-cyan-300 font-semibold">$1</strong>')
-                                                                // Convert markdown italic *text* to <em>
-                                                                .replace(/(?<!\*)\*([^*]+)\*(?!\*)/g, '<em class="text-gray-300">$1</em>')
-                                                                // Convert bullet points * to proper list items with spacing
-                                                                .replace(/^\* /gm, '<div class="mt-2 pl-2">• ')
-                                                                .replace(/• ([^<]*?)(?=<div|$)/g, '• $1</div>')
-                                                                // Add space after emoji at start of paragraphs
-                                                                .replace(/([🧬🩺⚠️✅❌💊🔬🦠❓🔗🛡️⛔☠️])\s/g, '$1 ')
-                                                                // Add spacing for paragraph separation
-                                                                .replace(/\n\n/g, '<div class="my-3"></div>')
-                                                                // Single line breaks with margin
-                                                                .replace(/\n/g, '<br class="my-1"/>')
-                                                                // Add space after numbered list items
-                                                                .replace(/(\d+\.)\s/g, '<div class="mt-2 pl-2">$1 ')
-                                                        }}
-                                                    />
+                                                    <div className="prose prose-sm prose-invert max-w-none leading-relaxed">
+                                                <ReactMarkdown>{msg.content}</ReactMarkdown>
+                                            </div>
                                                 ) : (
                                                     msg.content
                                                 )}
@@ -4170,17 +4032,7 @@ function RadialScene({ data, animationTime, selectedNodeId, selectedEdgeId, onNo
         return { nodePositions: positions, maxRing, nodeMap };
     }, [data, ringRadius]);
 
-    // Deduplicate edges by their source-target pair to prevent React key warnings
-    const uniqueEdges = useMemo(() => {
-        const seen = new Set<string>();
-        return data.knowledge_graph.edges.filter(edge => {
-            // Create a normalized key (sorted to handle bidirectional edges)
-            const key = [edge.source, edge.target].sort().join('-');
-            if (seen.has(key)) return false;
-            seen.add(key);
-            return true;
-        });
-    }, [data.knowledge_graph.edges]);
+    const uniqueEdges = useMemo(() => dedupeEdges(data.knowledge_graph.edges), [data.knowledge_graph.edges]);
 
     return (
         <>
@@ -4285,11 +4137,26 @@ function SignalPanel({ signals }: { signals: MicroSignal[] }) {
 // GRAPH INTERACTIVE CHAT - Floating command chat panel
 // ============================================
 
+function appendChatCoverage(message: string, coverage?: {
+    partial?: boolean; nodes?: { included: number; provided: number }; edges?: { included: number; provided: number };
+    shortenedFields?: number;
+}): string {
+    if (!coverage?.partial) return message;
+    const details = [
+        coverage.nodes?.provided ? coverage.nodes.included + '/' + coverage.nodes.provided + ' concepts' : null,
+        coverage.edges?.provided ? coverage.edges.included + '/' + coverage.edges.provided + ' liens' : null,
+        coverage.shortenedFields ? coverage.shortenedFields + ' champ(s) abrégé(s)' : null,
+    ].filter(Boolean).join(', ');
+    return message + '\n\n**Contexte partiel :** la limite de lecture de cette réponse a été atteinte'
+        + (details ? ' (' + details + ')' : '') + '. Précisez les concepts à examiner pour approfondir.';
+}
+
 interface GraphChatProps {
     isOpen: boolean;
     graphNodes: RingNode[];
     graphEdges: RingEdge[];
     pathology: string;
+    research?: RadialRingsData['research'];
     // Existing callbacks
     onCreateGroup: (nodeType: string, groupName: string, nodeNames?: string[]) => void;
     onFilterVisibility: (nodeName: string) => void;
@@ -4312,6 +4179,7 @@ function GraphInteractiveChat({
     graphNodes,
     graphEdges,
     pathology,
+    research,
     onCreateGroup,
     onFilterVisibility,
     onAddNode,
@@ -4361,9 +4229,23 @@ function GraphInteractiveChat({
                 message: userMessage,
                 context: {
                     graphState: {
-                        nodes: graphNodes.map(n => ({ id: n.id, name: n.name, node_type: n.node_type, ring: n.ring })),
-                        edges: graphEdges.slice(0, 50).map(e => ({ id: e.id, source: e.source, target: e.target, relationship: e.relationship }))
+                        nodes: graphNodes.map(n => ({
+                            id: n.id, name: n.name, node_type: n.node_type, ring: n.ring,
+                            parent_pathology: n.parent_pathology, description: n.properties?.description,
+                            properties: n.properties, evidence_status: n.evidence_status, evidence_grade: n.evidence_grade,
+                        })),
+                        edges: graphEdges.map(e => ({
+                            id: e.id, source: e.source, target: e.target, relationship: e.relationship,
+                            rationale: e.rationale, references: e.references,
+                            evidence_status: e.evidence_status, evidence_grade: e.evidence_grade,
+                        }))
                     },
+                    researchLimitations: research?.limitations ?? [],
+                    researchCoverage: research ? {
+                        result_status: research.result_status,
+                        source_statuses: research.source_statuses,
+                        unresolved_questions: research.unresolved_questions,
+                    } : undefined,
                     pathology,
                     conversationHistory: messages
                 }
@@ -4371,7 +4253,7 @@ function GraphInteractiveChat({
 
             if (error) throw error;
 
-            const response = data.message || 'Commande exécutée.';
+            const response = appendChatCoverage(data.message || 'Commande exécutée.', data.contextCoverage);
             setMessages(prev => [...prev, { role: 'assistant', content: response }]);
 
             // Execute action if present
@@ -4504,30 +4386,9 @@ function GraphInteractiveChat({
                                             }`}
                                     >
                                         {msg.role === 'assistant' ? (
-                                            <div
-                                                className="prose prose-sm prose-invert max-w-none leading-relaxed"
-                                                style={{
-                                                    whiteSpace: 'pre-wrap',
-                                                    lineHeight: '1.6'
-                                                }}
-                                                dangerouslySetInnerHTML={{
-                                                    __html: msg.content
-                                                        // Convert markdown bold **text** to <strong>
-                                                        .replace(/\*\*([^*]+)\*\*/g, '<strong class="text-cyan-300">$1</strong>')
-                                                        // Convert markdown italic *text* to <em>
-                                                        .replace(/(?<!\*)\*([^*]+)\*(?!\*)/g, '<em class="text-gray-300">$1</em>')
-                                                        // Convert bullet points * to proper list items with spacing
-                                                        .replace(/^\* /gm, '<br/>• ')
-                                                        // Add space after emoji at start of paragraphs
-                                                        .replace(/([🧬🩺⚠️✅❌💊🔬🦠❓🔗])\s/g, '$1 ')
-                                                        // Add double line break for paragraph separation
-                                                        .replace(/\n\n/g, '<br/><br/>')
-                                                        // Single line breaks
-                                                        .replace(/\n/g, '<br/>')
-                                                        // Add space after numbered list items
-                                                        .replace(/(\d+\.)\s/g, '<br/>$1 ')
-                                                }}
-                                            />
+                                            <div className="prose prose-sm prose-invert max-w-none leading-relaxed">
+                                                <ReactMarkdown>{msg.content}</ReactMarkdown>
+                                            </div>
                                         ) : (
                                             msg.content
                                         )}
@@ -4613,6 +4474,15 @@ export default function RadialRingsModal({
     const { invokeAI, llmMode } = useAI();
     const researchRequest = useRef<AbortController | null>(null);
     const [researchSources, setResearchSources] = useState<Record<string, SourceStatus[]>>({});
+    const [researchProgress, setResearchProgress] = useState<AIJobProgress | null>(null);
+    const researchPathKey = useRef('');
+    const pendingExpansion = useRef<{ nodeId: string; pathKey: string } | null>(null);
+    const researchOwner = useRef<string | null | undefined>(undefined);
+    const invalidatedInitialData = useRef<RadialRingsData | undefined>();
+    const ownerVersion = useRef(0);
+    const [ownerRevision, setOwnerRevision] = useState(0);
+    const dataRef = useRef<RadialRingsData | null>(data);
+    useEffect(() => { dataRef.current = data; }, [data]);
     const [animationTime, setAnimationTime] = useState(0);
     const [isPaused, setIsPaused] = useState(false);
     const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
@@ -4651,7 +4521,7 @@ export default function RadialRingsModal({
 
     // Queue for smooth rendering (0.2s delay per node)
     const nodeQueueRef = useRef<RingNode[]>([]);
-    const queueIntervalRef = useRef<NodeJS.Timeout | null>(null);
+    const queueIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
     // View Controls
     const [nodeSpacing, setNodeSpacing] = useState(40); // Repulsion strength factor
@@ -4812,109 +4682,60 @@ export default function RadialRingsModal({
     // ============================================
     const handleDeepAnalysis = useCallback(async () => {
         if (!data || isDeepAnalyzing) return;
-
+        const startingOwnerVersion = ownerVersion.current;
         setIsDeepAnalyzing(true);
         setDeepAnalysisMode(false);
         setGoldenNodeIds(new Set());
         setDeepAnalysisResult(null);
-
         try {
-            // Prepare graph context for AI analysis
-            const nodesContext = data.knowledge_graph.nodes.map(n => ({
-                id: n.id,
-                name: n.name,
-                type: n.node_type,
-                ring: n.ring
+            // The full typed graph reaches the review, including opposite effects,
+            // explanations, inspectable citations and gaps in source retrieval.
+            const nodesContext = data.knowledge_graph.nodes.map(node => ({
+                id: node.id, name: node.name, type: node.node_type, parent_pathology: node.parent_pathology,
+                description: node.properties.description, references: node.properties.references ?? [],
             }));
-
-            const edgesContext = data.knowledge_graph.edges.slice(0, 100).map(e => ({
-                source: typeof e.source === 'object' ? (e.source as any).id : e.source,
-                target: typeof e.target === 'object' ? (e.target as any).id : e.target,
-                relationship: e.relationship,
-                evidence: e.evidence_grade
+            const edgesContext = data.knowledge_graph.edges.map(edge => ({
+                source: edge.source, target: edge.target, relationship: edge.relationship,
+                evidence_status: edge.evidence_status ?? 'hypothesis', evidence_grade: edge.evidence_grade,
+                rationale: edge.rationale ?? '', references: edge.references ?? [],
             }));
-
-            // Call AI to analyze optimal treatment (non-streaming JSON mode)
-            const { data: aiResponse, error } = await invokeAI('causal-reasoning', {
-                stream: false, // Request JSON response instead of SSE stream
-                query: `Analyse ce graphe de connaissances médicales pour la pathologie "${primaryPathology}".
-
-NŒUDS DISPONIBLES:
-${nodesContext.map(n => `- ${n.name} (${n.type}, ID: ${n.id})`).join('\n')}
-
-RELATIONS:
-${edgesContext.map(e => `- ${e.source} → ${e.target}: ${e.relationship}`).join('\n')}
-
-MISSION CRITIQUE:
-1. Identifie le MEILLEUR SCHÉMA DE TRAITEMENT pour guérir ou gérer cette pathologie
-2. Sélectionne les nœuds les plus importants (médicaments, traitements, mécanismes clés)
-3. Ignore les nœuds non pertinents ou dangereux (contre-indications)
-
-RÉPONDS EN JSON STRICT:
-{
-    "optimal_node_ids": ["id1", "id2", ...],
-    "treatment_summary": "Résumé du schéma thérapeutique optimal",
-    "rationale": "Explication de pourquoi ces nœuds sont optimaux"
-}
-
-IMPORTANT: Retourne UNIQUEMENT les IDs des nœuds qui forment le schéma thérapeutique optimal. Maximum 10 nœuds.`,
-                context: {
-                    pathology: primaryPathology,
-                    graph_size: { nodes: nodesContext.length, edges: edgesContext.length }
-                }
+            const { data: aiResponse, error: responseError } = await invokeAI('causal-reasoning', {
+                stream: false,
+                query: 'Compare les options thérapeutiques justifiées par les sources de ce graphe, pour TOUTES les pathologies sélectionnées. ' +
+                    'Prends en compte chaque relation, les bénéfices, risques cumulés, interactions, contre-indications conditionnelles et contradictions. ' +
+                    'Les poids du graphe ne sont pas des niveaux de preuve. Une hypothèse, un titre ou une source indisponible ne justifie pas une indication. ' +
+                    'Explique les données et vérifications manquantes avant toute modification de traitement. Aucune prescription ou posologie personnalisée définitive. ' +
+                    'Propose seulement les options à discuter avec le clinicien lorsque les données permettent une comparaison ; une liste vide est valide. ' +
+                    'Réponds en JSON avec optimal_node_ids (uniquement les IDs existants réellement soutenus par les données), treatment_summary et rationale. ' +
+                    'Inclure les sources exactes, les limites et les alternatives dans la synthèse.\\n\\n' +
+                    JSON.stringify({ pathologies: allPathologies, nodes: nodesContext, edges: edgesContext,
+                        research: data.research ?? { limitations: ['Provenance historique non vérifiée.'] } }),
+                context: { pathologies: allPathologies, graph_size: { nodes: nodesContext.length, edges: edgesContext.length },
+                    requires_clinical_review: true },
             });
-
-            if (error) throw error;
-
-            console.log('[Deep Analysis] Raw AI response:', aiResponse);
-
-            // Parse AI response - try multiple possible structures
-            let parsed: { optimal_node_ids?: string[]; treatment_summary?: string; rationale?: string } | null = null;
-
-            // Case 1: Response is already a parsed object with optimal_node_ids
-            if (aiResponse?.optimal_node_ids) {
-                parsed = aiResponse;
+            if (ownerVersion.current !== startingOwnerVersion) return;
+            if (responseError) throw responseError;
+            let parsed = aiResponse?.optimal_node_ids ? aiResponse
+                : aiResponse?.data?.optimal_node_ids ? aiResponse.data : undefined;
+            if (!parsed) {
+                const value = aiResponse?.analysis ?? aiResponse?.explanation ?? aiResponse?.response ?? aiResponse?.content;
+                if (typeof value === 'string') {
+                    const first = value.indexOf('{'), last = value.lastIndexOf('}');
+                    if (first >= 0 && last > first) parsed = JSON.parse(value.slice(first, last + 1));
+                } else if (value && typeof value === 'object') parsed = value;
             }
-            // Case 2: Response has the data nested in 'data' field
-            else if (aiResponse?.data?.optimal_node_ids) {
-                parsed = aiResponse.data;
-            }
-            // Case 3: Response is in 'analysis' or 'explanation' text field - extract JSON
-            else {
-                const analysisText = aiResponse?.analysis || aiResponse?.explanation || aiResponse?.response || aiResponse?.content || '';
-                if (typeof analysisText === 'string') {
-                    const jsonMatch = analysisText.match(/\{[\s\S]*\}/);
-                    if (jsonMatch) {
-                        try {
-                            parsed = JSON.parse(jsonMatch[0]);
-                        } catch (parseErr) {
-                            console.error('[Deep Analysis] JSON parse error:', parseErr);
-                        }
-                    }
-                } else if (typeof analysisText === 'object' && analysisText?.optimal_node_ids) {
-                    parsed = analysisText;
-                }
-            }
-
-            if (parsed && parsed.optimal_node_ids && Array.isArray(parsed.optimal_node_ids)) {
-                const optimalIds = new Set<string>(parsed.optimal_node_ids);
-                setGoldenNodeIds(optimalIds);
-                setDeepAnalysisResult(parsed.treatment_summary || 'Schéma thérapeutique optimal identifié');
-                setDeepAnalysisMode(true);
-
-                console.log(`[Deep Analysis] Identified ${optimalIds.size} optimal nodes:`, parsed.optimal_node_ids);
-            } else {
-                console.error('[Deep Analysis] Could not parse response. Structure received:', Object.keys(aiResponse || {}));
-                throw new Error(`Invalid AI response format. Keys: ${Object.keys(aiResponse || {}).join(', ')}`);
-            }
-
-        } catch (err) {
-            console.error('[Deep Analysis] Error:', err);
-            setDeepAnalysisResult('Erreur lors de l\'analyse. Réessayez.');
-        } finally {
-            setIsDeepAnalyzing(false);
-        }
-    }, [data, primaryPathology, isDeepAnalyzing]);
+            const knownIds = new Set(data.knowledge_graph.nodes.map(node => node.id));
+            if (!Array.isArray(parsed?.optimal_node_ids) || !parsed.optimal_node_ids.every((id: unknown) => typeof id === 'string' && knownIds.has(id))
+                || typeof parsed.treatment_summary !== 'string') throw new Error('La synthèse ne correspond pas aux concepts du graphe.');
+            setGoldenNodeIds(new Set<string>(parsed.optimal_node_ids));
+            setDeepAnalysisResult([parsed.treatment_summary, typeof parsed.rationale === 'string' ? parsed.rationale : ''].filter(Boolean).join('\n\n'));
+            setDeepAnalysisMode(true);
+        } catch (failure) {
+            if (ownerVersion.current !== startingOwnerVersion) return;
+            setDeepAnalysisResult(failure instanceof Error ? failure.message : 'L’analyse n’a pas pu être terminée.');
+            setDeepAnalysisMode(true);
+        } finally { if (ownerVersion.current === startingOwnerVersion) setIsDeepAnalyzing(false); }
+    }, [data, primaryPathology, allPathologies.join('|'), isDeepAnalyzing, invokeAI]);
 
     // Exit deep analysis mode
     const exitDeepAnalysisMode = useCallback(() => {
@@ -4978,8 +4799,8 @@ IMPORTANT: Retourne UNIQUEMENT les IDs des nœuds qui forment le schéma thérap
             case 'Symptôme': return ['SYMPTOM'];
             case 'Pathologie': return ['PATHOLOGY'];
             case 'Complication': return ['COMPLICATION'];
-            case 'Analyses': return ['LAB'];
-            case 'Suggestion': return ['GUIDELINE', 'EVIDENCE', 'LIFESTYLE'];
+            case 'Analyses': return ['LAB', 'BIOMARKER', 'GENE', 'PROTEIN', 'PATHWAY', 'MECHANISM'];
+            case 'Suggestion': return ['GUIDELINE', 'EVIDENCE', 'LIFESTYLE', 'RISK_FACTOR'];
             default: return [category];
         }
     };
@@ -5044,7 +4865,7 @@ IMPORTANT: Retourne UNIQUEMENT les IDs des nœuds qui forment le schéma thérap
             connectedNodeIds.add(typeof e.target === 'object' ? (e.target as any).id : e.target);
         });
 
-        const activeNodes = potentialNodes.filter(n => {
+        const activeNodes = hiddenRelationTypes.size === 0 ? potentialNodes : potentialNodes.filter(n => {
             // Always keep central node
             if (n.ring === 0) return true;
             // Keep node if it's connected
@@ -5067,7 +4888,7 @@ IMPORTANT: Retourne UNIQUEMENT les IDs des nœuds qui forment le schéma thérap
 
     const animationRef = useRef<number>();
     const startTimeRef = useRef<number>(0);
-    const revealIntervalRef = useRef<NodeJS.Timeout | null>(null);
+    const revealIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
     const [webglAvailable, setWebglAvailable] = useState<boolean | null>(null);
 
     // Check WebGL on mount
@@ -5089,8 +4910,8 @@ IMPORTANT: Retourne UNIQUEMENT les IDs des nœuds qui forment le schéma thérap
     useEffect(() => {
         if (isOpen && allPathologies.length > 0) {
             setCentralNode(primaryPathology);
-            if (initialData) {
-                setResearchSources({});
+            if (initialData && initialData !== invalidatedInitialData.current) {
+                setResearchSources(initialData.research?.source_statuses ?? {});
                 // Determine if initialData is the full object or just knowledge_graph
                 if (initialData.knowledge_graph) {
                     setData(initialData);
@@ -5108,15 +4929,16 @@ IMPORTANT: Retourne UNIQUEMENT les IDs des nœuds qui forment le schéma thérap
                 if (nodes) {
                     setVisibleNodeCount(nodes.length);
                 }
-            } else {
+            } else if (researchPathKey.current !== JSON.stringify({ llmMode, pathologies: allPathologies }) || !dataRef.current?.research) {
                 fetchData(allPathologies);
             }
+            setActivePathologies(new Set(allPathologies));
         }
         return () => {
             researchRequest.current?.abort();
             if (animationRef.current) cancelAnimationFrame(animationRef.current);
         };
-    }, [isOpen, allPathologies.join(',')]);
+    }, [isOpen, allPathologies.join(','), llmMode]);
 
     useEffect(() => {
         if (!data || isPaused || !isOpen) return;
@@ -5238,196 +5060,83 @@ IMPORTANT: Retourne UNIQUEMENT les IDs des nœuds qui forment le schéma thérap
         researchRequest.current?.abort();
         const request = new AbortController();
         researchRequest.current = request;
-        // Initialize with central nodes for ALL pathologies (Dual Graph Init)
-        const initialNodes: RingNode[] = pathologies.map((p, i) => ({
-            id: `central-init-${i}`,
-            ring: 0,
-            lane: 'pathology',
-            name: p,
-            node_type: 'PATHOLOGY',
-            properties: { description: 'Initialisation...', source: 'System' },
-            proximity_score: 1,
-            evidence_grade: 'D',
-            translation_gap: false,
-            parent_pathology: p
+        researchPathKey.current = JSON.stringify({ llmMode, pathologies });
+        const initialNodes: RingNode[] = pathologies.map((name, index) => ({
+            id: 'central-init-' + index, ring: 0, lane: 'pathology', name, node_type: 'PATHOLOGY',
+            properties: { description: 'Recherche en cours', source: 'Recherche' },
+            proximity_score: 1, evidence_grade: 'D', translation_gap: false, parent_pathology: name,
         }));
-
-        setData({
-            knowledge_graph: { nodes: initialNodes, edges: [] },
-            micro_signals: [],
-            hypotheses: []
-        });
-
+        setData({ knowledge_graph: { nodes: initialNodes, edges: [] }, micro_signals: [], hypotheses: [] });
         setIsLoading(true);
         setError(null);
         setFromCache(false);
         setResearchSources({});
+        setResearchProgress({ status: 'queued', progress: 0, message: 'Préparation de la recherche et des sources.' });
         setAnimationTime(0);
         startTimeRef.current = 0;
         setNewlySpawnedNodes(new Set());
         nodeQueueRef.current = [];
 
         try {
-            const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
-            const supabaseKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY || import.meta.env.VITE_SUPABASE_ANON_KEY;
             const { data: { session } } = await supabase.auth.getSession();
-            const token = session?.access_token;
-            if (!token) throw new Error('Connectez-vous pour lancer une recherche.');
-
-            // Worker function to fetch and stream a single pathology graph
-            const fetchPathologyStream = async (pathology: string) => {
-                const response = await aiFetch(`${supabaseUrl}/functions/v1/deep-research-graph`, {
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'Authorization': `Bearer ${token}`,
-                        'apikey': supabaseKey
-                    },
-                    method: 'POST',
-                    signal: request.signal,
-                    body: JSON.stringify({
-                        topic: pathology,
-                        pathologies: [pathology],
-                        isComorbidityAnalysis: false, // Independent generation for full twin graphs
-                        max_nodes: 100,
-                        include_pubmed: true,
-                        include_fda: true,
-                        streaming: true
-                    })
-                });
-
-                if (!response.ok) {
-                    let errorMessage = `HTTP ${response.status}`;
-                    try {
-                        const errorData = await response.json();
-                        errorMessage = errorData.details || errorData.error || errorMessage;
-                    } catch (e) {
-                        try {
-                            const errorText = await response.text();
-                            if (errorText) errorMessage = errorText;
-                        } catch (textErr) { }
-                    }
-                    throw new Error(errorMessage);
-                }
-                if (!response.body) throw new Error('No response body');
-
-                const reader = response.body.getReader();
-                const decoder = new TextDecoder();
-                let buffer = '';
-
-                // Deduplication State for this streaming session
-                const localKnownNames = new Map<string, string>(); // NormName -> ID
-                const localRedirects = new Map<string, string>(); // DuplicateID -> KeeperID
-
-                // Initialize with any existing initial nodes
-                initialNodes.forEach(n => {
-                    if (n.name) localKnownNames.set(n.name.trim().toLowerCase(), n.id);
-                });
-
-                while (true) {
-                    const { done, value } = await reader.read();
-                    if (done) break;
-
-                    buffer += decoder.decode(value, { stream: true });
-                    const lines = buffer.split('\n\n');
-                    buffer = lines.pop() || '';
-
-                    for (const line of lines) {
-                        const cleanedLine = line.trim();
-                        if (!cleanedLine.startsWith('data: ')) continue;
-                        try {
-                            const eventData = JSON.parse(cleanedLine.slice(6));
-
-                            if (eventData.type === 'complete' && Array.isArray(eventData.source_statuses)) {
-                                setResearchSources(prev => ({ ...prev, [pathology]: eventData.source_statuses }));
-                            }
-                            // Handle Node Events
-                            if (eventData.type === 'cached' || eventData.type === 'node') {
-                                const rawNodes = eventData.type === 'cached' ? eventData.nodes : [eventData.node];
-                                const uniqueNewNodes: any[] = [];
-
-                                rawNodes.forEach((n: any) => {
-                                    // Fix: Map API 'label' to 'name' if missing
-                                    if (!n.name && n.label) n.name = n.label;
-
-                                    const normName = n.name?.trim().toLowerCase();
-                                    if (!normName) return;
-
-                                    if (localKnownNames.has(normName)) {
-                                        // Duplicate found!
-                                        const keeperId = localKnownNames.get(normName)!;
-                                        if (n.id !== keeperId) {
-                                            localRedirects.set(n.id, keeperId);
-                                            // Don't add to uniqueNewNodes
-                                        }
-                                    } else {
-                                        const graphId = pathologies.length > 1 ? `pathology-${pathologies.indexOf(pathology)}-${n.id}` : n.id;
-                                        localKnownNames.set(normName, graphId);
-                                        localRedirects.set(n.id, graphId);
-                                        uniqueNewNodes.push({ ...n, id: graphId });
-                                    }
-                                });
-
-                                uniqueNewNodes.forEach((n: any) => {
-                                    // CRITICAL: Tag node with current pathology for Twin Layout distribution
-                                    n.parent_pathology = pathology;
-                                    const trNode = transformNode(n, allPathologies, primaryPathology);
-                                    nodeQueueRef.current.push({ ...trNode, evidence_grade: 'D' });
-                                });
-
-                                if (eventData.type === 'cached') {
-                                    setFromCache(true);
-                                    // Transform edges with redirection
-                                    const edges = eventData.edges.map((e: any) => {
-                                        // Apply redirects
-                                        const source = localRedirects.get(e.source) || e.source;
-                                        const target = localRedirects.get(e.target) || e.target;
-                                        return transformEdge({ ...e, source, target });
-                                    });
-
-                                    setData(prev => prev ? ({
-                                        ...prev,
-                                        knowledge_graph: {
-                                            ...prev.knowledge_graph,
-                                            edges: [...prev.knowledge_graph.edges, ...edges]
-                                        }
-                                    }) : null);
-                                }
-                            }
-                            // Handle Edge Events
-                            else if (eventData.type === 'edges') {
-                                const newEdges = eventData.edges.map((e: any) => {
-                                    // Fix: Map API 'edge_type' to 'relationship' if missing
-                                    if (!e.relationship && e.edge_type) e.relationship = e.edge_type;
-
-                                    // Apply redirects
-                                    const source = e.source_id ?? e.source;
-                                    const target = e.target_id ?? e.target;
-                                    return { ...transformEdge({ ...e, source_id: localRedirects.get(source) || source,
-                                        target_id: localRedirects.get(target) || target }), evidence_grade: 'D' };
-                                });
-
-                                setData(prev => prev ? ({
-                                    ...prev,
-                                    knowledge_graph: {
-                                        ...prev.knowledge_graph,
-                                        edges: [...prev.knowledge_graph.edges, ...newEdges]
-                                    }
-                                }) : null);
-                            }
-                        } catch (e) { console.warn(e); }
-                    }
-                }
+            if (request.signal.aborted || researchRequest.current !== request) return;
+            if (!session?.user.id && llmMode === 'cloud') throw new Error('Connectez-vous pour lancer une recherche.');
+            const boundSession = llmMode === 'cloud' && session ? createOwnerBoundGraphInvoke(session.user.id, {
+                getSession: async () => (await supabase.auth.getSession()).data.session,
+                invoke: (functionName, body, headers) => supabase.functions.invoke(functionName, { body, headers }),
+            }) : undefined;
+            if (boundSession) {
+                await boundSession.assertOwner(session!.user.id);
+                if (request.signal.aborted || researchRequest.current !== request) return;
+                if (researchOwner.current !== undefined && researchOwner.current !== session!.user.id)
+                    throw Object.assign(new Error('Votre session a changé. Rouvrez la recherche avec le compte actuel.'), { status: 401 });
+                researchOwner.current = session!.user.id;
+            }
+            const input = {
+                topic: pathologies[0], pathologies, max_nodes: 150,
+                include_pubmed: true, include_fda: true, async: true, streaming: false,
             };
-
-            // Execute parallel fetches for all pathologies
-            await Promise.all(pathologies.map(p => fetchPathologyStream(p)));
-            setIsLoading(false);
-
-        } catch (err) {
-            if (request.signal.aborted) return;
-            console.error('[DEEP-RESEARCH] Error:', err);
-            setError(String(err));
-            setIsLoading(false);
+            const result = await runGraphResearch(boundSession?.invokeAI ?? invokeAI, input, {
+                userId: session?.user.id ?? 'local-research',
+                scopeKey: JSON.stringify({ llmMode, mode: 'initial', pathologies }),
+                signal: request.signal,
+                assertOwner: boundSession?.assertOwner,
+                onProgress: progress => { if (!request.signal.aborted) setResearchProgress(progress); },
+                ...(llmMode === 'cloud' ? {
+                    recoveryStatus: (id: string, owner: string, after = 0) => aiTransport.status(id, after, owner),
+                    recoveryByRequest: (requestId: string, owner: string) => aiTransport.statusByRequest(requestId, owner),
+                } : {}),
+            });
+            if (request.signal.aborted || researchRequest.current !== request) return;
+            if (!Array.isArray(result?.nodes) || !Array.isArray(result?.edges)) throw new Error('Le graphe reçu est incomplet.');
+            const merged = mergeRadialResearchGraph({ nodes: initialNodes, edges: [] }, result,
+                { pathologies, primaryPathology: pathologies[0], scopeId: 'research' });
+            const sources = { [pathologies.join(' + ')]: Array.isArray(result.source_statuses) ? result.source_statuses : [] };
+            const limitations = Array.isArray(result.limitations) ? result.limitations : [];
+            if (merged.unresolvedEdges) limitations.push('Certains liens ambigus n’ont pas pu être attachés au graphe.');
+            setResearchSources(sources);
+            const completed: RadialRingsData = {
+                knowledge_graph: { nodes: merged.nodes, edges: merged.edges }, micro_signals: [], hypotheses: [],
+                research: { summary: result.research_summary ?? '', model: result.ai_model ?? '',
+                    result_status: result.result_status ?? 'partial', limitations,
+                    unresolved_questions: result.unresolved_questions ?? [], source_statuses: sources },
+            };
+            dataRef.current = completed;
+            setData(completed);
+            setNewlySpawnedNodes(new Set(merged.nodes.map(node => node.id)));
+        } catch (failure) {
+            if (!request.signal.aborted && (failure as { status?: number })?.status === 401) {
+                dataRef.current = null;
+                setData(null);
+                setResearchSources({});
+            }
+            if (!request.signal.aborted) setError(failure instanceof Error ? failure.message : 'La recherche a échoué.');
+        } finally {
+            if (researchRequest.current === request) {
+                researchRequest.current = null;
+                setIsLoading(false);
+                setResearchProgress(null);
+            }
         }
     };
 
@@ -5439,156 +5148,117 @@ IMPORTANT: Retourne UNIQUEMENT les IDs des nœuds qui forment le schéma thérap
     const [expandingNodeName, setExpandingNodeName] = useState<string | null>(null);
 
     const handleSetCentral = async (identifier: string) => {
-        if (!data) return;
+        if (!data || (researchRequest.current && !researchRequest.current.signal.aborted)) return;
+        const byId = data.knowledge_graph.nodes.find(item => item.id === identifier);
+        const matches = data.knowledge_graph.nodes.filter(item => item.name.toLocaleLowerCase('fr') === identifier.toLocaleLowerCase('fr'));
+        const node = byId ?? (matches.length === 1 ? matches[0] : undefined);
+        if (!node) { setError('Sélectionnez précisément le concept à approfondir.'); return; }
 
-        // 1. Find the node (try ID first, then Case-Insensitive Name)
-        let node = data.knowledge_graph.nodes.find(n => n.id === identifier);
-        if (!node) {
-            node = data.knowledge_graph.nodes.find(n =>
-                n.name.toLowerCase() === identifier.toLowerCase() ||
-                n.name.toLowerCase().includes(identifier.toLowerCase())
-            );
-        }
-
-        if (!node) {
-            console.error(`[RadialRingsModal] Node not found for identifier: ${identifier}`);
-            return;
-        }
-
-        // 2. Clear UI selections/focus for fresh expansion
+        const request = new AbortController();
+        researchRequest.current = request;
+        pendingExpansion.current = { nodeId: node.id, pathKey: JSON.stringify({ llmMode, pathologies: allPathologies }) };
         setMultiSelectedNodeIds(new Set());
         setHighlightedNodeIds(new Set());
         setFocusMode(false);
         setFilterSelectedNodeId(null);
         setSelectedNodeId(node.id);
-
         setIsExpanding(true);
         setExpandingNodeName(node.name);
+        setError(null);
+        setResearchProgress({ status: 'queued', progress: 0, message: 'Recherche des liens avec les concepts existants.' });
 
         try {
-            // Prepare existing nodes for cross-link analysis
-            const nodeId = node.id;
-            const expansionTopic = node.name;
-            const existingNodesForCrossLink = data.knowledge_graph.nodes
-                .filter(n => n.id !== nodeId)
-                .map(n => ({
-                    name: n.name,
-                    node_type: n.node_type || n.lane || 'UNKNOWN'
-                }));
-
-            console.log(`[EXPAND] Sending ${existingNodesForCrossLink.length} existing nodes for cross-link analysis`);
-
-            const response = await invokeAI('deep-research-graph', {
-                topic: node.name,
-                medication: ['DRUG', 'MEDICATION'].includes((node.node_type || node.lane).toUpperCase()) ? node.name : undefined,
-                max_nodes: 100,
-                include_pubmed: true,
-                include_fda: true,
-                existing_nodes: existingNodesForCrossLink
+            const { data: { session } } = await supabase.auth.getSession();
+            if (request.signal.aborted || researchRequest.current !== request) return;
+            if (!session?.user.id && llmMode === 'cloud') throw new Error('Connectez-vous pour approfondir la recherche.');
+            const boundSession = llmMode === 'cloud' && session ? createOwnerBoundGraphInvoke(session.user.id, {
+                getSession: async () => (await supabase.auth.getSession()).data.session,
+                invoke: (functionName, body, headers) => supabase.functions.invoke(functionName, { body, headers }),
+            }) : undefined;
+            if (boundSession) {
+                await boundSession.assertOwner(session!.user.id);
+                if (request.signal.aborted || researchRequest.current !== request) return;
+                if (researchOwner.current !== undefined && researchOwner.current !== session!.user.id)
+                    throw Object.assign(new Error('Votre session a changé. Rouvrez la recherche avec le compte actuel.'), { status: 401 });
+                researchOwner.current = session!.user.id;
+            }
+            const topicType = (node.node_type || node.lane).toUpperCase();
+            const existingNodes = data.knowledge_graph.nodes.map(item => ({
+                id: item.id, name: item.name, node_type: item.node_type || item.lane,
+                ...(item.parent_pathology ? { parent_pathology: item.parent_pathology } : {}),
+            }));
+            const input = {
+                topic: node.name, topic_type: topicType, pathologies: allPathologies,
+                medication: ['DRUG', 'MEDICATION'].includes(topicType) ? node.name : undefined,
+                max_nodes: 150, include_pubmed: true, include_fda: true, existing_nodes: existingNodes,
+                async: true, streaming: false,
+            };
+            const result = await runGraphResearch(boundSession?.invokeAI ?? invokeAI, input, {
+                userId: session?.user.id ?? 'local-research',
+                scopeKey: JSON.stringify({ llmMode, mode: 'expansion', topic: node.id, pathologies: allPathologies, existingNodes }),
+                signal: request.signal,
+                assertOwner: boundSession?.assertOwner,
+                onProgress: progress => { if (!request.signal.aborted) setResearchProgress(progress); },
+                ...(llmMode === 'cloud' ? {
+                    recoveryStatus: (id: string, owner: string, after = 0) => aiTransport.status(id, after, owner),
+                    recoveryByRequest: (requestId: string, owner: string) => aiTransport.statusByRequest(requestId, owner),
+                } : {}),
             });
-
-            if (response.error) throw response.error;
-
-            const result = response.data;
-            if (llmMode === 'cloud' && Array.isArray(result.source_statuses)) {
-                setResearchSources(prev => ({ ...prev, [expansionTopic]: result.source_statuses }));
-            }
-
-            // Returned IDs are local to this expansion. Reuse existing concepts by name;
-            // scope new IDs to the selected node before attaching edges to the displayed graph.
-            const idsByName = new Map(data.knowledge_graph.nodes.map(n => [n.name.toLowerCase(), n.id]));
-            idsByName.set(node.name.toLowerCase(), node.id);
-            const idsByResponseId = new Map<string, string>();
-            const nodesToAdd: RingNode[] = [];
-            for (const raw of result.nodes) {
-                const name = raw.label.toLowerCase();
-                const graphId = idsByName.get(name) ?? `expansion-${node.id}-${raw.id}`;
-                idsByResponseId.set(raw.id, graphId);
-                if (!idsByName.has(name)) {
-                    nodesToAdd.push({ ...transformNode({ ...raw, id: graphId, parent_pathology: node.parent_pathology },
-                        allPathologies, primaryPathology), evidence_grade: 'D' });
-                    idsByName.set(name, graphId);
-                }
-            }
-            const resolveId = (id: string) => idsByResponseId.get(id) ?? idsByName.get(id.toLowerCase()) ?? id;
-            const newEdges: RingEdge[] = result.edges.map((e: any) => {
-                const sourceId = resolveId(e.source_id);
-                const targetId = resolveId(e.target_id);
-                return {
-                    id: `${sourceId}-${targetId}`,
-                    source: sourceId,
-                    target: targetId,
-                    relationship: e.edge_type,
-                    weight: e.weight || 0.5,
-                    evidence_grade: 'D',
-                    translation_gap: false
-                };
+            if (request.signal.aborted || researchRequest.current !== request) return;
+            if (!Array.isArray(result?.nodes) || !Array.isArray(result?.edges)) throw new Error('L’expansion reçue est incomplète.');
+            const current = dataRef.current ?? data;
+            const merged = mergeRadialResearchGraph(current.knowledge_graph, result, {
+                pathologies: allPathologies, primaryPathology, scopeId: 'expansion-' + crypto.randomUUID(),
+                parentPathology: node.parent_pathology,
             });
-
-            // Add nodes progressively with COSMIC STREAMING animation
-            let currentNodes = [...data.knowledge_graph.nodes];
-            let currentEdges = [...data.knowledge_graph.edges];
-
-            setNewlySpawnedNodes(new Set());
-
-            for (let i = 0; i < nodesToAdd.length; i++) {
-                const newNode = nodesToAdd[i];
-                currentNodes = [...currentNodes, newNode];
-                setNewlySpawnedNodes(prev => new Set([...prev, newNode.id]));
-
-                const currentNodeIds = new Set(currentNodes.map(n => n.id));
-                const relevantEdges = newEdges.filter(e =>
-                    currentNodeIds.has(e.source) &&
-                    currentNodeIds.has(e.target) &&
-                    !currentEdges.some(ce => ce.id === e.id ||
-                        (ce.source === e.source && ce.target === e.target) ||
-                        (ce.source === e.target && ce.target === e.source))
-                );
-
-                if (relevantEdges.length > 0) {
-                    currentEdges = [...currentEdges, ...relevantEdges];
-                }
-
-                setData({
-                    ...data,
-                    knowledge_graph: { nodes: currentNodes, edges: currentEdges }
-                });
-
-                if (i < nodesToAdd.length - 1) {
-                    await new Promise(resolve => setTimeout(resolve, 120));
-                }
-            }
-
-            // FINAL PASS
-            const finalNodeIds = new Set(currentNodes.map(n => n.id));
-            const remainingCrossLinks = newEdges.filter(e =>
-                finalNodeIds.has(e.source) &&
-                finalNodeIds.has(e.target) &&
-                !currentEdges.some(ce => ce.id === e.id ||
-                    (ce.source === e.source && ce.target === e.target) ||
-                    (ce.source === e.target && ce.target === e.source))
-            );
-
-            if (remainingCrossLinks.length > 0) {
-                currentEdges = [...currentEdges, ...remainingCrossLinks];
-                setData({
-                    ...data,
-                    knowledge_graph: { nodes: currentNodes, edges: currentEdges }
-                });
-            }
-
-            setTimeout(() => setNewlySpawnedNodes(new Set()), 2000);
+            const sourceStatuses = { ...(current.research?.source_statuses ?? researchSources),
+                [node.name]: Array.isArray(result.source_statuses) ? result.source_statuses : [] };
+            const limitations = [...new Set([...(current.research?.limitations ?? []), ...(result.limitations ?? [])])];
+            if (merged.unresolvedEdges) limitations.push('Certains liens ambigus n’ont pas pu être attachés au graphe.');
+            const updated: RadialRingsData = { ...current,
+                knowledge_graph: { nodes: merged.nodes, edges: merged.edges },
+                research: { summary: [...new Set([current.research?.summary, result.research_summary].filter(Boolean))].join('\n\n'),
+                    model: result.ai_model ?? current.research?.model ?? '',
+                    result_status: limitations.length ? 'partial' : result.result_status ?? 'partial', limitations,
+                    unresolved_questions: [...new Set([...(current.research?.unresolved_questions ?? []), ...(result.unresolved_questions ?? [])])] as string[],
+                    source_statuses: sourceStatuses },
+            };
+            const beforeIds = new Set(current.knowledge_graph.nodes.map(item => item.id));
+            setNewlySpawnedNodes(new Set(merged.nodes.filter(item => !beforeIds.has(item.id)).map(item => item.id)));
+            dataRef.current = updated;
+            setData(updated);
+            setResearchSources(sourceStatuses);
             setCentralNode(node.name);
-
-        } catch (err) {
-            console.error('[EXPAND] Error:', err);
-            setError('La recherche complémentaire a échoué.');
+            setTimeout(() => setNewlySpawnedNodes(new Set()), 2000);
+        } catch (failure) {
+            if (!request.signal.aborted && (failure as { status?: number })?.status === 401) {
+                dataRef.current = null;
+                setData(null);
+                setResearchSources({});
+                pendingExpansion.current = null;
+            }
+            if (!request.signal.aborted) setError(failure instanceof Error ? failure.message : 'La recherche complémentaire a échoué.');
         } finally {
-            setIsLoading(false);
-            setIsExpanding(false);
-            setExpandingNodeName(null);
+            if (researchRequest.current === request) {
+                researchRequest.current = null;
+                if (!request.signal.aborted) pendingExpansion.current = null;
+                setIsExpanding(false);
+                setExpandingNodeName(null);
+                setResearchProgress(null);
+            }
         }
     };
+
+    // Closing detaches the observer only. Reopening resumes the same durable
+    // expansion through its saved request reference instead of starting over.
+    useEffect(() => {
+        if (!isOpen || !pendingExpansion.current) return;
+        if (pendingExpansion.current.pathKey !== JSON.stringify({ llmMode, pathologies: allPathologies })) {
+            pendingExpansion.current = null;
+            return;
+        }
+        void handleSetCentral(pendingExpansion.current.nodeId);
+    }, [isOpen, allPathologies.join(','), llmMode]);
 
     const handleEdgeSelect = (edge: RingEdge | null, source: RingNode | null, target: RingNode | null, multiNodes?: RingNode[]) => {
         setSelectedEdge(edge);
@@ -5630,7 +5300,7 @@ IMPORTANT: Retourne UNIQUEMENT les IDs des nœuds qui forment le schéma thérap
 
     const handleClose = useCallback(() => {
         if (animationRef.current) cancelAnimationFrame(animationRef.current);
-        setData(null);
+        researchRequest.current?.abort();
         setShowLinkModal(false);
         onClose();
     }, [onClose]);
@@ -5667,6 +5337,48 @@ IMPORTANT: Retourne UNIQUEMENT les IDs des nœuds qui forment le schéma thérap
             console.warn("Removed central node!");
         }
     }, [data, centralNodeId]);
+
+    useEffect(() => {
+        if (llmMode !== 'cloud') return;
+        const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+            const nextOwner = session?.user.id ?? null;
+            const previousOwner = researchOwner.current;
+            researchOwner.current = nextOwner;
+            if (previousOwner === undefined || previousOwner === nextOwner) return;
+            researchRequest.current?.abort();
+            researchRequest.current = null;
+            pendingExpansion.current = null;
+            researchPathKey.current = '';
+            invalidatedInitialData.current = initialData;
+            ownerVersion.current++;
+            setOwnerRevision(ownerVersion.current);
+            dataRef.current = null;
+            nodeQueueRef.current = [];
+            setData(null);
+            setResearchSources({});
+            setResearchProgress(null);
+            setIsLoading(false);
+            setIsExpanding(false);
+            setExpandingNodeName(null);
+            setIsDeepAnalyzing(false);
+            setDeepAnalysisMode(false);
+            setDeepAnalysisResult(null);
+            setGoldenNodeIds(new Set());
+            setShowLinkModal(false);
+            setSelectedEdge(null);
+            setSelectedEdgeSource(null);
+            setSelectedEdgeTarget(null);
+            setMultiNodesForAnalysis([]);
+            setMultiSelectedNodeIds(new Set());
+            setSelectedNodeId(null);
+            setHighlightedNodeIds(new Set());
+            setNodeGroups(new Map());
+            setNewlySpawnedNodes(new Set());
+            setFromCache(false);
+            setError('Votre session a changé. Rouvrez la recherche avec le compte actuel.');
+        });
+        return () => subscription.unsubscribe();
+    }, [llmMode, initialData]);
 
     // [SECTION:RENDER]
     if (!isOpen) return null;
@@ -5847,6 +5559,27 @@ IMPORTANT: Retourne UNIQUEMENT les IDs des nœuds qui forment le schéma thérap
 
                                 {/* Scrollable Content */}
                                 <div className="flex-1 overflow-y-auto overflow-x-hidden p-2 sm:p-3 min-h-0">
+                                    {data?.research && (
+                                        <details className="mb-3 rounded border border-cyan-700/40 bg-cyan-950/20 p-2 text-xs text-gray-300">
+                                            <summary className="cursor-pointer font-medium text-cyan-200">
+                                                Couverture de la recherche · {data.research.result_status === 'complete' ? 'collecte terminée' : data.research.result_status === 'fallback' ? 'correspondances seules' : 'partielle'}
+                                            </summary>
+                                            <p className="my-2 text-gray-400">Une recherche terminée ne garantit pas l’exhaustivité. Les conclusions et leurs conditions d’application restent à valider.</p>
+                                            {data.research.summary && <p className="whitespace-pre-wrap my-2">{data.research.summary}</p>}
+                                            {data.research.limitations.length > 0 && (
+                                                <div className="my-2 text-amber-200">
+                                                    <p className="font-medium">Limites rencontrées</p>
+                                                    <ul className="list-disc pl-4 space-y-1">{data.research.limitations.map(limit => <li key={limit}>{limit}</li>)}</ul>
+                                                </div>
+                                            )}
+                                            {data.research.unresolved_questions.length > 0 && (
+                                                <div className="my-2">
+                                                    <p className="font-medium">Questions à approfondir</p>
+                                                    <ul className="list-disc pl-4 space-y-1">{data.research.unresolved_questions.map(question => <li key={question}>{question}</li>)}</ul>
+                                                </div>
+                                            )}
+                                        </details>
+                                    )}
                                     {Object.entries(researchSources).map(([topic, statuses]) => (
                                         <details key={topic} className="mb-3 text-xs text-gray-300">
                                             <summary className="cursor-pointer font-medium">Sources · {topic}</summary>
@@ -5858,6 +5591,14 @@ IMPORTANT: Retourne UNIQUEMENT les IDs des nœuds qui forment le schéma thérap
                                                         empty: 'aucun résultat', skipped: 'non interrogée', unavailable: 'indisponible'
                                                     })[entry.status]} ({entry.count})
                                                     {entry.detail && <p>{entry.detail}</p>}
+                                                    {!!entry.query_statuses?.length && entry.query_statuses.length > 1 && (
+                                                        <ul className="my-1 list-disc pl-4 space-y-1 text-gray-400">
+                                                            {entry.query_statuses.map(query => <li key={query.topic}>
+                                                                {query.topic} · {({ available: 'résultats disponibles', partial: 'couverture partielle', empty: 'aucun résultat', skipped: 'non interrogée', unavailable: 'indisponible' })[query.status]} ({query.count})
+                                                                {query.detail && <span className="block">{query.detail}</span>}
+                                                            </li>)}
+                                                        </ul>
+                                                    )}
                                                     {!!entry.failed_tables?.length && <p>Tables indisponibles · {entry.failed_tables.join(', ')}</p>}
                                                     {entry.records.map(record => (
                                                         <a key={record.id} href={record.url} target="_blank" rel="noreferrer"
@@ -6112,8 +5853,12 @@ IMPORTANT: Retourne UNIQUEMENT les IDs des nœuds qui forment le schéma thérap
                     {/* Loading */}
                     {/* Futuristic Loading Animation - Electric Circuit Theme */}
                     {/* Show when loading AND graph has minimal content (placeholder only) */}
-                    {isLoading && (!data || data.knowledge_graph.nodes.length <= 1) && (
+                    {isLoading && (
                         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/90 backdrop-blur-xl overflow-hidden animate-in fade-in duration-500">
+                            <button type="button" onClick={handleClose} aria-label="Fermer le suivi de la recherche"
+                                className="absolute top-5 right-5 z-20 min-h-11 min-w-11 rounded-lg bg-gray-800 p-3 text-white hover:bg-gray-700">
+                                <X className="h-5 w-5" />
+                            </button>
                             {/* Background fill with pulsing gradient */}
                             <div className="absolute inset-0 bg-gradient-to-br from-gray-950 via-[#050510] to-black opacity-90" />
                             <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(56,189,248,0.15),transparent_70%)] animate-pulse" style={{ animationDuration: '4s' }} />
@@ -6178,7 +5923,7 @@ IMPORTANT: Retourne UNIQUEMENT les IDs des nœuds qui forment le schéma thérap
 
                                 {/* Loading text with futuristic progress bar */}
                                 <div className="mt-8 w-full">
-                                    <LoadingProgressBar />
+                                    <LoadingProgressBar job={researchProgress} />
                                 </div>
                             </div>
 
@@ -6205,7 +5950,7 @@ IMPORTANT: Retourne UNIQUEMENT les IDs des nœuds qui forment le schéma thérap
                         <div className="absolute top-4 left-1/2 transform -translate-x-1/2 z-40 bg-gray-900/90 backdrop-blur-sm rounded-full px-6 py-3 border border-purple-500/50 shadow-xl">
                             <div className="flex items-center gap-3">
                                 <Loader2 className="w-5 h-5 text-purple-400 animate-spin" />
-                                <span className="text-white text-sm">Expansion depuis <span className="text-purple-400 font-medium">{expandingNodeName}</span>...</span>
+                                <span className="text-white text-sm">Expansion depuis <span className="text-purple-400 font-medium">{expandingNodeName}</span>…<span className="block text-xs text-gray-300" role="status">{researchProgress?.message}</span></span>
                             </div>
                         </div>
                     )}
@@ -6296,7 +6041,7 @@ IMPORTANT: Retourne UNIQUEMENT les IDs des nœuds qui forment le schéma thérap
                                 <button
                                     onClick={handleDeepAnalysis}
                                     className="absolute top-20 sm:top-24 left-1/2 -translate-x-1/2 z-30 bg-gradient-to-r from-amber-500 via-yellow-500 to-amber-600 hover:from-amber-400 hover:via-yellow-400 hover:to-amber-500 text-black font-bold px-4 py-2.5 rounded-xl shadow-lg shadow-amber-500/30 flex items-center gap-2 transition-all hover:scale-105 active:scale-95"
-                                    title="Analyser le graphe pour identifier le schéma de traitement optimal"
+                                    title="Comparer les options thérapeutiques et leurs limites"
 
                                 >
                                     <svg className="w-5 h-5 animate-pulse" fill="currentColor" viewBox="0 0 20 20">
@@ -6325,7 +6070,7 @@ IMPORTANT: Retourne UNIQUEMENT les IDs des nœuds qui forment le schéma thérap
                                         Analyse en cours...
                                     </p>
                                     <p className="mt-2 text-sm text-gray-400">
-                                        Identification du schéma thérapeutique optimal
+                                        Comparaison des options, bénéfices et risques
                                     </p>
                                 </div>
                             )}
@@ -6343,8 +6088,8 @@ IMPORTANT: Retourne UNIQUEMENT les IDs des nœuds qui forment le schéma thérap
                                                 </svg>
                                             </div>
                                             <div>
-                                                <h4 className="text-amber-400 font-bold text-sm">Schéma Optimal</h4>
-                                                <p className="text-amber-200/70 text-xs">{goldenNodeIds.size} nœuds identifiés</p>
+                                                <h4 className="text-amber-400 font-bold text-sm">Options à valider</h4>
+                                                <p className="text-amber-200/70 text-xs">{goldenNodeIds.size} concepts retenus · validation clinique requise</p>
                                             </div>
                                         </div>
                                         <p className="text-sm text-amber-100 mb-3 leading-relaxed">{deepAnalysisResult}</p>
@@ -6376,7 +6121,8 @@ IMPORTANT: Retourne UNIQUEMENT les IDs des nœuds qui forment le schéma thérap
                                 isOpen={!isLoading && !error}
                                 graphNodes={data.knowledge_graph.nodes}
                                 graphEdges={data.knowledge_graph.edges}
-                                pathology={pathology}
+                                pathology={allPathologies.join(' + ')}
+                                research={data.research}
                                 onCreateGroup={(nodeType, groupName) => {
                                     // Find all nodes of the given type and create a group
                                     const matchingNodes = data.knowledge_graph.nodes.filter(
@@ -6584,12 +6330,15 @@ IMPORTANT: Retourne UNIQUEMENT les IDs des nœuds qui forment le schéma thérap
 
                 {/* Link Explanation Modal */}
                 <LinkExplanationModal
+                    key={ownerRevision}
                     isOpen={showLinkModal}
                     onClose={() => setShowLinkModal(false)}
                     edge={selectedEdge}
                     sourceNode={selectedEdgeSource}
                     targetNode={selectedEdgeTarget}
                     multiNodes={multiNodesForAnalysis}
+                    relatedEdges={data?.knowledge_graph.edges ?? []}
+                    research={data?.research}
                     pathology={pathology || centralNode || (typeof activePathologies !== 'undefined' && activePathologies[0]) || ''}
                     onSetCentral={handleSetCentral}
                 />

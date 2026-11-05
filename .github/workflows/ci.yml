@@ -49,6 +49,9 @@ jobs:
       - name: Typecheck scientific library and matrix UI
         run: npx tsc -p tsconfig.scientific-library.json --pretty false
 
+      - name: Typecheck research graph, recovery and restored evidence contracts
+        run: npx tsc -p tsconfig.graph-research.json --pretty false
+
       - name: Typecheck anatomical atlas viewer
         run: npx tsc -p tsconfig.anatomical-twin.json --pretty false
 
@@ -69,6 +72,24 @@ jobs:
           supabase/functions/patient-health-synthesis/index.ts
           supabase/functions/discovery-platform/index.ts
           supabase/functions/hypothesis-processor/index.ts
+          supabase/functions/systematic-research/index.ts
+          supabase/functions/focused-research/index.ts
+          supabase/functions/targeted-research/index.ts
+          supabase/functions/live-research/index.ts
+          supabase/functions/discovery-search/index.ts
+          supabase/functions/discovery-engine/index.ts
+          supabase/functions/hypothesis-generator/index.ts
+          supabase/functions/scientific-analysis/index.ts
+          supabase/functions/validate-hypothesis/index.ts
+          supabase/functions/analyze-kg-links/index.ts
+          supabase/functions/analyze-user-links/index.ts
+          supabase/functions/graph-chat/index.ts
+          supabase/functions/radial-rings-engine/index.ts
+          supabase/functions/adversarial-reviewer/index.ts
+          supabase/functions/lbd-contradiction-detector/index.ts
+          supabase/functions/pathology-analyzer/index.ts
+          supabase/functions/detect-side-effects/index.ts
+          supabase/functions/ai-assistant/index.ts
 
       - name: Lint
         run: npm run lint
