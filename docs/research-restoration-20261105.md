@@ -91,9 +91,9 @@ Contrôles locaux exécutés sur la version candidate :
 
 Les cas de régression couvrent la transmission réelle du contexte aux requêtes de synthèse, les références non inventées, les directions et types de relations, les métadonnées bibliographiques, les réponses historiques, la reprise après interruption, les doubles soumissions, les changements de compte et les accès de deux utilisateurs à des patients distincts. Les fournisseurs et données cliniques de ces tests sont synthétiques.
 
-Le contrôle Deno local n’a pas pu télécharger `esm.sh` et `deno.land` : la connexion est refusée dans l’environnement d’exécution. La CI de la PR vérifie 29 points d’entrée Edge, en plus des tests, du build et des assertions PostgreSQL 17. Son résultat sera consigné après l’exécution distante.
+Le contrôle Deno local n’a pas pu télécharger `esm.sh` et `deno.land` : la connexion est refusée dans l’environnement d’exécution. La CI de la [PR #39](https://github.com/mtnrconcept/medimind-nexus/pull/39) vérifie 29 points d’entrée Edge, en plus des tests, du build et des assertions PostgreSQL 17. Le premier passage distant a confirmé les tests et les assertions PostgreSQL, puis identifié une incompatibilité de type générique dans l’adaptateur Supabase du graphe. L’adaptateur utilise désormais le type `SupabaseClient` explicite ; la PR expose le résultat des contrôles sur chaque révision.
 
-Le parcours visuel authentifié n’a pas été exécuté dans un navigateur : aucun binaire de navigateur n’est disponible localement et son téléchargement a échoué. Les composants bibliographiques ont été vérifiés par rendu et assertions, et les interfaces par TypeScript et compilation. Aucune mesure comparative avec des appels réels à Astra ni validation de pertinence médicale n’est revendiquée.
+L’aperçu Vercel du premier commit a atteint l’état READY et son accueil a été ouvert dans un navigateur distant. Aucune erreur de chargement de l’application n’a été observée. Le parcours authentifié n’a pas été exercé. Les composants bibliographiques ont été vérifiés par rendu et assertions, et les interfaces par TypeScript et compilation. Aucune mesure comparative avec des appels réels à Astra ni validation de pertinence médicale n’est revendiquée.
 
 ## Inventaire des fichiers modifiés
 

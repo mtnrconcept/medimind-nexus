@@ -1,4 +1,4 @@
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { createClient, type SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { callAI, startBackgroundAI } from "../_shared/ai-client.ts";
 import { readBoundedJson } from "../_shared/bounded-json.ts";
 import {
@@ -20,7 +20,7 @@ const json = (body: unknown, status = 200) => new Response(JSON.stringify(body),
     status, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
 });
 
-function researchServices(client: ReturnType<typeof createClient>): ResearchServices {
+function researchServices(client: SupabaseClient): ResearchServices {
     return {
         callAI,
         async isAuthenticated(token) {
