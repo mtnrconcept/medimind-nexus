@@ -1,3 +1,5 @@
+import { relationPresentation, type RelationMetadata } from '../../../supabase/functions/cross-data-analyzer/relation-contract';
+import { frenchMedicalLabel } from '../../../supabase/functions/_shared/medical-terminology';
 import { useMemo, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
@@ -50,7 +52,7 @@ interface Medication {
     atc_code?: string;
 }
 
-interface CausalLink {
+interface CausalLink extends RelationMetadata {
     from: string;
     fromType: 'symptom' | 'pathology' | 'treatment' | 'medication';
     to: string;
@@ -146,54 +148,8 @@ export function RelationshipMatrix({
             .replace(/\s+/g, ' ');
     };
 
-    // Vérifier si deux noms correspondent (version stricte)
-    const matchesElement = (linkName: string, elementName: string): boolean => {
-        const linkNorm = normalizeForComparison(linkName);
-        const elemNorm = normalizeForComparison(elementName);
-
-        // Correspondance exacte
-        if (linkNorm === elemNorm) return true;
-
-        // Inclusions : assouplissement du ratio pour les noms longs (médicaments)
-        // Si le nom du lien est contenu dans l'élément, c'est souvent un bon match (ex: "Metformine" dans "Metformine 1000mg")
-        if (elemNorm.length >= 5) {
-            // Si le lien est court (ex: AI output) et inclus dans l'élément long (DB)
-            if (elemNorm.includes(linkNorm)) {
-                // Ratio abaissé à 0.3 pour capturer "Metformine" (10) dans "Metformine...long..." (30+)
-                if (linkNorm.length >= elemNorm.length * 0.3) return true;
-                // Si le lien est au tout début (ex: marque ou substance au début)
-                if (elemNorm.startsWith(linkNorm)) return true;
-            }
-            // Inverse (rare): élément inclus dans lien
-            if (linkNorm.includes(elemNorm) && elemNorm.length >= linkNorm.length * 0.6) return true;
-        }
-
-        // Comparaison par mots
-        const linkWords = linkNorm.split(' ').filter(w => w.length >= 3); // 3+ chars (inclut "type", "nom")
-        const elemWords = elemNorm.split(' ').filter(w => w.length >= 3);
-
-        if (linkWords.length === 0 || elemWords.length === 0) return false;
-
-        // 1. Couverture de l'élément par le lien (ex: "Diabete type 2" vs "Diabete")
-        const matchingElemWords = elemWords.filter(ew =>
-            linkWords.some(lw => lw === ew || (lw.length >= 4 && ew.length >= 4 && (lw.includes(ew) || ew.includes(lw))))
-        );
-        const elemCoverage = matchingElemWords.length / elemWords.length;
-        if (elemCoverage >= 0.7) return true;
-
-        // 2. Couverture du lien par l'élément (NOUVEAU - CRITIQUE)
-        // Ex: Link="Metformine", Elem="Metformine 1000mg sachet"
-        // Link words ["metformine"] sont tous dans Elem words
-        const matchingLinkWords = linkWords.filter(lw =>
-            elemWords.some(ew => lw === ew || (lw.length >= 4 && ew.length >= 4 && (lw.includes(ew) || ew.includes(lw))))
-        );
-        const linkCoverage = matchingLinkWords.length / linkWords.length;
-
-        // Si 100% des mots significatifs du lien sont trouvés dans l'élément, c'est un match
-        if (linkCoverage >= 0.9) return true;
-
-        return false;
-    };
+    // Exact identity only: two formulations must never be collapsed by fuzzy names.
+    const matchesElement = (a: string,b: string) => normalizeForComparison(a) === normalizeForComparison(b);
 
     // Créer la liste de tous les éléments sélectionnés
     const allElements = useMemo((): MatrixElement[] => {
@@ -253,87 +209,12 @@ export function RelationshipMatrix({
 
         if (!link) return null;
 
-        // Déterminer le label de probabilité
-        const probabilityLabel = link.probability === 'high' ? 'Forte' :
-            link.probability === 'medium' ? 'Moyenne' :
-                link.probability === 'low' ? 'Faible' : '';
-
-        // 🔴 ROUGE - DANGER
-        // Interaction dangereuse (dangerLevel critical ou high)
-        if (link.dangerLevel === 'critical' || link.dangerLevel === 'high') {
-            return {
-                type: 'danger',
-                label: link.dangerLevel === 'critical' ? '⚠️ Critique' : '🔶 Élevé',
-                description: link.evidence || link.relationship || 'Interaction dangereuse',
-                color: '#dc2626',
-                bgColor: '#fef2f2',
-                link
-            };
-        }
-
-        // 🟠 ORANGE - CONTRE-INDIQUÉ
-        // Médicament contre-indiqué pour pathologie, ou danger modéré
-        if (isAppropriatenessWarning(link) || link.dangerLevel === 'moderate') {
-            return {
-                type: 'contraindicated',
-                label: '✗ Contre-indiqué',
-                description: link.evidence || link.relationship || 'Contre-indication',
-                color: '#ea580c',
-                bgColor: '#fff7ed',
-                link
-            };
-        }
-
-        // 🟡 JAUNE - INTERACTION POSSIBLE / EFFETS SECONDAIRES
-        if (link.effectType === 'adverse' || link.effectType === 'both' ||
-            link.dangerLevel === 'low' ||
-            link.interactionType === 'drug-drug') {
-            return {
-                type: 'interaction',
-                label: '⚡ Interaction',
-                description: link.evidence || link.relationship || 'Interaction possible',
-                color: '#ca8a04',
-                bgColor: '#fefce8',
-                link
-            };
-        }
-
-        // 🟢 VERT - TRAITE / ADAPTÉ (médicament → pathologie)
-        if (isAppropriatenessSuccess(link) || link.effectType === 'therapeutic') {
-            return {
-                type: 'treats',
-                label: '✓ Traite',
-                description: link.therapeuticDetails || link.evidence || link.relationship || 'Traitement adapté',
-                color: '#16a34a',
-                bgColor: '#f0fdf4',
-                link
-            };
-        }
-
-        // 🟢 VERT - SYMPTÔME (pathologie → symptôme)
-        if (link.symptomFrequency) {
-            const frequencyLabel = link.symptomFrequency === 'principal' ? '★ Principal' :
-                link.symptomFrequency === 'frequent' ? '◆ Fréquent' :
-                    link.symptomFrequency === 'possible' ? '◇ Possible' : '○ Rare';
-            const isNormal = link.symptomFrequency === 'principal' || link.symptomFrequency === 'frequent';
-            return {
-                type: 'symptom',
-                label: frequencyLabel,
-                description: link.evidence || link.relationship || 'Symptôme associé',
-                color: isNormal ? '#16a34a' : '#ca8a04',
-                bgColor: isNormal ? '#f0fdf4' : '#fefce8',
-                link
-            };
-        }
-
-        // Lien par défaut (informatif - avec probabilité si disponible)
+        const display = relationPresentation(link);
         return {
-            type: 'interaction',
-            label: probabilityLabel || 'Lien',
-            description: link.evidence || link.relationship || 'Relation détectée',
-            color: '#3b82f6',
-            bgColor: '#eff6ff',
-            link
+            type: 'interaction', label: display.label,
+            description: display.description + ' ' + (link.contextLimitations || []).join(' '),
+            color: display.tone === 'caution' ? '#92400e' : '#334155',
+            bgColor: display.tone === 'caution' ? '#fff7ed' : '#f1f5f9', link,
         };
     };
 
@@ -381,19 +262,10 @@ export function RelationshipMatrix({
                 <CardHeader className="pb-2">
                     <CardTitle className="text-sm flex items-center justify-between">
                         <span>Matrice des relations ({allElements.length} éléments)</span>
-                        <div className="flex gap-2 text-xs">
-                            <Badge className="bg-green-500/20 text-green-700 border-green-500/30">
-                                ✓ Traite / Normal
-                            </Badge>
-                            <Badge className="bg-yellow-500/20 text-yellow-700 border-yellow-500/30">
-                                ⚡ Interaction
-                            </Badge>
-                            <Badge className="bg-orange-500/20 text-orange-700 border-orange-500/30">
-                                ⚠ Contre-indiqué
-                            </Badge>
-                            <Badge className="bg-red-500/20 text-red-700 border-red-500/30">
-                                ⛔ Danger
-                            </Badge>
+                        <div className="flex flex-wrap gap-2 text-xs">
+                            <Badge variant="outline">Relation étudiée ≠ efficacité prouvée</Badge>
+                            <Badge variant="outline">Contexte / co-utilisation</Badge>
+                            <Badge variant="outline">Lien non établi</Badge>
                         </div>
                     </CardTitle>
                 </CardHeader>
@@ -416,7 +288,7 @@ export function RelationshipMatrix({
                                                 <div className="flex flex-col items-center gap-1">
                                                     {getTypeIcon(element.type)}
                                                     <span className="text-xs font-medium truncate max-w-[100px]" title={element.name}>
-                                                        {element.name.length > 12 ? element.name.slice(0, 12) + '...' : element.name}
+                                                        {frenchMedicalLabel(element.name).length > 20 ? frenchMedicalLabel(element.name).slice(0,20) + '…' : frenchMedicalLabel(element.name)}
                                                     </span>
                                                 </div>
                                             </TableHead>
@@ -433,7 +305,7 @@ export function RelationshipMatrix({
                                                 <div className="flex items-center gap-2">
                                                     {getTypeIcon(rowElement.type)}
                                                     <span className="text-xs truncate max-w-[140px]" title={rowElement.name}>
-                                                        {rowElement.name}
+                                                        {frenchMedicalLabel(rowElement.name)}
                                                     </span>
                                                 </div>
                                             </TableCell>
@@ -475,7 +347,7 @@ export function RelationshipMatrix({
                                                                 <TooltipContent className="max-w-[300px]">
                                                                     <div className="space-y-1">
                                                                         <p className="font-semibold text-sm">
-                                                                            {rowElement.name} ↔ {colElement.name}
+                                                                            {frenchMedicalLabel(rowElement.name)} ↔ {colElement.name}
                                                                         </p>
                                                                         <p className="text-xs">{pill.description}</p>
                                                                         <p className="text-xs text-muted-foreground italic">Cliquer pour plus de détails</p>
@@ -486,14 +358,13 @@ export function RelationshipMatrix({
                                                             <button type="button" className="rounded-md border border-amber-500/40 bg-amber-500/10 px-2 py-1 text-[11px] text-foreground hover:bg-amber-500/20"
                                                                 title="Interprétation OpenAI, non validée cliniquement"
                                                                 onClick={() => setSelectedAssessment({ left: rowElement.name, right: colElement.name, item: assessment })}>
-                                                                {assessment.verdict === 'hypothesis' ? 'Hypothèse IA' :
-                                                                    assessment.verdict === 'insufficient' ? 'IA : incertain' : 'IA : à vérifier'}
+                                                                {assessment.headline || (assessment.verdict === 'hypothesis' ? 'Piste non confirmée' : 'Lien non établi')}
                                                             </button>
                                                         ) : research?.sources?.length ? (
                                                             <button type="button" className="rounded-md border border-primary/30 px-2 py-1 text-[11px] text-primary hover:bg-primary/10"
                                                                 title="Publications de contexte, relation clinique non établie"
                                                                 onClick={() => setSelectedResearch({ query: research.query, sources: research.sources! })}>
-                                                                {research.sources.length} réf. à examiner
+                                                                {research.sources.length} sources · analyse à terminer
                                                             </button>
                                                         ) : (
                                                             <span className="text-xs text-muted-foreground">{snapshot ?
@@ -554,11 +425,11 @@ export function RelationshipMatrix({
 
             {/* Dialog des détails du lien (même design que RiskNetworkGraph) */}
             <Dialog open={showLinkDialog} onOpenChange={setShowLinkDialog}>
-                <DialogContent className="max-w-lg">
+                <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto">
                     <DialogHeader>
                         <DialogTitle className="flex items-center gap-2">
                             <Info className="h-5 w-5 text-primary" />
-                            Détails du lien de causalité
+                            Relation bibliographique et limites
                         </DialogTitle>
                     </DialogHeader>
                     {selectedLink && (
@@ -569,7 +440,7 @@ export function RelationshipMatrix({
                                     {selectedLink.fromType === 'pathology' ? '🏥' :
                                         selectedLink.fromType === 'symptom' ? '🩺' :
                                             selectedLink.fromType === 'medication' ? '💊' : '⚕️'}
-                                    {' '}{selectedLink.fromType}
+                                    {' '}{{pathology:'Pathologie',symptom:'Symptôme',medication:'Médicament',treatment:'Traitement'}[selectedLink.fromType]}
                                 </Badge>
                                 <span className="font-medium">{selectedLink.from}</span>
                                 <ArrowRight className="h-4 w-4 text-muted-foreground" />
@@ -577,7 +448,7 @@ export function RelationshipMatrix({
                                     {selectedLink.toType === 'pathology' ? '🏥' :
                                         selectedLink.toType === 'symptom' ? '🩺' :
                                             selectedLink.toType === 'medication' ? '💊' : '⚕️'}
-                                    {' '}{selectedLink.toType}
+                                    {' '}{{pathology:'Pathologie',symptom:'Symptôme',medication:'Médicament',treatment:'Traitement'}[selectedLink.toType]}
                                 </Badge>
                                 <span className="font-medium">{selectedLink.to}</span>
                             </div>
@@ -588,6 +459,17 @@ export function RelationshipMatrix({
                                 <p className="text-sm">{selectedLink.relationship}</p>
                             </div>
 
+                            <div className="rounded-lg border p-3 text-sm">
+                                <strong>{relationPresentation(selectedLink).label}</strong>
+                                <p className="mt-1 text-muted-foreground">{relationPresentation(selectedLink).description}</p>
+                                {selectedLink.contextLimitations?.map(note => <p key={note} className="mt-1 text-xs">{note}</p>)}
+                                {selectedLink.evidenceQuotes?.map((quote,index) => (
+                                    <blockquote key={index} className="mt-3 border-l-2 pl-3 text-xs">
+                                        <p>{quote.quote}</p>
+                                        <a href={quote.url} target="_blank" rel="noopener noreferrer" className="text-primary underline">Consulter le passage source</a>
+                                    </blockquote>
+                                ))}
+                            </div>
                             {/* Indicateurs */}
                             <div className="grid grid-cols-2 gap-3">
                                 {supportsAppropriatenessBadge(selectedLink) && (
@@ -650,7 +532,7 @@ export function RelationshipMatrix({
                             {selectedLink.evidence && (
                                 <div className="p-4 bg-blue-50 dark:bg-blue-900/20 rounded-lg border border-blue-200 dark:border-blue-800">
                                     <p className="text-sm font-medium text-blue-800 dark:text-blue-300 mb-2">
-                                        📚 Explication médicale
+                                        📚 Observation bibliographique
                                     </p>
                                     <p className="text-sm text-blue-700 dark:text-blue-400">
                                         {selectedLink.evidence}

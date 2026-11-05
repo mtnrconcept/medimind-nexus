@@ -57,6 +57,7 @@ export default function AIActivityPanel() {
   const selected = detail !== null && detail.owner === owner && detail.job.id === selectedId ? detail.job : null;
   const pending = jobs.filter(job => !terminal(job) && !job.stalled).length;
   const display = useMemo(() => selected?.result_payload?.body ? describeAIResult(selected.result_payload) : null, [selected]);
+  const crossAnalysisArchive = selected?.function_name === 'cross-data-analyzer';
   const selectedBatch = selected?.analysis_mode === 'scraper_batch' && typeof display?.structured[0] === 'object'
     ? display.structured[0] as ScraperBatchResult : null;
 
@@ -205,6 +206,11 @@ export default function AIActivityPanel() {
                 {selected && (
                   <div className="space-y-4">
                     <h3 className="font-semibold">{label(selected)}</h3>
+                    {crossAnalysisArchive && <p role="alert" className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950 dark:bg-amber-950/30 dark:text-amber-100">
+                      Archive technique : « terminé » signifie que le traitement informatique est fini, pas que ses conclusions sont validées médicalement.
+                      Les anciennes analyses peuvent contenir des classifications erronées. Utilisez la vue Analyse croisée et son bouton de réanalyse pour appliquer le moteur corrigé.
+                    </p>}
+
                     {selectedBatch && <p className="text-sm">{selectedBatch.completed}/{selectedBatch.total} URL réussies · {selectedBatch.failed} en erreur · {selectedBatch.skipped} non lancées.</p>}
                     {selected.analysis_mode === 'scraper_batch' && !terminal(selected) && (
                       <div className="space-y-2">

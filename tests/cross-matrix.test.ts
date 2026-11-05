@@ -181,7 +181,7 @@ async function runMatrixCadenceFixture(t: TestContext, failReads: boolean, loseA
     id: '11111111-1111-4111-8111-111111111111', function_name: 'cross-data-analyzer', analysis_mode: 'progressive_matrix',
     status: 'queued', updated_at: new Date().toISOString(), provider_response_id: failReads ? 'resp_saved' : null,
     request_payload: { selection: {}, risk: detectHighRiskContext({ selectedElementCount: count }), _matrix_runtime: { windowStartedAt: origin, retries: 0 } },
-    result_payload: { elements: selected, cells: {}, batchSize: 3, analysis: ensureAnalysisShape({ summary: 'Synthetic fixture.' }) },
+    result_payload: { elements: selected, cells: {}, batchSize: 3, analysis: ensureAnalysisShape({ engineVersion: 2, summary: 'Synthetic fixture.' }) },
   };
   const tasks: Promise<void>[] = [];
   const calls = [0];
