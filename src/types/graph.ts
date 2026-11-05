@@ -1,4 +1,15 @@
 
+export interface GraphReference {
+    id: string;
+    title: string;
+    url: string;
+    abstract?: string;
+    year?: string;
+    journal?: string;
+    publication_types?: string[];
+    abstract_truncated?: boolean;
+}
+
 export interface RingNode {
     id: string;
     ring: number;
@@ -15,6 +26,7 @@ export interface RingNode {
     tags?: string[];
     is_inherited?: boolean; // True if node came from previous expansion
     parent_pathology?: string; // For comorbidity: which pathology this node belongs to
+    evidence_status?: 'source_linked' | 'hypothesis';
 }
 
 export interface RingEdge {
@@ -25,6 +37,9 @@ export interface RingEdge {
     evidence_grade: string;
     translation_gap: boolean;
     weight: number;
+    rationale?: string;
+    references?: GraphReference[];
+    evidence_status?: 'source_linked' | 'hypothesis';
 }
 
 export interface MicroSignal {
@@ -42,4 +57,12 @@ export interface RadialRingsData {
     };
     micro_signals: MicroSignal[];
     hypotheses: any[];
+    research?: {
+        summary: string;
+        model: string;
+        result_status: 'complete' | 'partial' | 'fallback';
+        limitations: string[];
+        unresolved_questions: string[];
+        source_statuses: Record<string, import('../../supabase/functions/deep-research-graph/sources').SourceStatus[]>;
+    };
 }

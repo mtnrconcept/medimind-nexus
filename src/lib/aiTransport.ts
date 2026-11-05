@@ -106,6 +106,11 @@ export function createAITransport(options: AITransportOptions) {
     return request<AIToolStatus>({ action: 'status', jobId, after: String(after) }, owner);
   }
 
+  /** Recover an accepted admission whose acknowledgement never reached the browser. */
+  async function statusByRequest(requestId: string, owner?: string): Promise<AIToolStatus> {
+    return request<AIToolStatus>({ action: 'status', requestId, after: '0' }, owner);
+  }
+
   async function statusWithRetry(jobId: string, cursor: number, owner: string, observation: AIJobObservation, signal?: AbortSignal): Promise<AIToolStatus> {
     let delay = 0;
     while (true) {
@@ -344,6 +349,7 @@ export function createAITransport(options: AITransportOptions) {
   return {
     fetch: aiFetch,
     status,
+    statusByRequest,
     observe,
     startBatch,
     stopBatch,

@@ -8,6 +8,7 @@ export type ClinicalTask =
   | 'polypharmacy'
   | 'treatment_general'
   | 'treatment_complex'
+  | 'research_synthesis'
   | 'final_safety_review';
 
 export interface ClinicalEntity {
@@ -412,6 +413,16 @@ export function selectClinicalModel(
       timeoutMs: 30_000,
       finalReviewRequired: false,
       routeReason: 'simple deterministic lookup with low clinical risk',
+    };
+  }
+
+  if (input.task === 'research_synthesis') {
+    return {
+      model: criticalModel,
+      reasoningEffort: 'high',
+      timeoutMs: 120_000,
+      finalReviewRequired: true,
+      routeReason: 'scientific evidence synthesis requires the configured research model and explicit review',
     };
   }
 

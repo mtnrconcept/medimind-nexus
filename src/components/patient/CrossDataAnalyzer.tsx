@@ -50,6 +50,7 @@ import { RiskNetworkGraph } from './RiskNetworkGraph';
 import { reconcileGraphSelectionRequest, snapshotExternalEntities, snapshotSelectionIds,
   type GraphEntity } from './crossGraphGroups';
 import { AgentCrossAnalysisPanel, type AgentReview } from './AgentCrossAnalysisPanel';
+import { ResearchSourceList, ResearchTraceDetails, type ResearchCitation, type ResearchTrace } from './ResearchSourceList';
 import useMedicalStats from '@/hooks/useMedicalStats';
 import {
   getAppropriatenessBadgeLabel,
@@ -90,12 +91,9 @@ interface Medication {
   isExternal?: boolean;
 }
 
-interface WebSource {
-  title: string;
-  url: string;
-}
+type WebSource = ResearchCitation;
 
-interface WebResearch {
+interface WebResearch extends ResearchTrace {
   query: string;
   pairHash?: string;
   status?: 'matched' | 'empty' | 'unavailable';
@@ -1866,6 +1864,7 @@ const CrossDataAnalyzer = ({ patientData }: CrossDataAnalyzerProps) => {
                                   : research.status === 'empty' ? 'Aucune publication exploitable pour cette requête. Cela ne prouve pas l’absence de lien.'
                                   : 'Aucune référence vérifiable enregistrée. Relancez la recherche.'}
                               </p>
+                              <ResearchTraceDetails providers={research.providers} scopeNotes={research.scopeNotes} />
                               {research.findings && research.findings.length > 0 && (
                                 <ul className="space-y-1 mb-2">
                                   {research.findings.map((finding, fIndex) => (
@@ -1877,20 +1876,7 @@ const CrossDataAnalyzer = ({ patientData }: CrossDataAnalyzerProps) => {
                                 </ul>
                               )}
                               {research.sources && research.sources.length > 0 && (
-                                <div className="flex flex-wrap gap-2">
-                                  {research.sources.map((source, sIndex) => (
-                                    <a
-                                      key={sIndex}
-                                      href={source.url}
-                                      target="_blank"
-                                      rel="noopener noreferrer"
-                                      className="inline-flex items-center gap-1 text-xs text-primary hover:underline"
-                                    >
-                                      <ExternalLink className="h-3 w-3" />
-                                      {source.title.slice(0, 50)}...
-                                    </a>
-                                  ))}
-                                </div>
+                                <ResearchSourceList sources={research.sources} />
                               )}
                             </div>
                           ))}

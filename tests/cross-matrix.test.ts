@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
 import test, { type TestContext } from 'node:test';
-import { buildPairCandidates, buildPairHash, ensureAnalysisShape, normalizeCausalLink, type SelectedElement } from '../supabase/functions/cross-data-analyzer/analysis-utils.ts';
+import { buildPairCandidates, buildPairHash, ensureAnalysisShape, normalizeCausalLink, type AnalysisResult, type SelectedElement } from '../supabase/functions/cross-data-analyzer/analysis-utils.ts';
 import { readCells, pendingPairs, readPairAssessments } from '../supabase/functions/cross-data-analyzer/matrix-progress.ts';
 import { createMatrixInitialState } from '../supabase/functions/cross-data-analyzer/matrix-job.ts';
 import { detectHighRiskContext } from '../supabase/functions/_shared/clinical-brain.ts';
+import { RESEARCH_MODEL } from '../supabase/functions/_shared/research-model.ts';
 
 const elements: SelectedElement[] = [
   { name: 'Alpha', type: 'pathology' }, { name: 'Beta', type: 'symptom' }, { name: 'Gamma', type: 'medication' },
@@ -52,6 +53,15 @@ test('a response cannot fill another pair or silently discard an invalid link', 
 
 import { createClient } from '@supabase/supabase-js';
 import { handleMatrix } from '../supabase/functions/cross-data-analyzer/matrix-job.ts';
+
+const syntheticResearch = {
+  query: 'Synthetic pair query', status: 'matched' as const, retrievedAt: '2026-01-01T00:00:00.000Z',
+  scopeNotes: ['La recherche synthétique élargit le concept ; sa pertinence reste à vérifier.'],
+  providers: [{ name: 'PubMed', status: 'matched' as const, count: 1, query: 'Synthetic provider query with human-study filter' }],
+  articles: [{ title: 'Synthetic publication fixture', url: 'https://pubmed.ncbi.nlm.nih.gov/12345/', pmid: '12345', provider: 'PubMed',
+    abstract: 'Synthetic abstract supplied to the model, with no clinical assertion.', abstractTruncated: true,
+    publicationTypes: ['Synthetic fixture'], year: '2025', journal: 'Synthetic Journal' }],
+};
 
 async function drainMatrixTasks(tasks: Promise<void>[], t: TestContext) {
   let ticks = 0;
@@ -170,36 +180,42 @@ test('server continues without a polling browser and resumes a truncated batch w
   assert.equal((await (await dispatch({ action: 'matrix.latest' })).json()).job.id, job.id);
 });
 
-async function runMatrixCadenceFixture(t: TestContext, failReads: boolean, loseAcknowledgments = false) {
+async function runMatrixCadenceFixture(t: TestContext, failReads: boolean, loseAcknowledgments = false, historicalCompletedResponse = false) {
   const origin = 1_800_000_000_000;
   t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: origin });
   t.mock.method(console, 'log', () => undefined);
   t.mock.method(console, 'error', () => undefined);
-  const count = failReads ? 2 : 15;
+  const count = failReads || historicalCompletedResponse ? 2 : 15;
   const selected: SelectedElement[] = Array.from({ length: count }, (_, index) => ({ name: `Synthetic ${index}`, type: 'pathology' }));
   const job: Record<string, unknown> = {
     id: '11111111-1111-4111-8111-111111111111', function_name: 'cross-data-analyzer', analysis_mode: 'progressive_matrix',
-    status: 'queued', updated_at: new Date().toISOString(), provider_response_id: failReads ? 'resp_saved' : null,
+    status: 'queued', updated_at: new Date().toISOString(), provider_response_id: historicalCompletedResponse ? 'resp_historical' : failReads ? 'resp_saved' : null,
+    ...(historicalCompletedResponse ? { model: 'gpt-5.5', reasoning_effort: 'medium' } : {}),
     request_payload: { selection: {}, risk: detectHighRiskContext({ selectedElementCount: count }), _matrix_runtime: { windowStartedAt: origin, retries: 0 } },
-    result_payload: { elements: selected, cells: {}, batchSize: 3, analysis: ensureAnalysisShape({ engineVersion: 2, summary: 'Synthetic fixture.' }) },
+    result_payload: { elements: selected, cells: historicalCompletedResponse ? Object.fromEntries(buildPairCandidates(selected).map(pair => [pair.pairHash, []])) : {},
+      batchSize: 3, analysis: ensureAnalysisShape({ engineVersion: 2, summary: 'Synthetic fixture.' }) },
   };
   const tasks: Promise<void>[] = [];
   const calls = [0];
   const gets: string[] = [];
   const controlReservations = new Map<number, number>();
   let posts = 0;
+  const requestedModels: string[] = [];
   const providers = new Map<string, Record<string, unknown>>();
+  if (historicalCompletedResponse) providers.set('resp_historical', {
+    id: 'resp_historical', model: 'gpt-5.5', status: 'completed', output_text: JSON.stringify({ summary: 'Historical synthesis kept.' }),
+  });
   const base = 'https://matrix.invalid';
   const globals = globalThis as typeof globalThis & {
     EdgeRuntime?: { waitUntil(p: Promise<void>): void }; Deno?: { env: { get(name: string): string } };
   };
   const oldRuntime = globals.EdgeRuntime, oldDeno = globals.Deno;
   globals.EdgeRuntime = { waitUntil: work => tasks.push(work) };
-  globals.Deno = { env: { get: name => name === 'OPENAI_MODEL' ? 'gpt-6.1-sol' : 'synthetic-key' } };
+  globals.Deno = { env: { get: name => name.endsWith('_MODEL') ? 'gpt-6.1-sol' : 'synthetic-key' } };
   t.after(() => { globals.EdgeRuntime = oldRuntime; globals.Deno = oldDeno; });
   const dispatch = (body: Record<string, unknown>) => handleMatrix(new Request(base, {
     headers: { authorization: 'Bearer synthetic-service' },
-  }), body, base, 'synthetic-service', async () => [], createClient);
+  }), body, base, 'synthetic-service', async () => syntheticResearch, createClient);
   t.mock.method(globalThis, 'fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
     const request = new Request(input, init);
     const url = new URL(request.url);
@@ -218,6 +234,7 @@ async function runMatrixCadenceFixture(t: TestContext, failReads: boolean, loseA
       t.mock.timers.tick(100);
       posts += 1;
       const body = await request.json();
+      requestedModels.push(body.model);
       const payload = JSON.parse(body.input[1].content);
       const result = payload.pairs ? { cells: payload.pairs.map(({ pair }: { pair: { pairHash: string } }) => ({ pairHash: pair.pairHash, links: [], assessment: {
         verdict: 'hypothesis', explanation: 'Analyse OpenAI: association possible non vérifiée',
@@ -251,7 +268,7 @@ async function runMatrixCadenceFixture(t: TestContext, failReads: boolean, loseA
   await dispatch({ action: 'matrix.work', jobId: job.id });
   await drainMatrixTasks(tasks, t);
   const maximum = Math.max(...calls.map(start => calls.filter(at => at >= start && at < start + 60_000).length));
-  return { job, calls, maximum, gets, posts, controlReservations, elapsed: Date.now() - origin };
+  return { job, calls, maximum, gets, posts, requestedModels, controlReservations, elapsed: Date.now() - origin };
 }
 
 test('immediate matrix GET failures keep the saved response and respect the nested invocation quota', async t => {
@@ -269,13 +286,29 @@ test('fast matrix batches stay paced and lost relay acknowledgments cannot multi
   for (const loseAcknowledgments of [false, true]) await t.test(loseAcknowledgments ? 'every accepted relay acknowledgment is lost' : 'relay acknowledgments arrive', async st => {
     const fixture = await runMatrixCadenceFixture(st, false, loseAcknowledgments);
     assert.equal(fixture.job.status, 'completed');
-    const result = fixture.job.result_payload as { cells: Record<string, unknown>; analysis: { summary: string } };
+    const result = fixture.job.result_payload as { cells: Record<string, unknown>; analysis: AnalysisResult };
     assert.equal(Object.keys(result.cells).length, 105);
     assert.equal(result.analysis.summary, 'Synthetic complete matrix.');
+    assert.deepEqual(result.analysis.webResearch[0].sources, syntheticResearch.articles,
+      'Persisted and returned sources must retain the abstracts and publication metadata actually examined.');
+    assert.deepEqual(result.analysis.webResearch[0].providers, syntheticResearch.providers);
+    assert.deepEqual(result.analysis.webResearch[0].scopeNotes, syntheticResearch.scopeNotes);
     assert.equal(fixture.posts, 36, '35 batches and one synthesis must each be generated once');
+    assert.deepEqual([...new Set(fixture.requestedModels)], [RESEARCH_MODEL], 'legacy pairs and synthesis must use Astra even when OPENAI_MODEL points elsewhere');
+    assert.equal(fixture.job.model, RESEARCH_MODEL);
     assert.equal(fixture.gets.length, 36);
     assert.ok([...fixture.controlReservations.values()].every(count => count === 1), 'Only one waiting invocation may own each continuation');
     assert.ok(fixture.maximum <= 30, `Observed ${fixture.maximum} nested invocations in 60 seconds.`);
     st.diagnostic(`Maximum ${fixture.maximum}/60 s, ${fixture.calls.length} total invocations, ${fixture.elapsed} ms simulated.`);
   });
+});
+
+test('a saved legacy provider response can still finalize with its actual historical model', async t => {
+  const fixture = await runMatrixCadenceFixture(t, false, false, true);
+  assert.equal(fixture.job.status, 'completed');
+  assert.equal(fixture.posts, 0, 'migration must not regenerate or reject an existing completed response');
+  assert.deepEqual(fixture.gets, ['resp_historical']);
+  assert.equal(fixture.job.model, 'gpt-5.5');
+  assert.equal(fixture.job.reasoning_effort, 'medium');
+  assert.equal((fixture.job.result_payload as { analysis: { summary: string } }).analysis.summary, 'Historical synthesis kept.');
 });

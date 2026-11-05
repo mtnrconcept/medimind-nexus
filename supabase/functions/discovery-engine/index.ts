@@ -1,3 +1,4 @@
+import { researchAIOptions } from '../_shared/research-model.ts';
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { callAI } from "../_shared/ai-client.ts";
@@ -423,12 +424,10 @@ Génère une analyse COMPLÈTE et DÉTAILLÉE selon le format de ton prompt syst
                     const aiResult = await callAI(
                         DISCOVERY_PROMPT,
                         context,
-                        {
-                            model: "gpt-5.5",
-                            reasoningEffort: "medium",
+                        researchAIOptions({
                             maxTokens: 16000,
                             temperature: 0.3,
-                        }
+                        })
                     );
 
                     const fullText = aiResult.text;

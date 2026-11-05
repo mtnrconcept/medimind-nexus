@@ -1,5 +1,5 @@
 import { medicalSearchTerms, medicalSearchScope } from '../_shared/medical-terminology.ts';
-import type { PairCandidate } from './analysis-utils.ts';
+import type { AnalysisResult, PairCandidate } from './analysis-utils.ts';
 
 export type LiteratureStatus = 'matched' | 'empty' | 'unavailable';
 export interface LiteratureArticle {
@@ -10,6 +10,14 @@ export interface LiteratureProviderStatus { name: string; status: LiteratureStat
 export interface PairResearchResult {
   query: string; status: LiteratureStatus; articles: LiteratureArticle[];
   providers: LiteratureProviderStatus[]; retrievedAt: string; scopeNotes?: string[];
+}
+/** Keep the retrieved record reviewable after a background job has completed. */
+export function toAnalysisResearch(research: Omit<PairResearchResult, 'articles'> & {
+  articles: AnalysisResult['webResearch'][number]['sources'];
+}, pairHash?: string): AnalysisResult['webResearch'][number] {
+  return { query: research.query, ...(pairHash ? { pairHash } : {}), status: research.status,
+    providers: research.providers.map(provider => ({ ...provider })), retrievedAt: research.retrievedAt,
+    scopeNotes: [...(research.scopeNotes || [])], findings: [], sources: research.articles.map(article => ({ ...article })) };
 }
 export function buildPairSearchQuery(pair: PairCandidate): string {
   const term = (value: string) => '"' + value.replace(/["\\[\]{}|<>]/g, ' ').replace(/\s+/g, ' ').trim() + '"';

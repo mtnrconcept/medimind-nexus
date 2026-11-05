@@ -8,6 +8,7 @@ import {
   cleanJsonString,
   startBackgroundAI,
 } from "../_shared/ai-client.ts";
+import { researchAIOptions } from "../_shared/research-model.ts";
 import {
   computeHealthScore,
   deriveLabTrends,
@@ -573,11 +574,9 @@ async function finalizeWithProvider(
   let degradedReason: string | undefined;
   let modelValue: any = {};
   try {
-    const provider = await retrieveBackgroundForWorker(supabase, jobId, providerResponseId, {
-      model: "gpt-5.5",
-      reasoningEffort: "high",
+    const provider = await retrieveBackgroundForWorker(supabase, jobId, providerResponseId, researchAIOptions({
       timeoutMs: 15_000,
-    });
+    }));
     if (!provider) return null;
     if (isProviderPending(provider.status)) {
       await updateJob(supabase, jobId, { provider_status: provider.status, progress_message: "Réponse IA encore en cours." });
@@ -692,15 +691,11 @@ serve(async (req) => {
     });
 
     try {
-      const provider = await startBackgroundAI(systemPrompt(), userPrompt(context), {
-        model: "gpt-5.5",
-        forceModel: true,
-        reasoningEffort: "high",
+      const provider = await startBackgroundAI(systemPrompt(), userPrompt(context), researchAIOptions({
         maxTokens: payload._backgroundMaxTokens ?? 5000,
         responseFormat: { type: "json_object" },
         timeoutMs: 15_000,
-        enforceClinicalContract: true,
-      });
+      }));
       await updateJob(supabase, jobId, {
         provider_name: provider.provider,
         provider_response_id: provider.id,

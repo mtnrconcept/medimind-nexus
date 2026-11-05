@@ -163,11 +163,28 @@ test('native jobs, database/auth calls and other origins pass through without an
   let sessionReads = 0;
   const direct: string[] = [];
   const transport = createAITransport(options(async input => { direct.push(String(input)); return Response.json({ direct: true }); }, async () => { sessionReads += 1; return null; }));
-  for (const url of [base + '/functions/v1/cross-data-analyzer', base + '/rest/v1/patients', 'https://external.invalid/functions/v1/ai-assistant']) {
+  for (const url of [base + '/functions/v1/cross-data-analyzer', base + '/functions/v1/deep-research-graph', base + '/rest/v1/patients', 'https://external.invalid/functions/v1/ai-assistant']) {
     assert.deepEqual(await (await transport.fetch(url, input)).json(), { direct: true });
   }
-  assert.equal(direct.length, 3);
+  assert.equal(direct.length, 4);
   assert.equal(sessionReads, 0);
+});
+
+test('request reference recovery reads with the current owner and rejects an account switch during the response', async () => {
+  let owner = 'owner-a';
+  const requestId = crypto.randomUUID();
+  const transport = createAITransport(options(async (url, init) => {
+    const request = new Request(url, init);
+    const params = new URL(request.url).searchParams;
+    assert.equal(request.method, 'GET');
+    assert.equal(request.headers.get('authorization'), 'Bearer owner-a-jwt');
+    assert.equal(params.get('action'), 'status');
+    assert.equal(params.get('requestId'), requestId);
+    assert.equal(params.get('after'), '0');
+    owner = 'owner-b';
+    return Response.json(final({ private: 'belongs to A' }));
+  }, async () => ({ userId: owner, accessToken: owner + '-jwt' })));
+  await assert.rejects(transport.statusByRequest(requestId, 'owner-a'), error => (error as { status?: number }).status === 401);
 });
 
 test('recovery references are isolated by user and cleared when that user signs out', async t => {

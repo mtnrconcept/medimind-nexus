@@ -6,6 +6,7 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { callAI, cleanJsonString, startBackgroundAI } from "../_shared/ai-client.ts";
 import { MAX_DIRECT_AI_TIMEOUT_MS } from "../_shared/ai-policy.ts";
+import { researchAIOptions, RESEARCH_MODEL } from "../_shared/research-model.ts";
 import {
   applyClinicalSafetyContract,
   buildClinicalSystemPrompt,
@@ -15,8 +16,6 @@ import {
   type ClinicalRiskAssessment,
 } from "../_shared/clinical-brain.ts";
 import {
-  OPENAI_CROSS_DATA_MODEL,
-  OPENAI_CROSS_DATA_REASONING_EFFORT,
   buildEvidenceLinks,
   buildPairCandidates,
   buildPairHash,
@@ -1171,13 +1170,10 @@ IMPORTANT CACHE:
       patientCount: relevantPatients.length,
       selectedElementCount: selectedElements.length,
     });
-    const clinicalModelEnv = getClinicalModelEnv((key) => Deno.env.get(key));
+    const clinicalModelEnv = { ...getClinicalModelEnv((key) => Deno.env.get(key)), OPENAI_CLINICAL_CRITICAL_MODEL: RESEARCH_MODEL };
     const hasExternalEvidence = webResearchResults.some((result) => result.articles.length > 0);
-    const defaultClinicalTask = medications.length >= 3 || selectedElements.length >= 6
-      ? 'polypharmacy'
-      : 'suspected_interaction';
     const fullRoute = selectClinicalModel({
-      task: defaultClinicalTask,
+      task: 'research_synthesis',
       riskAssessment,
       elementCount: selectedElements.length,
       hasExternalEvidence,
@@ -1274,7 +1270,7 @@ IMPORTANT CACHE:
         `- ${link.fromType}:${link.from} -> ${link.toType}:${link.to} | ${link.relationship} | prob=${link.probability} | danger=${link.dangerLevel || 'none'} | effet=${link.effectType || 'none'} | preuve=${link.evidence}`
       ).join('\n') || 'Aucun lien valide.';
 
-      const schemaPrompt = `Tu es un expert clinicien francophone. Tu utilises GPT-5.5 Pro avec raisonnement maximal pour proposer des schémas thérapeutiques alternatifs après une première analyse cross-data.
+      const schemaPrompt = `Tu es un expert clinicien francophone. Tu utilises GPT-6 Astra pour proposer des schémas thérapeutiques alternatifs après une première analyse cross-data.
 
 OBJECTIF:
 Proposer 2 à 4 schémas alternatifs cliniquement cohérents, actionnables et prudents, en réanalysant rigoureusement les connexions entre pathologies, symptômes, traitements et médicaments.
@@ -1356,14 +1352,17 @@ Génère uniquement le JSON des schémas thérapeutiques alternatifs.`;
       let treatmentSchemas: TreatmentSchema[] = [];
 
       try {
-        const schemaCallOptions = {
-          model: schemaRoute.model || OPENAI_CROSS_DATA_MODEL,
-          forceModel: true,
-          reasoningEffort: schemaRoute.reasoningEffort || OPENAI_CROSS_DATA_REASONING_EFFORT,
+        const schemaCallOptions = researchAIOptions({
+          clinicalTask: 'treatment_complex',
+          clinicalRiskAssessment: riskAssessment,
+          elementCount: selectedElements.length,
+          hasExternalEvidence,
+          reasoningEffort: schemaRoute.reasoningEffort,
+          reasoningMode: schemaRoute.reasoningMode,
           responseFormat: { type: 'json_object' },
           maxTokens: payload._backgroundMaxTokens ?? 6000,
           timeoutMs: MAX_DIRECT_AI_TIMEOUT_MS,
-        };
+        });
 
         if (runJob && providerResponseId) {
           const providerResult = await retrieveBackgroundForWorker(supabase, jobId, providerResponseId, schemaCallOptions);
@@ -1472,7 +1471,7 @@ Génère uniquement le JSON des schémas thérapeutiques alternatifs.`;
     }
 
     const systemPrompt = `Tu es un MÉDECIN EXPERT francophone spécialisé dans l'analyse cross-data et l'évaluation thérapeutique.
-Tu travailles avec GPT-5.5 Pro et le raisonnement maximal. Ton objectif est une analyse clinique utile, sourcée, prudente et actionnable.
+Tu travailles avec GPT-6 Astra. Ton objectif est une analyse clinique utile, sourcée, prudente et actionnable.
 
 ## CONTRAT DE QUALITÉ
 - Audite toutes les paires fournies, mais ne retourne que les liens avec une preuve directe.
@@ -1725,14 +1724,16 @@ Réponds UNIQUEMENT en français avec le JSON demandé. Génère uniquement les 
 
     const fullSystemPrompt = buildClinicalSystemPrompt(systemPrompt, riskAssessment);
     const fullUserPrompt = userPrompt + "\n\nGénère maintenant le JSON final. Raisonne sur chaque paire, conserve seulement les liens directement justifiés, puis produis une synthèse clinique exploitable.";
-    const fullCallOptions = {
-      model: fullRoute.model || OPENAI_CROSS_DATA_MODEL,
-      forceModel: true,
-      reasoningEffort: fullRoute.reasoningEffort || OPENAI_CROSS_DATA_REASONING_EFFORT,
+    const fullCallOptions = researchAIOptions({
+      clinicalRiskAssessment: riskAssessment,
+      elementCount: selectedElements.length,
+      hasExternalEvidence,
+      reasoningEffort: fullRoute.reasoningEffort,
+      reasoningMode: fullRoute.reasoningMode,
       responseFormat: { type: 'json_object' },
       maxTokens: payload._backgroundMaxTokens ?? 8000,
       timeoutMs: MAX_DIRECT_AI_TIMEOUT_MS,
-    };
+    });
 
     let aiResult: Awaited<ReturnType<typeof callAI>> | null = null;
 

@@ -1,0 +1,14 @@
+{
+  "extends": "./tsconfig.app.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "allowImportingTsExtensions": true
+  },
+  "include": [
+    "src/vite-env.d.ts",
+    "src/components/cde/RadialRingsModal.tsx",
+    "src/lib/graphResearch.ts",
+    "tests/graph-research-client.test.ts",
+    "tests/graph-research-session.test.ts"
+  ]
+}

@@ -2,7 +2,7 @@
 export const DURABLE_AI_TOOLS = [
   'adversarial-reviewer', 'ai-assistant', 'analyze-kg-links', 'analyze-user-links',
   'causal-reasoning', 'cde-systematic-analyze', 'continuous-discovery-pipeline',
-  'deep-research-graph', 'detect-side-effects', 'discovery-engine', 'discovery-platform', 'discovery-search',
+  'detect-side-effects', 'discovery-engine', 'discovery-platform', 'discovery-search',
   'document-analyzer', 'embed-data', 'expand-graph', 'focused-research',
   'generate-embeddings', 'generate-molecule', 'graph-chat', 'hypothesis-generator',
   'knowledge-extractor', 'lbd-analogy-finder', 'lbd-contradiction-detector',
@@ -16,5 +16,5 @@ const toolNames: ReadonlySet<string> = new Set(DURABLE_AI_TOOLS);
 export function isDurableAITool(name: string): boolean { return toolNames.has(name); }
 
 export const NATIVE_AI_JOB_TOOLS: ReadonlySet<string> = new Set([
-  'cross-data-analyzer', 'deep-research', 'cde-analyze', 'patient-health-synthesis',
+  'cross-data-analyzer', 'deep-research', 'deep-research-graph', 'cde-analyze', 'patient-health-synthesis',
 ]);

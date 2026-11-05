@@ -1,3 +1,4 @@
+import { researchAIOptions } from '../_shared/research-model.ts';
 // Hypothesis reasoning runs at OpenAI; short, leased workers persist its result.
 
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
@@ -320,18 +321,14 @@ Retourne JSON strict selon le format spécifié.`;
                 await updateBackgroundJobRecord(supabase, job.id, {
                     status: 'processing', started_at: new Date().toISOString(),
                     progress_percentage: 30,
-                    progress_message: 'Préparation de l’analyse approfondie RCDP (GPT-5.5).',
+                    progress_message: 'Préparation de l’analyse approfondie RCDP (GPT-6 Astra).',
                 });
             }
             const providerStep = await advanceHypothesisProvider({
                 providerResponseId, maxTokens: _backgroundMaxTokens,
             }, {
-                start: maxTokens => startBackgroundAI(systemPrompt, userPrompt, {
-                    model: 'gpt-5.5', reasoningEffort: 'high', maxTokens,
-                }),
-                retrieve: responseId => retrieveBackgroundAI(responseId, {
-                    model: 'gpt-5.5', reasoningEffort: 'high',
-                }),
+                start: maxTokens => startBackgroundAI(systemPrompt, userPrompt, researchAIOptions({ maxTokens })),
+                retrieve: responseId => retrieveBackgroundAI(responseId, researchAIOptions()),
                 update: (patch, budget) => updateBackgroundJobRecord(supabase, job.id, patch, budget),
             });
             if (!providerStep.ready) {

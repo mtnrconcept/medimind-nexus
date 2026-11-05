@@ -1,3 +1,4 @@
+import { researchAIOptions } from '../_shared/research-model.ts';
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { callAI } from "../_shared/ai-client.ts";
@@ -149,11 +150,9 @@ Sois particulièrement vigilant sur les affirmations pharmacologiques (transport
         const aiResponse = await callAI(
             systemPrompt,
             userPrompt,
-            {
-                model: "gpt-5.5",
-                reasoningEffort: "high",
+            researchAIOptions({
                 maxTokens: 4096
-            }
+            })
         );
 
         const content = aiResponse.text || "";

@@ -6,6 +6,7 @@ import {
   type HypothesisProviderRuntime,
 } from '../supabase/functions/_shared/hypothesis-jobs.ts';
 import type { AIBackgroundPollResult } from '../supabase/functions/_shared/ai-client.ts';
+import { RESEARCH_MODEL } from '../supabase/functions/_shared/research-model.ts';
 
 const jobId = '11111111-1111-4111-8111-111111111111';
 const ownerId = '22222222-2222-4222-8222-222222222222';
@@ -26,6 +27,8 @@ test('the owner-scoped hypothesis mirror stores only a legacy reference and inte
   assert.equal(mirror.function_name, 'hypothesis-processor');
   assert.equal(mirror.analysis_mode, 'hypothesis_generation');
   assert.equal(mirror.status, 'queued');
+  assert.equal(mirror.model, RESEARCH_MODEL);
+  assert.equal(mirror.reasoning_effort, 'high');
   assert.deepEqual(Object.keys(mirror.request_payload).sort(), ['_background_monitor', 'legacyJobId']);
   assert.equal(mirror.request_payload.legacyJobId, jobId);
   assert.equal(mirror.expires_at, new Date(now + 24 * 60 * 60_000).toISOString());

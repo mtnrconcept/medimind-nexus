@@ -117,9 +117,11 @@ export interface AnalysisResult {
     pairHash?: string;
     status?: 'matched' | 'empty' | 'unavailable';
     retrievedAt?: string;
-    providers?: { name: string; status: 'matched' | 'empty' | 'unavailable'; count?: number; error?: string }[];
+    scopeNotes?: string[];
+    providers?: { name: string; status: 'matched' | 'empty' | 'unavailable'; count?: number; error?: string; query?: string }[];
     findings: string[];
-    sources: { title: string; url: string; abstract?: string; publicationTypes?: string[]; year?: string }[];
+    sources: { title: string; url: string; abstract?: string; publicationTypes?: string[]; year?: string;
+      pmid?: string; provider?: string; journal?: string; abstractTruncated?: boolean }[];
   }[];
 }
 

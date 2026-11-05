@@ -1,3 +1,4 @@
+import { researchAIOptions, RESEARCH_MODEL } from '../_shared/research-model.ts';
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { getOpenFDAComprehensiveData } from "./openfda-api.ts";
@@ -11,7 +12,7 @@ const corsHeaders = {
 };
 
 /**
- * SCIENTIFIC ANALYSIS ENGINE - OPENAI GPT-5.5 POWERED
+ * SCIENTIFIC ANALYSIS ENGINE - OPENAI GPT-6 ASTRA POWERED
  *
  * Unified AI analysis engine that:
  * 1. Aggregates data from ALL medical APIs (PubMed, OpenFDA, ClinicalTrials, RxNorm)
@@ -587,12 +588,10 @@ async function performScientificAnalysis(
         SYSTEM_PROMPT,
         userPrompt,
         onChunk,
-        {
-            model: "gpt-5.5",
-            reasoningEffort: "high",
+        researchAIOptions({
             maxTokens: 8000,
             temperature: 0.2
-        }
+        })
     );
 
     return {
@@ -682,7 +681,7 @@ serve(async (req) => {
                         type: 'metadata',
                         analysis_id: `ANA-${Date.now().toString(36)}`.toUpperCase(),
                         analysis_type: request.analysis_type,
-                        model: "gpt-5.5",
+                        model: RESEARCH_MODEL,
                         reasoningEffort: "high",
                         search_depth: request.evidence_depth || 'standard',
                         estimated_sources: '19.7M événements FDA + 176K médicaments + millions d\'articles'

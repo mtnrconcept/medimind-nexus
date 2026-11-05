@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { streamAI } from "../_shared/ai-client.ts";
+import { researchAIOptions } from "../_shared/research-model.ts";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -148,11 +149,9 @@ ${repro}
               };
               controller.enqueue(encoder.encode(`data: ${JSON.stringify(openaiChunk)}\n\n`));
             },
-            {
-              model: "gpt-5.5",
-              reasoningEffort: "low",
+            researchAIOptions({
               maxTokens: 4096,
-            }
+            })
           );
           controller.enqueue(encoder.encode('data: [DONE]\n\n'));
           controller.close();

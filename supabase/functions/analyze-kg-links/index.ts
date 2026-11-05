@@ -1,3 +1,4 @@
+import { researchAIOptions } from '../_shared/research-model.ts';
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { streamAI } from "../_shared/ai-client.ts";
@@ -210,11 +211,9 @@ Sois rigoureux mais créatif. Cherche des connexions non évidentes.`;
                             };
                             controller.enqueue(encoder.encode(`data: ${JSON.stringify(chunk)}\n\n`));
                         },
-                        {
-                            model: "gpt-5.5",
-                            reasoningEffort: "high",
+                        researchAIOptions({
                             maxTokens: 8192
-                        }
+                        })
                     );
 
                     const fullText = aiResponse.text;

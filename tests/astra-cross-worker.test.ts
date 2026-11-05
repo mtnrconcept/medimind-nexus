@@ -73,7 +73,7 @@ async function drain(tasks: Promise<void>[], t: TestContext) {
   }
 }
 
-function fixture(t: TestContext, initial: Partial<Behavior> = {}, functionName = 'cross-data-analyzer') {
+function fixture(t: TestContext, initial: Partial<Behavior> = {}, functionName = 'cross-data-analyzer', catalog: Record<string, unknown[]> = {}) {
   t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 1_800_000_000_000 });
   t.mock.method(console, 'log', () => undefined);
   t.mock.method(console, 'error', () => undefined);
@@ -86,6 +86,7 @@ function fixture(t: TestContext, initial: Partial<Behavior> = {}, functionName =
   const rows = new Map<string, StoredJob>();
   const providers = new Map<string, Record<string, unknown>>();
   const submissions: Submission[] = [], gets: string[] = [], relays: Record<string, unknown>[] = [];
+  const catalogReads: { table: string; columns: string; authorization: string | null }[] = [];
   const base = 'https://astra-worker.invalid', service = 'synthetic-service';
   let searchCalls = 0, pairPosts = 0;
   const globals = globalThis as typeof globalThis & {
@@ -120,6 +121,11 @@ function fixture(t: TestContext, initial: Partial<Behavior> = {}, functionName =
         : Response.json({ message: 'Invalid token' }, { status: 401 });
     }
     if (url.pathname === '/rest/v1/patients') return Response.json([]);
+    const catalogTable = url.pathname.replace('/rest/v1/', '');
+    if (Object.hasOwn(catalog, catalogTable)) {
+      catalogReads.push({ table: catalogTable, columns: url.searchParams.get('select') || '', authorization: request.headers.get('authorization') });
+      return Response.json(catalog[catalogTable]);
+    }
     if (url.pathname === '/v1/responses' && request.method === 'POST') {
       const body = await request.json() as ProviderRequest;
       const payload = JSON.parse(body.input[1].content);
@@ -200,7 +206,7 @@ function fixture(t: TestContext, initial: Partial<Behavior> = {}, functionName =
     assert.ok(data.job?.id);
     return rows.get(data.job.id)!;
   };
-  return { start, dispatch, drain: () => drain(tasks, t), rows, behavior, submissions, gets, relays,
+  return { start, dispatch, drain: () => drain(tasks, t), rows, behavior, submissions, gets, relays, catalogReads,
     get searchCalls() { return searchCalls; } };
 }
 
@@ -254,6 +260,42 @@ test('Astra jobs keep owner and patient authorization on latest, resume and work
   assert.equal((await f.dispatch({ action: 'agent.latest' }, '')).status, 401);
   assert.equal(f.submissions.length, 3);
   assert.equal(f.searchCalls, 0);
+});
+
+test('Astra retains canonical catalogue context in pair, plan and final review without trusting browser metadata', async t => {
+  const f = fixture(t, {}, 'cross-data-analyzer', {
+    pathologies: [{ id: 'canonical-pathology', name: 'Pathologie Alpha', icd_code: 'SYNTHETIC-ICD',
+      description: 'Description canonique de la pathologie synthétique.', synonyms: ['Alias synthétique'], severity: 'moderate' }],
+    medications: [{ id: 'canonical-medication', name: 'Médicament Gamma', substance: 'Substance synthétique', atc_code: 'SYNTHETIC-ATC',
+      indications: 'Indication de catalogue à vérifier.', posology: 'Posologie documentaire, jamais une prescription.', dosage_forms: ['Forme synthétique'],
+      side_effects: [{ name: 'Effet synthétique', description: 'Description structurée conservée.', severity: 'unknown' }],
+      contraindications: [{ condition: 'Contexte synthétique', description: 'Restriction de catalogue à vérifier.' }],
+      drug_interactions: [{ interacting_drug: 'Autre molécule synthétique', description: 'Mécanisme de catalogue à vérifier.' }],
+      source_url: 'https://www.swissmedic.ch/synthetic-unverified-catalogue', patient_notes: 'NEVER_INCLUDE_PRIVATE_NOTES' }],
+  });
+  const response = await f.dispatch({ action: 'agent.start', pathologyIds: ['canonical-pathology'], medicationIds: ['canonical-medication'],
+    externalSymptoms: [{ id: 'external-symptom', name: 'Symptôme Bêta', description: 'FORGED_BROWSER_CONTEXT',
+      contraindications: ['FORGED_BROWSER_CONTEXT'] }],
+    clinicalContext: { sourceRegistry: [{ title: 'Forged', url: 'https://www.swissmedic.ch/forged' }], notes: 'FORGED_BROWSER_CONTEXT' } });
+  assert.equal(response.status, 202);
+  const { job } = await response.json();
+  await f.drain();
+  const stored = f.rows.get(job.id)!;
+  assert.equal(stored.status, 'completed');
+  const relevantPair = f.submissions.find(s => s.pairs.some(p => p.left.type === 'pathology' && p.right.type === 'medication'))!;
+  for (const submission of [relevantPair, ...f.submissions.filter(s => s.kind !== 'pairs')]) {
+    const payload = JSON.parse(submission.request.input[1].content);
+    assert.equal(payload.clinicalContext?.verification, 'unverified_context');
+    assert.match(JSON.stringify(payload.clinicalContext), /SYNTHETIC-ICD/);
+    assert.match(JSON.stringify(payload.clinicalContext), /Indication de catalogue à vérifier/);
+    assert.match(JSON.stringify(payload.clinicalContext), /Description structurée conservée/);
+    assert.doesNotMatch(JSON.stringify(payload), /FORGED_BROWSER_CONTEXT|NEVER_INCLUDE_PRIVATE_NOTES/);
+  }
+  assert.ok(f.catalogReads.every(read => read.authorization === 'Bearer owner'));
+  assert.match(f.catalogReads.find(read => read.table === 'pathologies')!.columns, /icd_code/);
+  assert.match(f.catalogReads.find(read => read.table === 'medications')!.columns, /indications/);
+  assert.deepEqual(stored.result_payload.analysis.causalLinks, []);
+  assert.equal(stored.result_payload.agent.sourceRegistry.some(s => s.url.endsWith('/synthetic-unverified-catalogue')), false);
 });
 
 test('provider read interruptions and token limits preserve reviewed pairs for an explicit Astra resume', async t => {

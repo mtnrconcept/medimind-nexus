@@ -1,3 +1,4 @@
+import { researchAIOptions } from '../_shared/research-model.ts';
 // ============================================
 // RADIAL RINGS DISCOVERY ENGINE - MAIN ORCHESTRATOR
 // ============================================
@@ -70,12 +71,10 @@ Réponds en JSON: { "hypotheses": [{"title": "...", "probability": X, "rationale
         const aiResponse = await callAI(
             "Tu es un expert en génération d'hypothèses médicales falsifiables. Réponds uniquement en JSON.",
             prompt,
-            {
-                model: "gpt-5.5",
-                reasoningEffort: "high",
+            researchAIOptions({
                 maxTokens: 4000,
                 temperature: 0.3
-            }
+            })
         );
 
         const textContent = aiResponse.text;

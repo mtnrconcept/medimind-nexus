@@ -1,3 +1,4 @@
+import { researchAIOptions } from '../_shared/research-model.ts';
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { callAI } from "../_shared/ai-client.ts";
@@ -95,11 +96,9 @@ Fournis une analyse détaillée de chaque lien.`;
         const aiResult = await callAI(
             systemPrompt,
             userPrompt,
-            {
-                model: "gpt-5.5",
-                reasoningEffort: "medium",
+            researchAIOptions({
                 maxTokens: 4096,
-            }
+            })
         );
 
         const content = aiResult.text || "";

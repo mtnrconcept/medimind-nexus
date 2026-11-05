@@ -2,6 +2,7 @@ import type { AICallOptions } from '../_shared/ai-client.ts';
 import { buildPairCandidates, ensureAnalysisShape, typedElementKey, type AnalysisResult, type PairAssessment, type PairCandidate, type SelectedElement } from './analysis-utils.ts';
 import { pendingPairs, type MatrixCells } from './matrix-progress.ts';
 import { RELATION_ENGINE_VERSION } from './relation-contract.ts';
+import { CLINICAL_CONTEXT_GUIDANCE, contextForPairs, type CanonicalClinicalContext } from './clinical-context.ts';
 import { ASTRA_MODEL, AGENT_VERSION, MEDICAL_WEB_DOMAINS, buildAgentPairFormat, AGENT_PLAN_FORMAT,
   AGENT_PAIR_PROMPT, AGENT_PLAN_PROMPT, AGENT_FINAL_PROMPT, readAgentCells, readAgentPlan, verifiedAgentSources,
   type AgentSource, type AgentPlan, type AgentStage } from './agent-contract.ts';
@@ -12,16 +13,19 @@ export interface AgentRuntimeState {
 }
 export interface AgentMatrixState {
   elements: SelectedElement[]; cells: MatrixCells; batchSize: number; analysis: AnalysisResult;
+  clinicalContext?: CanonicalClinicalContext;
   agent: AgentRuntimeState;
 }
 export interface AgentStep { kind: Exclude<AgentStage, 'completed'>; pairs: PairCandidate[] }
 
-export function createAgentState(elements: SelectedElement[]): AgentMatrixState {
+export function createAgentState(elements: SelectedElement[], clinicalContext?: CanonicalClinicalContext): AgentMatrixState {
   // One provider response per pair gives every cell its own required web trace.
   const state: AgentMatrixState = { elements, cells: {}, batchSize: 1,
+    ...(clinicalContext ? { clinicalContext } : {}),
     analysis: ensureAnalysisShape({ engineVersion: RELATION_ENGINE_VERSION, summary: 'Recherche spécialisée et analyse croisée par GPT-6 Astra.' }),
     agent: { version: AGENT_VERSION, stage: 'pairs', candidates: [], candidateCells: {}, candidateAssessments: [], sourceRegistry: [] } };
   updateAgentCoverage(state);
+  if (clinicalContext?.truncations.length) state.analysis.warnings.push('Le contexte du catalogue a été abrégé ; les champs et listes concernés sont signalés. Les risques locaux ne peuvent pas être considérés comme exhaustifs.');
   return state;
 }
 
@@ -59,7 +63,8 @@ export function globalAgentInput(state: AgentMatrixState) {
     kind: link.relationKind, support: link.evidenceSupport, evidence: link.evidence.slice(0, 600), danger: link.dangerLevel,
     interactionEffect: link.interactionEffect, limitations: link.contextLimitations, sourceUrls: link.webSources,
   })) }));
-  return { selection: state.elements, assessments: (state.analysis.pairAssessments || []).map(compact), warnings: state.analysis.warnings,
+  return { selection: state.elements, clinicalContext: state.clinicalContext,
+    assessments: (state.analysis.pairAssessments || []).map(compact), warnings: state.analysis.warnings,
     findings: compactLinks(state.cells), candidates: state.agent.candidates,
     candidateAssessments: state.agent.candidateAssessments.map(compact), candidateFindings: compactLinks(state.agent.candidateCells),
     draftPlan: state.agent.draftPlan, sourceRegistry: state.agent.sourceRegistry,
@@ -71,13 +76,14 @@ export function buildAgentRequest(state: AgentMatrixState, step: AgentStep): { s
   const pairStep = step.kind === 'pairs' || step.kind === 'candidate_pairs';
   const final = step.kind === 'final';
   const payload = pairStep ? { pairs: step.pairs.map(pair => ({ pair: { ...pair, leftKey: typedElementKey(pair.left), rightKey: typedElementKey(pair.right) } })),
+    clinicalContext: contextForPairs(state.clinicalContext, step.pairs),
     selectionContext: [...state.elements, ...state.agent.candidates].map(e => ({ ...e, key: typedElementKey(e) })),
     purpose: step.kind === 'candidate_pairs' ? 'Vérification de la paire planifiée ; les candidats ne sont pas déjà prescrits.' : 'Analyse de la paire planifiée dans le cadre de la revue exhaustive de la sélection.' }
     : globalAgentInput(state);
   const user = JSON.stringify(payload);
   // Do not silently omit low-ranked pairs to fit a context window.
   if (user.length > (final ? 1_800_000 : 350_000)) throw new Error('La synthèse dépasse le contexte prévu ; réduisez la sélection ou reprenez une analyse plus ciblée.');
-  return { system: pairStep ? AGENT_PAIR_PROMPT : final ? AGENT_FINAL_PROMPT : AGENT_PLAN_PROMPT, user,
+  return { system: (pairStep ? AGENT_PAIR_PROMPT : final ? AGENT_FINAL_PROMPT : AGENT_PLAN_PROMPT) + '\n' + CLINICAL_CONTEXT_GUIDANCE, user,
     options: { model: ASTRA_MODEL, forceModel: true, reasoningEffort: final ? 'xhigh' : 'high',
       clinicalTask: final ? 'final_safety_review' : pairStep ? 'polypharmacy' : 'treatment_complex',
       maxTokens: 65_536, responseFormat: pairStep ? buildAgentPairFormat(step.pairs) : AGENT_PLAN_FORMAT,

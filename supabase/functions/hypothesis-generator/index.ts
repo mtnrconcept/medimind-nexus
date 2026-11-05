@@ -1,3 +1,4 @@
+import { researchAIOptions } from '../_shared/research-model.ts';
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { callAI } from "../_shared/ai-client.ts";
 
@@ -143,12 +144,10 @@ serve(async (req) => {
         const aiResponse = await callAI(
             SYSTEM_PROMPT,
             userPrompt,
-            {
-                model: "gpt-5.5",
-                reasoningEffort: "high",
+            researchAIOptions({
                 maxTokens: 8000,
                 temperature: 0.3
-            }
+            })
         );
 
         let textContent = aiResponse.text;

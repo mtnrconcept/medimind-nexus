@@ -1,3 +1,4 @@
+import { researchAIOptions } from '../_shared/research-model.ts';
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { callAI, streamAI } from "../_shared/ai-client.ts";
@@ -1144,12 +1145,10 @@ Commence par le JSON maintenant.`;
                             fullText += text;
                             sendEvent(controller, { type: 'text', content: text });
                         },
-                        {
-                            model: "gpt-5.5",
-                            reasoningEffort: "medium",
+                        researchAIOptions({
                             maxTokens: 80000,
                             temperature: 0.7,
-                        }
+                        })
                     );
 
                     sendEvent(controller, {
