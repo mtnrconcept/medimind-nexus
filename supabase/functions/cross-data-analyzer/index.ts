@@ -798,7 +798,7 @@ serve(async (req) => {
     if (!supabaseUrl || !supabaseKey) {
       throw new Error('Supabase function environment is incomplete: SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY are required');
     }
-    if (payload.action?.startsWith('matrix.')) {
+    if (payload.action?.startsWith('matrix.') || payload.action?.startsWith('agent.')) {
       return await handleMatrix(req, payload, supabaseUrl, supabaseKey, pair =>
         searchLiterature(pair, 5), createClient);
     }

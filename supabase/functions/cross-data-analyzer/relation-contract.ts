@@ -2,7 +2,8 @@ import type { CausalLink, PairCandidate } from './analysis-utils.ts';
 
 export const RELATION_ENGINE_VERSION = 2;
 export const RELATION_KINDS = ['indication', 'adverse_effect', 'interaction', 'risk_factor', 'manifestation',
-  'adjunctive_use', 'coadministration', 'association', 'uncertain'] as const;
+  'adjunctive_use', 'coadministration', 'association', 'symptom_cascade', 'symptom_relief',
+  'contraindication', 'disease_worsening', 'uncertain'] as const;
 export type RelationKind = typeof RELATION_KINDS[number];
 export interface EvidenceSource {
   url: string; title: string; abstract?: string; publicationTypes?: string[];
@@ -15,11 +16,15 @@ export interface RelationMetadata {
   validationVersion?: number;
   evidenceQuotes?: EvidenceQuote[];
   contextLimitations?: string[];
+  evidenceOrigin?: 'openai_web_search' | 'verified_excerpt';
+  citationVerification?: 'provider_trace' | 'verbatim';
+  interactionEffect?: 'increase_effect' | 'decrease_effect' | 'increase_toxicity' | 'mixed' | 'unknown';
 }
 const text = (v: unknown): string => typeof v === 'string' ? v.trim() : '';
 const key = (v: string): string => v.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/\s+/g,' ').trim();
 const match = (v: string, pattern: RegExp) => pattern.test(key(v));
-const causal = new Set<RelationKind>(['indication','adverse_effect','interaction','risk_factor','manifestation']);
+const causal = new Set<RelationKind>(['indication','adverse_effect','interaction','risk_factor','manifestation',
+  'symptom_relief','contraindication','disease_worsening']);
 
 /** Checks traceability and obvious context conflicts, NOT medical truth.
  * It never creates a clinical relation, quote, efficacy claim or severity.
@@ -97,12 +102,32 @@ export function validateRelationEvidence(raw: unknown, normalized: CausalLink, p
   if (kind==='adverse_effect' && context.temporality!=='after_exposure') {
     kind='association'; support='contextual'; limits.push('Chronologie non démontrée : le médicament ne peut être présenté comme la cause du symptôme.');
   }
+  if (kind==='symptom_relief' && !match(passages,/relie[fv]|alleviat|soulage|soulagement|amelior|attenu|symptom.{0,60}(reduc|improv)/)) {
+    support='contextual'; limits.push('Le passage cité ne décrit pas de soulagement symptomatique attribué au traitement.');
+  }
+  if (kind==='contraindication' && (!match(passages,/contraindicat|contre.?indicat|contre.?indiqu/) ||
+      match(passages,/not (?:a )?contraindicat|no (?:absolute )?contraindicat|n.est pas contre.?indiqu|absence de contre.?indicat/))) {
+    support='contextual'; limits.push('Une précaution ou un risque ne suffit pas à établir une contre-indication formelle.');
+  }
+  if (kind==='disease_worsening' && !match(passages,/worsen|exacerbat|aggravat|deteriorat|disease flare/)) {
+    support='contextual'; limits.push('Le passage cité ne décrit pas d’aggravation de la maladie attribuée au traitement.');
+  }
+  if ((kind==='symptom_relief' || kind==='disease_worsening') && context.temporality!=='after_exposure') {
+    support='contextual'; limits.push('Chronologie non démontrée : une amélioration ou aggravation ne peut être attribuée au traitement.');
+  }
   if (causal.has(kind) && match(statements,/sans (preuve|demonstration|effet propre)|ne (prouve|demontre|permet) pas|not (demonstrat|establish)|co.?utilisation|co.?administration|traitements concomitants/)) {
     support='contextual'; limits.push('Le texte de la source décrit une association ou une limite, pas une causalité établie.');
   }
   if (kind==='indication' && !(medicines.length===1 && [pair.left,pair.right].some(e=>e.type==='pathology'))) return null;
   if (kind==='interaction' && medicines.length!==2) return null;
   if (kind==='adverse_effect' && !(medicines.length===1 && [pair.left,pair.right].some(e=>e.type==='symptom'||e.type==='pathology'))) return null;
+  if (kind==='symptom_relief' || kind==='contraindication' || kind==='disease_worsening') {
+    const targetType = kind==='symptom_relief' ? 'symptom' : 'pathology';
+    const medicine = medicines[0];
+    const target = [pair.left,pair.right].find(e=>e.type===targetType);
+    if (medicines.length!==1 || !target || normalized.fromType!==medicine.type || normalized.toType!==targetType ||
+        key(normalized.from)!==key(medicine.name) || key(normalized.to)!==key(target.name)) return null;
+  }
   const result: CausalLink = { ...normalized, relationKind:kind, evidenceSupport:support,
     validationVersion:RELATION_ENGINE_VERSION, evidenceQuotes:quotes, contextLimitations:[...new Set(limits)],
     webSources:[...new Set(quotes.map(q=>q.url))] };
@@ -122,17 +147,25 @@ export function relationPresentation(link: RelationMetadata): {label:string; des
   if (link.validationVersion!==RELATION_ENGINE_VERSION || !link.relationKind) return {
     label:'À réexaminer',description:'Ancienne classification sans contrôle du sens clinique et du passage source.',tone:'neutral'};
   const contextual=link.evidenceSupport!=='direct';
+  const nativeTrace=link.citationVerification==='provider_trace';
   const labels: Record<RelationKind,string> = {
     indication:contextual?'Usage rapporté':'Indication étudiée',
-    adverse_effect:contextual?'Association observée':'Effet indésirable rapporté',
-    interaction:contextual?'Co-utilisation rapportée':'Interaction rapportée',
+    adverse_effect:contextual?(nativeTrace?'Effet indésirable possible':'Association observée'):'Effet indésirable rapporté',
+    interaction:contextual?(nativeTrace?'Interaction possible':'Co-utilisation rapportée'):'Interaction rapportée',
     risk_factor:contextual?'Prudence à évaluer':'Facteur de risque rapporté',
     manifestation:contextual?'Association observée':'Manifestation décrite',
     adjunctive_use:'Usage complémentaire',coadministration:'Co-utilisation',association:'Association rapportée',uncertain:'Lien non établi',
+    symptom_cascade:contextual?'Enchaînement possible':'Enchaînement symptomatique rapporté',
+    symptom_relief:contextual?'Soulagement symptomatique possible':'Soulagement symptomatique rapporté',
+    contraindication:contextual?'Prudence à évaluer':'Contre-indication rapportée',
+    disease_worsening:contextual?'Aggravation possible':'Aggravation rapportée',
   };
   return {label:labels[link.relationKind],
-    description:contextual?'Source contextuelle : aucune preuve directe applicable à la paire sélectionnée.':'Passage source retrouvé ; interprétation clinique à vérifier.',
-    tone:!contextual&&['adverse_effect','interaction','risk_factor'].includes(link.relationKind)?'caution':'neutral'};
+    description:link.citationVerification === 'provider_trace'
+      ? 'Source retrouvée par la recherche web ; interprétation de l’agent à vérifier, sans contrôle automatique du passage cité.'
+      : contextual?'Source contextuelle : aucune preuve directe applicable à la paire sélectionnée.':'Passage source retrouvé ; interprétation clinique à vérifier.',
+    tone:(['contraindication','disease_worsening'].includes(link.relationKind) ||
+      (!contextual||nativeTrace)&&['adverse_effect','interaction','risk_factor'].includes(link.relationKind))?'caution':'neutral'};
 }
 
 export function contextualRelationExplanation(kind: RelationKind): string {
@@ -145,6 +178,10 @@ export function contextualRelationExplanation(kind: RelationKind): string {
     adjunctive_use:'Le médicament est utilisé en complément pour une complication ou un contexte particulier. Cela ne signifie pas qu’il traite la maladie initiale.',
     coadministration:'Les médicaments sont administrés ensemble. Aucun effet propre, bénéfice combiné ou interaction ne peut être déduit de leur seule co-utilisation.',
     association:'Les éléments apparaissent dans la même observation. Le sens et la causalité de leur relation ne sont pas démontrés.',
+    symptom_cascade:'Un enchaînement entre symptômes est envisagé ; son mécanisme et sa chronologie restent à confirmer.',
+    symptom_relief:'Un soulagement du symptôme est envisagé, mais son attribution au traitement reste à confirmer. Cela ne démontre pas que le traitement agit sur la maladie responsable.',
+    contraindication:'Une situation de prudence est évoquée ; la source ne suffit pas à établir une contre-indication formelle applicable à la maladie et à la présentation sélectionnées.',
+    disease_worsening:'Une aggravation de la maladie est envisagée, mais sa survenue, sa chronologie et son attribution au traitement ne sont pas établies dans ce contexte.',
     uncertain:'Les informations disponibles ne permettent pas d’établir ce lien.',
   };
   return descriptions[kind];

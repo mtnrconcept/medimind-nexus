@@ -1,6 +1,19 @@
-import { relationPresentation, type RelationMetadata } from '../../../supabase/functions/cross-data-analyzer/relation-contract';
-import { canDisplayRiskScore } from './crossDataDisplay';
-import { useCallback, useState, useMemo, useEffect } from 'react';
+import { RELATION_ENGINE_VERSION, relationPresentation, type RelationMetadata } from '../../../supabase/functions/cross-data-analyzer/relation-contract';
+import { useCallback, useState, useMemo, useEffect, useRef } from 'react';
+import {
+    buildAutomaticPathologyGraph,
+    canonicalGraphKey,
+    collectCanonicalGraphEntities,
+    graphEntityFromNode,
+    graphSelectionIds,
+    graphSelectionSignature,
+    projectClinicalGraphLinks,
+    restoreSnapshotGraphEntities,
+    snapshotSelectionIds,
+    type GraphAnalysisSnapshot,
+    type GraphEntity,
+    type GraphMembershipKind,
+} from './crossGraphGroups';
 import {
     ReactFlow,
     Node,
@@ -18,6 +31,12 @@ import {
     getBezierPath,
     BaseEdge,
     EdgeLabelRenderer,
+    Handle,
+    Position,
+    type NodeProps,
+    useNodesInitialized,
+    useReactFlow,
+    type NodeChange,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -64,9 +83,7 @@ import {
     FileText,
 } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
-import { useAI } from '@/contexts/AIContext';
 import type { PairAssessment } from '../../../supabase/functions/cross-data-analyzer/analysis-utils';
-import { resolveAIJob } from '@/lib/aiJobs';
 import { toast } from 'sonner';
 import {
     getAppropriatenessBadgeLabel,
@@ -211,6 +228,90 @@ interface PathologyGroup {
     pathologyName: string;
     memberIds: string[]; // IDs des médicaments/traitements/symptômes dans ce groupe
     color: string;
+    automatic?: boolean;
+}
+
+function ClinicalEntityNode({ data }: NodeProps) {
+    const kinds = (data.membershipKinds ?? []) as GraphMembershipKind[];
+    const origin = kinds.includes('manifestation') && kinds.includes('adverse_effect') ? 'Plusieurs origines possibles'
+        : kinds.includes('adverse_effect') ? 'Effet indésirable rapporté'
+            : kinds.includes('manifestation') ? 'Manifestation décrite'
+                : kinds.includes('adjunctive_use') ? 'Usage complémentaire'
+                    : kinds.includes('indication') ? 'Indication étudiée' : null;
+    return (
+        <>
+            <Handle type="target" position={Position.Top} />
+            <div className="text-center break-words leading-snug">{String(data.label)}</div>
+            {origin && <div className="mt-1 text-center text-[10px] font-normal opacity-80">{origin}</div>}
+            {Number(data.sharedGroupCount) > 1 && (
+                <div className="mt-1 rounded bg-violet-100 px-1 py-0.5 text-center text-[10px] font-medium text-violet-800">
+                    Même élément · {Number(data.sharedGroupCount)} groupes
+                </div>
+            )}
+            <Handle type="source" position={Position.Bottom} />
+        </>
+    );
+}
+
+function ClinicalPathologyGroupNode({ data }: NodeProps) {
+    return <div className="pointer-events-none absolute inset-x-4 top-3 truncate text-left text-xs font-semibold" title={String(data.label)}>
+        {String(data.label)}
+    </div>;
+}
+
+const clinicalNodeTypes = { clinicalEntity: ClinicalEntityNode, clinicalPathologyGroup: ClinicalPathologyGroupNode };
+
+function FitClinicalGraph({ layoutKey }: { layoutKey: string }) {
+    const initialized = useNodesInitialized();
+    const { fitView } = useReactFlow();
+    const fittedLayout = useRef('');
+    useEffect(() => {
+        if (!initialized || !layoutKey || fittedLayout.current === layoutKey) return;
+        fittedLayout.current = layoutKey;
+        void fitView({ padding: 0.15, maxZoom: 1, duration: 200 });
+    }, [initialized, layoutKey, fitView]);
+    return null;
+}
+
+const interactionEffectLabels: Record<NonNullable<CausalLink['interactionEffect']>, string> = {
+    increase_effect: 'Augmentation de l’effet', decrease_effect: 'Diminution de l’effet',
+    increase_toxicity: 'Augmentation de la toxicité', mixed: 'Effets multiples', unknown: 'Effet non déterminé',
+};
+
+function hasRiskSignal(link: CausalLink): boolean {
+    return link.validationVersion === RELATION_ENGINE_VERSION &&
+        ['adverse_effect', 'interaction', 'risk_factor', 'contraindication', 'disease_worsening'].includes(link.relationKind || '');
+}
+
+function ClinicalLinkEvidence({ link }: { link: CausalLink }) {
+    const sources = [...new Set(link.webSources || [])].flatMap(value => {
+        try {
+            const url = new URL(value);
+            return url.protocol === 'https:' && !url.username && !url.password ? [{ url: url.href, host: url.hostname }] : [];
+        } catch { return []; }
+    });
+    return (
+        <div className="space-y-2 text-xs">
+            <p className="text-muted-foreground">{relationPresentation(link).description}</p>
+            {link.interactionEffect && <Badge variant="outline">{interactionEffectLabels[link.interactionEffect]}</Badge>}
+            {!!link.contextLimitations?.length && (
+                <ul className="list-disc space-y-1 pl-4 text-muted-foreground">
+                    {link.contextLimitations.map((limit, index) => <li key={index}>{limit}</li>)}
+                </ul>
+            )}
+            {sources.length > 0 && (
+                <div className="flex flex-wrap items-center gap-2">
+                    <span className="font-medium">Sources consultables :</span>
+                    {sources.map((source, index) => (
+                        <a key={source.url} href={source.url} target="_blank" rel="noopener noreferrer"
+                            className="text-primary underline underline-offset-2" title={source.url}>
+                            {index + 1}. {source.host}
+                        </a>
+                    ))}
+                </div>
+            )}
+        </div>
+    );
 }
 
 function TreatmentSchemasGraphPanel({ schemas }: { schemas: TreatmentSchema[] }) {
@@ -324,10 +425,13 @@ interface RiskNetworkGraphProps {
     selectedTreatmentIds?: string[];
     selectedMedicationIds?: string[];
     analysisResultFromParent?: AnalysisResult | null;
+    analysisSnapshot?: GraphAnalysisSnapshot | null;
+    onSnapshotMatchChange?: (matches: boolean) => void;
     onAnalysisResultChange?: (result: AnalysisResult) => void;
-    onAnalyzeWithOpenAI?: (ids: {
+    onAnalyzeWithOpenAI: (ids: {
         pathologyIds?: string[]; symptomIds?: string[];
         treatmentIds?: string[]; medicationIds?: string[];
+        elements?: GraphEntity[];
     }) => Promise<void>;
     onGenerateTreatmentSchemas?: () => void;
     isGeneratingTreatmentSchemas?: boolean;
@@ -344,12 +448,13 @@ export function RiskNetworkGraph({
     selectedTreatmentIds,
     selectedMedicationIds,
     analysisResultFromParent,
+    analysisSnapshot,
+    onSnapshotMatchChange,
     onAnalysisResultChange,
     onAnalyzeWithOpenAI,
     onGenerateTreatmentSchemas,
     isGeneratingTreatmentSchemas = false,
-}: RiskNetworkGraphProps = {}) {
-    const { invokeAI } = useAI();
+}: RiskNetworkGraphProps) {
     // États
     const [nodes, setNodes, onNodesChangeOriginal] = useNodesState([]);
     const [edges, setEdges, onEdgesChange] = useEdgesState([]);
@@ -365,7 +470,6 @@ export function RiskNetworkGraph({
     const [symptoms, setSymptoms] = useState<Symptom[]>([]);
     const [treatments, setTreatments] = useState<Treatment[]>([]);
     const [medications, setMedications] = useState<Medication[]>([]);
-    const [analysisResult, setAnalysisResult] = useState<AnalysisResult | null>(null);
 
     // État pour la popup de détails du lien
     const [hoveredLink, setHoveredLink] = useState<CausalLink | null>(null);
@@ -375,8 +479,18 @@ export function RiskNetworkGraph({
     const [edgeLinkMap, setEdgeLinkMap] = useState<Record<string, CausalLink>>({});
 
     // État pour l'affichage progressif des liens
-    const [displayedLinks, setDisplayedLinks] = useState<CausalLink[]>([]);
     const [isLoadingLinks, setIsLoadingLinks] = useState(false);
+    const restoredSnapshotJob = useRef<string | null>(null);
+    const snapshotSelectionMatches = !analysisSnapshot || graphSelectionSignature({
+        pathologyIds: selectedPathologyIds, symptomIds: selectedSymptomIds,
+        treatmentIds: selectedTreatmentIds, medicationIds: selectedMedicationIds,
+    }) === graphSelectionSignature(snapshotSelectionIds(analysisSnapshot.selection));
+    const snapshotNodesMatch = !analysisSnapshot || JSON.stringify(collectCanonicalGraphEntities(nodes).map(canonicalGraphKey).sort()) ===
+        JSON.stringify([...new Set(analysisSnapshot.elements.map(canonicalGraphKey))].sort());
+    const analysisMatchesSnapshot = snapshotSelectionMatches && snapshotNodesMatch;
+    const analysisResult = analysisMatchesSnapshot ? analysisResultFromParent ?? null : null;
+    const displayedLinks = useMemo(() => analysisResult?.causalLinks ?? [], [analysisResult]);
+    useEffect(() => { onSnapshotMatchChange?.(analysisMatchesSnapshot); }, [analysisMatchesSnapshot, onSnapshotMatchChange]);
 
     // État pour les cartes dépliées (accordéon)
     const [expandedLinks, setExpandedLinks] = useState<Set<string>>(new Set());
@@ -387,6 +501,10 @@ export function RiskNetworkGraph({
     const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null);
     const [showGroupDialog, setShowGroupDialog] = useState(false);
     const [newGroupPathologyId, setNewGroupPathologyId] = useState<string | null>(null);
+    const [automaticGrouping, setAutomaticGrouping] = useState(true);
+    const automaticLayoutKey = useRef('');
+    const externalSelectionKey = useRef('');
+    const pendingExternalProjection = useRef<string | null>(null);
 
     // ========================================
     // HELPERS & UTILITIES (INIT FIRST)
@@ -418,19 +536,15 @@ export function RiskNetworkGraph({
     const groupColors = useMemo(() => ['#8b5cf6', '#06b6d4', '#f59e0b', '#ec4899', '#10b981', '#6366f1'], []);
     const getNextGroupColor = useCallback(() => groupColors[groups.length % groupColors.length], [groups.length, groupColors]);
 
-    // Fonction pour calculer le score de dangerosité d'un lien
+    // Sorting priority only; this is not a clinical risk score.
     const getDangerScore = useCallback((link: CausalLink): number => {
-        let score = 0;
-        if (link.dangerLevel === 'critical') score += 100;
-        else if (link.dangerLevel === 'high') score += 75;
-        else if (link.dangerLevel === 'moderate') score += 50;
-        else if (link.dangerLevel === 'low') score += 25;
-        if (isAppropriatenessWarning(link)) score += 60;
-        if (link.effectType === 'adverse') score += 40;
-        else if (link.effectType === 'both') score += 20;
-        if (link.interactionType === 'drug-drug') score += 30;
-        if (link.interactionType === 'pathology-danger') score += 50;
-        return score;
+        if (hasRiskSignal(link) && link.evidenceSupport === 'direct') {
+            if (link.dangerLevel === 'critical') return 5;
+            if (link.dangerLevel === 'high') return 4;
+            if (link.dangerLevel === 'moderate') return 3;
+            return 2;
+        }
+        return hasRiskSignal(link) ? 1 : 0;
     }, []);
 
     // Helper pour obtenir le label d'adéquation selon les types d'entités
@@ -474,162 +588,81 @@ export function RiskNetworkGraph({
 
     // Calcul des statistiques en temps réel basé sur les nœuds/liens visibles
     const liveStats = useMemo((): SchemaStats => {
-        const visibleLinks = displayedLinks.filter(link => {
-            // Vérifier si les nœuds source et cible sont visibles
-            const fromNode = nodes.find(n =>
-                String(n.data.label).toLowerCase().includes(link.from.toLowerCase()) ||
-                link.from.toLowerCase().includes(String(n.data.label).toLowerCase())
-            );
-            const toNode = nodes.find(n =>
-                String(n.data.label).toLowerCase().includes(link.to.toLowerCase()) ||
-                link.to.toLowerCase().includes(String(n.data.label).toLowerCase())
-            );
+        const visibleLinks = [...new Map(projectClinicalGraphLinks(displayedLinks, nodes, hiddenNodes)
+            .map(edge => [edge.canonicalLinkId, edge.link])).values()];
 
-            if (!fromNode || !toNode) return false;
-            return !hiddenNodes.has(fromNode.id) && !hiddenNodes.has(toNode.id);
-        });
-
-        let redLinks = 0, orangeLinks = 0, greenLinks = 0;
+        let redLinks = 0, orangeLinks = 0;
+        const greenLinks = 0;
         let totalDangerScore = 0, inappropriateCount = 0, adverseEffectCount = 0;
 
         visibleLinks.forEach(link => {
-            if (link.dangerLevel === 'critical' || link.dangerLevel === 'high') {
+            if (hasRiskSignal(link) && link.evidenceSupport === 'direct' && (link.dangerLevel === 'critical' || link.dangerLevel === 'high')) {
                 redLinks++;
                 totalDangerScore += link.dangerLevel === 'critical' ? 100 : 75;
-            } else if (link.dangerLevel === 'moderate') {
+            } else if (hasRiskSignal(link) && link.dangerLevel === 'moderate') {
                 orangeLinks++;
                 totalDangerScore += 50;
-            } else if (isAppropriatenessSuccess(link) || !link.dangerLevel) {
-                greenLinks++;
+            } else if (hasRiskSignal(link)) {
+                orangeLinks++;
             }
 
             if (isAppropriatenessWarning(link)) inappropriateCount++;
-            if (link.effectType === 'adverse') adverseEffectCount++;
+            if (link.relationKind === 'adverse_effect' && link.evidenceSupport === 'direct') adverseEffectCount++;
         });
 
         return { redLinks, orangeLinks, greenLinks, totalDangerScore, inappropriateCount, adverseEffectCount };
     }, [displayedLinks, nodes, hiddenNodes]);
 
-    // Calcul du score en temps réel
-    const liveScore = useMemo(() => {
-        return Math.max(0, 100 - (liveStats.redLinks * 20 + liveStats.orangeLinks * 10 + liveStats.inappropriateCount * 15));
-    }, [liveStats]);
+    const isCanonicalHidden = useCallback((node: Node) => {
+        const entity = graphEntityFromNode(node);
+        if (!entity) return hiddenNodes.has(node.id);
+        const key = canonicalGraphKey(entity);
+        return nodes.filter(candidate => {
+            const item = graphEntityFromNode(candidate);
+            return item && canonicalGraphKey(item) === key;
+        }).every(copy => hiddenNodes.has(copy.id) || (!!copy.parentId && hiddenNodes.has(copy.parentId)));
+    }, [nodes, hiddenNodes]);
 
-    // Ratio bénéfice/risque en temps réel
-    const liveBenefitRiskRatio = useMemo(() => {
-        return liveStats.greenLinks / (liveStats.redLinks + liveStats.orangeLinks + 1);
-    }, [liveStats]);
-
-
-    // Fonction pour cacher/montrer un nœud
+    // The element control affects every copy; the group control only affects
+    // that container, so another copy can still carry an interaction alert.
     const toggleNodeVisibility = useCallback((nodeId: string) => {
-        setHiddenNodes(prev => {
-            const newSet = new Set(prev);
-            if (newSet.has(nodeId)) {
-                newSet.delete(nodeId);
-            } else {
-                newSet.add(nodeId);
-            }
-            return newSet;
+        const node = nodes.find(candidate => candidate.id === nodeId);
+        const entity = node ? graphEntityFromNode(node) : null;
+        if (!node || !entity) return;
+        const key = canonicalGraphKey(entity);
+        const copies = nodes.filter(candidate => {
+            const item = graphEntityFromNode(candidate);
+            return item && canonicalGraphKey(item) === key;
         });
-    }, []);
+        setHiddenNodes(previous => {
+            const next = new Set(previous);
+            const show = copies.every(copy => previous.has(copy.id));
+            copies.forEach(copy => show ? next.delete(copy.id) : next.add(copy.id));
+            return next;
+        });
+    }, [nodes]);
 
-    // Fonction pour cacher/montrer un groupe entier (inclut la pathologie principale)
     const toggleGroupVisibility = useCallback((groupId: string) => {
-        const group = groups.find(g => g.id === groupId);
-        if (!group) return;
-
-        setHiddenGroups(prev => {
-            const newSet = new Set(prev);
-            const isHidden = newSet.has(groupId);
-
-            // Collecter tous les IDs à cacher/montrer (membres + pathologie + groupe lui-même)
-            const allIdsToToggle = [
-                ...group.memberIds,
-                group.pathologyId, // La pathologie principale du groupe
-                groupId, // Le nœud groupe lui-même
-            ];
-
-            if (isHidden) {
-                newSet.delete(groupId);
-                // Montrer tous les éléments du groupe
-                setHiddenNodes(prevNodes => {
-                    const updatedNodes = new Set(prevNodes);
-                    allIdsToToggle.forEach(id => updatedNodes.delete(id));
-                    return updatedNodes;
-                });
-            } else {
-                newSet.add(groupId);
-                // Cacher tous les éléments du groupe
-                setHiddenNodes(prevNodes => {
-                    const updatedNodes = new Set(prevNodes);
-                    allIdsToToggle.forEach(id => updatedNodes.add(id));
-                    return updatedNodes;
-                });
-            }
-            return newSet;
+        const hidden = hiddenGroups.has(groupId);
+        setHiddenGroups(previous => {
+            const next = new Set(previous);
+            if (hidden) next.delete(groupId);
+            else next.add(groupId);
+            return next;
         });
-    }, [groups]);
+        setHiddenNodes(previous => {
+            const next = new Set(previous);
+            if (hidden) next.delete(groupId);
+            else next.add(groupId);
+            return next;
+        });
+    }, [hiddenGroups]);
 
     // Obtenir les nœuds visibles uniquement
     const visibleNodes = useMemo(() => {
-        return nodes.filter(n => !hiddenNodes.has(n.id));
+        return nodes.filter(n => !hiddenNodes.has(n.id) && (!n.parentId || !hiddenNodes.has(n.parentId)));
     }, [nodes, hiddenNodes]);
 
-    // Mettre à jour le style des edges quand des nœuds sont cachés
-    useEffect(() => {
-        if (hiddenNodes.size === 0) {
-            // Restaurer tous les edges à leur style normal
-            setEdges(eds => eds.map(edge => ({
-                ...edge,
-                animated: edge.data?.originalAnimated ?? edge.animated,
-                style: {
-                    ...edge.style,
-                    opacity: 1,
-                    strokeDasharray: edge.data?.originalStrokeDasharray ?? undefined,
-                },
-            })));
-        } else {
-            // Griser les edges connectés à des nœuds cachés
-            setEdges(eds => eds.map(edge => {
-                const sourceHidden = hiddenNodes.has(edge.source);
-                const targetHidden = hiddenNodes.has(edge.target);
-                const isAffected = sourceHidden || targetHidden;
-
-                return {
-                    ...edge,
-                    animated: isAffected ? false : (edge.data?.originalAnimated ?? edge.animated),
-                    style: {
-                        ...edge.style,
-                        opacity: isAffected ? 0.15 : 1,
-                        strokeDasharray: isAffected ? '5,5' : (edge.data?.originalStrokeDasharray ?? undefined),
-                    },
-                    data: {
-                        ...edge.data,
-                        // Sauvegarder les valeurs originales si pas déjà fait
-                        originalAnimated: edge.data?.originalAnimated ?? edge.animated,
-                        originalStrokeDasharray: edge.data?.originalStrokeDasharray ?? edge.style?.strokeDasharray,
-                    },
-                };
-            }));
-        }
-    }, [hiddenNodes, setEdges]);
-
-    // Mettre à jour l'opacité des nœuds cachés sur le canvas
-    useEffect(() => {
-        setNodes(nds => nds.map(node => ({
-            ...node,
-            style: {
-                ...node.style,
-                opacity: hiddenNodes.has(node.id) ? 0.3 : 1,
-                transition: 'opacity 0.2s ease',
-            },
-        })));
-    }, [hiddenNodes, setNodes]);
-
-
-
-    // Trier les liens par dangerosité (du plus dangereux au moins dangereux)
     const sortedDisplayedLinks = useMemo(() => {
         return [...displayedLinks].sort((a, b) => getDangerScore(b) - getDangerScore(a));
     }, [displayedLinks, getDangerScore]);
@@ -642,12 +675,13 @@ export function RiskNetworkGraph({
         const visibleNodeIds = nodes.filter(n => !hiddenNodes.has(n.id) && n.data.type !== 'group').map(n => n.id).join(',');
 
         // Copier les nœuds visibles
-        const visibleNodes = nodes.filter(n => !hiddenNodes.has(n.id) && n.data.type !== 'group');
+        const visibleNodes = nodes.filter(n => !hiddenNodes.has(n.id) && (!n.parentId || !hiddenNodes.has(n.parentId)));
 
         // Si pas de nœuds visibles ou pas d'edges, pas de schéma proposé
-        if (visibleNodes.length === 0 || edges.length === 0) {
+        if (visibleNodes.length === 0 || edges.length === 0 || !analysisResult?.schemaComparison?.proposedChanges?.length) {
             setProposedNodes([]);
             setProposedEdges([]);
+            setShowProposedSchema(false);
             return;
         }
 
@@ -659,6 +693,7 @@ export function RiskNetworkGraph({
         let proposedNodesList = visibleNodes.map(n => ({
             ...n,
             id: `proposed-${n.id}`,
+            parentId: n.parentId ? `proposed-${n.parentId}` : undefined,
             position: { ...n.position }, // Mêmes positions initiales
             draggable: true,
             selectable: true,
@@ -764,7 +799,7 @@ export function RiskNetworkGraph({
         console.log('[ProposedSchema] Edges générées:', newEdges.length);
         setProposedNodes(proposedNodesList);
         setProposedEdges(newEdges);
-    }, [analysisResult, nodes.length, hiddenNodes, edgeLinkMap, setProposedNodes, setProposedEdges]);
+    }, [analysisResult, nodes, edges, hiddenNodes, edgeLinkMap, setProposedNodes, setProposedEdges]);
 
     // Toggle une carte
     const toggleLinkExpand = (linkId: string) => {
@@ -805,473 +840,128 @@ export function RiskNetworkGraph({
         loadData();
     }, []);
 
-    // Synchroniser les nœuds avec les sélections externes (de CrossDataAnalyzer)
+    // Selection is authoritative for canonical entities; graph aliases are only
+    // a projection. A moved/duplicated node must not trigger another insertion.
     useEffect(() => {
-        if (!selectedPathologyIds && !selectedSymptomIds && !selectedTreatmentIds && !selectedMedicationIds) {
-            return; // Pas de sélections externes
-        }
-
-        console.log('[RiskNetworkGraph] Synchronisation avec sélections externes:', {
-            pathologies: selectedPathologyIds?.length || 0,
-            symptoms: selectedSymptomIds?.length || 0,
-            treatments: selectedTreatmentIds?.length || 0,
-            medications: selectedMedicationIds?.length || 0
+        if (!selectedPathologyIds && !selectedSymptomIds && !selectedTreatmentIds && !selectedMedicationIds) return;
+        const catalogue: (GraphEntity & { severity?: string | null })[] = [
+            ...(externalPathologies || pathologies).map(item => ({ ...item, type: 'pathology' as const })),
+            ...(externalSymptoms || symptoms).map(item => ({ ...item, type: 'symptom' as const })),
+            ...(externalTreatments || treatments).map(item => ({ ...item, type: 'treatment' as const })),
+            ...(externalMedications || medications).map(item => ({ ...item, type: 'medication' as const })),
+        ];
+        const useSnapshot = analysisSnapshot && snapshotSelectionMatches;
+        const selection: (GraphEntity & { severity?: string | null })[] = useSnapshot
+            ? restoreSnapshotGraphEntities(analysisSnapshot, catalogue) : [
+            ...(externalPathologies || pathologies).filter(item => selectedPathologyIds?.includes(item.id)).map(item => ({ ...item, type: 'pathology' as const })),
+            ...(externalSymptoms || symptoms).filter(item => selectedSymptomIds?.includes(item.id)).map(item => ({ ...item, type: 'symptom' as const })),
+            ...(externalTreatments || treatments).filter(item => selectedTreatmentIds?.includes(item.id)).map(item => ({ ...item, type: 'treatment' as const })),
+            ...(externalMedications || medications).filter(item => selectedMedicationIds?.includes(item.id)).map(item => ({ ...item, type: 'medication' as const })),
+        ];
+        const signature = JSON.stringify([useSnapshot ? analysisSnapshot.jobId : null,
+            selection.map(item => [item.type, item.id, item.name, item.severity])]);
+        if (externalSelectionKey.current === signature) return;
+        externalSelectionKey.current = signature;
+        const selectedByKey = new Map(selection.map(item => [canonicalGraphKey(item), item]));
+        const wanted = new Set(selectedByKey.keys());
+        const replacingSnapshot = Boolean(useSnapshot && restoredSnapshotJob.current !== analysisSnapshot.jobId);
+        if (useSnapshot) restoredSnapshotJob.current = analysisSnapshot.jobId;
+        pendingExternalProjection.current = JSON.stringify([...selectedByKey].map(([key, item]) => [key, item.id]).sort(([a], [b]) => a.localeCompare(b)));
+        setNodes(previous => {
+            const retained = (replacingSnapshot ? [] : previous).filter(node => !node.data.fromExternalSelection || wanted.has(String(node.data.canonicalId))).map(node => {
+                const item = selectedByKey.get(String(node.data.canonicalId));
+                return item ? { ...node, data: { ...node.data, label: item.name, entityId: item.id,
+                    severity: item.severity, fromExternalSelection: true } } : node;
+            });
+            const present = new Set(collectCanonicalGraphEntities(retained).map(canonicalGraphKey));
+            const added = [...selectedByKey.values()].filter(item => !present.has(canonicalGraphKey(item))).map((item, index): Node => {
+                const colors = getItemColors(item as MedicalItem);
+                const canonicalId = canonicalGraphKey(item);
+                return {
+                    id: `clinical:${encodeURIComponent(canonicalId)}:unassigned`, type: 'clinicalEntity',
+                    position: { x: 60 + (index % 4) * 240, y: 80 + Math.floor(index / 4) * 120 },
+                    data: { label: item.name, type: item.type, entityId: item.id, canonicalId, severity: item.severity, fromExternalSelection: true },
+                    style: { background: colors.bg, border: `2px solid ${colors.border}`, color: colors.text,
+                        borderRadius: 12, padding: '12px 14px', width: 210, fontSize: 12, fontWeight: 500 },
+                };
+            });
+            return [...retained, ...added];
         });
-
-        // Utiliser les données externes si disponibles, sinon les données locales
-        const pathsToUse = externalPathologies || pathologies;
-        const sympsToUse = externalSymptoms || symptoms;
-        const treatsToUse = externalTreatments || treatments;
-        const medsToUse = externalMedications || medications;
-
-        const newNodes: Node[] = [];
-        const positions = { x: 100, y: 100 };
-        const gridStep = 200;
-        let nodeIndex = 0;
-
-        // Ajouter les pathologies sélectionnées
-        selectedPathologyIds?.forEach(id => {
-            const item = pathsToUse.find(p => p.id === id);
-            if (item && !nodes.find(n => n.id === id)) {
-                const colors = getPathologySeverityColor(item.severity);
-                newNodes.push({
-                    id: item.id,
-                    position: { x: positions.x + (nodeIndex % 4) * gridStep, y: positions.y + Math.floor(nodeIndex / 4) * gridStep },
-                    data: { label: item.name, type: 'pathology', status: 'neutral' },
-                    style: {
-                        background: colors.bg,
-                        border: `2px solid ${colors.border}`,
-                        borderRadius: '12px',
-                        padding: '10px 16px',
-                        fontSize: '13px',
-                        fontWeight: '500',
-                        color: colors.text,
-                    },
-                });
-                nodeIndex++;
-            }
-        });
-
-        // Ajouter les symptômes sélectionnés
-        selectedSymptomIds?.forEach(id => {
-            const item = sympsToUse.find(s => s.id === id);
-            if (item && !nodes.find(n => n.id === id)) {
-                const colors = getSymptomColor();
-                newNodes.push({
-                    id: item.id,
-                    position: { x: positions.x + (nodeIndex % 4) * gridStep, y: positions.y + Math.floor(nodeIndex / 4) * gridStep },
-                    data: { label: item.name, type: 'symptom', status: 'neutral' },
-                    style: {
-                        background: colors.bg,
-                        border: `2px solid ${colors.border}`,
-                        borderRadius: '12px',
-                        padding: '10px 16px',
-                        fontSize: '13px',
-                        fontWeight: '500',
-                        color: colors.text,
-                    },
-                });
-                nodeIndex++;
-            }
-        });
-
-        // Ajouter les traitements sélectionnés
-        selectedTreatmentIds?.forEach(id => {
-            const item = treatsToUse.find(t => t.id === id);
-            if (item && !nodes.find(n => n.id === id)) {
-                const colors = { bg: '#dcfce7', border: '#22c55e', text: '#15803d' };
-                newNodes.push({
-                    id: item.id,
-                    position: { x: positions.x + (nodeIndex % 4) * gridStep, y: positions.y + Math.floor(nodeIndex / 4) * gridStep },
-                    data: { label: item.name, type: 'treatment', status: 'neutral' },
-                    style: {
-                        background: colors.bg,
-                        border: `2px solid ${colors.border}`,
-                        borderRadius: '12px',
-                        padding: '10px 16px',
-                        fontSize: '13px',
-                        fontWeight: '500',
-                        color: colors.text,
-                    },
-                });
-                nodeIndex++;
-            }
-        });
-
-        // Ajouter les médicaments sélectionnés
-        selectedMedicationIds?.forEach(id => {
-            const item = medsToUse.find(m => m.id === id);
-            if (item && !nodes.find(n => n.id === id)) {
-                const colors = getMedicationColor();
-                newNodes.push({
-                    id: item.id,
-                    position: { x: positions.x + (nodeIndex % 4) * gridStep, y: positions.y + Math.floor(nodeIndex / 4) * gridStep },
-                    data: { label: item.name, type: 'medication', status: 'neutral' },
-                    style: {
-                        background: colors.bg,
-                        border: `2px solid ${colors.border}`,
-                        borderRadius: '12px',
-                        padding: '10px 16px',
-                        fontSize: '13px',
-                        fontWeight: '500',
-                        color: colors.text,
-                    },
-                });
-                nodeIndex++;
-            }
-        });
-
-        if (newNodes.length > 0) {
-            setNodes(prev => [...prev, ...newNodes]);
-            console.log('[RiskNetworkGraph] Nœuds ajoutés depuis sélections externes:', newNodes.length);
-        }
     }, [selectedPathologyIds, selectedSymptomIds, selectedTreatmentIds, selectedMedicationIds,
         externalPathologies, externalSymptoms, externalTreatments, externalMedications,
-        pathologies, symptoms, treatments, medications, setNodes, nodes]);
+        pathologies, symptoms, treatments, medications, getItemColors, setNodes, analysisSnapshot, snapshotSelectionMatches]);
 
     // Synchroniser l'analyse depuis le parent
     useEffect(() => {
-        setAnalysisResult(analysisResultFromParent ?? null);
-        setDisplayedLinks(analysisResultFromParent?.causalLinks ?? []);
         setIsLoadingLinks(false);
-    }, [analysisResultFromParent]);
+    }, [analysisResultFromParent, analysisMatchesSnapshot]);
 
     useEffect(() => {
-        if (!analysisResultFromParent) { setEdges([]); setEdgeLinkMap({}); return; }
-        const links = analysisResultFromParent.causalLinks || [];
-        const mapped: Record<string,CausalLink> = {};
-        const currentEdges: Edge[] = [];
-        links.forEach((link,index) => {
-            if (link.validationVersion !== 2 || !link.relationKind) return;
-            // Full labels and types, never substring-matched drug formulations.
-            const source = nodes.filter(n => n.data.type === link.fromType &&
-                normalizeForComparison(String(n.data.label)) === normalizeForComparison(link.from));
-            const target = nodes.filter(n => n.data.type === link.toType &&
-                normalizeForComparison(String(n.data.label)) === normalizeForComparison(link.to));
-            if (source.length !== 1 || target.length !== 1 || source[0].id === target[0].id) return;
+        const links = analysisResult?.causalLinks || [];
+        const projected = projectClinicalGraphLinks(links, nodes, hiddenNodes);
+        const mapped: Record<string, CausalLink> = {};
+        const currentEdges: Edge[] = projected.map(({ id, source, target, canonicalLinkId, link }) => {
             const display = relationPresentation(link);
-            const color = display.tone === 'caution' ? '#b45309' : '#64748b';
-            const id = 'reviewed-' + source[0].id + '-' + target[0].id + '-' + index;
+            const danger = hasRiskSignal(link) && link.evidenceSupport === 'direct' && (link.dangerLevel === 'critical' || link.dangerLevel === 'high');
+            const color = danger ? '#dc2626' : hasRiskSignal(link) ? '#b45309' : '#64748b';
             mapped[id] = link;
-            currentEdges.push({ id, source:source[0].id, target:target[0].id, type:'smoothstep',
-                animated:false, label:display.label,
-                style:{stroke:color,strokeWidth:2,strokeDasharray:link.evidenceSupport==='direct'?undefined:'5 4'},
-                markerEnd:{type:MarkerType.ArrowClosed,color},
-                labelStyle:{fontSize:10,fill:color}, data:{link} });
+            return { id, source, target, type: 'smoothstep', animated: false, label: display.label,
+                style: { stroke: color, strokeWidth: danger ? 3 : 2, strokeDasharray: link.evidenceSupport === 'direct' ? undefined : '5 4' },
+                markerEnd: link.evidenceSupport !== 'direct' || ['association', 'coadministration'].includes(link.relationKind || '')
+                    ? undefined : { type: MarkerType.ArrowClosed, color },
+                labelStyle: { fontSize: 10, fill: color }, data: { link, canonicalLinkId } };
         });
-        setEdges(currentEdges);
+        setEdges(previous => [...previous.filter(edge => edge.data?.manual && nodes.some(node => node.id === edge.source) && nodes.some(node => node.id === edge.target)), ...currentEdges]);
         setEdgeLinkMap(mapped);
-    }, [analysisResultFromParent, nodes, normalizeForComparison, setEdges]);
+        // Alert counts belong to canonical relations, never to visual copies.
+        const risks = [...new Map(projected.filter(edge => hasRiskSignal(edge.link))
+            .map(edge => [edge.canonicalLinkId, edge.link])).values()];
+        setAlerts(risks.map(link => ({
+            title: `${link.from} → ${link.to}`,
+            type: link.evidenceSupport === 'direct' && (link.dangerLevel === 'critical' || link.dangerLevel === 'high') ? 'danger' as const : 'warning' as const,
+            description: `${link.evidence || ''} ${relationPresentation(link).description}`.trim(), links: [link],
+        })));
+    }, [analysisResult, nodes, hiddenNodes, setEdges]);
 
-
-
-    // Analyser les connexions via l'IA (uniquement les nœuds visibles)
+    // Visibility is a view preference, never a silent clinical exclusion.
     const analyzeConnections = useCallback(async (customIds?: {
         pathologyIds?: string[],
         symptomIds?: string[],
         treatmentIds?: string[],
         medicationIds?: string[]
     }) => {
-        // Utiliser les nœuds visibles uniquement
-        const nodesToAnalyze = nodes.filter(n => !hiddenNodes.has(n.id));
+        const nodesToAnalyze = nodes.filter(node => graphEntityFromNode(node));
 
-        if (nodesToAnalyze.length < 2 && !customIds) {
-            console.log('[RiskNetworkGraph] Pas assez de nœuds visibles pour analyser');
+        if (collectCanonicalGraphEntities(nodesToAnalyze).length < 2 && !customIds) {
             return;
         }
 
         setIsAnalyzing(true);
         setIsLoadingLinks(true);
-        setDisplayedLinks([]); // Réinitialiser les liens affichés
-        const newAlerts: AlertInfo[] = [];
 
         try {
-            // Préparer les IDs par type (nœuds visibles uniquement)
-            const pathologyIds = customIds?.pathologyIds || nodesToAnalyze.filter(n => n.data.type === 'pathology').map(n => n.id);
-            const symptomIds = customIds?.symptomIds || nodesToAnalyze.filter(n => n.data.type === 'symptom').map(n => n.id);
-            const treatmentIds = customIds?.treatmentIds || nodesToAnalyze.filter(n => n.data.type === 'treatment').map(n => n.id);
-            const medicationIds = customIds?.medicationIds || nodesToAnalyze.filter(n => n.data.type === 'medication').map(n => n.id);
+            const canonicalSelection = graphSelectionIds(nodesToAnalyze);
+            const pathologyIds = customIds?.pathologyIds || canonicalSelection.pathologyIds;
+            const symptomIds = customIds?.symptomIds || canonicalSelection.symptomIds;
+            const treatmentIds = customIds?.treatmentIds || canonicalSelection.treatmentIds;
+            const medicationIds = customIds?.medicationIds || canonicalSelection.medicationIds;
 
-            console.log('[RiskNetworkGraph] Analyse avec IDs:', {
-                total: pathologyIds.length + symptomIds.length + treatmentIds.length + medicationIds.length,
-                isCustom: !!customIds,
-                pathologyIds, symptomIds, treatmentIds, medicationIds
-            });
-
-            // The dossier's durable OpenAI matrix is the authoritative
-            // analysis workflow; never fall back to a local LLM for relations.
-            if (onAnalyzeWithOpenAI) {
-                await onAnalyzeWithOpenAI({ pathologyIds, symptomIds, treatmentIds, medicationIds });
-                return;
-            }
-
-            // Standalone legacy graph: cloud server, not local model.
-            const { data, error } = await supabase.functions.invoke('cross-data-analyzer', {
-                body: { pathologyIds, symptomIds, treatmentIds, medicationIds, async: true }
-            });
-
-            if (data?.error) {
-                toast.error(`Erreur d'analyse: ${data.error}`);
-                setIsAnalyzing(false);
-                setIsLoadingLinks(false);
-                return;
-            }
-
-            if (error) {
-                console.error('[RiskNetworkGraph] Erreur API:', error);
-                throw error;
-            }
-
-            const resolvedData = await resolveAIJob<any>(invokeAI, 'cross-data-analyzer', data);
-
-            console.log('[RiskNetworkGraph] Réponse API:', resolvedData);
-
-            // Extract the actual analysis object from the response
-            const actualAnalysis = resolvedData?.analysis || resolvedData;
-            setAnalysisResult(actualAnalysis);
-
-            // Sync with parent if callback provided
-            if (onAnalysisResultChange) {
-                onAnalysisResultChange(actualAnalysis);
-            }
-
-            // Vérifier la structure des données
-            const causalLinks = actualAnalysis?.causalLinks || [];
-            console.log('[RiskNetworkGraph] Liens trouvés:', causalLinks.length);
-
-            // Mettre à jour les edges et les nœuds selon les résultats
-            const newEdges: Edge[] = [];
-            const nodeUpdates: Record<string, { status: 'success' | 'danger' | 'warning' | 'neutral' }> = {};
-            const newEdgeLinkMap: Record<string, CausalLink> = {};
-
-            // Fonction pour trouver un nœud par son nom et son type clinique.
-            const findNodeByName = (name: string, type?: string) => {
-                const normalizedName = normalizeForComparison(name);
-                const typedCandidates = type
-                    ? nodes.filter(n => n.data.type === type)
-                    : nodes;
-
-                const exactMatch = typedCandidates.find(n => normalizeForComparison(String(n.data.label)) === normalizedName);
-                if (exactMatch) return exactMatch;
-
-                return typedCandidates.find(n => {
-                    const nodeNameNorm = normalizeForComparison(n.data.label);
-                    return nodeNameNorm.includes(normalizedName) ||
-                        normalizedName.includes(nodeNameNorm) ||
-                        nodeNameNorm === normalizedName;
-                });
-            };
-
-            causalLinks.forEach((link: CausalLink) => {
-                // Trouver les nœuds source et cible
-                const sourceNode = findNodeByName(link.from, link.fromType);
-                const targetNode = findNodeByName(link.to, link.toType);
-
-                if (sourceNode && targetNode && sourceNode.id !== targetNode.id) {
-                    // Déterminer la couleur du lien selon le type de relation
-                    let strokeColor = linkColors.blue; // Bleu par défaut (informatif)
-                    let alertType: 'danger' | 'warning' | 'info' = 'info';
-
-                    // Rouge: VRAI Danger (Interaction dangereuse ou toxicité critique)
-                    if (link.dangerLevel === 'critical' || link.dangerLevel === 'high') {
-                        strokeColor = linkColors.red;
-                        alertType = 'danger';
-                    }
-                    // Orange: Contre-indication "Non indiqué" (mais pas forcément mortel)
-                    else if (isAppropriatenessWarning(link)) {
-                        strokeColor = linkColors.orange;
-                        alertType = 'warning'; // Change from danger to warning
-                    }
-                    // Jaune/Orange: Risque d'interaction modéré
-                    else if (link.dangerLevel === 'moderate' || (link.effectType === 'adverse' && !isAppropriatenessSuccess(link))) {
-                        strokeColor = linkColors.orange;
-                        alertType = 'warning';
-                    }
-                    // Jaune: Effets secondaires bénins ou interaction bénigne, symptôme normal
-                    else if (link.dangerLevel === 'low' || link.effectType === 'both' || link.symptomFrequency === 'possible' || link.symptomFrequency === 'rare') {
-                        strokeColor = linkColors.yellow;
-                    }
-                    // Vert: Adapté ou lien normal (traitement approprié, symptôme principal/fréquent)
-                    else if (isAppropriatenessSuccess(link) || link.effectType === 'therapeutic' || link.symptomFrequency === 'principal' || link.symptomFrequency === 'frequent') {
-                        strokeColor = linkColors.green;
-                    }
-
-                    const isDanger = alertType === 'danger';
-                    const isWarning = alertType === 'warning';
-
-                    // Créer un ID unique pour l'edge
-                    const edgeId = `${sourceNode.id}-${targetNode.id}-${Date.now()}-${Math.random()}`;
-
-                    // Stocker le lien dans la map
-                    newEdgeLinkMap[edgeId] = link;
-
-                    // Créer l'edge avec les data du lien
-                    newEdges.push({
-                        id: edgeId,
-                        source: sourceNode.id,
-                        target: targetNode.id,
-                        type: 'smoothstep',
-                        animated: isDanger,
-                        style: {
-                            stroke: strokeColor,
-                            strokeWidth: isDanger ? 3 : 2,
-                            cursor: 'pointer',
-                        },
-                        markerEnd: {
-                            type: MarkerType.ArrowClosed,
-                            color: strokeColor,
-                        },
-                        label: link.symptomFrequency || link.relationship?.substring(0, 25) || '...',
-                        labelStyle: { fontSize: 10, fill: strokeColor, cursor: 'pointer' },
-                        labelBgStyle: { fill: 'white', fillOpacity: 0.9, cursor: 'pointer' },
-                        data: { link }, // Stocker le lien complet dans data
-                    });
-
-                    // Mettre à jour le statut des nœuds et ajouter des alertes
-                    if (isDanger) {
-                        nodeUpdates[sourceNode.id] = { status: 'danger' };
-                        nodeUpdates[targetNode.id] = { status: 'danger' };
-
-                        newAlerts.push({
-                            title: `🔴 DANGER: ${link.from} → ${link.to}`,
-                            type: 'danger',
-                            description: link.evidence || link.relationship || 'Interaction dangereuse détectée',
-                            links: [link],
-                        });
-                    } else if (isWarning) {
-                        if (nodeUpdates[sourceNode.id]?.status !== 'danger') {
-                            nodeUpdates[sourceNode.id] = { status: 'warning' };
-                        }
-                        if (nodeUpdates[targetNode.id]?.status !== 'danger') {
-                            nodeUpdates[targetNode.id] = { status: 'warning' };
-                        }
-
-                        newAlerts.push({
-                            title: `🟠 Risque: ${link.from} → ${link.to}`,
-                            type: 'warning',
-                            description: link.evidence || link.relationship || "Risque d'interaction détecté",
-                            links: [link],
-                        });
-                    } else if (strokeColor === linkColors.green) {
-                        if (!nodeUpdates[sourceNode.id]) {
-                            nodeUpdates[sourceNode.id] = { status: 'success' };
-                        }
-                        if (!nodeUpdates[targetNode.id]) {
-                            nodeUpdates[targetNode.id] = { status: 'success' };
-                        }
-                    }
-                }
-            });
-
-            // Mettre à jour les edges et la map des liens
-            // IMPORTANT: On conserve les liens structurels (intra-groupe) qui ne sont pas des liens de causalité
-            setEdges(prevEdges => {
-                const structuralEdges = prevEdges.filter(e => e.data?.isStructural);
-                return [...structuralEdges, ...newEdges];
-            });
-            setEdgeLinkMap(newEdgeLinkMap);
-
-            // Mettre à jour les styles des nœuds
-            setNodes(nds => nds.map(node => {
-                const update = nodeUpdates[node.id];
-                if (update) {
-                    let borderColor = node.style?.borderColor || '#9ca3af';
-                    let bgColor = node.style?.background || '#f3f4f6';
-
-                    if (update.status === 'danger') {
-                        borderColor = linkColors.red;
-                        bgColor = '#fef2f2';
-                    } else if (update.status === 'warning') {
-                        borderColor = linkColors.orange;
-                        bgColor = '#fff7ed';
-                    } else if (update.status === 'success') {
-                        borderColor = linkColors.green;
-                        bgColor = '#f0fdf4';
-                    }
-
-                    return {
-                        ...node,
-                        style: {
-                            ...node.style,
-                            border: `3px solid ${borderColor}`,
-                            background: bgColor,
-                            boxShadow: update.status === 'danger'
-                                ? '0 0 15px rgba(239, 68, 68, 0.5)'
-                                : update.status === 'success'
-                                    ? '0 0 10px rgba(34, 197, 94, 0.3)'
-                                    : 'none',
-                        },
-                    };
-                }
-                return node;
-            }));
-
-            // Afficher les alertes
-            setAlerts(newAlerts);
-            if (newAlerts.length > 0) {
-                setCurrentAlert(newAlerts[0]);
-                setShowAlertDialog(true);
-            }
-
-            // Afficher les liens progressivement
-            const allLinks = causalLinks as CausalLink[];
-            for (let i = 0; i < allLinks.length; i++) {
-                await new Promise(resolve => setTimeout(resolve, 150));
-                setDisplayedLinks(prev => [...prev, allLinks[i]]);
-            }
+            // The parent owns the authenticated, resumable Astra agent job.
+            // There is no standalone fallback to another model or old endpoint.
+            await onAnalyzeWithOpenAI({ pathologyIds, symptomIds, treatmentIds, medicationIds,
+                ...(analysisSnapshot ? { elements: collectCanonicalGraphEntities(nodesToAnalyze) } : {}) });
 
         } catch (error) {
-            console.error('[RiskNetworkGraph] Erreur d\'analyse:', error);
+            toast.error(error instanceof Error ? error.message : 'L’analyse agentique est temporairement indisponible.');
         } finally {
             setIsAnalyzing(false);
             setIsLoadingLinks(false);
         }
-    }, [nodes, setNodes, setEdges, hiddenNodes, onAnalyzeWithOpenAI, onAnalysisResultChange, normalizeForComparison]);
+    }, [nodes, onAnalyzeWithOpenAI, analysisSnapshot]);
 
-    // Analyser les connexions entre groupes
-    const analyzeGroupConnections = useCallback(async () => {
-        if (groups.length < 2) {
-            // Fallback to normal analysis if less than 2 groups
-            analyzeConnections();
-            return;
-        }
-
-        // Collecter tous les IDs de tous les groupes pour analyser leurs interactions
-        const allPathologyIds: string[] = [];
-        const allSymptomIds: string[] = [];
-        const allTreatmentIds: string[] = [];
-        const allMedicationIds: string[] = [];
-
-        groups.forEach(group => {
-            group.memberIds.forEach(memberId => {
-                const node = nodes.find(n => n.id === memberId);
-                if (!node) return;
-
-                switch (node.data.type) {
-                    case 'pathology':
-                        if (!allPathologyIds.includes(memberId)) allPathologyIds.push(memberId);
-                        break;
-                    case 'symptom':
-                        if (!allSymptomIds.includes(memberId)) allSymptomIds.push(memberId);
-                        break;
-                    case 'treatment':
-                        if (!allTreatmentIds.includes(memberId)) allTreatmentIds.push(memberId);
-                        break;
-                    case 'medication':
-                        if (!allMedicationIds.includes(memberId)) allMedicationIds.push(memberId);
-                        break;
-                }
-            });
-        });
-
-        // Utiliser la même logique d'analyse mais restreinte aux éléments des groupes
-        analyzeConnections({
-            pathologyIds: allPathologyIds,
-            symptomIds: allSymptomIds,
-            treatmentIds: allTreatmentIds,
-            medicationIds: allMedicationIds
-        });
-    }, [groups, nodes, analyzeConnections]);
+    // Re-examine every canonical entity, including hidden/unassigned elements.
+    // Restricting this to group members would silently omit unclassified risks.
+    const analyzeGroupConnections = useCallback(() => analyzeConnections(), [analyzeConnections]);
 
     // Debounce search term to avoid blocking UI
     const [debouncedSearchTerm, setDebouncedSearchTerm] = useState(searchTerm);
@@ -1301,67 +991,35 @@ export function RiskNetworkGraph({
             .slice(0, 50);
     }, [activeTab, debouncedSearchTerm, pathologies, symptoms, treatments, medications]);
 
-    // Ajouter un nœud au graphique
     const addNode = useCallback((item: MedicalItem) => {
-        // Vérifier si le nœud existe déjà
-        if (nodes.find(n => n.id === item.id)) return;
-
+        const canonicalId = canonicalGraphKey(item);
+        if (collectCanonicalGraphEntities(nodes).some(entity => canonicalGraphKey(entity) === canonicalId)) return;
         const colors = getItemColors(item);
-        // Détection Danger / Toxicité
-        const isToxic = ['methotrexate', 'chimio', 'chemo', 'opiac', 'opioid', 'immuno'].some(k =>
-            item.name.toLowerCase().includes(k)
-        );
-        const isSevere = item.type === 'pathology' && (
-            (item as Pathology).severity === 'high' ||
-            (item as Pathology).severity === 'critical' ||
-            ['cancer', 'tumeur', 'tumor', 'sida', 'hiv'].some(k => item.name.toLowerCase().includes(k))
-        );
-
-        // Style spécial pour Toxic / Severe
-        const finalStyle = {
-            background: isToxic ? '#ef4444' : colors.bg,
-            border: isToxic ? '2px solid #b91c1c' : `2px solid ${colors.border}`,
-            borderRadius: '8px',
-            padding: '10px 15px',
-            fontSize: '12px',
-            fontWeight: 500,
-            color: isToxic ? '#ffffff' : colors.text, // Texte blanc sur rouge
-            minWidth: '120px',
-            textAlign: 'center' as const,
-        };
-
-        // Label avec icône si sévère
-        const labelText = isSevere ? `💀 ${item.name}` : item.name;
-
-        const newNode: Node = {
-            id: item.id,
-            data: {
-                label: labelText,
-                type: item.type,
-                severity: item.type === 'pathology' ? (item as Pathology).severity : undefined,
-                isToxic,
-                isSevere
-            },
-            position: {
-                x: 250 + Math.random() * 300,
-                y: 150 + Math.random() * 200
-            },
-            style: finalStyle,
-        };
-
-        setNodes(nds => [...nds, newNode]);
-
-        // NE PAS lancer l'analyse automatiquement - l'utilisateur cliquera sur le bouton
-        // if (nodes.length >= 1) {
-        //     setTimeout(() => analyzeConnections(), 500);
-        // }
+        setNodes(previous => [...previous, {
+            id: `clinical:${encodeURIComponent(canonicalId)}:unassigned`, type: 'clinicalEntity',
+            data: { label: item.name, type: item.type, entityId: item.id, canonicalId,
+                severity: item.type === 'pathology' ? item.severity : undefined },
+            position: { x: 60 + (previous.length % 4) * 240, y: 80 + Math.floor(previous.length / 4) * 120 },
+            style: { background: colors.bg, border: `2px solid ${colors.border}`, color: colors.text,
+                borderRadius: 12, padding: '12px 14px', width: 210, fontSize: 12, fontWeight: 500 },
+        }]);
     }, [nodes, setNodes, getItemColors]);
 
-    // Supprimer un nœud
+    // Removing an element removes all of its visual copies, without changing
+    // any prescription or patient record.
     const removeNode = useCallback((nodeId: string) => {
-        setNodes(nds => nds.filter(n => n.id !== nodeId));
-        setEdges(eds => eds.filter(e => e.source !== nodeId && e.target !== nodeId));
-    }, [setNodes, setEdges]);
+        const selected = nodes.find(node => node.id === nodeId);
+        const entity = selected ? graphEntityFromNode(selected) : null;
+        if (!entity) return;
+        const key = canonicalGraphKey(entity);
+        const removed = new Set(nodes.filter(node => {
+            const item = graphEntityFromNode(node);
+            return item && canonicalGraphKey(item) === key;
+        }).map(node => node.id));
+        setNodes(previous => previous.filter(node => !removed.has(node.id)));
+        setEdges(previous => previous.filter(edge => !removed.has(edge.source) && !removed.has(edge.target)));
+        setGroups(previous => previous.map(group => ({ ...group, memberIds: group.memberIds.filter(id => !removed.has(id)) })));
+    }, [nodes, setNodes, setEdges]);
 
     // Connexion manuelle entre nœuds
     // Connexion manuelle ou Inter-Groupes
@@ -1383,7 +1041,7 @@ export function RiskNetworkGraph({
                 animated: true,
                 style: { stroke: '#94a3b8', strokeWidth: 2, strokeDasharray: '5,5' },
                 markerEnd: { type: MarkerType.ArrowClosed },
-                data: { isGroupConnection: true }
+                data: { isGroupConnection: true, manual: true }
             } as Edge;
             setEdges(eds => addEdge(newEdge, eds));
 
@@ -1400,6 +1058,7 @@ export function RiskNetworkGraph({
             animated: true,
             style: { stroke: '#94a3b8', strokeWidth: 2 },
             markerEnd: { type: MarkerType.ArrowClosed },
+            label: 'Lien manuel à examiner', data: { manual: true },
         } as Edge;
 
         setEdges(eds => addEdge(newEdge, eds));
@@ -1443,7 +1102,9 @@ export function RiskNetworkGraph({
             // Soyons précis: on utilise le centre (approximatif width=150, height=50)
             // Mieux: juste la position x,y (top-left) c'est standard.
             // Pour être user-friendly, testons le centre.
-            const center = { x: node.position.x + 75, y: node.position.y + 25 };
+            const parent = node.parentId ? nodes.find(candidate => candidate.id === node.parentId) : undefined;
+            const center = { x: node.position.x + (parent?.position.x || 0) + (node.measured?.width || 210) / 2,
+                y: node.position.y + (parent?.position.y || 0) + (node.measured?.height || 70) / 2 };
             return isPointInPolygon(center, polygon);
         });
 
@@ -1466,7 +1127,7 @@ export function RiskNetworkGraph({
 
     // --- Logique de REDIMENSIONNEMENT AUTOMATIQUE des groupes ---
 
-    const handleGroupAutoResize = useCallback((nds: Node[], changes: any[]) => {
+    const handleGroupAutoResize = useCallback((nds: Node[], changes: NodeChange[]) => {
         const padding = 40;
         const parentIdsToUpdate = new Set<string>();
 
@@ -1563,12 +1224,12 @@ export function RiskNetworkGraph({
     }, []);
 
     // Wrappers pour onNodesChange qui incluent le resize
-    const onNodesChange = useCallback((changes: any[]) => {
+    const onNodesChange = useCallback((changes: NodeChange[]) => {
         onNodesChangeOriginal(changes);
         setNodes(nds => handleGroupAutoResize(nds, changes));
     }, [onNodesChangeOriginal, handleGroupAutoResize, setNodes]);
 
-    const onProposedNodesChange = useCallback((changes: any[]) => {
+    const onProposedNodesChange = useCallback((changes: NodeChange[]) => {
         onProposedNodesChangeOriginal(changes);
         setProposedNodes(nds => handleGroupAutoResize(nds, changes));
     }, [onProposedNodesChangeOriginal, handleGroupAutoResize, setProposedNodes]);
@@ -1584,10 +1245,10 @@ export function RiskNetworkGraph({
 
     // Grouper les nœuds sélectionnés (Style Blender)
     const groupSelectedNodes = useCallback(() => {
-        if (selectedNodes.length < 2) return;
+        if (selectedNodes.length < 2 || automaticGrouping) return;
 
         // Récupérer les objets nœuds complets
-        const nodesToGroup = nodes.filter(n => selectedNodes.includes(n.id) && !n.parentId);
+        const nodesToGroup = nodes.filter(n => selectedNodes.includes(n.id) && !n.parentId && graphEntityFromNode(n));
         if (nodesToGroup.length < 2) return; // Besoin d'au moins 2 nœuds top-level
 
         // Calculer la bounding box
@@ -1621,7 +1282,7 @@ export function RiskNetworkGraph({
             },
             data: {
                 label: groupName,
-                isGroup: true // Custom flag
+                isGroup: true, type: 'group' // Visual container only
             },
             draggable: true,
         };
@@ -1669,40 +1330,12 @@ export function RiskNetworkGraph({
         // Desélectionner pour éviter les confusions
         setSelectedNodes([]);
 
-        // --- NOUVEAU: Créer des liens structurels intra-groupe (Full Mesh) ---
-        const structuralEdges: Edge[] = [];
-        for (let i = 0; i < nodesToGroup.length; i++) {
-            for (let j = i + 1; j < nodesToGroup.length; j++) {
-                const source = nodesToGroup[i].id;
-                const target = nodesToGroup[j].id;
-                const edgeId = `structural-${source}-${target}`;
 
-                // Vérifier si un lien existe déjà (même médical)
-                const exists = edges.some(e =>
-                    (e.source === source && e.target === target) ||
-                    (e.source === target && e.target === source)
-                );
-
-                if (!exists) {
-                    structuralEdges.push({
-                        id: edgeId,
-                        source,
-                        target,
-                        type: 'default', // Trait simple
-                        style: { stroke: '#e2e8f0', strokeWidth: 1, strokeDasharray: '5,5' }, // Gris clair tireté
-                        data: { isStructural: true },
-                        animated: false,
-                        selected: false,
-                    });
-                }
-            }
-        }
-        setEdges(prev => [...prev, ...structuralEdges]);
-
-    }, [selectedNodes, nodes, getNextGroupColor, edges, setEdges, setNodes]);
+    }, [selectedNodes, nodes, getNextGroupColor, setNodes, automaticGrouping]);
 
     // Ancien système (compatible pour l'instant) mais on privilégiera le nouveau
     const createGroupFromPathology = useCallback((pathologyId: string) => {
+        setAutomaticGrouping(false);
         // ... (Logique maintenue pour compatibilité, ou redirigée)
         // Pour l'instant on garde l'ancienne fonction en fallback ou on l'adapte
         // Si on veut utiliser le nouveau système visuel, il faudrait sélectionner les nœuds connectés et appeler groupSelectedNodes
@@ -1744,7 +1377,7 @@ export function RiskNetworkGraph({
                 borderRadius: '12px',
                 zIndex: -1,
             },
-            data: { label: `Groupe ${pathologyNode.data.label}`, isGroup: true },
+            data: { label: `Groupe ${pathologyNode.data.label}`, isGroup: true, type: 'group' },
         };
 
         const newPathologyGroup: PathologyGroup = {
@@ -1781,6 +1414,7 @@ export function RiskNetworkGraph({
 
     // Ajouter un nœud à un groupe existant
     const addNodeToGroup = useCallback((nodeId: string, groupId: string) => {
+        setAutomaticGrouping(false);
         setGroups(prev => prev.map(g => {
             if (g.id === groupId && !g.memberIds.includes(nodeId)) {
                 return { ...g, memberIds: [...g.memberIds, nodeId] };
@@ -1809,6 +1443,7 @@ export function RiskNetworkGraph({
 
     // Retirer un nœud d'un groupe
     const removeNodeFromGroup = useCallback((nodeId: string, groupId: string) => {
+        setAutomaticGrouping(false);
         setGroups(prev => prev.map(g => {
             if (g.id === groupId) {
                 return { ...g, memberIds: g.memberIds.filter(id => id !== nodeId) };
@@ -1835,6 +1470,7 @@ export function RiskNetworkGraph({
 
     // Supprimer un groupe
     const deleteGroup = useCallback((groupId: string) => {
+        setAutomaticGrouping(false);
         const group = groups.find(g => g.id === groupId);
         if (!group) return;
 
@@ -1885,381 +1521,141 @@ export function RiskNetworkGraph({
     }, [groups, setNodes]);
 
 
-    // ========================================
-    // AUTO-GROUPING BASED ON ANALYSIS RESULTS
-    // ========================================
-
-    // Types de source de symptôme
-    type SymptomSource = 'pathology' | 'adverse' | 'both';
-
-    // Couleurs pour les bordures de symptômes selon leur source
-    const symptomSourceStyles = useMemo(() => ({
-        pathology: { borderColor: '#3b82f6', borderStyle: 'solid' }, // Bleu - causé par pathologie
-        adverse: { borderColor: '#f97316', borderStyle: 'dashed' }, // Orange tireté - effet secondaire
-        both: { borderColor: '#8b5cf6', borderStyle: 'double' }, // Violet double - les deux
-    }), []);
-
-    // Fonction d'auto-génération de groupes basée sur l'analyse
-    // Si pas de liens causaux disponibles, lance d'abord une analyse
-    const autoGenerateGroups = useCallback(async () => {
-        const causalLinks = analysisResult?.causalLinks || displayedLinks;
-
-        // Si pas de liens, lancer une analyse d'abord
-        if (!causalLinks || causalLinks.length === 0) {
-            console.log('[AutoGroup] Aucun lien - lancement de l\'analyse automatique');
-            await analyzeConnections();
-            // Après l'analyse, récupérer les nouveaux liens
-            // Note: on doit attendre que l'analyse soit terminée
-            return; // Les liens seront disponibles via analysisResult après l'analyse
+    // Groups are a projection of reviewed relations. A visual copy retains
+    // its canonical entityId and never becomes another selected medication.
+    const applyAutomaticGroups = useCallback(() => {
+        // Selection synchronization and grouping are separate effects. The
+        // old render must not overwrite a newer selection queued by the first.
+        if (pendingExternalProjection.current !== null) {
+            const actual = JSON.stringify(collectCanonicalGraphEntities(nodes.filter(node => node.data.fromExternalSelection))
+                .map(entity => [canonicalGraphKey(entity), entity.id]).sort(([a], [b]) => a.localeCompare(b)));
+            if (actual !== pendingExternalProjection.current) return;
+            pendingExternalProjection.current = null;
         }
+        const plan = buildAutomaticPathologyGraph(collectCanonicalGraphEntities(nodes), analysisResult?.causalLinks || displayedLinks);
+        const signature = JSON.stringify(plan);
+        if (automaticLayoutKey.current === signature) return;
+        automaticLayoutKey.current = signature;
 
-        // Ne pas supprimer les groupes existants - les mettre à jour
-        // Garder une map des groupes existants par pathologyId pour mise à jour
-        const existingGroupsByPathology = new Map(
-            groups.map(g => [g.pathologyId, g])
-        );
-
-        // Récupérer les pathologies présentes sur le canvas (visibles uniquement)
-        const pathologyNodes = nodes.filter(n =>
-            n.data.type === 'pathology' &&
-            n.type !== 'group' &&
-            !hiddenNodes.has(n.id)
-        );
-        if (pathologyNodes.length === 0) {
-            console.log('[AutoGroup] Aucune pathologie visible sur le canvas');
-            return;
+        const previous = new Map(nodes.map(node => [node.id, node]));
+        const templates = new Map<string, Node>();
+        for (const node of nodes) {
+            const entity = graphEntityFromNode(node);
+            if (entity && !templates.has(canonicalGraphKey(entity))) templates.set(canonicalGraphKey(entity), node);
         }
+        const positions = new Map<string, { x: number; y: number }>();
+        const groupNodes: Node[] = [];
+        const layoutGroups: PathologyGroup[] = [];
+        let rowY = 60, rowHeight = 0;
+        const groupWidth = 520;
+        const keepMovedPosition = (node: Node | undefined, suggested: { x: number; y: number }) => {
+            const priorLayout = node?.data.autoLayoutPosition as { x: number; y: number } | undefined;
+            return node && priorLayout && (Math.abs(node.position.x - priorLayout.x) > 1 || Math.abs(node.position.y - priorLayout.y) > 1)
+                ? node.position : suggested;
+        };
 
-        console.log('[AutoGroup] Pathologies trouvées:', pathologyNodes.map(n => n.data.label));
-
-        // Map pour suivre quels symptômes sont liés à quelles sources
-        const symptomSources = new Map<string, SymptomSource>();
-        // Map pour suivre les médicaments partagés entre pathologies
-        const medicationToPathologies = new Map<string, string[]>();
-        // Map de chaque pathologie vers ses nœuds liés
-        const pathologyRelations = new Map<string, Set<string>>();
-
-        // Initialiser les relations de pathologie
-        pathologyNodes.forEach(pNode => {
-            pathologyRelations.set(pNode.id, new Set([pNode.id]));
-        });
-
-        // Analyser les liens de causalité
-        causalLinks.forEach(link => {
-            // Normaliser les noms pour la comparaison
-            const fromNorm = normalizeForComparison(link.from);
-            const toNorm = normalizeForComparison(link.to);
-
-            // Trouver les nœuds correspondants
-            const fromNode = nodes.find(n =>
-                normalizeForComparison(String(n.data.label)).includes(fromNorm) ||
-                fromNorm.includes(normalizeForComparison(String(n.data.label)))
-            );
-            const toNode = nodes.find(n =>
-                normalizeForComparison(String(n.data.label)).includes(toNorm) ||
-                toNorm.includes(normalizeForComparison(String(n.data.label)))
-            );
-
-            if (!fromNode || !toNode) return;
-
-            // 1. Médicament/Traitement → Pathologie (TRAITE)
-            if (isAppropriatenessSuccess(link)) {
-
-                // Trouver la pathologie ciblée
-                const pathologyNode = pathologyNodes.find(p =>
-                    normalizeForComparison(String(p.data.label)).includes(toNorm) ||
-                    toNorm.includes(normalizeForComparison(String(p.data.label)))
-                );
-
-                if (pathologyNode) {
-                    pathologyRelations.get(pathologyNode.id)?.add(fromNode.id);
-
-                    // Tracker les médicaments partagés
-                    const existing = medicationToPathologies.get(fromNode.id) || [];
-                    if (!existing.includes(pathologyNode.id)) {
-                        existing.push(pathologyNode.id);
-                        medicationToPathologies.set(fromNode.id, existing);
-                    }
-
-                    console.log(`[AutoGroup] ${fromNode.data.label} TRAITE ${pathologyNode.data.label}`);
-                }
-            }
-
-            // 2. Pathologie → Symptôme (CAUSE)
-            if (link.fromType === 'pathology' && link.toType === 'symptom' && link.symptomFrequency) {
-                const pathologyNode = pathologyNodes.find(p =>
-                    normalizeForComparison(String(p.data.label)).includes(fromNorm) ||
-                    fromNorm.includes(normalizeForComparison(String(p.data.label)))
-                );
-
-                if (pathologyNode) {
-                    pathologyRelations.get(pathologyNode.id)?.add(toNode.id);
-
-                    // Marquer le symptôme comme causé par pathologie
-                    const existing = symptomSources.get(toNode.id);
-                    if (existing === 'adverse') {
-                        symptomSources.set(toNode.id, 'both');
-                    } else if (!existing) {
-                        symptomSources.set(toNode.id, 'pathology');
-                    }
-
-                    console.log(`[AutoGroup] ${pathologyNode.data.label} CAUSE ${toNode.data.label} (${link.symptomFrequency})`);
-                }
-            }
-
-            // 3. Médicament → Symptôme (EFFET SECONDAIRE)
-            if ((link.fromType === 'medication' || link.fromType === 'treatment') &&
-                link.toType === 'symptom' &&
-                link.effectType === 'adverse') {
-
-                // Marquer le symptôme comme effet secondaire
-                const existing = symptomSources.get(toNode.id);
-                if (existing === 'pathology') {
-                    symptomSources.set(toNode.id, 'both');
-                } else if (!existing) {
-                    symptomSources.set(toNode.id, 'adverse');
-                }
-
-                // Trouver les pathologies liées à ce médicament
-                const medPathologies = medicationToPathologies.get(fromNode.id) || [];
-                medPathologies.forEach(pathId => {
-                    pathologyRelations.get(pathId)?.add(toNode.id);
-                });
-
-                console.log(`[AutoGroup] ${fromNode.data.label} CAUSE (effet secondaire) ${toNode.data.label}`);
-            }
-        });
-
-        // Appliquer les styles visuels aux symptômes selon leur source
-        setNodes(nds => nds.map(n => {
-            const source = symptomSources.get(n.id);
-            if (source && n.data.type === 'symptom') {
-                const style = symptomSourceStyles[source];
-                return {
-                    ...n,
-                    data: { ...n.data, symptomSource: source },
-                    style: {
-                        ...n.style,
-                        border: `3px ${style.borderStyle} ${style.borderColor}`,
-                        boxShadow: source === 'adverse' ? '0 0 10px rgba(249, 115, 22, 0.4)' :
-                            source === 'both' ? '0 0 10px rgba(139, 92, 246, 0.4)' :
-                                '0 0 10px rgba(59, 130, 246, 0.3)',
-                    },
-                };
-            }
-            return n;
-        }));
-
-        // === PHASE 1: Collecter les données de tous les groupes ===
-        interface GroupLayout {
-            pathologyId: string;
-            pathologyName: string;
-            memberIdsArray: string[];
-            nodesToGroup: Node[];
-            width: number;
-            height: number;
-            gridPositions: Map<string, { x: number; y: number }>;
-            existingGroupId?: string;
-        }
-
-        const groupLayouts: GroupLayout[] = [];
-        const nodeWidth = 160;
-        const nodeHeight = 60;
-        const gapX = 20;
-        const gapY = 20;
-        const padding = 40;
-
-        pathologyRelations.forEach((memberIds, pathologyId) => {
-            if (memberIds.size < 2) return;
-
-            const pathologyNode = pathologyNodes.find(p => p.id === pathologyId);
-            if (!pathologyNode) return;
-
-            const memberIdsArray = Array.from(memberIds).filter(id => !hiddenNodes.has(id));
-            const existingGroup = existingGroupsByPathology.get(pathologyId);
-
-            const nodesToGroup = nodes.filter(n =>
-                memberIdsArray.includes(n.id) &&
-                (!n.parentId || n.parentId === existingGroup?.id)
-            );
-
-            if (nodesToGroup.length < 2) return;
-
-            // Calculer les dimensions en grille
-            const cols = Math.ceil(Math.sqrt(nodesToGroup.length));
-            const rows = Math.ceil(nodesToGroup.length / cols);
-            const width = cols * (nodeWidth + gapX) - gapX + padding * 2;
-            const height = rows * (nodeHeight + gapY) - gapY + padding * 2;
-
-            // Calculer les positions en grille pour chaque nœud
-            const gridPositions: Map<string, { x: number; y: number }> = new Map();
-            nodesToGroup.forEach((node, index) => {
-                const col = index % cols;
-                const row = Math.floor(index / cols);
-                gridPositions.set(node.id, {
-                    x: padding + col * (nodeWidth + gapX),
-                    y: padding + row * (nodeHeight + gapY),
-                });
+        plan.groups.forEach((group, index) => {
+            if (index > 0 && index % 2 === 0) { rowY += rowHeight + 70; rowHeight = 0; }
+            const oldGroup = previous.get(group.id);
+            // Keep existing members in their slots as new pairs arrive.
+            const oldOrder = Array.isArray(oldGroup?.data.autoMemberIds) ? oldGroup.data.autoMemberIds as string[] : [];
+            const members = [group.pathologyId,
+                ...oldOrder.filter(id => id !== group.pathologyId && group.memberIds.includes(id)),
+                ...group.memberIds.filter(id => id !== group.pathologyId && !oldOrder.includes(id)),
+            ];
+            const height = Math.max(170, 150 + Math.ceil((members.length - 1) / 2) * 120);
+            const suggested = { x: 60 + (index % 2) * (groupWidth + 70), y: rowY };
+            const position = keepMovedPosition(oldGroup, suggested);
+            rowHeight = Math.max(rowHeight, height);
+            const color = groupColors[index % groupColors.length];
+            groupNodes.push({
+                id: group.id, type: 'clinicalPathologyGroup', position, draggable: true,
+                style: { width: groupWidth, height, background: `${color}0c`, border: `1.5px solid ${color}70`, borderRadius: 16, zIndex: -1 },
+                data: { label: group.pathologyName, type: 'group', isGroup: true, automatic: true,
+                    autoMemberIds: members, autoLayoutPosition: suggested },
             });
-
-            groupLayouts.push({
-                pathologyId,
-                pathologyName: String(pathologyNode.data.label),
-                memberIdsArray,
-                nodesToGroup,
-                width,
-                height,
-                gridPositions,
-                existingGroupId: existingGroup?.id,
-            });
+            members.forEach((id, memberIndex) => positions.set(id, memberIndex === 0 ? { x: 140, y: 42 }
+                : { x: 35 + ((memberIndex - 1) % 2) * 240, y: 140 + Math.floor((memberIndex - 1) / 2) * 120 }));
+            layoutGroups.push({ id: group.id, name: group.pathologyName, pathologyName: group.pathologyName,
+                pathologyId: group.pathologyId, memberIds: members, color, automatic: true });
         });
-
-        // === PHASE 2: Positionner les groupes sans chevauchement ===
-        const groupGap = 50; // Espace entre les groupes
-        let currentX = 50;
-        let currentY = 50;
-        let rowMaxHeight = 0;
-        const maxCanvasWidth = 1200; // Largeur max avant wrap
-
-        const groupPositions: Map<string, { x: number; y: number }> = new Map();
-
-        groupLayouts.forEach((layout, idx) => {
-            // Si le groupe dépasse la largeur max, passer à la ligne suivante
-            if (currentX + layout.width > maxCanvasWidth && idx > 0) {
-                currentX = 50;
-                currentY += rowMaxHeight + groupGap;
-                rowMaxHeight = 0;
+        const looseY = plan.groups.length ? rowY + rowHeight + 90 : 80;
+        let looseIndex = 0;
+        const instanceNodes: Node[] = plan.instances.map(instance => {
+            const old = previous.get(instance.id);
+            const template = old || templates.get(instance.canonicalId);
+            const suggested = positions.get(instance.id) || { x: 60 + (looseIndex % 4) * 250, y: looseY + Math.floor(looseIndex++ / 4) * 130 };
+            const colors = getItemColors({ id: instance.entityId, name: instance.name, type: instance.type,
+                severity: template?.data.severity } as MedicalItem);
+            const manifestation = instance.membershipKinds.includes('manifestation');
+            const adverse = instance.membershipKinds.includes('adverse_effect');
+            const borderColor = manifestation && adverse ? '#8b5cf6' : adverse ? '#f97316' : colors.border;
+            return {
+                id: instance.id, type: 'clinicalEntity', parentId: instance.groupId,
+                position: keepMovedPosition(old, suggested),
+                data: { ...template?.data, label: instance.name, type: instance.type, entityId: instance.entityId,
+                    canonicalId: instance.canonicalId, membershipKinds: instance.membershipKinds,
+                    sharedGroupCount: instance.sharedGroupCount, autoLayoutPosition: suggested },
+                style: { background: colors.bg, border: `2px ${adverse && !manifestation ? 'dashed' : 'solid'} ${borderColor}`,
+                    color: colors.text, borderRadius: 12, padding: '12px 14px', width: instance.type === 'pathology' ? 240 : 210,
+                    fontSize: 12, fontWeight: 500 },
+            };
+        });
+        setNodes([...groupNodes, ...instanceNodes]);
+        setGroups(layoutGroups);
+        setHiddenNodes(hidden => {
+            const next = new Set<string>();
+            groupNodes.forEach(node => { if (hidden.has(node.id)) next.add(node.id); });
+            for (const instance of plan.instances) {
+                const copies = nodes.filter(node => String(node.data.canonicalId) === instance.canonicalId);
+                if (hidden.has(instance.id) || (copies.length > 0 && copies.every(copy => hidden.has(copy.id)))) next.add(instance.id);
             }
-
-            groupPositions.set(layout.pathologyId, { x: currentX, y: currentY });
-
-            // Avancer horizontalement
-            currentX += layout.width + groupGap;
-            rowMaxHeight = Math.max(rowMaxHeight, layout.height);
+            return next;
         });
+        setHiddenGroups(hidden => new Set([...hidden].filter(id => layoutGroups.some(group => group.id === id))));
+    }, [analysisResult, displayedLinks, nodes, groupColors, getItemColors, setNodes]);
 
-        // === PHASE 3: Créer/mettre à jour les groupes et positionner les nœuds ===
-        const newGroups: PathologyGroup[] = [];
-        const updatedGroupIds: string[] = [];
+    useEffect(() => {
+        if (automaticGrouping) applyAutomaticGroups();
+    }, [automaticGrouping, applyAutomaticGroups]);
 
-        groupLayouts.forEach((layout, idx) => {
-            const groupPos = groupPositions.get(layout.pathologyId)!;
-            const color = groupColors[idx % groupColors.length];
-            const groupId = layout.existingGroupId || `auto-group-${layout.pathologyId}-${Date.now()}`;
+    const autoGenerateGroups = useCallback(() => {
+        automaticLayoutKey.current = '';
+        setAutomaticGrouping(true);
+        applyAutomaticGroups();
+    }, [applyAutomaticGroups]);
 
-            if (layout.existingGroupId) {
-                // Mettre à jour groupe existant
-                updatedGroupIds.push(layout.existingGroupId);
-                const existingGroup = existingGroupsByPathology.get(layout.pathologyId);
-                if (existingGroup) {
-                    existingGroup.memberIds = layout.memberIdsArray;
-                    newGroups.push(existingGroup);
-                }
-
-                setNodes(nds => nds.map(n => {
-                    if (n.id === layout.existingGroupId) {
-                        return {
-                            ...n,
-                            position: groupPos,
-                            style: { ...n.style, width: layout.width, height: layout.height },
-                        };
-                    }
-                    const gridPos = layout.gridPositions.get(n.id);
-                    if (gridPos && n.parentId === layout.existingGroupId) {
-                        return { ...n, position: gridPos };
-                    }
-                    return n;
-                }));
-            } else {
-                // Créer nouveau groupe
-                const groupNode: Node = {
-                    id: groupId,
-                    type: 'default',
-                    position: groupPos,
-                    style: {
-                        width: layout.width,
-                        height: layout.height,
-                        backgroundColor: `${color}15`,
-                        border: `2px dashed ${color}`,
-                        borderRadius: '16px',
-                        zIndex: -1,
-                        pointerEvents: 'all',
-                    },
-                    data: {
-                        label: `📋 ${layout.pathologyName}`,
-                        isGroup: true,
-                        type: 'group',
-                        pathologyId: layout.pathologyId,
-                    },
-                    draggable: true,
-                };
-
-                newGroups.push({
-                    id: groupId,
-                    name: `Groupe ${layout.pathologyName}`,
-                    pathologyId: layout.pathologyId,
-                    pathologyName: layout.pathologyName,
-                    memberIds: layout.memberIdsArray,
-                    color,
-                });
-
-                setNodes(nds => {
-                    const newNodes = [groupNode, ...nds];
-                    return newNodes.map(n => {
-                        if (layout.memberIdsArray.includes(n.id) && !n.parentId && n.id !== groupId) {
-                            const gridPos = layout.gridPositions.get(n.id);
-                            return {
-                                ...n,
-                                parentId: groupId,
-                                position: gridPos || { x: padding, y: padding },
-                            };
-                        }
-                        return n;
-                    });
-                });
-            }
+    const useFreeLayout = useCallback(() => {
+        setAutomaticGrouping(false);
+        automaticLayoutKey.current = '';
+        const entities = collectCanonicalGraphEntities(nodes);
+        const flatNodes: Node[] = entities.map((entity, index) => {
+            const canonicalId = canonicalGraphKey(entity);
+            const template = nodes.find(node => String(node.data.canonicalId) === canonicalId);
+            const colors = getItemColors({ ...entity, severity: template?.data.severity } as MedicalItem);
+            return { id: `clinical:${encodeURIComponent(canonicalId)}:unassigned`, type: 'clinicalEntity',
+                position: { x: 60 + (index % 4) * 250, y: 80 + Math.floor(index / 4) * 120 },
+                data: { ...template?.data, label: entity.name, type: entity.type, entityId: entity.id,
+                    canonicalId, membershipKinds: [], sharedGroupCount: 0 },
+                style: { background: colors.bg, border: `2px solid ${colors.border}`, color: colors.text,
+                    borderRadius: 12, padding: '12px 14px', width: 210, fontSize: 12, fontWeight: 500 } };
         });
+        setNodes(flatNodes);
+        setGroups([]);
+        setHiddenNodes(new Set());
+        setHiddenGroups(new Set());
+        setSelectedNodes([]);
+    }, [nodes, getItemColors, setNodes]);
 
-        // Fusionner: garder les groupes existants qui ne sont pas mis à jour + les nouveaux
-        const finalGroups = [
-            ...groups.filter(g => updatedGroupIds.includes(g.id) === false &&
-                !newGroups.some(ng => ng.pathologyId === g.pathologyId)),
-            ...newGroups,
-        ];
-        setGroups(finalGroups);
-
-        // Gérer les médicaments partagés - ajouter des indicateurs visuels
-        medicationToPathologies.forEach((pathologyIds, medId) => {
-            if (pathologyIds.length > 1) {
-                // Ce médicament traite plusieurs pathologies
-                setNodes(nds => nds.map(n => {
-                    if (n.id === medId) {
-                        return {
-                            ...n,
-                            data: {
-                                ...n.data,
-                                isShared: true,
-                                sharedPathologies: pathologyIds.length,
-                            },
-                            style: {
-                                ...n.style,
-                                boxShadow: '0 0 15px rgba(16, 185, 129, 0.6)',
-                                border: '3px solid #10b981',
-                            },
-                        };
-                    }
-                    return n;
-                }));
-                console.log(`[AutoGroup] ${nodes.find(n => n.id === medId)?.data.label} est partagé entre ${pathologyIds.length} pathologies`);
-            }
-        });
-
-        console.log(`[AutoGroup] ${newGroups.length} groupes créés automatiquement`);
-
-    }, [analysisResult, displayedLinks, nodes, groups, hiddenNodes, normalizeForComparison, groupColors, setNodes, setGroups, analyzeConnections, symptomSourceStyles]);
-
-
-
+    const canonicalNodes = useMemo(() => collectCanonicalGraphEntities(nodes).map(entity =>
+        nodes.find(node => {
+            const item = graphEntityFromNode(node);
+            return item && canonicalGraphKey(item) === canonicalGraphKey(entity);
+        })!), [nodes]);
+    const visibleEntityCount = collectCanonicalGraphEntities(visibleNodes).length;
+    const layoutKey = visibleNodes.map(node => `${node.id}:${node.parentId || ''}`).join('|');
+    const sharedEntityCount = canonicalNodes.filter(node => Number(node.data.sharedGroupCount) > 1).length;
+    const unassignedEntityCount = canonicalNodes.filter(node => !node.parentId && node.data.type !== 'pathology').length;
 
     // Icône par type
     const getTypeIcon = (type: string) => {
@@ -2273,20 +1669,34 @@ export function RiskNetworkGraph({
     };
 
     // Obtenir la couleur du lien pour l'affichage
-    const getLinkDisplayColor = (link: CausalLink) => relationPresentation(link).tone === 'caution'
+    const getLinkDisplayColor = (link: CausalLink) => hasRiskSignal(link)
         ? 'border-amber-500 bg-amber-50 dark:bg-amber-900/20'
         : 'border-slate-300 bg-slate-50 dark:bg-slate-900/20';
 
     return (
         <div className="flex flex-col gap-4">
-            {analysisResultFromParent?.pairAssessments?.length ? (
+            {analysisSnapshot && !analysisMatchesSnapshot && (
+                <div role="status" className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950">
+                    <strong>Nouvelle sélection non analysée.</strong>{' '}
+                    Les résultats de l’analyse enregistrée ne s’appliquent pas à cette sélection modifiée.
+                    Lancez une analyse pour examiner tous les éléments et reconstruire leurs groupes.
+                </div>
+            )}
+            {analysisResult?.pairAssessments?.length ? (
                 <div role="status" className="rounded-lg border border-primary/20 bg-primary/5 p-3 text-sm">
-                    <strong>OpenAI a examiné {analysisResultFromParent.pairAssessments.length} paire(s).</strong>
+                    <strong>OpenAI a examiné {analysisResult.pairAssessments.length} paire(s) dans l’analyse affichée.</strong>
                     {' '}Les hypothèses et preuves insuffisantes sont détaillées dans la vue matrice.
                     Seules les relations assorties de références consultables apparaissent comme liens du graphe,
                     et nécessitent une validation clinique.
                 </div>
             ) : null}
+            {canonicalNodes.length > 0 && (
+                <div className="flex flex-wrap items-center gap-x-4 gap-y-1 rounded-lg border bg-muted/30 px-3 py-2 text-xs text-muted-foreground" role="status">
+                    <span>{automaticGrouping ? 'Regroupement automatique par pathologie' : 'Disposition libre'}</span>
+                    {sharedEntityCount > 0 && <span>{sharedEntityCount} élément(s) présent(s) dans plusieurs groupes : une seule identité clinique.</span>}
+                    {automaticGrouping && unassignedEntityCount > 0 && <span>{unassignedEntityCount} élément(s) non rattaché(s), conservé(s) dans l’analyse.</span>}
+                </div>
+            )}
             {/* Rangée supérieure: Sélection + Graphique */}
             <div className="flex gap-4 h-[700px]">
                 {/* Panel de sélection des éléments */}
@@ -2337,7 +1747,7 @@ export function RiskNetworkGraph({
                                                 size="sm"
                                                 className="w-full justify-start text-xs h-8 px-2"
                                                 onClick={() => addNode(item)}
-                                                disabled={nodes.some(n => n.id === item.id)}
+                                                disabled={canonicalNodes.some(n => n.data.canonicalId === canonicalGraphKey(item))}
                                             >
                                                 {getTypeIcon(item.type)}
                                                 <span className="truncate ml-2">{item.name}</span>
@@ -2349,16 +1759,16 @@ export function RiskNetworkGraph({
 
                             {/* Nœuds actifs */}
                             <div className="border-t pt-3 shrink-0">
-                                <p className="text-xs font-medium mb-2">Éléments ajoutés ({nodes.length})</p>
+                                <p className="text-xs font-medium mb-2">Éléments sélectionnés ({canonicalNodes.length})</p>
                                 <div className="space-y-1 max-h-[150px] overflow-y-auto">
-                                    {nodes.map(node => {
+                                    {canonicalNodes.map(node => {
                                         // Ne pas afficher les nœuds de groupe dans cette liste
                                         if (node.type === 'group') return null;
 
                                         return (
                                             <div
                                                 key={node.id}
-                                                className={`flex items-center justify-between text-xs transition-opacity ${hiddenNodes.has(node.id) ? 'opacity-40' : ''}`}
+                                                className={`flex items-center justify-between text-xs transition-opacity ${isCanonicalHidden(node) ? 'opacity-40' : ''}`}
                                             >
                                                 <Badge
                                                     variant="outline"
@@ -2377,9 +1787,9 @@ export function RiskNetworkGraph({
                                                         size="sm"
                                                         className="h-6 w-6 p-0"
                                                         onClick={() => toggleNodeVisibility(node.id)}
-                                                        title={hiddenNodes.has(node.id) ? "Montrer" : "Cacher"}
+                                                        title={isCanonicalHidden(node) ? "Montrer les copies" : "Cacher les copies"}
                                                     >
-                                                        {hiddenNodes.has(node.id) ? (
+                                                        {isCanonicalHidden(node) ? (
                                                             <EyeOff className="h-3 w-3 text-gray-400" />
                                                         ) : (
                                                             <Eye className="h-3 w-3 text-gray-600" />
@@ -2390,6 +1800,7 @@ export function RiskNetworkGraph({
                                                         size="sm"
                                                         className="h-6 w-6 p-0"
                                                         onClick={() => removeNode(node.id)}
+                                                        aria-label={`Retirer ${String(node.data.label)} de la sélection`}
                                                     >
                                                         <Trash2 className="h-3 w-3 text-red-500" />
                                                     </Button>
@@ -2408,7 +1819,7 @@ export function RiskNetworkGraph({
                             <Button
                                 className="w-full"
                                 onClick={() => (groups.length >= 2 ? analyzeGroupConnections() : analyzeConnections())}
-                                disabled={nodes.length < 2 || isAnalyzing}
+                                disabled={canonicalNodes.length < 2 || isAnalyzing}
                             >
                                 {isAnalyzing ? (
                                     <>
@@ -2418,7 +1829,7 @@ export function RiskNetworkGraph({
                                 ) : (
                                     <>
                                         <Network className="h-4 w-4 mr-2" />
-                                        {groups.length >= 2 ? 'Analyser inter-groupes' : 'Analyser les connexions'}
+                                        Analyser tous les éléments
                                     </>
                                 )}
                             </Button>
@@ -2426,20 +1837,12 @@ export function RiskNetworkGraph({
                             {/* Score en temps réel */}
                             {displayedLinks.length > 0 && (
                                 <div className="mt-3 p-2 bg-gradient-to-r from-gray-50 to-gray-100 dark:from-gray-800 dark:to-gray-900 rounded-lg border">
-                                    <div className="flex items-center justify-between mb-2">
-                                        <span className="text-xs font-medium">Score clinique non calculé</span>
-                                        <Badge className={`${liveScore >= 70 ? 'bg-green-500' : liveScore >= 40 ? 'bg-orange-500' : 'bg-red-500'}`}>
-                                            Non calculé
-                                        </Badge>
-                                    </div>
+                                    <p className="text-xs font-medium mb-2">Relations à examiner</p>
                                     <div className="flex gap-1 text-[10px]">
-                                        <Badge variant="outline" className="text-red-500 border-red-300">🔴 {liveStats.redLinks}</Badge>
-                                        <Badge variant="outline" className="text-orange-500 border-orange-300">🟠 {liveStats.orangeLinks}</Badge>
-                                        <Badge variant="outline" className="text-green-500 border-green-300">🟢 {liveStats.greenLinks}</Badge>
+                                        <Badge variant="outline" className="text-red-600 border-red-300">{liveStats.redLinks} risque(s) élevé(s)</Badge>
+                                        <Badge variant="outline" className="text-amber-700 border-amber-300">{liveStats.orangeLinks} prudence(s)</Badge>
                                     </div>
-                                    <div className="text-[10px] text-gray-500 mt-1">
-                                        B/R: {liveBenefitRiskRatio.toFixed(1)}
-                                    </div>
+                                    <p className="mt-1 text-[10px] text-muted-foreground">Les copies ne multiplient pas les alertes. Aucun score clinique n’est déduit du nombre de liens.</p>
 
                                     {/* Toggle schéma proposé */}
                                     {proposedNodes.length > 0 && (
@@ -2464,20 +1867,31 @@ export function RiskNetworkGraph({
                                             variant="outline"
                                             size="sm"
                                             className="h-6 text-xs"
+                                            onClick={useFreeLayout}
+                                            aria-pressed={!automaticGrouping}
+                                            title="Revenir à un seul nœud par élément et organiser librement les groupes"
+                                        >
+                                            Libre
+                                        </Button>
+                                        <Button
+                                            variant="outline"
+                                            size="sm"
+                                            className="h-6 text-xs"
                                             onClick={groupSelectedNodes}
-                                            disabled={selectedNodes.length < 2}
-                                            title="Grouper les nœuds sélectionnés"
+                                            disabled={automaticGrouping || selectedNodes.length < 2}
+                                            title={automaticGrouping ? 'Passez en disposition libre pour créer un groupe manuel' : 'Grouper les nœuds sélectionnés'}
                                         >
                                             <BoxSelect className="h-3 w-3 mr-1" />
                                             Manuel
                                         </Button>
                                         <Button
-                                            variant="default"
+                                            variant={automaticGrouping ? 'default' : 'outline'}
                                             size="sm"
                                             className="h-6 text-xs bg-gradient-to-r from-purple-500 to-blue-500 hover:from-purple-600 hover:to-blue-600"
                                             onClick={autoGenerateGroups}
-                                            disabled={displayedLinks.length === 0 && !analysisResult}
-                                            title="Créer automatiquement les groupes basés sur l'analyse"
+                                            disabled={canonicalNodes.length === 0}
+                                            aria-pressed={automaticGrouping}
+                                            title="Regrouper par pathologie et dupliquer les éléments partagés selon les relations analysées"
                                         >
                                             <Network className="h-3 w-3 mr-1" />
                                             Auto
@@ -2604,7 +2018,8 @@ export function RiskNetworkGraph({
                                         <Badge variant="outline" className="ml-2">Non calculé</Badge>
                                     </div>
                                     <ReactFlow
-                                        nodes={nodes.filter(n => !hiddenNodes.has(n.id))}
+                                        nodeTypes={clinicalNodeTypes}
+                                        nodes={visibleNodes}
                                         edges={edges}
                                         onNodesChange={onNodesChange}
                                         onEdgesChange={onEdgesChange}
@@ -2627,6 +2042,7 @@ export function RiskNetworkGraph({
                                         attributionPosition="bottom-left"
                                         className="bg-slate-50 dark:bg-slate-950"
                                     >
+                                        <FitClinicalGraph layoutKey={layoutKey} />
                                         <Background variant={BackgroundVariant.Dots} gap={20} size={1} />
                                         <Controls position="bottom-left" />
                                     </ReactFlow>
@@ -2643,6 +2059,7 @@ export function RiskNetworkGraph({
                                         </Badge>
                                     </div>
                                     <ReactFlow
+                                        nodeTypes={clinicalNodeTypes}
                                         nodes={proposedNodes}
                                         edges={proposedEdges}
                                         onNodesChange={onProposedNodesChange}
@@ -2673,7 +2090,8 @@ export function RiskNetworkGraph({
                         ) : (
                             /* === Mode Normal: 1 ReactFlow === */
                             <ReactFlow
-                                nodes={nodes}
+                                nodeTypes={clinicalNodeTypes}
+                                nodes={visibleNodes}
                                 edges={edges}
                                 onNodesChange={onNodesChange}
                                 onEdgesChange={onEdgesChange}
@@ -2699,6 +2117,7 @@ export function RiskNetworkGraph({
                                 attributionPosition="bottom-left"
                                 className="bg-slate-50 dark:bg-slate-950"
                             >
+                                <FitClinicalGraph layoutKey={layoutKey} />
                                 <Background variant={BackgroundVariant.Dots} gap={20} size={1} />
                                 <Controls />
 
@@ -2725,68 +2144,19 @@ export function RiskNetworkGraph({
                                     </div>
                                 )}
 
-                                {/* Légende */}
-                                <Panel position="top-right" className="bg-white/90 dark:bg-gray-900/90 p-3 rounded-lg shadow-lg">
-                                    <div className="text-xs space-y-2">
-                                        <p className="font-semibold mb-2">Types d'éléments</p>
-                                        <div className="flex items-center gap-2">
-                                            <div className="w-3 h-3 rounded" style={{ background: '#fef2f2', border: '2px solid #ef4444' }} />
-                                            <span>Pathologie (sévère)</span>
+                                <Panel position="top-right" className="max-w-[220px] rounded-lg border bg-white/95 p-3 shadow-sm dark:bg-gray-900/95">
+                                    <details className="text-[11px] leading-relaxed">
+                                        <summary className="cursor-pointer font-semibold">Légende du graphe</summary>
+                                        <div className="mt-2 space-y-2">
+                                            <p><span className="inline-block w-5 border-t-2 border-slate-500 mr-2" />Relation sourcée à vérifier</p>
+                                            <p><span className="inline-block w-5 border-t-2 border-dashed border-slate-500 mr-2" />Contexte différent ou incertain</p>
+                                            <p><span className="inline-block w-5 border-t-2 border-amber-700 mr-2" />Effet indésirable, interaction ou risque</p>
+                                            <p><span className="inline-block w-5 border-t-2 border-red-600 mr-2" />Risque élevé signalé</p>
+                                            <p className="border-t pt-2">Un symptôme peut être relié à une maladie, à un traitement ou aux deux. Son origine doit être confirmée.</p>
+                                            <p>« Même élément » identifie les copies d’un élément associé à plusieurs pathologies.</p>
+                                            <p>Un élément hors groupe reste inclus dans l’analyse.</p>
                                         </div>
-                                        <div className="flex items-center gap-2">
-                                            <div className="w-3 h-3 rounded" style={{ background: '#dcfce7', border: '2px solid #22c55e' }} />
-                                            <span>Pathologie (légère)</span>
-                                        </div>
-                                        <div className="flex items-center gap-2">
-                                            <div className="w-3 h-3 rounded" style={{ background: '#dbeafe', border: '2px solid #3b82f6' }} />
-                                            <span>Symptôme</span>
-                                        </div>
-                                        <div className="flex items-center gap-2">
-                                            <div className="w-3 h-3 rounded" style={{ background: '#ffedd5', border: '2px solid #f97316' }} />
-                                            <span>Médicament/Traitement</span>
-                                        </div>
-
-                                        <div className="border-t pt-2 mt-2">
-                                            <p className="font-semibold mb-2">Types de liens</p>
-                                            <div className="flex items-center gap-2">
-                                                <div className="w-8 h-1 rounded" style={{ background: linkColors.green }} />
-                                                <span>Relation à vérifier</span>
-                                            </div>
-                                            <div className="flex items-center gap-2">
-                                                <div className="w-8 h-1 rounded" style={{ background: linkColors.yellow }} />
-                                                <span>Effet bénin</span>
-                                            </div>
-                                            <div className="flex items-center gap-2">
-                                                <div className="w-8 h-1 rounded" style={{ background: linkColors.orange }} />
-                                                <span>Risque d'interaction</span>
-                                            </div>
-                                            <div className="flex items-center gap-2">
-                                                <div className="w-8 h-1 rounded" style={{ background: linkColors.red }} />
-                                                <span>⚠️ Danger</span>
-                                            </div>
-                                        </div>
-
-                                        {/* Source des symptômes */}
-                                        <div className="border-t pt-2 mt-2">
-                                            <p className="font-semibold mb-2">Source symptôme</p>
-                                            <div className="flex items-center gap-2">
-                                                <div className="w-3 h-3 rounded" style={{ border: '3px solid #3b82f6', background: '#dbeafe' }} />
-                                                <span>Causé par pathologie</span>
-                                            </div>
-                                            <div className="flex items-center gap-2">
-                                                <div className="w-3 h-3 rounded" style={{ border: '3px dashed #f97316', background: '#ffedd5' }} />
-                                                <span>Effet secondaire</span>
-                                            </div>
-                                            <div className="flex items-center gap-2">
-                                                <div className="w-3 h-3 rounded" style={{ border: '3px double #8b5cf6', background: '#f3e8ff' }} />
-                                                <span>Les deux</span>
-                                            </div>
-                                            <div className="flex items-center gap-2 mt-1">
-                                                <div className="w-3 h-3 rounded" style={{ border: '3px solid #10b981', boxShadow: '0 0 5px rgba(16, 185, 129, 0.6)' }} />
-                                                <span>Partagé (multi-patho)</span>
-                                            </div>
-                                        </div>
-                                    </div>
+                                    </details>
                                 </Panel>
 
                                 {/* Indicateur d'analyse */}
@@ -2826,7 +2196,7 @@ export function RiskNetworkGraph({
                     <CardHeader className="pb-2">
                         <CardTitle className="text-sm flex items-center gap-2">
                             <Network className="h-4 w-4" />
-                            Liens de causalité
+                            Relations analysées
                             {isLoadingLinks && (
                                 <span className="text-xs text-muted-foreground ml-2 flex items-center gap-1">
                                     <Loader2 className="h-3 w-3 animate-spin" />
@@ -2958,7 +2328,7 @@ export function RiskNetworkGraph({
                                                                     link.effectType === 'adverse' ? '⚠️ Indésirable' : '⚖️ Les deux'}
                                                             </Badge>
                                                         )}
-                                                        {link.validationVersion === 2 && (
+                                                        {link.validationVersion === RELATION_ENGINE_VERSION && (
                                                             <Badge variant="outline" className="text-xs">
                                                                 {relationPresentation(link).label}
                                                             </Badge>
@@ -2976,6 +2346,8 @@ export function RiskNetworkGraph({
                                                             </p>
                                                         </div>
                                                     )}
+
+                                                    <ClinicalLinkEvidence link={link} />
 
                                                     {/* Détails thérapeutiques */}
                                                     {link.therapeuticDetails && (
@@ -3016,11 +2388,9 @@ export function RiskNetworkGraph({
                             <FileText className="h-4 w-4 text-purple-500" />
                             Synthèse Clinique
                             <Badge variant="secondary" className="ml-2">
-                                {nodes.length - hiddenNodes.size} nœuds actifs
+                                {visibleEntityCount} éléments actifs
                             </Badge>
-                            <Badge className={`ml-1 ${liveScore >= 70 ? 'bg-green-500' : liveScore >= 40 ? 'bg-orange-500' : 'bg-red-500'}`}>
-                                Score clinique non calculé
-                            </Badge>
+                            <Badge variant="outline" className="ml-1">Évaluation qualitative</Badge>
                         </CardTitle>
                     </CardHeader>
                     <CardContent className="pt-0 space-y-4">
@@ -3028,18 +2398,16 @@ export function RiskNetworkGraph({
                         <div className="p-3 bg-gradient-to-r from-gray-50 to-gray-100 dark:from-gray-800 dark:to-gray-900 rounded-lg border">
                             <div className="flex items-center justify-between">
                                 <span className="text-xs font-medium">État actuel des liens</span>
-                                <span className="text-xs text-gray-500">B/R: {liveBenefitRiskRatio.toFixed(2)}</span>
+                                <span className="text-xs text-muted-foreground">Un lien partagé est compté une fois</span>
                             </div>
                             <div className="flex gap-2 mt-2">
                                 <Badge variant="outline" className="text-red-500 border-red-300">
-                                    🔴 Dangers: {liveStats.redLinks}
+                                    Risques élevés signalés : {liveStats.redLinks}
                                 </Badge>
                                 <Badge variant="outline" className="text-orange-500 border-orange-300">
-                                    🟠 Risques: {liveStats.orangeLinks}
+                                    Relations de prudence : {liveStats.orangeLinks}
                                 </Badge>
-                                <Badge variant="outline" className="text-green-500 border-green-300">
-                                    🟢 Adaptés: {liveStats.greenLinks}
-                                </Badge>
+
                             </div>
                         </div>
 
@@ -3171,175 +2539,6 @@ export function RiskNetworkGraph({
                 </Card>
             )}
 
-            {/* Panneau de Comparaison de Schéma - Affiche avec schemaComparison OU proposedNodes */}
-            {canDisplayRiskScore(analysisResult?.causalLinks, analysisResult?.schemaComparison?.currentScore) && (
-                <Card className="mt-4 border-l-4 border-l-cyan-500">
-                    <CardHeader className="pb-2">
-                        <CardTitle className="text-sm flex items-center gap-2">
-                            <Activity className="h-4 w-4 text-cyan-500" />
-                            Comparaison exploratoire — indice non validé
-                            <Badge
-                                variant="secondary"
-                                className={`ml-2 ${(analysisResult?.schemaComparison?.improvementPercent || 0) > 0 ? 'bg-green-100 text-green-700' : 'bg-gray-100'}`}
-                            >
-                                {(analysisResult?.schemaComparison?.improvementPercent || 0) > 0 ? '+' : ''}{analysisResult?.schemaComparison?.improvementPercent || '--'}% amélioration
-                            </Badge>
-                        </CardTitle>
-                    </CardHeader>
-                    <CardContent className="pt-0 space-y-4">
-                        {/* Scores comparatifs */}
-                        <div className="grid grid-cols-2 gap-4">
-                            {/* Score Actuel */}
-                            <div className="p-3 bg-gray-50 dark:bg-gray-800 rounded-lg border">
-                                <p className="text-xs font-medium text-gray-500 mb-1">Schéma Actuel</p>
-                                <div className="flex items-center gap-2">
-                                    <span className="text-2xl font-bold text-gray-700 dark:text-gray-300">
-                                        {analysisResult?.schemaComparison?.currentScore ?? liveScore}
-                                    </span>
-                                    <span className="text-xs text-gray-500">/100</span>
-                                </div>
-                                <div className="mt-2 h-2 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden">
-                                    <div
-                                        className="h-full bg-gray-500 transition-all duration-500"
-                                        style={{ width: `${analysisResult?.schemaComparison?.currentScore ?? liveScore}%` }}
-                                    />
-                                </div>
-                            </div>
-
-                            {/* Score Proposé */}
-                            <div className="p-3 bg-green-50 dark:bg-green-900/20 rounded-lg border border-green-200 dark:border-green-800">
-                                <p className="text-xs font-medium text-green-600 mb-1">Schéma Proposé</p>
-                                <div className="flex items-center gap-2">
-                                    <span className="text-2xl font-bold text-green-700 dark:text-green-400">
-                                        {analysisResult?.schemaComparison?.proposedScore ?? 'Non évalué'}
-                                    </span>
-                                    <span className="text-xs text-green-500">/100</span>
-                                </div>
-                                <div className="mt-2 h-2 bg-green-200 dark:bg-green-800 rounded-full overflow-hidden">
-                                    <div
-                                        className="h-full bg-green-500 transition-all duration-500"
-                                        style={{ width: `${analysisResult?.schemaComparison?.proposedScore ?? 'Non évalué'}%` }}
-                                    />
-                                </div>
-                            </div>
-                        </div>
-
-                        {/* Comparaison des liens */}
-                        <div className="p-3 bg-white dark:bg-gray-900 rounded-lg border">
-                            <p className="text-xs font-medium mb-3">Évolution des liens</p>
-                            <div className="space-y-2">
-                                {/* Rouge → Moins */}
-                                <div className="flex items-center gap-2">
-                                    <span className="text-xs w-20">🔴 Dangers</span>
-                                    <div className="flex-1 flex items-center gap-2">
-                                        <Badge variant="destructive" className="text-xs">{analysisResult?.schemaComparison?.currentStats?.redLinks ?? liveStats.redLinks}</Badge>
-                                        <ArrowRight className="h-3 w-3 text-gray-400" />
-                                        <Badge className="text-xs bg-green-500">{analysisResult?.schemaComparison?.proposedStats?.redLinks ?? 0}</Badge>
-                                        <span className="text-xs text-green-600">
-                                            (-{(analysisResult?.schemaComparison?.currentStats?.redLinks ?? liveStats.redLinks) - (analysisResult?.schemaComparison?.proposedStats?.redLinks ?? 0)})
-                                        </span>
-                                    </div>
-                                </div>
-                                {/* Orange → Moins */}
-                                <div className="flex items-center gap-2">
-                                    <span className="text-xs w-20">🟠 Risques</span>
-                                    <div className="flex-1 flex items-center gap-2">
-                                        <Badge className="text-xs bg-orange-500">{analysisResult?.schemaComparison?.currentStats?.orangeLinks ?? liveStats.orangeLinks}</Badge>
-                                        <ArrowRight className="h-3 w-3 text-gray-400" />
-                                        <Badge className="text-xs bg-yellow-500">{analysisResult?.schemaComparison?.proposedStats?.orangeLinks ?? 0}</Badge>
-                                    </div>
-                                </div>
-                                {/* Vert → Plus */}
-                                <div className="flex items-center gap-2">
-                                    <span className="text-xs w-20">🟢 Adaptés</span>
-                                    <div className="flex-1 flex items-center gap-2">
-                                        <Badge className="text-xs bg-green-500">{analysisResult?.schemaComparison?.currentStats?.greenLinks ?? liveStats.greenLinks}</Badge>
-                                        <ArrowRight className="h-3 w-3 text-gray-400" />
-                                        <Badge className="text-xs bg-green-600">{analysisResult?.schemaComparison?.proposedStats?.greenLinks ?? (liveStats.greenLinks + liveStats.redLinks)}</Badge>
-                                        <span className="text-xs text-green-600">
-                                            (+{(analysisResult?.schemaComparison?.proposedStats?.greenLinks ?? (liveStats.greenLinks + liveStats.redLinks)) - (analysisResult?.schemaComparison?.currentStats?.greenLinks ?? liveStats.greenLinks)})
-                                        </span>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-
-                        {/* Ratio Bénéfice/Risque */}
-                        <div className="p-3 bg-cyan-50 dark:bg-cyan-900/20 rounded-lg border border-cyan-200 dark:border-cyan-800">
-                            <p className="text-xs font-medium text-cyan-700 dark:text-cyan-300 mb-2">
-                                📊 Ratio Bénéfice/Risque
-                            </p>
-                            <div className="flex items-center gap-4">
-                                <div className="text-center">
-                                    <span className="text-lg font-bold text-gray-600">{(analysisResult?.schemaComparison?.benefitRiskRatio?.current ?? liveBenefitRiskRatio).toFixed(1)}</span>
-                                    <p className="text-[10px] text-gray-500">Actuel</p>
-                                </div>
-                                <ArrowRight className="h-5 w-5 text-cyan-500" />
-                                <div className="text-center">
-                                    <span className="text-lg font-bold text-green-600">{(analysisResult?.schemaComparison?.benefitRiskRatio?.proposed ?? (liveBenefitRiskRatio * 2)).toFixed(1)}</span>
-                                    <p className="text-[10px] text-green-500">Proposé</p>
-                                </div>
-                                <Badge className="ml-auto bg-green-100 text-green-700 border-green-300">
-                                    ×{((analysisResult?.schemaComparison?.benefitRiskRatio?.proposed ?? (liveBenefitRiskRatio * 2)) / ((analysisResult?.schemaComparison?.benefitRiskRatio?.current ?? liveBenefitRiskRatio) || 1)).toFixed(1)} meilleur
-                                </Badge>
-                            </div>
-                        </div>
-
-                        {/* Modifications proposées */}
-                        {(analysisResult?.schemaComparison?.proposedChanges?.length || 0) > 0 && (
-                            <div className="p-3 bg-purple-50 dark:bg-purple-900/20 rounded-lg border border-purple-200 dark:border-purple-800">
-                                <p className="text-xs font-medium text-purple-700 dark:text-purple-300 mb-2">
-                                    🔄 Modifications proposées ({analysisResult?.schemaComparison?.proposedChanges?.length || 0})
-                                </p>
-                                <div className="space-y-2">
-                                    {analysisResult?.schemaComparison?.proposedChanges?.map((change, idx) => (
-                                        <div key={idx} className="p-2 bg-white dark:bg-gray-800 rounded border flex items-center justify-between">
-                                            <div className="flex-1">
-                                                <div className="flex items-center gap-2 mb-1">
-                                                    <Badge
-                                                        variant="outline"
-                                                        className={`text-[10px] ${change.action === 'replace' ? 'bg-blue-50 text-blue-700' :
-                                                            change.action === 'remove' ? 'bg-red-50 text-red-700' :
-                                                                'bg-green-50 text-green-700'
-                                                            }`}
-                                                    >
-                                                        {change.action === 'replace' ? '↔️ Remplacer' :
-                                                            change.action === 'remove' ? '❌ Retirer' : '➕ Ajouter'}
-                                                    </Badge>
-                                                    <span className="text-xs font-medium">{change.target}</span>
-                                                    {change.replacement && (
-                                                        <>
-                                                            <ArrowRight className="h-3 w-3" />
-                                                            <span className="text-xs font-medium text-green-600">{change.replacement}</span>
-                                                        </>
-                                                    )}
-                                                </div>
-                                                <p className="text-[10px] text-gray-500">{change.reason}</p>
-                                            </div>
-                                            <Badge className="bg-green-100 text-green-700 text-[10px]">
-                                                +{change.improvementScore}%
-                                            </Badge>
-                                        </div>
-                                    ))}
-                                </div>
-                            </div>
-                        )}
-
-                        {/* Synthèse clinique */}
-                        {analysisResult?.schemaComparison?.clinicalSummary && (
-                            <div className="p-3 bg-gray-50 dark:bg-gray-800 rounded-lg border">
-                                <p className="text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">
-                                    📋 Synthèse des modifications
-                                </p>
-                                <p className="text-sm text-gray-700 dark:text-gray-300">
-                                    {analysisResult.schemaComparison.clinicalSummary}
-                                </p>
-                            </div>
-                        )}
-                    </CardContent>
-                </Card>
-            )}
-
             {/* Dialog des alertes */}
             <Dialog open={showAlertDialog} onOpenChange={setShowAlertDialog}>
                 <DialogContent className="max-w-lg">
@@ -3374,9 +2573,9 @@ export function RiskNetworkGraph({
 
                         {alerts.length === 0 && (
                             <div className="text-center py-8 text-muted-foreground">
-                                <CheckCircle2 className="h-12 w-12 mx-auto mb-3 text-green-500" />
-                                <p>Aucune alerte détectée</p>
-                                <p className="text-sm">Les connexions semblent sûres</p>
+                                <Info className="h-10 w-10 mx-auto mb-3" />
+                                <p>Aucune alerte visible dans cette analyse</p>
+                                <p className="text-sm">L’absence d’alerte ne permet pas de conclure à l’absence de risque.</p>
                             </div>
                         )}
                     </div>
@@ -3389,7 +2588,7 @@ export function RiskNetworkGraph({
                     <DialogHeader>
                         <DialogTitle className="flex items-center gap-2">
                             <Info className="h-5 w-5 text-primary" />
-                            Détails du lien de causalité
+                            Détails de la relation
                         </DialogTitle>
                     </DialogHeader>
                     {hoveredLink && (
@@ -3484,6 +2683,7 @@ export function RiskNetworkGraph({
                                     </p>
                                 </div>
                             )}
+                            <ClinicalLinkEvidence link={hoveredLink} />
                         </div>
                     )}
                 </DialogContent>

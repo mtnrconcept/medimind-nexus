@@ -1,4 +1,5 @@
 import type { RelationMetadata } from './relation-contract.ts';
+import type { AgentDirection, AgentReview } from './agent-contract.ts';
 export type MedicalEntityType = 'symptom' | 'pathology' | 'treatment' | 'medication';
 export type Probability = 'high' | 'medium' | 'low';
 export type DangerLevel = 'critical' | 'high' | 'moderate' | 'low';
@@ -88,6 +89,7 @@ export interface TreatmentSchema {
 
 /** OpenAI interpretations are not independently validated medical evidence. */
 export interface PairAssessment extends RelationMetadata {
+  directions?: AgentDirection[];
   fromName?: string;
   toName?: string;
   headline?: string;
@@ -99,6 +101,7 @@ export interface PairAssessment extends RelationMetadata {
 }
 
 export interface AnalysisResult {
+  agentReview?: AgentReview;
   engineVersion?: number;
   requiresReanalysis?: boolean;
   causalLinks: CausalLink[];
@@ -544,6 +547,7 @@ export function buildEvidenceLinks(input: BuildEvidenceLinksInput): CausalLink[]
 export function ensureAnalysisShape(rawAnalysis: Partial<AnalysisResult> | null | undefined): AnalysisResult {
   return {
     engineVersion: rawAnalysis?.engineVersion,
+    agentReview: rawAnalysis?.agentReview,
     requiresReanalysis: rawAnalysis?.requiresReanalysis,
     causalLinks: Array.isArray(rawAnalysis?.causalLinks) ? rawAnalysis.causalLinks as CausalLink[] : [],
     pairAssessments: Array.isArray(rawAnalysis?.pairAssessments)

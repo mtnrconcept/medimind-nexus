@@ -15,7 +15,7 @@ export interface MatrixJob<T> {
   result_payload: { analysis: T; elements: SelectedElement[]; cells: Record<string, unknown[]> };
 }
 
-export function useCrossMatrix<T>(patientId: string | undefined, enabled: boolean) {
+export function useCrossMatrix<T>(patientId: string | undefined, enabled: boolean, engine: 'astra' | 'literature' = 'astra') {
   const [job, setJob] = useState<MatrixJob<T> | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -23,7 +23,7 @@ export function useCrossMatrix<T>(patientId: string | undefined, enabled: boolea
   const timer = useRef<ReturnType<typeof setTimeout>>();
   const request = useCallback(async (action: string, body: object = {}) => {
     const { data, error: failure } = await supabase.functions.invoke('cross-data-analyzer', {
-      body: { ...body, action, patientId },
+      body: { ...body, action: engine === 'astra' ? action.replace(/^matrix\./, 'agent.') : action, patientId },
     });
     if (failure) {
       const details = await failure.context?.json?.().catch(() => null);
@@ -34,7 +34,7 @@ export function useCrossMatrix<T>(patientId: string | undefined, enabled: boolea
     }
     if (!data || !('job' in data)) throw new Error('Le service de matrice progressive est indisponible.');
     return data.job as MatrixJob<T> | null;
-  }, [patientId]);
+  }, [patientId, engine]);
 
   const watch = useCallback((id: string | undefined, attempt: number) => {
     async function update() {
@@ -67,7 +67,12 @@ export function useCrossMatrix<T>(patientId: string | undefined, enabled: boolea
   useEffect(() => {
     const lifecycle = version;
     const attempt = ++lifecycle.current;
-    if (enabled) { setBusy(true); watch(undefined, attempt); }
+    // A job belongs to one patient and one engine. Never show the previous
+    // scope while the new authoritative read is still pending.
+    setJob(null);
+    setError(null);
+    setBusy(enabled);
+    if (enabled) watch(undefined, attempt);
     return () => { ++lifecycle.current; clearTimeout(timer.current); };
   }, [watch, enabled]);
 

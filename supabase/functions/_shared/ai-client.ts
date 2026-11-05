@@ -19,6 +19,11 @@ import {
   resolveAIOutputTokens,
   resolveDirectAITimeout,
 } from './ai-policy.ts';
+import {
+  buildOpenAIWebSearchRequest, extractOpenAIWebProvenance,
+  type AIWebSearchOptions, type AIWebSearchProvenance,
+} from './openai-web-search.ts';
+export type { AIWebSearchOptions, AIWebSource, AIWebSearchProvenance } from './openai-web-search.ts';
 
 declare const Deno: {
   env: {
@@ -26,7 +31,7 @@ declare const Deno: {
   };
 };
 
-export interface AIResponse {
+export interface AIResponse extends Partial<AIWebSearchProvenance> {
   text: string;
   provider: 'openai' | 'none';
   model: string;
@@ -46,7 +51,7 @@ export interface AIBackgroundResponse {
   maxOutputTokens?: number;
 }
 
-export interface AIBackgroundPollResult extends AIBackgroundResponse {
+export interface AIBackgroundPollResult extends AIBackgroundResponse, Partial<AIWebSearchProvenance> {
   text?: string;
   partialText?: string;
   incompleteReason?: string;
@@ -142,6 +147,7 @@ export interface AICallOptions {
   reasoningEffort?: ClinicalReasoningEffort;
   reasoningMode?: 'standard' | 'pro';
   responseFormat?: Record<string, unknown>;
+  webSearch?: AIWebSearchOptions;
   timeoutMs?: number;
   clinicalTask?: ClinicalTask;
   clinicalInput?: ClinicalRiskInput;
@@ -432,7 +438,7 @@ function hasReasoningEffort(options: AICallOptions): boolean {
 }
 
 function shouldUseResponsesAPI(model: string, options: AICallOptions): boolean {
-  return /^gpt-[56](?:\.|-|$)/i.test(model.trim()) || hasReasoningEffort(options);
+  return Boolean(options.webSearch) || /^gpt-[56](?:\.|-|$)/i.test(model.trim()) || hasReasoningEffort(options);
 }
 
 function supportsResponsesTemperature(model: string): boolean {
@@ -479,6 +485,10 @@ function buildResponsesBody(model: string, options: AICallOptions): Record<strin
 
   if (options.responseFormat) {
     body.text = { format: options.responseFormat };
+  }
+
+  if (options.webSearch) {
+    Object.assign(body, buildOpenAIWebSearchRequest(options.webSearch));
   }
 
   return body;
@@ -766,6 +776,8 @@ export async function callAI(
     reasoningEffort: prepared.options.reasoningEffort,
     clinicalSafety: prepared.clinicalSafety,
     clinicalRoute: prepared.clinicalRoute,
+    ...(prepared.options.webSearch
+      ? extractOpenAIWebProvenance(data, prepared.options.webSearch.allowedDomains) : {}),
   };
 }
 
@@ -823,7 +835,8 @@ export async function retrieveBackgroundAI(
   }
 
   const data = await withOpenAIRequest(
-    `${OPENAI_RESPONSES_URL}/${encodeURIComponent(responseId)}`,
+    `${OPENAI_RESPONSES_URL}/${encodeURIComponent(responseId)}${options.webSearch
+      ? '?' + new URLSearchParams({ 'include[]': 'web_search_call.action.sources' }).toString() : ''}`,
     apiKey,
     { method: 'GET' },
     BACKGROUND_AI_POLL_TIMEOUT_MS,
@@ -846,6 +859,7 @@ export async function retrieveBackgroundAI(
     incompleteReason: extractIncompleteReason(data),
     maxOutputTokens: extractOutputBudget(data, options.maxTokens),
     errorMessage: extractResponsesError(data),
+    ...extractOpenAIWebProvenance(data, options.webSearch?.allowedDomains),
   };
 }
 
@@ -896,6 +910,7 @@ async function consumeOpenAIStream(
   useResponsesAPI: boolean,
   onChunk: (text: string) => void | Promise<void>,
   maxOutputTokens: number,
+  onCompleted?: (response: Record<string, unknown>) => void,
 ): Promise<string> {
   if (!response.ok || !response.body) {
     const apiName = useResponsesAPI ? 'Responses' : 'Chat Completions';
@@ -937,6 +952,7 @@ async function consumeOpenAIStream(
       }
       if (event.type === 'response.completed') {
         const finalText = requireCompletedResponse(snapshot, fullText, maxOutputTokens);
+        onCompleted?.(snapshot);
         if (!fullText) await onChunk(finalText);
         fullText = finalText;
         terminal = true;
@@ -1021,12 +1037,18 @@ export async function streamAI(
         stream: true,
       };
 
+  let webProvenance: AIWebSearchProvenance | undefined;
   const fullText = await withOpenAIRequest(
     useResponsesAPI ? OPENAI_RESPONSES_URL : OPENAI_CHAT_COMPLETIONS_URL,
     apiKey,
     { method: 'POST', body },
     timeoutMs,
-    (response, signal) => consumeOpenAIStream(response, signal, useResponsesAPI, onChunk, resolveAIOutputTokens(prepared.options)),
+    (response, signal) => consumeOpenAIStream(
+      response, signal, useResponsesAPI, onChunk, resolveAIOutputTokens(prepared.options),
+      prepared.options.webSearch ? snapshot => {
+        webProvenance = extractOpenAIWebProvenance(snapshot, prepared.options.webSearch?.allowedDomains);
+      } : undefined,
+    ),
   );
 
   return {
@@ -1036,5 +1058,6 @@ export async function streamAI(
     reasoningEffort: prepared.options.reasoningEffort,
     clinicalSafety: prepared.clinicalSafety,
     clinicalRoute: prepared.clinicalRoute,
+    ...webProvenance,
   };
 }
