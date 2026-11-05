@@ -1,4 +1,5 @@
 import { canDisplayRiskScore } from './crossDataDisplay';
+import type { PairAssessment } from '../../../supabase/functions/cross-data-analyzer/analysis-utils';
 import { ensureAnalysisShape } from '../../../supabase/functions/cross-data-analyzer/analysis-utils';
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { Virtuoso } from 'react-virtuoso';
@@ -183,6 +184,7 @@ interface AnalysisResult {
   warnings: string[];
   recommendations: string[];
   webResearch?: WebResearch[];
+  pairAssessments?: PairAssessment[];
   alternatives?: Alternative[];
   schemaComparison?: SchemaComparison;
   treatmentSchemas?: TreatmentSchema[];
@@ -210,8 +212,9 @@ interface NCBIConcept {
 }
 
 const CrossDataAnalyzer = ({ patientData }: CrossDataAnalyzerProps) => {
-  const { invokeAI, llmMode } = useAI();
-  const matrix = useCrossMatrix<AnalysisResult>(patientData?.id, llmMode === 'cloud');
+  const { invokeAI } = useAI();
+  const matrix = useCrossMatrix<AnalysisResult>(patientData?.id, true);
+  const invokeCrossCloud = (name: string, body: unknown) => supabase.functions.invoke(name, { body });
   const matrixActive = matrix.job && !matrix.job.stalled && ['processing', 'queued'].includes(matrix.job.status);
   const matrixResume = matrix.job && (matrix.job.stalled || matrix.job.status === 'failed');
   const [pathologies, setPathologies] = useState<Pathology[]>([]);
@@ -221,15 +224,14 @@ const CrossDataAnalyzer = ({ patientData }: CrossDataAnalyzerProps) => {
   const [loading, setLoading] = useState(true);
   const [showLoader, setShowLoader] = useState(true);
   const [fadeOut, setFadeOut] = useState(false);
-  const [analyzing, setAnalyzing] = useState(false);
   const [generatingTreatmentSchemas, setGeneratingTreatmentSchemas] = useState(false);
   const [analysisProgress, setAnalysisProgress] = useState<AIJobProgress | null>(null);
   const [isAutoSelecting, setIsAutoSelecting] = useState(false);
   const [result, setResult] = useState<AnalysisResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
-    if (llmMode === 'cloud') setResult(matrix.job?.result_payload.analysis ?? null);
-  }, [llmMode, matrix.job]);
+    setResult(matrix.job?.result_payload.analysis ?? null);
+  }, [matrix.job]);
   const [viewMode, setViewMode] = useState<'list' | 'network'>('list');
 
   const [selectedPathologies, setSelectedPathologies] = useState<string[]>([]);
@@ -816,26 +818,33 @@ const CrossDataAnalyzer = ({ patientData }: CrossDataAnalyzerProps) => {
   const getTotalSelected = () =>
     selectedPathologies.length + selectedSymptoms.length + selectedTreatments.length + selectedMedications.length;
 
-  const buildAnalysisRequestBody = () => {
-    const dbPathologyIds = selectedPathologies.filter(id => !pathologies.find(p => p.id === id && p.category === 'NCBI'));
-    const extPathologies = selectedPathologies
+  const buildAnalysisRequestBody = (selected?: {
+    pathologyIds?: string[]; symptomIds?: string[];
+    treatmentIds?: string[]; medicationIds?: string[];
+  }) => {
+    const chosenPathologies = selected?.pathologyIds ?? selectedPathologies;
+    const chosenSymptoms = selected?.symptomIds ?? selectedSymptoms;
+    const chosenTreatments = selected?.treatmentIds ?? selectedTreatments;
+    const chosenMedications = selected?.medicationIds ?? selectedMedications;
+    const dbPathologyIds = chosenPathologies.filter(id => !pathologies.find(p => p.id === id && p.category === 'NCBI'));
+    const extPathologies = chosenPathologies
       .map(id => pathologies.find(p => p.id === id && p.category === 'NCBI'))
       .filter(Boolean);
 
-    const dbSymptomIds = selectedSymptoms.filter(id => !symptoms.find(s => s.id === id && s.body_system === 'NCBI'));
-    const extSymptoms = selectedSymptoms
+    const dbSymptomIds = chosenSymptoms.filter(id => !symptoms.find(s => s.id === id && s.body_system === 'NCBI'));
+    const extSymptoms = chosenSymptoms
       .map(id => symptoms.find(s => s.id === id && s.body_system === 'NCBI'))
       .filter(Boolean);
 
-    const dbMedicationIds = selectedMedications.filter(id => !medications.find(m => m.id === id && !m.atc_code));
-    const extMedications = selectedMedications
+    const dbMedicationIds = chosenMedications.filter(id => !medications.find(m => m.id === id && !m.atc_code));
+    const extMedications = chosenMedications
       .map(id => medications.find(m => m.id === id && !m.atc_code))
       .filter(Boolean);
 
     return {
       pathologyIds: dbPathologyIds,
       symptomIds: dbSymptomIds,
-      treatmentIds: selectedTreatments,
+      treatmentIds: chosenTreatments,
       medicationIds: dbMedicationIds,
       externalPathologies: extPathologies,
       externalSymptoms: extSymptoms,
@@ -843,57 +852,23 @@ const CrossDataAnalyzer = ({ patientData }: CrossDataAnalyzerProps) => {
     };
   };
 
-  const runAnalysis = async () => {
-    if (getTotalSelected() < 2) {
-      toast.error('Sélectionnez au moins 2 éléments pour analyser les liens de causalité');
+  // Cross-data investigations always run on the durable server OpenAI
+  // workflow, independently of the user's optional local LLM preference.
+  const runAnalysis = async (visibleIds?: {
+    pathologyIds?: string[]; symptomIds?: string[];
+    treatmentIds?: string[]; medicationIds?: string[];
+  }) => {
+    if (matrix.busy || matrixActive) return;
+    const request = buildAnalysisRequestBody(visibleIds);
+    const count = (request.pathologyIds.length + request.externalPathologies.length +
+      request.symptomIds.length + request.externalSymptoms.length +
+      request.treatmentIds.length + request.medicationIds.length + request.externalMedications.length);
+    if (count < 2) {
+      toast.error('Sélectionnez au moins 2 éléments pour une analyse OpenAI');
       return;
     }
-
-    if (llmMode === 'cloud') {
-      setError(null);
-      await matrix.submit('matrix.start', buildAnalysisRequestBody());
-      return;
-    }
-    setAnalyzing(true);
-    setAnalysisProgress(null);
     setError(null);
-    setResult(null);
-
-    try {
-      const { data, error: fnError } = await invokeAI('cross-data-analyzer', {
-        ...buildAnalysisRequestBody(),
-        async: true,
-      });
-
-      if (fnError) throw fnError;
-
-      if (data.error) {
-        if (data.error.includes('Crédits insuffisants') || data.error.includes('402')) {
-          setError('Crédits IA insuffisants. Rechargez votre compte dans Paramètres → Workspace → Usage.');
-        } else if (data.error.includes('Limite') || data.error.includes('429')) {
-          setError('Limite de requêtes atteinte. Réessayez dans quelques instants.');
-        } else {
-          setError(data.error);
-        }
-        return;
-      }
-
-      const resolvedData = await resolveAIJob<{
-        analysis: AnalysisResult;
-        context?: { pubmedSearches?: number };
-      }>(invokeAI, 'cross-data-analyzer', data, {
-        onProgress: setAnalysisProgress,
-      });
-
-      setResult(resolvedData.analysis);
-      toast.success(`Analyse terminée : ${resolvedData.context?.pubmedSearches || 0} recherches PubMed effectuées`);
-    } catch (err) {
-      console.error('Erreur d\'analyse:', err);
-      setError(err instanceof Error ? err.message : 'Erreur lors de l\'analyse. Veuillez réessayer.');
-    } finally {
-      setAnalyzing(false);
-      setAnalysisProgress(null);
-    }
+    await matrix.submit('matrix.start', request);
   };
 
   const runTreatmentSchemaGeneration = async () => {
@@ -907,7 +882,7 @@ const CrossDataAnalyzer = ({ patientData }: CrossDataAnalyzerProps) => {
     setError(null);
 
     try {
-      const { data, error: fnError } = await invokeAI('cross-data-analyzer', {
+      const { data, error: fnError } = await invokeCrossCloud('cross-data-analyzer', {
         ...(matrix.job?.selection ?? buildAnalysisRequestBody()),
         analysisMode: 'treatment_schemas',
         currentAnalysis: result,
@@ -920,7 +895,7 @@ const CrossDataAnalyzer = ({ patientData }: CrossDataAnalyzerProps) => {
       const resolvedData = await resolveAIJob<{
         treatmentSchemas?: TreatmentSchema[];
         analysis?: AnalysisResult;
-      }>(invokeAI, 'cross-data-analyzer', data, {
+      }>(invokeCrossCloud, 'cross-data-analyzer', data, {
         onProgress: setAnalysisProgress,
       });
 
@@ -1121,6 +1096,7 @@ const CrossDataAnalyzer = ({ patientData }: CrossDataAnalyzerProps) => {
               selectedMedicationIds={selectedMedications}
               analysisResultFromParent={result}
               onAnalysisResultChange={incoming => setResult(ensureAnalysisShape(incoming as unknown as Parameters<typeof ensureAnalysisShape>[0]))}
+              onAnalyzeWithOpenAI={runAnalysis}
               onGenerateTreatmentSchemas={runTreatmentSchemaGeneration}
               isGeneratingTreatmentSchemas={generatingTreatmentSchemas}
             />
@@ -1666,10 +1642,10 @@ const CrossDataAnalyzer = ({ patientData }: CrossDataAnalyzerProps) => {
                   {getTotalSelected()} {t('élément(s) sélectionné(s)')} • {t('Recherche web incluse')}
                 </p>
                 <Button
-                  onClick={runAnalysis}
-                  disabled={analyzing || matrix.busy || Boolean(matrixActive) || getTotalSelected() < 2}
+                  onClick={() => { void runAnalysis(); }}
+                  disabled={matrix.busy || Boolean(matrixActive) || getTotalSelected() < 2}
                 >
-                  {analyzing || matrixActive ? (
+                  {matrixActive ? (
                     <>
                       <Loader2 className="h-4 w-4 mr-2 animate-spin" />
                       Analyse en cours...
@@ -1677,7 +1653,7 @@ const CrossDataAnalyzer = ({ patientData }: CrossDataAnalyzerProps) => {
                   ) : (
                     <>
                       <Brain className="h-4 w-4 mr-2" />
-                      Analyser les liens
+                      Analyser avec OpenAI
                     </>
                   )}
                 </Button>
@@ -1758,6 +1734,32 @@ const CrossDataAnalyzer = ({ patientData }: CrossDataAnalyzerProps) => {
 
                     {result.alternatives && result.alternatives.length > 0 && (
                       <AlternativesPanel alternatives={result.alternatives} />
+                    )}
+
+                    {result.pairAssessments && result.pairAssessments.length > 0 && (
+                      <section className="rounded-xl border bg-card p-4" aria-label="Analyses de liens réalisées par OpenAI">
+                        <h4 className="flex items-center gap-2 font-semibold">
+                          <Brain className="h-4 w-4 text-primary" />
+                          Analyses OpenAI : {result.pairAssessments.length} paire(s) examinée(s)
+                        </h4>
+                        <p className="mt-1 text-xs text-muted-foreground">
+                          Une hypothèse produite par le modèle n'est pas une relation médicale prouvée.
+                          Les sources citées et leur pertinence doivent être vérifiées.
+                        </p>
+                        <div className="mt-3 max-h-[420px] space-y-2 overflow-y-auto">
+                          {result.pairAssessments.map(item => (
+                            <details key={item.pairHash} className="rounded-lg border px-3 py-2">
+                              <summary className="cursor-pointer break-words text-sm font-medium">
+                                {item.verdict === 'cited_relation' ? 'Référence citée · à vérifier'
+                                  : item.verdict === 'hypothesis' ? 'Hypothèse IA · non confirmée'
+                                    : 'Preuves insuffisantes'} · {item.pairHash}
+                              </summary>
+                              <p className="mt-2 whitespace-pre-wrap text-sm">{item.explanation}</p>
+                              <p className="mt-2 text-xs text-muted-foreground">Limites : {item.limitations}</p>
+                            </details>
+                          ))}
+                        </div>
+                      </section>
                     )}
 
                     {/* Liens de causalité */}

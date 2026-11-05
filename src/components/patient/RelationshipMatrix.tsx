@@ -75,10 +75,11 @@ interface AnalysisResult {
     warnings?: string[];
     recommendations?: string[];
     sources?: string[];
+    pairAssessments?: PairAssessment[];
     webResearch?: { query: string; pairHash?: string; status?: 'matched' | 'empty' | 'unavailable'; sources?: { title: string; url: string }[] }[];
 }
 
-import { buildPairHash, typedElementKey, type SelectedElement } from '../../../supabase/functions/cross-data-analyzer/analysis-utils';
+import { buildPairHash, typedElementKey, type PairAssessment, type SelectedElement } from '../../../supabase/functions/cross-data-analyzer/analysis-utils';
 interface RelationshipMatrixProps {
     snapshot?: { elements: SelectedElement[]; cells: Record<string, unknown[]> };
     pathologies: Pathology[];
@@ -126,6 +127,7 @@ export function RelationshipMatrix({
     // État pour le dialog de détails du lien
     const [selectedLink, setSelectedLink] = useState<CausalLink | null>(null);
     const [showLinkDialog, setShowLinkDialog] = useState(false);
+    const [selectedAssessment, setSelectedAssessment] = useState<{ left: string; right: string; item: PairAssessment } | null>(null);
     const [selectedResearch, setSelectedResearch] = useState<{ query: string; sources: { title: string; url: string }[] } | null>(null);
 
     // Normaliser les noms pour comparaison
@@ -441,6 +443,8 @@ export function RelationshipMatrix({
                                                 const isDiagonal = rowElement.id === colElement.id;
                                                 const research = analysisResult?.webResearch?.find(r => (r.pairHash ?? r.query) ===
                                                     buildPairHash(rowElement.name, rowElement.type, colElement.name, colElement.type));
+                                                const assessment = analysisResult?.pairAssessments?.find(item => item.pairHash ===
+                                                    buildPairHash(rowElement.name, rowElement.type, colElement.name, colElement.type));
 
                                                 return (
                                                     <TableCell
@@ -478,6 +482,13 @@ export function RelationshipMatrix({
                                                                     </div>
                                                                 </TooltipContent>
                                                             </Tooltip>
+                                                        ) : assessment ? (
+                                                            <button type="button" className="rounded-md border border-amber-500/40 bg-amber-500/10 px-2 py-1 text-[11px] text-foreground hover:bg-amber-500/20"
+                                                                title="Interprétation OpenAI, non validée cliniquement"
+                                                                onClick={() => setSelectedAssessment({ left: rowElement.name, right: colElement.name, item: assessment })}>
+                                                                {assessment.verdict === 'hypothesis' ? 'Hypothèse IA' :
+                                                                    assessment.verdict === 'insufficient' ? 'IA : incertain' : 'IA : à vérifier'}
+                                                            </button>
                                                         ) : research?.sources?.length ? (
                                                             <button type="button" className="rounded-md border border-primary/30 px-2 py-1 text-[11px] text-primary hover:bg-primary/10"
                                                                 title="Publications de contexte, relation clinique non établie"
@@ -501,6 +512,20 @@ export function RelationshipMatrix({
                     </ScrollArea>
                 </CardContent>
             </Card>
+
+            <Dialog open={selectedAssessment !== null} onOpenChange={open => { if (!open) setSelectedAssessment(null); }}>
+                <DialogContent className="max-w-xl">
+                    <DialogHeader>
+                        <DialogTitle>Analyse OpenAI · {selectedAssessment?.left} ↔ {selectedAssessment?.right}</DialogTitle>
+                    </DialogHeader>
+                    <p className="text-sm">{selectedAssessment?.item.explanation}</p>
+                    <p className="text-sm text-muted-foreground">Limites : {selectedAssessment?.item.limitations}</p>
+                    <p className="rounded-md bg-muted p-3 text-xs">
+                        Cette interprétation du modèle n'est pas une preuve de lien causal, d'innocuité ou d'efficacité.
+                        Les références bibliographiques et le contexte clinique doivent être vérifiés.
+                    </p>
+                </DialogContent>
+            </Dialog>
 
             <Dialog open={selectedResearch !== null} onOpenChange={open => { if (!open) setSelectedResearch(null); }}>
                 <DialogContent className="max-w-xl">

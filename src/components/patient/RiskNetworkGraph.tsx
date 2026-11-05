@@ -64,6 +64,7 @@ import {
 } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { useAI } from '@/contexts/AIContext';
+import type { PairAssessment } from '../../../supabase/functions/cross-data-analyzer/analysis-utils';
 import { resolveAIJob } from '@/lib/aiJobs';
 import { toast } from 'sonner';
 import {
@@ -184,6 +185,7 @@ interface TreatmentSchema {
 
 interface AnalysisResult {
     causalLinks: CausalLink[];
+    pairAssessments?: PairAssessment[];
     summary?: string;
     warnings: string[];
     recommendations?: string[];
@@ -322,6 +324,10 @@ interface RiskNetworkGraphProps {
     selectedMedicationIds?: string[];
     analysisResultFromParent?: AnalysisResult | null;
     onAnalysisResultChange?: (result: AnalysisResult) => void;
+    onAnalyzeWithOpenAI?: (ids: {
+        pathologyIds?: string[]; symptomIds?: string[];
+        treatmentIds?: string[]; medicationIds?: string[];
+    }) => Promise<void>;
     onGenerateTreatmentSchemas?: () => void;
     isGeneratingTreatmentSchemas?: boolean;
 }
@@ -338,6 +344,7 @@ export function RiskNetworkGraph({
     selectedMedicationIds,
     analysisResultFromParent,
     onAnalysisResultChange,
+    onAnalyzeWithOpenAI,
     onGenerateTreatmentSchemas,
     isGeneratingTreatmentSchemas = false,
 }: RiskNetworkGraphProps = {}) {
@@ -923,12 +930,12 @@ export function RiskNetworkGraph({
 
     // Synchroniser l'analyse depuis le parent
     useEffect(() => {
-        if (analysisResultFromParent && analysisResultFromParent.causalLinks.length > 0) {
+        if (analysisResultFromParent) {
             console.log('[RiskNetworkGraph] Analyse reçue du parent:', analysisResultFromParent.causalLinks.length, 'liens');
             setAnalysisResult(analysisResultFromParent);
             // Déclencher l'affichage progressif des liens
             setDisplayedLinks([]);
-            setIsLoadingLinks(true);
+            setIsLoadingLinks(analysisResultFromParent.causalLinks.length > 0);
 
             analysisResultFromParent.causalLinks.forEach((link, index) => {
                 setTimeout(() => {
@@ -976,9 +983,16 @@ export function RiskNetworkGraph({
                 pathologyIds, symptomIds, treatmentIds, medicationIds
             });
 
-            // Appeler l'API
-            const { data, error } = await invokeAI('cross-data-analyzer', {
-                pathologyIds, symptomIds, treatmentIds, medicationIds, async: true
+            // The dossier's durable OpenAI matrix is the authoritative
+            // analysis workflow; never fall back to a local LLM for relations.
+            if (onAnalyzeWithOpenAI) {
+                await onAnalyzeWithOpenAI({ pathologyIds, symptomIds, treatmentIds, medicationIds });
+                return;
+            }
+
+            // Standalone legacy graph: cloud server, not local model.
+            const { data, error } = await supabase.functions.invoke('cross-data-analyzer', {
+                body: { pathologyIds, symptomIds, treatmentIds, medicationIds, async: true }
             });
 
             if (data?.error) {
@@ -1197,7 +1211,7 @@ export function RiskNetworkGraph({
             setIsAnalyzing(false);
             setIsLoadingLinks(false);
         }
-    }, [nodes, setNodes, setEdges, hiddenNodes, invokeAI, onAnalysisResultChange, normalizeForComparison]);
+    }, [nodes, setNodes, setEdges, hiddenNodes, onAnalyzeWithOpenAI, onAnalysisResultChange, normalizeForComparison]);
 
     // Analyser les connexions entre groupes
     const analyzeGroupConnections = useCallback(async () => {
@@ -2254,6 +2268,14 @@ export function RiskNetworkGraph({
 
     return (
         <div className="flex flex-col gap-4">
+            {analysisResultFromParent?.pairAssessments?.length ? (
+                <div role="status" className="rounded-lg border border-primary/20 bg-primary/5 p-3 text-sm">
+                    <strong>OpenAI a examiné {analysisResultFromParent.pairAssessments.length} paire(s).</strong>
+                    {' '}Les hypothèses et preuves insuffisantes sont détaillées dans la vue matrice.
+                    Seules les relations assorties de références consultables apparaissent comme liens du graphe,
+                    et nécessitent une validation clinique.
+                </div>
+            ) : null}
             {/* Rangée supérieure: Sélection + Graphique */}
             <div className="flex gap-4 h-[700px]">
                 {/* Panel de sélection des éléments */}

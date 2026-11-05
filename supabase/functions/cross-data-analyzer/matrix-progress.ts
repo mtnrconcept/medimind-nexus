@@ -1,5 +1,5 @@
 import {
-  buildPairCandidates, normalizeCausalLink, type CausalLink, type PairCandidate, type SelectedElement,
+  buildPairCandidates, normalizeCausalLink, type CausalLink, type PairAssessment, type PairCandidate, type SelectedElement,
 } from './analysis-utils.ts';
 
 export type MatrixCells = Record<string, CausalLink[]>;
@@ -26,4 +26,26 @@ export function readCells(raw: unknown, requested: PairCandidate[]): MatrixCells
     if (links.length === entry.links.length) cells[pair.pairHash] = links;
   }
   return cells;
+}
+
+/** Missing or malformed AI assessments must never silently close a cell. */
+export function readPairAssessments(raw: unknown, requested: PairCandidate[]): Record<string, PairAssessment> {
+  const result: Record<string, PairAssessment> = {};
+  if (!Array.isArray(raw)) return result;
+  const allowed = new Set(requested.map(pair => pair.pairHash));
+  for (const entry of raw) {
+    const hash = entry?.pairHash;
+    const assessment = entry?.assessment;
+    if (typeof hash !== 'string' || !allowed.has(hash) || Object.hasOwn(result, hash) ||
+        !assessment || typeof assessment !== 'object' ||
+        !['cited_relation', 'hypothesis', 'insufficient'].includes(assessment.verdict) ||
+        typeof assessment.explanation !== 'string' || assessment.explanation.trim().length < 8 ||
+        typeof assessment.limitations !== 'string' || !assessment.limitations.trim()) continue;
+    result[hash] = {
+      pairHash: hash, source: 'openai',
+      verdict: assessment.verdict, explanation: assessment.explanation.trim().slice(0, 1200),
+      limitations: assessment.limitations.trim().slice(0, 600),
+    };
+  }
+  return result;
 }

@@ -20,6 +20,7 @@ function property(object: ts.ObjectLiteralExpression, name: string) {
 test('all explicit native AI generation callers opt into server jobs and avoid direct streaming fetch', () => {
   const failures: string[] = [];
   let checked = 0;
+  let matrixStarts = 0;
   let systematicStarts = 0;
   for (const filename of sources('src')) {
     const source = ts.createSourceFile(filename, readFileSync(filename, 'utf8'), ts.ScriptTarget.Latest, true,
@@ -37,6 +38,14 @@ test('all explicit native AI generation callers opt into server jobs and avoid d
             checked += 1;
             if (property(body, 'async')?.kind !== ts.SyntaxKind.TrueKeyword) failures.push(filename + ': ' + first.text + ' must use async:true');
           }
+        }
+        // The progressive cross-data workflow now uses a dedicated durable
+        // server job, rather than a generic async:true Edge invocation.
+        if (callee === 'submit' && ts.isPropertyAccessExpression(node.expression) &&
+            ts.isIdentifier(node.expression.expression) && node.expression.expression.text === 'matrix' &&
+            first && ts.isStringLiteral(first) && first.text === 'matrix.start') {
+          matrixStarts += 1;
+          checked += 1;
         }
         if (['fetch', 'aiFetch'].includes(callee) && first) {
           const endpoint = first.getText(source);
@@ -58,7 +67,8 @@ test('all explicit native AI generation callers opt into server jobs and avoid d
     };
     visit(source);
   }
-  assert.ok(checked >= 8, 'The native generation integration points were found');
+  assert.ok(matrixStarts > 0, 'The progressive OpenAI matrix server-job entry point was found');
+  assert.ok(checked >= 7, 'Expected native plus durable matrix entries, found ' + checked);
   assert.ok(systematicStarts > 0, 'The systematic workflow entry point was found');
   assert.deepEqual(failures, []);
 });
