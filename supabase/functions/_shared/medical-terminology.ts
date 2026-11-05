@@ -5,7 +5,7 @@ export interface MedicalTerm { fr: string; en: string; aliases: string[]; search
 export const MEDICAL_TERMS: readonly MedicalTerm[] = [
   { fr: 'Syndrome néphrotique', en: 'nephrotic syndrome', aliases: ['syndrome nephrotique'] },
   { fr: 'Syndrome néphrotique, autre', en: 'nephrotic syndrome', aliases: ['Nephrotic syndrome, other'] },
-  { fr: 'Varicelle', en: 'varicella', aliases: ['chickenpox', 'varicelle'], search: ['varicella', 'chickenpox'] },
+  { fr: 'Varicelle', en: 'varicella', aliases: ['chickenpox', 'varicelle', 'Varicella (VZV) infection'], search: ['varicella', 'chickenpox'] },
   { fr: 'Varicelle sans complication', en: 'varicella', aliases: ['Varicella without complication'] },
   { fr: 'Varicelle avec complications', en: 'varicella', aliases: ['Varicella with other complications'] },
   { fr: 'Œdème des paupières', en: 'periorbital edema', aliases: ['oedeme des paupieres', 'edema of eyelid', 'eyelid edema', 'eyelid swelling'], search: ['periorbital edema', 'eyelid edema', 'periorbital oedema'] },
@@ -75,11 +75,20 @@ function lookup(value: string): MedicalTerm | undefined {
   return MEDICAL_TERMS.find(term => [term.fr, ...term.aliases].some(alias => normalizeSearchText(alias) === normalized))
     ?? MEDICAL_TERMS.find(term => normalizeSearchText(term.en) === normalized);
 }
-export function frenchMedicalLabel(value: string): string { return lookup(value)?.fr ?? value; }
+export function frenchMedicalLabel(value: string): string {
+  // Translate the known disease name only; preserve the unresolved suffix.
+  if (/^nephrotic syndrome,\s*[ivx]+[a-z]?\s+\d+$/i.test(value.trim())) return value.replace(/^nephrotic syndrome/i,'Syndrome néphrotique');
+  return lookup(value)?.fr ?? value;
+}
 export function medicalSearchTerms(entity: MedicalSearchEntity): string[] {
   const original = entity.name.trim();
   const direct = lookup(original);
   if (direct) return direct.search ?? [direct.en];
+  // Some imported labels carry an administrative classification suffix.
+  // Broaden retrieval only, retaining the exact diagnostic label in analysis.
+  if (entity.type === 'pathology' && /^nephrotic syndrome,\s*[ivx]+[a-z]?\s+\d+$/i.test(original)) {
+    return ['nephrotic syndrome', original.slice(0, 160)];
+  }
   if (entity.type === 'medication') {
     const substance = entity.substance?.trim();
     const terms: string[] = [];
@@ -103,4 +112,10 @@ export function matchesMedicalText(value: string, query: string): boolean {
   const term = lookup(value);
   return [value, term?.fr ?? '', term?.en ?? '', ...(term?.aliases ?? [])]
     .some(candidate => normalizeSearchText(candidate).includes(needle));
+}
+
+export function medicalSearchScope(entity: MedicalSearchEntity): { broadened: boolean; note: string } {
+  const broadened = entity.type === 'pathology' && /^nephrotic syndrome,\s*[ivx]+[a-z]?\s+\d+$/i.test(entity.name.trim());
+  return { broadened, note: broadened
+    ? 'Recherche élargie au syndrome néphrotique. Le suffixe du diagnostic importé reste non résolu ; aucune conclusion sur un sous-type ne doit en être déduite.' : '' };
 }

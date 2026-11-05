@@ -1,3 +1,4 @@
+import { relationPresentation, type RelationMetadata } from '../../../supabase/functions/cross-data-analyzer/relation-contract';
 import { canDisplayRiskScore } from './crossDataDisplay';
 import { useCallback, useState, useMemo, useEffect } from 'react';
 import {
@@ -104,7 +105,7 @@ interface Medication {
 
 type MedicalItem = Pathology | Symptom | Treatment | Medication;
 
-interface CausalLink {
+interface CausalLink extends RelationMetadata {
     from: string;
     to: string;
     fromType?: string;
@@ -930,23 +931,37 @@ export function RiskNetworkGraph({
 
     // Synchroniser l'analyse depuis le parent
     useEffect(() => {
-        if (analysisResultFromParent) {
-            console.log('[RiskNetworkGraph] Analyse reçue du parent:', analysisResultFromParent.causalLinks.length, 'liens');
-            setAnalysisResult(analysisResultFromParent);
-            // Déclencher l'affichage progressif des liens
-            setDisplayedLinks([]);
-            setIsLoadingLinks(analysisResultFromParent.causalLinks.length > 0);
+        setAnalysisResult(analysisResultFromParent ?? null);
+        setDisplayedLinks(analysisResultFromParent?.causalLinks ?? []);
+        setIsLoadingLinks(false);
+    }, [analysisResultFromParent]);
 
-            analysisResultFromParent.causalLinks.forEach((link, index) => {
-                setTimeout(() => {
-                    setDisplayedLinks(prev => [...prev, link]);
-                    if (index === analysisResultFromParent.causalLinks.length - 1) {
-                        setIsLoadingLinks(false);
-                    }
-                }, index * 100);
-            });
-        }
-    }, [analysisResultFromParent, setAnalysisResult, setDisplayedLinks, setIsLoadingLinks]);
+    useEffect(() => {
+        if (!analysisResultFromParent) { setEdges([]); setEdgeLinkMap({}); return; }
+        const links = analysisResultFromParent.causalLinks || [];
+        const mapped: Record<string,CausalLink> = {};
+        const currentEdges: Edge[] = [];
+        links.forEach((link,index) => {
+            if (link.validationVersion !== 2 || !link.relationKind) return;
+            // Full labels and types, never substring-matched drug formulations.
+            const source = nodes.filter(n => n.data.type === link.fromType &&
+                normalizeForComparison(String(n.data.label)) === normalizeForComparison(link.from));
+            const target = nodes.filter(n => n.data.type === link.toType &&
+                normalizeForComparison(String(n.data.label)) === normalizeForComparison(link.to));
+            if (source.length !== 1 || target.length !== 1 || source[0].id === target[0].id) return;
+            const display = relationPresentation(link);
+            const color = display.tone === 'caution' ? '#b45309' : '#64748b';
+            const id = 'reviewed-' + source[0].id + '-' + target[0].id + '-' + index;
+            mapped[id] = link;
+            currentEdges.push({ id, source:source[0].id, target:target[0].id, type:'smoothstep',
+                animated:false, label:display.label,
+                style:{stroke:color,strokeWidth:2,strokeDasharray:link.evidenceSupport==='direct'?undefined:'5 4'},
+                markerEnd:{type:MarkerType.ArrowClosed,color},
+                labelStyle:{fontSize:10,fill:color}, data:{link} });
+        });
+        setEdges(currentEdges);
+        setEdgeLinkMap(mapped);
+    }, [analysisResultFromParent, nodes, normalizeForComparison, setEdges]);
 
 
 
@@ -2258,13 +2273,9 @@ export function RiskNetworkGraph({
     };
 
     // Obtenir la couleur du lien pour l'affichage
-    const getLinkDisplayColor = (link: CausalLink) => {
-        if (link.dangerLevel === 'critical' || link.dangerLevel === 'high') return 'border-red-500 bg-red-50 dark:bg-red-900/20';
-        if (link.dangerLevel === 'moderate' || isAppropriatenessWarning(link)) return 'border-orange-500 bg-orange-50 dark:bg-orange-900/20';
-        if (link.dangerLevel === 'low' || link.symptomFrequency === 'possible' || link.symptomFrequency === 'rare') return 'border-yellow-500 bg-yellow-50 dark:bg-yellow-900/20';
-        if (isAppropriatenessSuccess(link) || link.symptomFrequency === 'principal' || link.symptomFrequency === 'frequent') return 'border-green-500 bg-green-50 dark:bg-green-900/20';
-        return 'border-blue-500 bg-blue-50 dark:bg-blue-900/20';
-    };
+    const getLinkDisplayColor = (link: CausalLink) => relationPresentation(link).tone === 'caution'
+        ? 'border-amber-500 bg-amber-50 dark:bg-amber-900/20'
+        : 'border-slate-300 bg-slate-50 dark:bg-slate-900/20';
 
     return (
         <div className="flex flex-col gap-4">
@@ -2416,9 +2427,9 @@ export function RiskNetworkGraph({
                             {displayedLinks.length > 0 && (
                                 <div className="mt-3 p-2 bg-gradient-to-r from-gray-50 to-gray-100 dark:from-gray-800 dark:to-gray-900 rounded-lg border">
                                     <div className="flex items-center justify-between mb-2">
-                                        <span className="text-xs font-medium">Score actuel</span>
+                                        <span className="text-xs font-medium">Score clinique non calculé</span>
                                         <Badge className={`${liveScore >= 70 ? 'bg-green-500' : liveScore >= 40 ? 'bg-orange-500' : 'bg-red-500'}`}>
-                                            {liveScore}/100
+                                            Non calculé
                                         </Badge>
                                     </div>
                                     <div className="flex gap-1 text-[10px]">
@@ -2590,7 +2601,7 @@ export function RiskNetworkGraph({
                                         <span className="text-sm font-bold text-gray-700 dark:text-gray-300">
                                             📋 Schéma Actuel
                                         </span>
-                                        <Badge variant="outline" className="ml-2">{liveScore}/100</Badge>
+                                        <Badge variant="outline" className="ml-2">Non calculé</Badge>
                                     </div>
                                     <ReactFlow
                                         nodes={nodes.filter(n => !hiddenNodes.has(n.id))}
@@ -2628,7 +2639,7 @@ export function RiskNetworkGraph({
                                             ✨ Schéma Proposé
                                         </span>
                                         <Badge className="ml-2 bg-green-500">
-                                            {analysisResult?.schemaComparison?.proposedScore || '--'}/100
+                                            Non calculé
                                         </Badge>
                                     </div>
                                     <ReactFlow
@@ -2739,7 +2750,7 @@ export function RiskNetworkGraph({
                                             <p className="font-semibold mb-2">Types de liens</p>
                                             <div className="flex items-center gap-2">
                                                 <div className="w-8 h-1 rounded" style={{ background: linkColors.green }} />
-                                                <span>Adapté / Normal</span>
+                                                <span>Relation à vérifier</span>
                                             </div>
                                             <div className="flex items-center gap-2">
                                                 <div className="w-8 h-1 rounded" style={{ background: linkColors.yellow }} />
@@ -2947,10 +2958,9 @@ export function RiskNetworkGraph({
                                                                     link.effectType === 'adverse' ? '⚠️ Indésirable' : '⚖️ Les deux'}
                                                             </Badge>
                                                         )}
-                                                        {link.probability && (
+                                                        {link.validationVersion === 2 && (
                                                             <Badge variant="outline" className="text-xs">
-                                                                {link.probability === 'high' ? 'Forte' :
-                                                                    link.probability === 'medium' ? 'Moyenne' : 'Faible'}
+                                                                {relationPresentation(link).label}
                                                             </Badge>
                                                         )}
                                                     </div>
@@ -3009,7 +3019,7 @@ export function RiskNetworkGraph({
                                 {nodes.length - hiddenNodes.size} nœuds actifs
                             </Badge>
                             <Badge className={`ml-1 ${liveScore >= 70 ? 'bg-green-500' : liveScore >= 40 ? 'bg-orange-500' : 'bg-red-500'}`}>
-                                Score: {liveScore}/100
+                                Score clinique non calculé
                             </Badge>
                         </CardTitle>
                     </CardHeader>

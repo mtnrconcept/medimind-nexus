@@ -1,3 +1,4 @@
+import type { RelationMetadata } from './relation-contract.ts';
 export type MedicalEntityType = 'symptom' | 'pathology' | 'treatment' | 'medication';
 export type Probability = 'high' | 'medium' | 'low';
 export type DangerLevel = 'critical' | 'high' | 'moderate' | 'low';
@@ -5,7 +6,7 @@ export type EffectType = 'therapeutic' | 'adverse' | 'both';
 export type InteractionType = 'drug-drug' | 'drug-treatment' | 'pathology-danger';
 export type SymptomFrequency = 'principal' | 'frequent' | 'possible' | 'rare';
 
-export interface CausalLink {
+export interface CausalLink extends RelationMetadata {
   from: string;
   fromType: MedicalEntityType;
   to: string;
@@ -86,7 +87,10 @@ export interface TreatmentSchema {
 }
 
 /** OpenAI interpretations are not independently validated medical evidence. */
-export interface PairAssessment {
+export interface PairAssessment extends RelationMetadata {
+  fromName?: string;
+  toName?: string;
+  headline?: string;
   pairHash: string;
   verdict: 'cited_relation' | 'hypothesis' | 'insufficient';
   explanation: string;
@@ -95,6 +99,8 @@ export interface PairAssessment {
 }
 
 export interface AnalysisResult {
+  engineVersion?: number;
+  requiresReanalysis?: boolean;
   causalLinks: CausalLink[];
   pairAssessments?: PairAssessment[];
   summary: string;
@@ -110,7 +116,7 @@ export interface AnalysisResult {
     retrievedAt?: string;
     providers?: { name: string; status: 'matched' | 'empty' | 'unavailable'; count?: number; error?: string }[];
     findings: string[];
-    sources: { title: string; url: string }[];
+    sources: { title: string; url: string; abstract?: string; publicationTypes?: string[]; year?: string }[];
   }[];
 }
 
@@ -276,19 +282,18 @@ export function normalizeCausalLink(rawLink: unknown, selectedElements: Selected
   };
 
   if (typeof raw.isAppropriate === 'boolean') normalized.isAppropriate = raw.isAppropriate;
-  if (raw.effectType) normalized.effectType = coerceEnum(raw.effectType, VALID_EFFECT_TYPES, 'adverse');
+  if (VALID_EFFECT_TYPES.includes(raw.effectType as EffectType)) normalized.effectType = raw.effectType;
   if (raw.therapeuticDetails) normalized.therapeuticDetails = coerceString(raw.therapeuticDetails);
   if (raw.adverseDetails) normalized.adverseDetails = coerceString(raw.adverseDetails);
-  if (raw.dangerLevel) normalized.dangerLevel = coerceEnum(raw.dangerLevel, VALID_DANGER_LEVELS, 'moderate');
-  if (raw.interactionType) normalized.interactionType = coerceEnum(raw.interactionType, VALID_INTERACTION_TYPES, 'pathology-danger');
-  if (raw.symptomFrequency) normalized.symptomFrequency = coerceEnum(raw.symptomFrequency, VALID_SYMPTOM_FREQUENCIES, 'possible');
+  if (VALID_DANGER_LEVELS.includes(raw.dangerLevel as DangerLevel)) normalized.dangerLevel = raw.dangerLevel;
+  if (VALID_INTERACTION_TYPES.includes(raw.interactionType as InteractionType)) normalized.interactionType = raw.interactionType;
+  if (VALID_SYMPTOM_FREQUENCIES.includes(raw.symptomFrequency as SymptomFrequency)) normalized.symptomFrequency = raw.symptomFrequency;
 
   if (normalized.fromType === 'pathology' && normalized.toType === 'symptom') {
     delete normalized.isAppropriate;
     delete normalized.effectType;
     delete normalized.dangerLevel;
     delete normalized.interactionType;
-    normalized.symptomFrequency ||= 'possible';
   }
 
   const isMedicationOrTreatment = normalized.fromType === 'medication' || normalized.fromType === 'treatment';
@@ -298,22 +303,8 @@ export function normalizeCausalLink(rawLink: unknown, selectedElements: Selected
     delete normalized.isAppropriate;
   }
 
-  if (isTherapeuticAppropriatenessLink) {
-    normalized.effectType ||= normalized.isAppropriate === false ? 'adverse' : 'therapeutic';
-    if (normalized.isAppropriate === false) {
-      normalized.dangerLevel ||= 'moderate';
-      normalized.interactionType ||= 'pathology-danger';
-    }
-  }
-
-  if (normalized.fromType === 'medication' && normalized.toType === 'symptom') {
-    normalized.effectType ||= 'adverse';
-  }
-
-  if (normalized.fromType === 'medication' && normalized.toType === 'medication') {
-    normalized.interactionType ||= 'drug-drug';
-    normalized.dangerLevel ||= normalized.probability === 'high' ? 'high' : 'moderate';
-  }
+  // An endpoint's type is not evidence of indication, harm, frequency or
+  // severity. Missing values must remain missing, never clinical defaults.
 
   return normalized;
 }
@@ -402,45 +393,11 @@ function ratioFromStats(stats: SchemaStats): number {
 
 export function ensureSchemaComparison(analysis: AnalysisResult): SchemaComparison {
   const currentStats = computeSchemaStats(analysis.causalLinks || []);
-  if (!analysis.causalLinks?.length) {
-    return {
-      currentScore: null, proposedScore: null, improvementPercent: null,
-      currentStats, proposedStats: { ...currentStats }, proposedChanges: [],
-      benefitRiskRatio: { current: null, proposed: null }, assessmentStatus: 'insufficient_evidence',
-      clinicalSummary: 'Non évaluable : aucune relation documentée. L’absence de données ne démontre pas l’absence de risque.',
-    };
-  }
-  const fallbackChanges = (analysis.causalLinks || []).map(buildFallbackChange).filter((change): change is ProposedChange => Boolean(change));
-  const modelChanges = analysis.schemaComparison?.proposedChanges || [];
-  const proposedChanges = modelChanges.length > 0 ? modelChanges : fallbackChanges;
-  const currentScore = scoreFromStats(currentStats);
-  const redReduction = proposedChanges.filter((change) => change.action === 'replace' || change.action === 'remove').length;
-  const proposedStats: SchemaStats = analysis.schemaComparison?.proposedStats || {
-    ...currentStats,
-    redLinks: Math.max(0, currentStats.redLinks - redReduction),
-    orangeLinks: Math.max(0, currentStats.orangeLinks - Math.max(0, redReduction - currentStats.redLinks)),
-    greenLinks: currentStats.greenLinks + redReduction,
-    totalDangerScore: Math.max(0, currentStats.totalDangerScore - redReduction * 50),
-    inappropriateCount: Math.max(0, currentStats.inappropriateCount - redReduction),
-    adverseEffectCount: Math.max(0, currentStats.adverseEffectCount - redReduction),
-  };
-  const proposedScore = analysis.schemaComparison?.proposedScore ?? scoreFromStats(proposedStats);
-  const improvementPercent = currentScore > 0 ? Number((((proposedScore - currentScore) / currentScore) * 100).toFixed(1)) : proposedScore;
-
   return {
-    assessmentStatus: 'heuristic',
-    currentScore: analysis.schemaComparison?.currentScore ?? currentScore,
-    proposedScore,
-    improvementPercent: analysis.schemaComparison?.improvementPercent ?? improvementPercent,
-    currentStats: analysis.schemaComparison?.currentStats || currentStats,
-    proposedStats,
-    proposedChanges,
-    benefitRiskRatio: analysis.schemaComparison?.benefitRiskRatio || {
-      current: ratioFromStats(currentStats),
-      proposed: ratioFromStats(proposedStats),
-    },
-    clinicalSummary: analysis.schemaComparison?.clinicalSummary ||
-      'Les propositions priorisent la suppression des contre-indications, interactions fortes et effets indesirables evitables.',
+    currentScore: null, proposedScore: null, improvementPercent: null,
+    currentStats, proposedStats: { ...currentStats }, proposedChanges: [],
+    benefitRiskRatio: { current: null, proposed: null }, assessmentStatus: 'insufficient_evidence',
+    clinicalSummary: 'Non calculé : ces relations bibliographiques ne constituent pas un score clinique validé de bénéfice–risque. Aucune modification de traitement ne peut être déduite du nombre de liens.',
   };
 }
 
@@ -586,6 +543,8 @@ export function buildEvidenceLinks(input: BuildEvidenceLinksInput): CausalLink[]
 
 export function ensureAnalysisShape(rawAnalysis: Partial<AnalysisResult> | null | undefined): AnalysisResult {
   return {
+    engineVersion: rawAnalysis?.engineVersion,
+    requiresReanalysis: rawAnalysis?.requiresReanalysis,
     causalLinks: Array.isArray(rawAnalysis?.causalLinks) ? rawAnalysis.causalLinks as CausalLink[] : [],
     pairAssessments: Array.isArray(rawAnalysis?.pairAssessments)
       ? rawAnalysis.pairAssessments.filter((item): item is PairAssessment =>

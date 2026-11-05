@@ -1,3 +1,4 @@
+import { validateRelationEvidence, type EvidenceSource } from './relation-contract.ts';
 import {
   buildPairCandidates, normalizeCausalLink, type CausalLink, type PairAssessment, type PairCandidate, type SelectedElement,
 } from './analysis-utils.ts';
@@ -9,21 +10,23 @@ export function pendingPairs(elements: SelectedElement[], cells: MatrixCells) {
 
 // Only a complete, explicitly identified response can close a pair. An omitted
 // or malformed link must never turn into an audited cell with no finding.
-export function readCells(raw: unknown, requested: PairCandidate[]): MatrixCells {
+export function readCells(raw: unknown, requested: PairCandidate[], evidence?: Record<string,EvidenceSource[]>): MatrixCells {
   const cells: MatrixCells = {};
   if (!Array.isArray(raw)) return cells;
   for (const entry of raw) {
     const pair = requested.find(candidate => candidate.pairHash === entry?.pairHash);
     if (!pair || !Array.isArray(entry.links)) continue;
     const links: CausalLink[] = [];
+    let malformed = false;
     for (const link of entry.links) {
       if (typeof link?.relationship !== 'string' || !link.relationship.trim() ||
-          typeof link.evidence !== 'string' || !link.evidence.trim()) break;
+          typeof link.evidence !== 'string' || !link.evidence.trim()) { malformed = true; break; }
       const normalized = normalizeCausalLink(link, [pair.left, pair.right]);
-      if (!normalized) break;
-      links.push(normalized);
+      if (!normalized) { malformed = true; break; }
+      const checked = evidence ? validateRelationEvidence(link, normalized, pair, evidence[pair.pairHash] || []) : normalized;
+      if (checked) links.push(checked);
     }
-    if (links.length === entry.links.length) cells[pair.pairHash] = links;
+    if (!malformed && (evidence || links.length === entry.links.length)) cells[pair.pairHash] = links;
   }
   return cells;
 }

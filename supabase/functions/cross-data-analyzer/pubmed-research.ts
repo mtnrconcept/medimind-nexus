@@ -1,15 +1,15 @@
-import { medicalSearchTerms } from '../_shared/medical-terminology.ts';
+import { medicalSearchTerms, medicalSearchScope } from '../_shared/medical-terminology.ts';
 import type { PairCandidate } from './analysis-utils.ts';
 
 export type LiteratureStatus = 'matched' | 'empty' | 'unavailable';
 export interface LiteratureArticle {
   title: string; url: string; abstract: string; pmid: string; provider: string;
-  year?: string; journal?: string; abstractTruncated?: boolean;
+  year?: string; journal?: string; abstractTruncated?: boolean; publicationTypes?: string[];
 }
 export interface LiteratureProviderStatus { name: string; status: LiteratureStatus; count?: number; error?: string; query?: string }
 export interface PairResearchResult {
   query: string; status: LiteratureStatus; articles: LiteratureArticle[];
-  providers: LiteratureProviderStatus[]; retrievedAt: string;
+  providers: LiteratureProviderStatus[]; retrievedAt: string; scopeNotes?: string[];
 }
 export function buildPairSearchQuery(pair: PairCandidate): string {
   const term = (value: string) => '"' + value.replace(/["\\[\]{}|<>]/g, ' ').replace(/\s+/g, ' ').trim() + '"';
@@ -43,6 +43,7 @@ export function parsePubMedArticles(xml: string, expectedIds: string[]): Literat
       .map(([, attributes, body]) => [attributes.match(/Label="([^"]+)"/)?.[1], plain(body)].filter(Boolean).join(': ')).join(' ');
     result.push({ title, pmid, provider: 'PubMed', url: 'https://pubmed.ncbi.nlm.nih.gov/' + pmid + '/',
       abstract: abstract.slice(0, 6000), abstractTruncated: abstract.length > 6000,
+      publicationTypes: [...block.matchAll(/<PublicationType[^>]*>([\s\S]*?)<\/PublicationType>/g)].map(m => plain(m[1])),
       year: block.match(/<PubDate>[\s\S]*?<Year>(\d{4})<\/Year>/)?.[1],
       journal: plain(block.match(/<Journal>[\s\S]*?<Title>([\s\S]*?)<\/Title>/)?.[1] ?? '') });
   }
@@ -130,6 +131,8 @@ export function createLiteratureSearch(options: { apiKey?: string; fetcher?: typ
       const abstract = typeof row.abstractText === 'string' ? plain(row.abstractText) : '';
       articles.push({ pmid, title: plain(row.title), abstract: abstract.slice(0, 6000), abstractTruncated: abstract.length > 6000,
         url: 'https://pubmed.ncbi.nlm.nih.gov/' + pmid + '/', provider: 'Europe PMC',
+        publicationTypes: Array.isArray((row.pubTypeList as { pubType?: unknown[] } | undefined)?.pubType)
+          ? ((row.pubTypeList as { pubType: unknown[] }).pubType).filter((v): v is string => typeof v === 'string') : [],
         year: typeof row.pubYear === 'string' ? row.pubYear : undefined });
     }
     return { articles, count: response.hitCount, query: clinicalQuery };
@@ -151,7 +154,8 @@ export function createLiteratureSearch(options: { apiKey?: string; fetcher?: typ
         providers.push({ name, status: 'unavailable', error: message });
       }
     }
-    return { query, articles, providers, retrievedAt: new Date().toISOString(),
+    const scopeNotes = typeof pair === 'string' ? [] : [pair.left,pair.right].map(medicalSearchScope).filter(s => s.broadened).map(s => s.note);
+    return { query, articles, providers, scopeNotes, retrievedAt: new Date().toISOString(),
       status: articles.length ? 'matched' : providers.some(provider => provider.status === 'unavailable') ? 'unavailable' : 'empty' };
   };
 }

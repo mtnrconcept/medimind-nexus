@@ -2,6 +2,9 @@ export interface CrossDataDisplayLink {
   fromType?: string;
   toType?: string;
   isAppropriate?: boolean;
+  relationKind?: string;
+  validationVersion?: number;
+  evidenceSupport?: string;
 }
 
 export function isTherapeuticAppropriatenessLink(link: CrossDataDisplayLink): boolean {
@@ -12,7 +15,8 @@ export function isTherapeuticAppropriatenessLink(link: CrossDataDisplayLink): bo
 }
 
 export function supportsAppropriatenessBadge(link: CrossDataDisplayLink): boolean {
-  return isTherapeuticAppropriatenessLink(link) && typeof link.isAppropriate === 'boolean';
+  // A model's appropriateness boolean is never a prescribing decision.
+  return false;
 }
 
 export function isAppropriatenessWarning(link: CrossDataDisplayLink): boolean {
@@ -36,5 +40,6 @@ export function matrixEvidenceLabel(research: PairResearchDisplay | undefined, e
   return 'Lien non conclu';
 }
 export function canDisplayRiskScore(links: unknown[] | undefined, score: number | null | undefined): boolean {
-  return Boolean(links?.length) && typeof score === 'number' && Number.isFinite(score);
+  // No clinically calibrated score exists in this tool.
+  return false;
 }

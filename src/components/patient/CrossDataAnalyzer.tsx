@@ -1,3 +1,4 @@
+import { relationPresentation, type RelationMetadata } from '../../../supabase/functions/cross-data-analyzer/relation-contract';
 import { canDisplayRiskScore } from './crossDataDisplay';
 import type { PairAssessment } from '../../../supabase/functions/cross-data-analyzer/analysis-utils';
 import { ensureAnalysisShape } from '../../../supabase/functions/cross-data-analyzer/analysis-utils';
@@ -99,7 +100,7 @@ interface WebResearch {
   sources: WebSource[];
 }
 
-interface CausalLink {
+interface CausalLink extends RelationMetadata {
   from: string;
   fromType: 'symptom' | 'pathology' | 'treatment' | 'medication';
   to: string;
@@ -179,6 +180,8 @@ interface TreatmentSchema {
 }
 
 interface AnalysisResult {
+  engineVersion?: number;
+  requiresReanalysis?: boolean;
   causalLinks: CausalLink[];
   summary: string;
   warnings: string[];
@@ -1097,7 +1100,7 @@ const CrossDataAnalyzer = ({ patientData }: CrossDataAnalyzerProps) => {
               analysisResultFromParent={result}
               onAnalysisResultChange={incoming => setResult(ensureAnalysisShape(incoming as unknown as Parameters<typeof ensureAnalysisShape>[0]))}
               onAnalyzeWithOpenAI={runAnalysis}
-              onGenerateTreatmentSchemas={runTreatmentSchemaGeneration}
+              onGenerateTreatmentSchemas={undefined}
               isGeneratingTreatmentSchemas={generatingTreatmentSchemas}
             />
           ) : (
@@ -1639,7 +1642,7 @@ const CrossDataAnalyzer = ({ patientData }: CrossDataAnalyzerProps) => {
               {/* Bouton d'analyse */}
               < div className="flex items-center justify-between" >
                 <p className="text-sm text-muted-foreground">
-                  {getTotalSelected()} {t('élément(s) sélectionné(s)')} • {t('Recherche web incluse')}
+                  {matrix.job ? `${matrix.job.result_payload.elements.length} éléments dans l’analyse affichée · ` : ''}{getTotalSelected()} dans la nouvelle sélection
                 </p>
                 <Button
                   onClick={() => { void runAnalysis(); }}
@@ -1663,7 +1666,13 @@ const CrossDataAnalyzer = ({ patientData }: CrossDataAnalyzerProps) => {
                 <div className="rounded-md border p-3 space-y-2">
                   <p role="status">{matrix.job.progress_message}</p>
                   {matrix.job.error_message && <p>{matrix.job.error_message}</p>}
-                  {matrixResume && <Button disabled={matrix.busy} onClick={() => matrix.submit('matrix.resume', { jobId: matrix.job.id })}>
+                  <p className="text-xs text-muted-foreground">Les sources retrouvées, les relations contextuelles et les effets démontrés sont distincts. Aucun score de sécurité ni décision de traitement n’est calculé.</p>
+                  {result?.requiresReanalysis && <Button disabled={matrix.busy || Boolean(matrixActive)}
+                    onClick={() => matrix.submit('matrix.start', matrix.job!.selection)}>
+                    Réanalyser la sélection avec le moteur corrigé
+                  </Button>}
+
+                  {matrixResume && !result?.requiresReanalysis && <Button disabled={matrix.busy} onClick={() => matrix.submit('matrix.resume', { jobId: matrix.job.id })}>
                     Reprendre l’analyse
                   </Button>}
                 </div>
@@ -1722,7 +1731,7 @@ const CrossDataAnalyzer = ({ patientData }: CrossDataAnalyzerProps) => {
                       <SchemaComparisonPanel comparison={result.schemaComparison} hasEvidence={canDisplayRiskScore(result.causalLinks, result.schemaComparison.currentScore)} />
                     )}
 
-                    {result.causalLinks.length > 0 && (!matrix.job || matrix.job.status === 'completed') && <TreatmentSchemaGenerator
+                    {canDisplayRiskScore(result.causalLinks, result.schemaComparison?.currentScore) && <TreatmentSchemaGenerator
                       hasSchemas={(result.treatmentSchemas?.length || 0) > 0}
                       isGenerating={generatingTreatmentSchemas}
                       onGenerate={runTreatmentSchemaGeneration}
@@ -1750,12 +1759,11 @@ const CrossDataAnalyzer = ({ patientData }: CrossDataAnalyzerProps) => {
                           {result.pairAssessments.map(item => (
                             <details key={item.pairHash} className="rounded-lg border px-3 py-2">
                               <summary className="cursor-pointer break-words text-sm font-medium">
-                                {item.verdict === 'cited_relation' ? 'Référence citée · à vérifier'
-                                  : item.verdict === 'hypothesis' ? 'Hypothèse IA · non confirmée'
-                                    : 'Preuves insuffisantes'} · {item.pairHash}
+                                {item.fromName || 'Premier élément'} ↔ {item.toName || 'Second élément'} · {item.headline || 'Lien non établi'}
                               </summary>
                               <p className="mt-2 whitespace-pre-wrap text-sm">{item.explanation}</p>
                               <p className="mt-2 text-xs text-muted-foreground">Limites : {item.limitations}</p>
+                              {item.contextLimitations?.map(note => <p key={note} className="mt-1 text-xs text-muted-foreground">{note}</p>)}
                             </details>
                           ))}
                         </div>
@@ -1767,7 +1775,7 @@ const CrossDataAnalyzer = ({ patientData }: CrossDataAnalyzerProps) => {
                       <div className="space-y-3">
                         <h4 className="font-medium flex items-center gap-2">
                           <Link2 className="h-4 w-4" />
-                          Relations documentées à valider
+                          Relations bibliographiques et contexte
                         </h4>
                         <div className="space-y-3">
                           {result.causalLinks.map((link, index) => (
@@ -2203,43 +2211,9 @@ function CausalLinkCard({ link }: { link: CausalLink }) {
             <span className="text-sm font-medium">{link.to}</span>
           </div>
 
-          {getProbabilityBadge(link.probability)}
+          <Badge variant="secondary">{relationPresentation(link).label}</Badge>
 
-          {/* Badges résumés */}
-          {supportsAppropriatenessBadge(link) && (
-            link.isAppropriate ? (
-              <Badge className="bg-green-500/20 text-green-700 dark:text-green-400 border-green-500/30 flex items-center gap-1 h-6">
-                <CheckCircle2 className="h-3 w-3" />
-                {appropriatenessLabel}
-              </Badge>
-            ) : (
-              <Badge className="bg-destructive/20 text-destructive border-destructive/30 flex items-center gap-1 h-6">
-                <XCircle className="h-3 w-3" />
-                {appropriatenessLabel}
-              </Badge>
-            )
-          )}
-
-          {link.effectType === 'therapeutic' && (
-            <Badge className="bg-green-500/20 text-green-700 dark:text-green-400 border-green-500/30 flex items-center gap-1 h-6">Traite</Badge>
-          )}
-          {link.effectType === 'adverse' && (
-            <Badge className="bg-destructive/20 text-destructive border-destructive/30 flex items-center gap-1 h-6">Risque</Badge>
-          )}
-
-          {getDangerBadge(link.dangerLevel)}
-
-          {link.interactionType && (
-            <Badge className="bg-purple-500/20 text-purple-700 dark:text-purple-300 border-purple-500/30 h-6">
-              {getInteractionLabel(link.interactionType)}
-            </Badge>
-          )}
-
-          {link.symptomFrequency && (
-            <Badge className="bg-blue-500/20 text-blue-700 dark:text-blue-300 border-blue-500/30 h-6">
-              {getSymptomFrequencyLabel(link.symptomFrequency)}
-            </Badge>
-          )}
+          <Badge variant="outline">{link.evidenceSupport === 'direct' ? 'Passage source à vérifier' : 'Contexte, pas de causalité établie'}</Badge>
         </div>
 
         <Button variant="ghost" size="sm" className="h-8 w-8 p-0 shrink-0">
@@ -2253,6 +2227,15 @@ function CausalLinkCard({ link }: { link: CausalLink }) {
           <div className="h-px bg-border/50 mb-3" />
 
           <p className="text-sm font-medium text-primary">{link.relationship}</p>
+          <p className="text-sm text-muted-foreground">{relationPresentation(link).description}</p>
+          {link.contextLimitations?.map(note => <p key={note} className="text-xs text-muted-foreground">{note}</p>)}
+          {link.evidenceQuotes?.map((quote,index) => (
+            <blockquote key={index} className="border-l-2 pl-3 text-xs">
+              <p>{quote.quote}</p>
+              <a href={quote.url} target="_blank" rel="noopener noreferrer" className="text-primary underline">Publication citée</a>
+            </blockquote>
+          ))}
+
 
           {(link.effectType === 'therapeutic' || link.effectType === 'both') && link.therapeuticDetails && (
             <div className="p-3 bg-green-500/10 border border-green-500/20 rounded-md">
