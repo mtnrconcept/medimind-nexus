@@ -68,6 +68,7 @@ try{
  await selector.click();
  assert.equal(await page.getByRole('option').count(),21);
  assert.equal(await page.getByRole('option',{name:'Appendicectomie',exact:true}).count(),0);
+ await page.screenshot({path:join(artifactDir,'patient-pathology-options.png'),fullPage:true});
  await page.getByRole('option',{name:'Eczéma',exact:true}).click();
  await page.getByText('4 dossiers correspondants accessibles',{exact:true}).waitFor();
  const body=await page.locator('body').innerText();
@@ -107,6 +108,7 @@ try{
  assert.ok(bounds.x>=0&&bounds.x+bounds.width<=390,JSON.stringify(bounds));
  assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth),'mobile page overflow');
  await longOption.click();await page.getByText(/Aucun autre dossier accessible ne comporte ce même libellé/).waitFor();
+ assert.equal(await page.getByRole('button',{name:'Actualiser',exact:true}).isEnabled(),true,'the final screenshot must show a settled comparison');
  assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth),'long selection mobile overflow');
  await page.screenshot({path:join(artifactDir,'patient-pathology-mobile.png'),fullPage:true});
  console.log('PASS: 390px dropdown, long labels, scrolling and selection remain usable');

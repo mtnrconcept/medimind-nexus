@@ -43,20 +43,24 @@ export function PatientPathologySimilarity({ patientId, primaryPathology, record
   const [refresh, setRefresh] = useState(0);
   const [results, setResults] = useState<RankedPatientMatch[]>([]);
   const [loading, setLoading] = useState(false);
+  const [resolvedSelection, setResolvedSelection] = useState('');
   const [error, setError] = useState('');
   const [refreshing, setRefreshing] = useState(false);
   const selectedChoice = choices.find(p => p.id === selected);
   const isRecordedLabel = selectedChoice?.source === 'history';
+  const comparing = !!selectedChoice && (loading || refreshing || resolvedSelection !== selected);
 
   const refreshSources = async () => {
     setRefreshing(true);
     setError('');
     setResults([]);
+    setResolvedSelection('');
     try {
       await onRefresh?.();
       setRefresh(x => x + 1);
     } catch {
       setError('Impossible d’actualiser les pathologies du dossier. Veuillez réessayer.');
+      setResolvedSelection(selected);
     } finally {
       setRefreshing(false);
     }
@@ -69,11 +73,13 @@ export function PatientPathologySimilarity({ patientId, primaryPathology, record
       setResults([]);
       setError('');
       setLoading(false);
+      setResolvedSelection('');
       return () => { active = false; };
     }
     setResults([]);
     setError('');
     setLoading(true);
+    setResolvedSelection('');
     void loadAuthorizedPathologyMatches(createSupabaseMatchGateway(), patientId, selected)
       .then(found => { if (active) setResults(found); })
       .catch(err => {
@@ -82,7 +88,12 @@ export function PatientPathologySimilarity({ patientId, primaryPathology, record
           ? err.message
           : 'Impossible de comparer les dossiers autorisés. Veuillez réessayer.');
       })
-      .finally(() => { if (active) setLoading(false); });
+      .finally(() => {
+        if (active) {
+          setLoading(false);
+          setResolvedSelection(selected);
+        }
+      });
     return () => { active = false; };
   }, [patientId, selected, refresh, choices]);
 
@@ -130,7 +141,7 @@ export function PatientPathologySimilarity({ patientId, primaryPathology, record
             </div>
           </div>
         )}
-        <Button type="button" variant="outline" size="sm" onClick={() => void refreshSources()} disabled={loading || refreshing}>
+        <Button type="button" variant="outline" size="sm" onClick={() => void refreshSources()} disabled={comparing || refreshing}>
           <RefreshCw className={`h-4 w-4 mr-2${refreshing ? ' animate-spin' : ''}`} /> Actualiser
         </Button>
         {isRecordedLabel && (
@@ -141,8 +152,8 @@ export function PatientPathologySimilarity({ patientId, primaryPathology, record
         )}
         {!selectedChoice && error && <p role="alert" className="text-sm text-destructive">{error}</p>}
         {selectedChoice && (
-          <div className="space-y-3" aria-live="polite" aria-busy={loading}>
-            {loading || refreshing ? (
+          <div className="space-y-3" aria-live="polite" aria-busy={comparing}>
+            {comparing ? (
               <div className="flex gap-2 items-center text-sm text-muted-foreground py-5">
                 <Loader2 className="h-4 w-4 animate-spin" /> Recherche des dossiers autorisés et calcul des similarités…
               </div>
