@@ -9,6 +9,7 @@
     "src/lib/patientSimilarity/**/*.ts",
     "src/components/patient/PatientPathologySimilarity.tsx",
     "tests/patient-pathology-similarity.test.ts",
-    "tests/patient-matching-access.test.ts"
+    "tests/patient-matching-access.test.ts",
+    "tests/browser/patient-pathology.tsx"
   ]
 }

@@ -13,6 +13,14 @@ export interface PathologyChoice {
   id: string;
   name: string;
   icdCode?: string | null;
+  source: 'catalogue' | 'history';
+}
+
+export interface RecordedMedicalHistory {
+  id: string;
+  name: string;
+  conditionType: string;
+  diagnosisDate?: string | null;
 }
 
 export interface ClinicalPatientProfile {
@@ -20,7 +28,7 @@ export interface ClinicalPatientProfile {
   patientCode: string;
   age: number | null;
   diagnoses: RecordedPathology[];
-  history: Array<{ name: string; diagnosisDate?: string | null }>;
+  history: Array<{ id?: string; name: string; conditionType?: string; diagnosisDate?: string | null }>;
   medications: Array<{ substance?: string | null; atcCode?: string | null; medicationId?: string | null }>;
   labs: Array<{
     name: string;
@@ -47,7 +55,8 @@ export interface RankedPatientMatch {
   evidenceLevel: 'documented' | 'partial' | 'insufficient';
   sharedFactors: string[];
   componentScores: ComponentScores;
-  samePathology: true;
+  samePathology: boolean;
+  matchBasis: 'pathology-id' | 'recorded-label';
   statisticalCorrelation: false;
 }
 
@@ -71,6 +80,12 @@ function normalized(s: string | null | undefined): string {
     .replace(/\s+/g, ' ');
 }
 
+/** Full recorded label only: no substring, abbreviation, translation or diagnostic inference. */
+export function normalizeRecordedConditionLabel(value: string | null | undefined): string {
+  return (value ?? '').normalize('NFKD').replace(/\p{M}/gu, '').toLocaleLowerCase('fr')
+    .replace(/[’‘]/g, "'").replace(/\s+/gu, ' ').trim();
+}
+
 function isValidDate(raw: string | null | undefined): raw is string {
   if (!raw || !/^\d{4}-\d{2}-\d{2}$/.test(raw)) return false;
   const timestamp = Date.parse(raw + 'T00:00:00Z');
@@ -81,11 +96,21 @@ function isValidDate(raw: string | null | undefined): raw is string {
 export function buildPathologyChoices(
   primary: { id?: string | null; name?: string | null; icdCode?: string | null } | null,
   secondary: Array<{ id?: string | null; name?: string | null; icdCode?: string | null }> = [],
+  medicalHistory: RecordedMedicalHistory[] = [],
 ): PathologyChoice[] {
   const seen = new Map<string, PathologyChoice>();
   for (const item of [...(primary ? [primary] : []), ...secondary]) {
     if (!item.id || !item.name?.trim()) continue;
-    if (!seen.has(item.id)) seen.set(item.id, { id: item.id, name: item.name.trim(), icdCode: item.icdCode });
+    if (!seen.has(item.id)) seen.set(item.id, { id: item.id, name: item.name.trim(), icdCode: item.icdCode, source: 'catalogue' });
+  }
+  const historyLabels = new Set<string>();
+  // Stable row IDs allow the gateway to re-read and authorize the selection.
+  for (const item of [...medicalHistory].sort((a, b) => a.id.localeCompare(b.id))) {
+    const label = normalizeRecordedConditionLabel(item.name);
+    if (!item.id || item.conditionType !== 'disease' || !label || historyLabels.has(label)) continue;
+    historyLabels.add(label);
+    const id = `history:${item.id}`;
+    seen.set(id, { id, name: item.name.trim(), source: 'history' });
   }
   return [...seen.values()].sort((a, b) => a.name.localeCompare(b.name, 'fr') || a.id.localeCompare(b.id));
 }
@@ -264,6 +289,7 @@ function scoreProfile(source: ClinicalPatientProfile, other: ClinicalPatientProf
     sharedFactors,
     componentScores,
     samePathology: true,
+    matchBasis: 'pathology-id',
     statisticalCorrelation: false,
   };
 }
@@ -279,5 +305,43 @@ export function rankExactPathologyMatches(source: ClinicalPatientProfile, select
   }
   return [...unique.values()]
     .map(other => scoreProfile(source, other, selectedPathologyId))
+    .sort((a, b) => b.score - a.score || b.coveragePercent - a.coveragePercent || a.patientCode.localeCompare(b.patientCode, 'fr') || a.patientId.localeCompare(b.patientId));
+}
+
+/**
+ * Uncoded entries can be compared by their complete recorded label. This is
+ * explicitly weaker than a shared canonical diagnosis and never establishes one.
+ */
+export function rankRecordedConditionMatches(source: ClinicalPatientProfile, selectedName: string, candidates: ClinicalPatientProfile[]): RankedPatientMatch[] {
+  const label = normalizeRecordedConditionLabel(selectedName);
+  const matchesHistory = (h: ClinicalPatientProfile['history'][number]) => h.conditionType === 'disease' && normalizeRecordedConditionLabel(h.name) === label;
+  const matchesDiagnosis = (d: RecordedPathology) => normalizeRecordedConditionLabel(d.name) === label;
+  if (!label || !source.history.some(matchesHistory)) return [];
+
+  const comparisonKey = `recorded-label:${label}`;
+  const forComparison = (profile: ClinicalPatientProfile): ClinicalPatientProfile => ({
+    ...profile,
+    // Temporary scoring anchors retain recorded dates. They are never persisted
+    // or returned as coded diagnoses. The chosen item is not counted twice.
+    diagnoses: [
+      ...profile.diagnoses.filter(d => !matchesDiagnosis(d)),
+      ...profile.diagnoses.filter(matchesDiagnosis).map(d => ({ pathologyId: comparisonKey, diagnosedAt: d.diagnosedAt })),
+      ...profile.history.filter(matchesHistory).map(h => ({ pathologyId: comparisonKey, diagnosedAt: h.diagnosisDate })),
+    ],
+    history: profile.history.filter(h => !matchesHistory(h)),
+  });
+  const own = forComparison(source);
+  const unique = new Map<string, ClinicalPatientProfile>();
+  for (const candidate of candidates) {
+    if (candidate.id === source.id || unique.has(candidate.id)) continue;
+    if (!candidate.history.some(matchesHistory) && !candidate.diagnoses.some(matchesDiagnosis)) continue;
+    unique.set(candidate.id, candidate);
+  }
+  return [...unique.values()]
+    .map(other => ({
+      ...scoreProfile(own, forComparison(other), comparisonKey),
+      samePathology: false,
+      matchBasis: 'recorded-label' as const,
+    }))
     .sort((a, b) => b.score - a.score || b.coveragePercent - a.coveragePercent || a.patientCode.localeCompare(b.patientCode, 'fr') || a.patientId.localeCompare(b.patientId));
 }

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { buildPathologyChoices, rankExactPathologyMatches, type ClinicalPatientProfile } from '../src/lib/patientSimilarity/clinicalSimilarity.ts';
+import { buildPathologyChoices, rankExactPathologyMatches, rankRecordedConditionMatches, type ClinicalPatientProfile } from '../src/lib/patientSimilarity/clinicalSimilarity.ts';
 
 const PATHOLOGY = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1';
 const OTHER = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb2';
@@ -31,6 +31,80 @@ test('offers a unique list of the source dossier’s recorded pathologies, never
   );
   assert.deepEqual(choices.map(p => p.id), [OTHER, PATHOLOGY]);
   assert.equal(buildPathologyChoices(null, []).length, 0);
+});
+
+test('includes uncoded diseases recorded in personal history, without treating procedures or blank entries as pathologies', () => {
+  const choices = buildPathologyChoices(null, [{ id: PATHOLOGY, name: 'Asthme' }], [
+    { id: '10000000-0000-4000-8000-000000000001', conditionType: 'disease', name: 'Eczéma' },
+    { id: '10000000-0000-4000-8000-000000000002', conditionType: 'disease', name: '  eczéma  ' },
+    { id: '10000000-0000-4000-8000-000000000003', conditionType: 'disease', name: 'Migraine' },
+    { id: '10000000-0000-4000-8000-000000000004', conditionType: 'disease', name: 'Allergie suspectée' },
+    { id: '10000000-0000-4000-8000-000000000005', conditionType: 'surgery', name: 'Appendicectomie' },
+    { id: '10000000-0000-4000-8000-000000000006', conditionType: 'hospitalization', name: 'Séjour hospitalier' },
+    { id: '10000000-0000-4000-8000-000000000007', conditionType: 'disease', name: '   ' },
+  ]);
+  assert.deepEqual(choices.map(p => p.name), ['Allergie suspectée', 'Asthme', 'Eczéma', 'Migraine']);
+  assert.equal(choices.find(p => p.name === 'Asthme')?.source, 'catalogue');
+  assert.equal(choices.find(p => p.name === 'Eczéma')?.source, 'history');
+  assert.equal(choices.find(p => p.name === 'Eczéma')?.id, 'history:10000000-0000-4000-8000-000000000001');
+});
+
+test('keeps separate canonical identities and the uncoded provenance even when labels coincide', () => {
+  const choices = buildPathologyChoices({ id: PATHOLOGY, name: 'Asthme' }, [{ id: OTHER, name: 'Asthme' }], [
+    { id: '10000000-0000-4000-8000-000000000001', name: 'Asthme', conditionType: 'disease' },
+  ]);
+  assert.equal(choices.length, 3);
+  assert.deepEqual(choices.filter(p => p.source === 'catalogue').map(p => p.id).sort(), [PATHOLOGY, OTHER].sort());
+});
+
+test('uncoded matching uses the complete recorded disease label across history and catalogue, without confirming a shared diagnosis', () => {
+  const source = patient('source', { diagnoses: [], history: [{ name: 'Eczéma', conditionType: 'disease' }] });
+  const sourceBefore = structuredClone(source);
+  const results = rankRecordedConditionMatches(source, 'Eczéma', [
+    patient('history', { diagnoses: [], history: [{ name: '  ECZEMA  ', conditionType: 'disease' }] }),
+    patient('coded', { diagnoses: [{ pathologyId: OTHER, name: 'Eczéma' }] }),
+    patient('suspected', { diagnoses: [], history: [{ name: 'Eczéma suspecté', conditionType: 'disease' }] }),
+    patient('negation', { diagnoses: [], history: [{ name: 'Absence d’eczéma', conditionType: 'disease' }] }),
+    patient('procedure', { diagnoses: [], history: [{ name: 'Eczéma', conditionType: 'surgery' }] }),
+    patient('unknown-kind', { diagnoses: [], history: [{ name: 'Eczéma' }] }),
+    source,
+    patient('history', { diagnoses: [], history: [{ name: 'Eczéma', conditionType: 'disease' }] }),
+  ]);
+  assert.deepEqual(results.map(p => p.patientId).sort(), ['coded', 'history']);
+  for (const result of results) {
+    assert.equal(result.samePathology, false);
+    assert.equal(result.matchBasis, 'recorded-label');
+    assert.equal(result.componentScores.medicalHistory, null);
+    assert.equal(result.componentScores.coDiagnoses, null);
+    assert.ok(result.score < 25, 'the entry being compared must not inflate similarity by counting itself');
+  }
+  assert.deepEqual(source, sourceBefore, 'scoring must never change clinical records');
+});
+
+test('uncoded chronology uses the recorded date while excluding the index condition from shared risk factors', () => {
+  const source = patient('source', { diagnoses: [], history: [
+    { name: 'Migraine', conditionType: 'disease', diagnosisDate: '2024-01-01' },
+    { name: 'Eczéma', conditionType: 'disease', diagnosisDate: '2018-01-01' },
+  ] });
+  const earlier = patient('earlier', { diagnoses: [], history: [
+    { name: 'Migraine', conditionType: 'disease', diagnosisDate: '2020-01-01' },
+    { name: 'Eczéma', conditionType: 'disease', diagnosisDate: '2014-01-01' },
+  ] });
+  const future = patient('future', { diagnoses: [], history: [
+    { name: 'Migraine', conditionType: 'disease', diagnosisDate: '2020-01-01' },
+    { name: 'Eczéma', conditionType: 'disease', diagnosisDate: '2024-01-01' },
+  ] });
+  const matches = rankRecordedConditionMatches(source, 'Migraine', [future, earlier]);
+  assert.equal(matches[0].patientId, 'earlier');
+  assert.ok((matches[0].componentScores.chronology ?? 0) > 0.99);
+  assert.equal(matches[1].componentScores.chronology, null);
+  assert.ok(matches.every(p => p.sharedFactors.every(f => !f.includes('Migraine'))));
+});
+
+test('uncoded comparison requires a disease explicitly present in the source history', () => {
+  const peer = patient('peer', { history: [{ name: 'Asthme', conditionType: 'disease' }] });
+  assert.deepEqual(rankRecordedConditionMatches(patient('source'), 'Asthme', [peer]), []);
+  assert.deepEqual(rankRecordedConditionMatches(patient('source', { history: [{ name: 'Asthme', conditionType: 'surgery' }] }), 'Asthme', [peer]), []);
 });
 
 test('includes patients with exactly the same pathology UUID, excluding label-only or different UUIDs', () => {
