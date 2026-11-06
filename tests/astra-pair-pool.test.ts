@@ -62,7 +62,7 @@ test('candidate batches have the same concurrency and the final review waits for
   state = result.state;
   assert.deepEqual(engine.requests.map(r => r.pairs.length), [4, 4, 1]);
   assert.equal(result.pool.peakConcurrentBatches, 3);
-  assert.ok(engine.requests.every(request => request.options.model === FAST_PAIR_MODEL && request.options.reasoningEffort === 'low'));
+  assert.ok(engine.requests.every(request => request.options.model === FAST_PAIR_MODEL && request.options.reasoningEffort === 'none'));
   assert.equal(state.analysis.agentReview?.coverage.reviewedCandidatePairs, 9);
   assert.equal(nextAgentStep(state).kind, 'final');
   assert.ok(stages.slice(0, -1).every(stage => stage === 'candidate_pairs'));
@@ -135,28 +135,28 @@ test('successful queued reads reset consecutive read failures without creating a
   assert.equal(engine.requests.length, 3);
 });
 
-test('Sol receipts retain their actual model and effort after all pool slots have completed', async t => {
+test('Luna receipts retain their actual model and effort after all pool slots have completed', async t => {
   let clock = 1_800_000_000_000;
   t.mock.method(Date, 'now', () => clock);
   const engine = provider(() => clock, 10_000);
   const first = await runAgentPairPool(createAgentState(selection(4)), undefined, { ...engine, async persist() {} });
   assert.equal(first.pool.model, FAST_PAIR_MODEL);
-  assert.equal(first.pool.reasoningEffort, 'low');
+  assert.equal(first.pool.reasoningEffort, 'none');
   assert.equal(first.pool.slots.length, 2);
-  assert.ok(first.pool.slots.every(slot => slot.model === FAST_PAIR_MODEL && slot.reasoningEffort === 'low'));
+  assert.ok(first.pool.slots.every(slot => slot.model === FAST_PAIR_MODEL && slot.reasoningEffort === 'none'));
   assert.deepEqual(engine.requests.map(request => request.pairs.length), [4, 2]);
   for (const { options } of engine.requests) {
     assert.equal(options.clinicalTask, 'pair_relation_research');
-    assert.equal(options.maxTokens, 16_384);
+    assert.equal(options.maxTokens, 8_192);
     assert.equal(options.webSearch?.required, true);
-    assert.equal(options.webSearch?.searchContextSize, 'medium');
+    assert.equal(options.webSearch?.searchContextSize, 'low');
   }
   clock += 10_000;
   const second = await runAgentPairPool(first.state, first.pool, { ...engine, async persist() {} });
   assert.equal(second.blocked, false);
   assert.equal(second.pool.slots.length, 0);
   assert.equal(second.pool.model, FAST_PAIR_MODEL);
-  assert.equal(second.pool.reasoningEffort, 'low');
+  assert.equal(second.pool.reasoningEffort, 'none');
   assert.equal(second.state.analysis.agentReview?.coverage.webSearchedPairs, 6);
 });
 
@@ -202,7 +202,7 @@ test('a batch-size fallback also splits unsubmitted token retries while retainin
   assert.deepEqual(engine.requests.slice(2).map(request => request.pairs.length), Array(6).fill(1));
   const retried = first.pool.slots.filter(slot => slot.previousResponseId === 'resp_pool_1');
   assert.equal(retried.length, 2);
-  assert.ok(retried.every(slot => slot.pairHashes.length === 1 && slot.tokenRetries === 1 && slot.maxOutputTokens === 32_768));
+  assert.ok(retried.every(slot => slot.pairHashes.length === 1 && slot.tokenRetries === 1 && slot.maxOutputTokens === 16_384));
   const second = await runAgentPairPool(first.state, first.pool, { ...engine, retrieve, async persist() {} });
   assert.equal(second.blocked, false);
   assert.equal(second.state.analysis.agentReview?.coverage.webSearchedPairs, 6);
