@@ -8,8 +8,10 @@
     "src/vite-env.d.ts",
     "src/lib/patientSimilarity/**/*.ts",
     "src/components/patient/PatientPathologySimilarity.tsx",
+    "src/components/patient/PatientComparisonDetails.tsx",
     "tests/patient-pathology-similarity.test.ts",
     "tests/patient-matching-access.test.ts",
+    "tests/patient-comparison-evidence.test.ts",
     "tests/browser/patient-pathology.tsx"
   ]
 }

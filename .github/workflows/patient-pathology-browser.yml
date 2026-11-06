@@ -6,6 +6,7 @@ on:
     paths:
       - 'src/lib/patientSimilarity/**'
       - 'src/components/patient/PatientPathologySimilarity.tsx'
+      - 'src/components/patient/PatientComparisonDetails.tsx'
       - 'src/pages/PatientDetail.tsx'
       - 'tests/browser/patient-pathology.*'
       - 'scripts/check-patient-pathology-browser.mjs'
@@ -15,6 +16,7 @@ on:
     paths:
       - 'src/lib/patientSimilarity/**'
       - 'src/components/patient/PatientPathologySimilarity.tsx'
+      - 'src/components/patient/PatientComparisonDetails.tsx'
       - 'src/pages/PatientDetail.tsx'
       - 'tests/browser/patient-pathology.*'
       - 'scripts/check-patient-pathology-browser.mjs'
