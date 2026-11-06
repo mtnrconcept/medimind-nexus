@@ -251,7 +251,9 @@ export async function runAgentPairPool(initial: AgentMatrixState, savedPool: Age
           await commit(state, next);
           return;
         }
-        const budget = nextBackgroundTokenBudget({ retries: current.tokenRetries, maxOutputTokens: current.maxOutputTokens }, provider);
+        const budget = current.reasoningEffort === 'none' && provider.status === 'incomplete' && provider.incompleteReason === 'max_output_tokens' && current.tokenRetries < 2
+          ? Math.min(32_768, Math.max(16_384, (provider.maxOutputTokens ?? current.maxOutputTokens ?? 8_192) * 2))
+          : nextBackgroundTokenBudget({ retries: current.tokenRetries, maxOutputTokens: current.maxOutputTokens }, provider);
         if (budget !== null) {
           current.tokenRetries++; current.maxOutputTokens = budget;
           current.previousResponseId = current.responseId; current.responseId = undefined;
