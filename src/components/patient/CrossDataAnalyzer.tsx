@@ -246,11 +246,12 @@ const CrossDataAnalyzer = ({ patientData }: CrossDataAnalyzerProps) => {
   const [isAutoSelecting, setIsAutoSelecting] = useState(false);
   const [storedResult, setResult] = useState<AnalysisResult | null>(null);
   const resultJob = useRef<string | null>(null);
-  const result = displayedJob && resultJob.current === displayedJob.id ? storedResult : displayedJob?.result_payload.analysis ?? null;
+  const displayedElements = Array.isArray(displayedJob?.result_payload?.elements) ? displayedJob.result_payload.elements : [];
+  const result = displayedJob && resultJob.current === displayedJob.id ? storedResult : displayedJob?.result_payload?.analysis ?? null;
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
     resultJob.current = displayedJob?.id ?? null;
-    setResult(displayedJob?.result_payload.analysis ?? null);
+    setResult(displayedJob?.result_payload?.analysis ?? null);
   }, [displayedJob]);
   const [viewMode, setViewMode] = useState<'list' | 'network'>('list');
 
@@ -1148,7 +1149,7 @@ const CrossDataAnalyzer = ({ patientData }: CrossDataAnalyzerProps) => {
         <CardContent className="space-y-6">
           {displayedJob && (
             <div className="rounded-md border p-3 space-y-2">
-              <p className="text-xs font-medium">Analyse enregistrée · {displayedJob.result_payload.elements.length} éléments</p>
+              <p className="text-xs font-medium">Analyse enregistrée · {displayedElements.length} éléments</p>
               <p role="status">{displayedJob.progress_message}</p>
               {displayedJob.error_message && <p>{displayedJob.error_message}</p>}
               <p className="text-xs text-muted-foreground">Recherche web spécialisée · chaque paire examinée dans les deux sens · alternatives recroisées avant la revue finale. Les propositions nécessitent une validation médicale.</p>
@@ -1176,7 +1177,7 @@ const CrossDataAnalyzer = ({ patientData }: CrossDataAnalyzerProps) => {
               selectedTreatmentIds={selectedTreatments}
               selectedMedicationIds={selectedMedications}
               analysisResultFromParent={result}
-              analysisSnapshot={displayedJob ? { jobId: displayedJob.id, elements: displayedJob.result_payload.elements, selection: displayedJob.selection } : null}
+              analysisSnapshot={displayedJob ? { jobId: displayedJob.id, elements: displayedElements, selection: displayedJob.selection } : null}
               onSnapshotMatchChange={setGraphMatchesSnapshot}
               onAnalysisResultChange={incoming => setResult(ensureAnalysisShape(incoming as unknown as Parameters<typeof ensureAnalysisShape>[0]))}
               onAnalyzeWithOpenAI={runAnalysis}
@@ -1722,7 +1723,7 @@ const CrossDataAnalyzer = ({ patientData }: CrossDataAnalyzerProps) => {
               {/* Bouton d'analyse */}
               < div className="flex items-center justify-between" >
                 <p className="text-sm text-muted-foreground">
-                  {displayedJob ? `${displayedJob.result_payload.elements.length} éléments dans l’analyse affichée · ` : ''}{getTotalSelected()} dans la nouvelle sélection
+                  {displayedJob ? `${displayedElements.length} éléments dans l’analyse affichée · ` : ''}{getTotalSelected()} dans la nouvelle sélection
                 </p>
                 <Button
                   onClick={() => { void runAnalysis(); }}
