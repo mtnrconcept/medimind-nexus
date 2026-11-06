@@ -118,15 +118,15 @@ test('native citations must be in actual allowed tool sources, never generated U
 test('every selected pair is reviewed even if local relationships already exist', () => {
   const state = createAgentState(elements);
   const request = buildAgentRequest(state, nextAgentStep(state));
-  assert.equal(request.options.model, 'gpt-6.1-sol');
+  assert.equal(request.options.model, 'gpt-6-luna');
   assert.equal(request.options.forceModel, true);
-  assert.equal(request.options.reasoningEffort, 'low');
+  assert.equal(request.options.reasoningEffort, 'none');
   assert.equal(request.options.clinicalTask, 'pair_relation_research');
-  assert.equal(request.options.maxTokens, 16_384);
+  assert.equal(request.options.maxTokens, 8_192);
   assert.equal(request.options.skipClinicalBrain, undefined);
   assert.equal(request.options.webSearch?.required, true);
-  assert.equal(request.options.webSearch?.searchContextSize, 'medium');
-  assert.equal(state.analysis.agentReview?.pairModel, 'gpt-6.1-sol');
+  assert.equal(request.options.webSearch?.searchContextSize, 'low');
+  assert.equal(state.analysis.agentReview?.pairModel, 'gpt-6-luna');
   assert.equal(state.analysis.agentReview?.reviewModel, ASTRA_MODEL);
   assert.equal(nextAgentStep(state).pairs.length, 1);
   while (nextAgentStep(state).kind === 'pairs') {
@@ -205,7 +205,7 @@ test('unverified replacement plans cannot bypass candidate cross-checks', () => 
   assert.equal(nextAgentStep(state).kind, 'candidate_pairs');
   assert.equal(state.analysis.agentReview?.coverage.candidatePairs, 3);
   assert.equal(state.analysis.agentReview?.stage, 'candidate_pairs');
-  assert.equal(buildAgentRequest(state, nextAgentStep(state)).options.model, 'gpt-6.1-sol');
-  assert.equal(buildAgentRequest(state, nextAgentStep(state)).options.reasoningEffort, 'low');
+  assert.equal(buildAgentRequest(state, nextAgentStep(state)).options.model, 'gpt-6-luna');
+  assert.equal(buildAgentRequest(state, nextAgentStep(state)).options.reasoningEffort, 'none');
   assert.equal(nextAgentStep(state).pairs.every(p => [p.left.name,p.right.name].includes(candidate.name)), true);
 });
