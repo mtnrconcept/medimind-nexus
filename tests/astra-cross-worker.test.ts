@@ -460,7 +460,7 @@ test('fast sourced pairs and Astra review finish autonomously with every directi
     assert.equal(request.model, kind === 'pairs' ? 'gpt-6-luna' : ASTRA_MODEL,
       'An environment default must never replace the model assigned to this stage.');
     if (kind === 'pairs') {
-      assert.deepEqual(request.reasoning, { effort: 'none' });
+      assert.equal(request.reasoning, undefined);
       assert.equal(request.max_output_tokens, 8_192);
     }
     assert.deepEqual(request.text.format, kind === 'pairs' ? buildAgentPairFormat(pairs) : AGENT_PLAN_FORMAT);
@@ -521,7 +521,7 @@ test('four selected concepts use two Luna batches while tracing all six pair sea
   assert.deepEqual(f.submissions.map(item => item.kind), ['pairs', 'pairs', 'plan', 'final']);
   for (const { request } of pairSubmissions) {
     assert.equal(request.model, 'gpt-6-luna');
-    assert.deepEqual(request.reasoning, { effort: 'none' });
+    assert.equal(request.reasoning, undefined);
     assert.equal(request.max_output_tokens, 8_192);
     assert.equal(request.tool_choice, 'required');
   }
