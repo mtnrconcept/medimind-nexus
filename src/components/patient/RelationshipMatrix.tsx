@@ -83,7 +83,7 @@ interface AnalysisResult {
 
 import { buildPairHash, typedElementKey, type PairAssessment, type SelectedElement } from '../../../supabase/functions/cross-data-analyzer/analysis-utils';
 interface RelationshipMatrixProps {
-    snapshot?: { elements: SelectedElement[]; cells: Record<string, unknown[]> };
+    snapshot?: { elements?: SelectedElement[]; cells?: Record<string, unknown[]> };
     pathologies: Pathology[];
     symptoms: Symptom[];
     treatments: Treatment[];
@@ -151,9 +151,12 @@ export function RelationshipMatrix({
     // Exact identity only: two formulations must never be collapsed by fuzzy names.
     const matchesElement = (a: string,b: string) => normalizeForComparison(a) === normalizeForComparison(b);
 
+    const snapshotElements = Array.isArray(snapshot?.elements) ? snapshot.elements : [];
+    const snapshotCells = snapshot?.cells && typeof snapshot.cells === 'object' ? snapshot.cells : {};
+
     // Créer la liste de tous les éléments sélectionnés
     const allElements = useMemo((): MatrixElement[] => {
-        if (snapshot) return snapshot.elements.map(e => ({ ...e, id: typedElementKey(e) }));
+        if (snapshot && snapshotElements.length > 0) return snapshotElements.map(e => ({ ...e, id: typedElementKey(e) }));
         const elements: MatrixElement[] = [];
 
         // Pathologies
@@ -177,14 +180,14 @@ export function RelationshipMatrix({
         });
 
         return elements;
-    }, [snapshot, pathologies, symptoms, treatments, medications, selectedPathologies, selectedSymptoms, selectedTreatments, selectedMedications]);
+    }, [snapshot, snapshotElements, pathologies, symptoms, treatments, medications, selectedPathologies, selectedSymptoms, selectedTreatments, selectedMedications]);
 
     // Obtenir la pastille pour une intersection
     const getPillForIntersection = (rowElement: MatrixElement, colElement: MatrixElement): PillInfo | null => {
         if (rowElement.id === colElement.id) return null; // Même élément
 
         const pair = buildPairHash(rowElement.name, rowElement.type, colElement.name, colElement.type);
-        const causalLinks = snapshot ? (snapshot.cells[pair] || []) as CausalLink[] : analysisResult?.causalLinks || [];
+        const causalLinks = snapshot ? (snapshotCells[pair] || []) as CausalLink[] : analysisResult?.causalLinks || [];
 
         // Chercher un lien entre les deux éléments EXACTEMENT (dans les deux directions)
         // Le lien doit correspondre à CES DEUX éléments spécifiques, pas à d'autres
@@ -369,7 +372,7 @@ export function RelationshipMatrix({
                                                         ) : (
                                                             <span className="text-xs text-muted-foreground">{snapshot ?
                                                                 matrixEvidenceLabel(research,
-                                                                    buildPairHash(rowElement.name, rowElement.type, colElement.name, colElement.type) in snapshot.cells) : '-'}</span>
+                                                                    buildPairHash(rowElement.name, rowElement.type, colElement.name, colElement.type) in snapshotCells) : '-'}</span>
                                                         )}
                                                     </TableCell>
                                                 );
