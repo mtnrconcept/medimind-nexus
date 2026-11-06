@@ -15,7 +15,9 @@ export function resolveAIOutputTokens(options: {
   maxTokens?: number;
   reasoningEffort?: ClinicalReasoningEffort;
 } = {}): number {
-  const floor = options.reasoningEffort === 'max' || options.reasoningEffort === 'xhigh'
+  const floor = options.reasoningEffort === 'none'
+    ? 8_192
+    : options.reasoningEffort === 'max' || options.reasoningEffort === 'xhigh'
     ? 65_536
     : options.reasoningEffort === 'high' || options.reasoningEffort === 'medium'
       ? 32_768
