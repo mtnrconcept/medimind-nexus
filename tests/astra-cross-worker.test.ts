@@ -299,6 +299,18 @@ test('a production-era single-pair response completes before the remaining selec
   assert.equal(poolOf(job).peakConcurrentBatches, 8);
 });
 
+test('an explicit legacy regeneration keeps its single-pair recovery size while parallelizing the remaining work', async t => {
+  const f = fixture(t);
+  const job = f.seedLegacy(largeSelection);
+  job.status = 'failed';
+  (job.request_payload._matrix_runtime as Record<string, unknown>).regenerationRequired = true;
+  await f.dispatch({ action: 'agent.resume', jobId: job.id });
+  await f.drain();
+  assert.equal(job.status, 'completed');
+  assert.ok(f.submissions.filter(s => s.kind === 'pairs').every(s => s.pairs.length === 1));
+  assert.equal(poolOf(job).peakConcurrentBatches, 8);
+});
+
 test('a partial parallel batch retains valid cells and schedules only its missing pairs', async t => {
   const f = fixture(t, { partialFirstBatch: true });
   const job = await f.start(largeSelection);

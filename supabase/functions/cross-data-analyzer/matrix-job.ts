@@ -43,6 +43,7 @@ type MatrixRuntime = {
   controlUntil?: number;
   lastError?: { status?: number; code?: string; param?: string; type?: string };
   parallel?: AgentPairPool;
+  singlePairRecovery?: boolean;
 };
 const fields = [
   ['pathologyIds', 'externalPathologies', 'pathologies', 'id,name,severity'],
@@ -251,7 +252,9 @@ export async function handleMatrix(req: Request, body: Record<string, unknown>, 
             progress_message: 'Réponses parallèles conservées. Vous pouvez reprendre la synchronisation.' });
           return;
         }
-        const result = await runAgentPairPool(runtime.parallel ? agentState : { ...agentState, batchSize: AGENT_PAIR_BATCH_SIZE }, runtime.parallel, {
+        const result = await runAgentPairPool(runtime.parallel ? agentState : {
+          ...agentState, batchSize: runtime.singlePairRecovery ? 1 : AGENT_PAIR_BATCH_SIZE,
+        }, runtime.parallel, {
           start: (system, user, options) => startBackgroundAI(system, user, { ...options, clinicalRiskAssessment: job.request_payload.risk }),
           retrieve: retrieveBackgroundAI,
           async persist(reviewed, pool) {
@@ -609,6 +612,7 @@ export async function handleMatrix(req: Request, body: Record<string, unknown>, 
       result_payload: nextState,
       request_payload: { ...job.request_payload, _matrix_runtime: { ...runtime,
         ...(runtime?.parallel ? { parallel: resumeAgentPairPool(runtime.parallel) } : {}),
+        ...(regenerate && !runtime?.parallel ? { singlePairRecovery: true } : {}),
         ...(regenerate ? { lastProviderStatus: undefined, incompleteReason: undefined,
           ...(job.provider_response_id ? { lastRejectedResponseId: job.provider_response_id } : {}) } : {}),
         windowStartedAt: Date.now(), paused: false, retries: 0, creationPending: false, regenerationRequired: false } } })

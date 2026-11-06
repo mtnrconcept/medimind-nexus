@@ -196,9 +196,15 @@ export async function runAgentPairPool(initial: AgentMatrixState, savedPool: Age
     catch (error) { readError = error; }
     writes = writes.then(async () => {
       if (persistenceFailed || Date.now() >= deadline - 8_000) return;
-      if (provider && ['queued', 'in_progress'].includes(provider.status)) return;
       const next = structuredClone(pool), current = next.slots.find(s => s.id === slot.id);
       if (!current || current.responseId !== slot.responseId || current.phase !== 'running') return;
+      if (provider && ['queued', 'in_progress'].includes(provider.status)) {
+        if (current.readFailures) {
+          current.readFailures = 0; current.notBefore = 0; current.error = undefined;
+          await commit(state, next);
+        }
+        return;
+      }
       const reviewed = structuredClone(state);
       if (readError) {
         const http = readError instanceof OpenAIRequestError ? readError : null;

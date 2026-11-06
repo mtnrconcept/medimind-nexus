@@ -690,7 +690,7 @@ export async function prepareBackgroundJobRequest<T extends NativeJobPayload>(
     if (!id || !UUID.test(id) || !incoming.jobToken || !UUID.test(incoming.jobToken)) return stop(json({ error: 'jobId and jobToken are required' }, 400));
     const job = await store.load(id);
     const legacy = job?.requested_by == null && options.allowLegacyToken !== false;
-    if (!job || ['progressive_matrix', 'astra_cross_matrix'].includes(job.analysis_mode) || job.public_token !== incoming.jobToken ||
+    if (!job || ['progressive_matrix', 'astra_cross_matrix'].includes(job.analysis_mode ?? '') || job.public_token !== incoming.jobToken ||
         (!actor.service && (job.requested_by !== actor.userId && !legacy)) ||
         (!actor.service && job.expires_at && Date.parse(job.expires_at) <= Date.now())) {
       return stop(json({ error: 'Job not found or expired' }, 404));

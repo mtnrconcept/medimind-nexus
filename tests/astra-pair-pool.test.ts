@@ -102,3 +102,24 @@ test('351-pair scheduler benchmark compares serial and parallel execution with a
     sameLatencyGain: serial.pairStageSeconds / parallel.pairStageSeconds,
     doubleBatchLatencyGain: serial.pairStageSeconds / slowerBatches.pairStageSeconds }));
 });
+
+test('successful queued reads reset consecutive read failures without creating another response', async t => {
+  let clock = 1_800_000_000_000, reads = 0;
+  t.mock.method(Date, 'now', () => clock);
+  let state = createAgentState(selection(5)), pool = createAgentPairPool();
+  const engine = provider(() => clock);
+  const retrieve = async (id: string): Promise<AIBackgroundPollResult> => {
+    if (id === 'resp_pool_0' && reads++ < 18) {
+      if (reads % 2) throw new Error('Synthetic temporary network interruption.');
+      return { id, model: ASTRA_MODEL, provider: 'openai', status: 'in_progress' };
+    }
+    return engine.retrieve(id);
+  };
+  for (let i = 0; i < 30 && nextAgentStep(state).kind === 'pairs'; i++) {
+    const result = await runAgentPairPool(state, pool, { ...engine, retrieve, async persist() {} });
+    assert.equal(result.blocked, false);
+    state = result.state; pool = result.pool; clock += 20_000;
+  }
+  assert.equal(nextAgentStep(state).kind, 'plan');
+  assert.equal(engine.requests.length, 3);
+});
