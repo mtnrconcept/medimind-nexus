@@ -223,10 +223,11 @@ export function createToolTransport(deps: TransportDependencies) {
         const after = Number(url.searchParams.get('after') || 0);
         if (!Number.isSafeInteger(after) || after < 0) return json({ error: 'Curseur invalide.' }, 400);
         const job = isUUID(id) ? await store.get(id, owner) : await store.byRequest(requestId!, owner);
-        // Recovery may legitimately run before an uncertain start was accepted.
-        // Missing and foreign references are indistinguishable, owner-scoped data;
-        // polling a known task retains the strict not-found error contract.
-        if (!job) return isLookup ? json({ job: null }) : json({ error: 'Tâche inaccessible.' }, 404);
+        // Older clients recover uncertain starts through status(requestId).
+        // A request may not have been accepted yet; missing and foreign references
+        // are indistinguishable. A known jobId retains its strict not-found error.
+        if (!job) return isLookup || (id === null && isUUID(requestId))
+          ? json({ job: null }) : json({ error: 'Tâche inaccessible.' }, 404);
         // A recovery lookup only binds the request to its accepted task. Reading
         // results, replaying events and waking native workers belong to status.
         if (isLookup) return json({ job: publicJob(job, false, now()) });

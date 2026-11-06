@@ -104,14 +104,18 @@ test('sign-in is required and another user cannot read job or event contents', a
   assert.deepEqual((await list.json()).jobs, []);
 });
 
-test('request lookup treats absence as data while strict status keeps its 404 contract', async () => {
+test('request lookups, including legacy recovery, treat absence as data while known-job status stays strict', async () => {
   const app = setup(async () => jsonResponse());
   const response = await app.handler(lookup());
   assert.equal(response.status, 200);
   assert.equal(response.headers.get('cache-control'), 'no-store');
   assert.deepEqual(await response.json(), { job: null });
   assert.equal((await app.handler(status(requestId))).status, 404);
-  assert.equal((await app.handler(new Request(lookup().url.replace('action=lookup', 'action=status'), lookup()))).status, 404);
+  const legacy = await app.handler(new Request(lookup().url.replace('action=lookup', 'action=status'), lookup()));
+  assert.equal(legacy.status, 200);
+  assert.deepEqual(await legacy.json(), { job: null });
+  const knownJob = await app.handler(new Request(lookup().url.replace('action=lookup', 'action=status') + '&jobId=' + crypto.randomUUID(), lookup()));
+  assert.equal(knownJob.status, 404);
   assert.equal(app.calls(), 0);
   assert.equal(app.store.rows.size, 0);
 });
@@ -149,6 +153,9 @@ test('lookup cannot distinguish another owner task from absence and still requir
   assert.deepEqual(await foreign.json(), await absent.json());
   assert.equal((await app.handler(lookup(requestId, 'invalid'))).status, 401);
   assert.equal((await app.handler(new Request(lookup().url))).status, 401);
+  const legacyForeign = await app.handler(new Request(lookup(requestId, 'bob').url.replace('action=lookup', 'action=status'), lookup(requestId, 'bob')));
+  assert.equal(legacyForeign.status, 200);
+  assert.deepEqual(await legacyForeign.json(), { job: null });
   assert.equal(app.calls(), 1);
 });
 
