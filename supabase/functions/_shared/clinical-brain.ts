@@ -396,10 +396,10 @@ export function selectClinicalModel(
   if (input.task === 'pair_relation_research') {
     return {
       model: standardModel,
-      reasoningEffort: 'low',
+      reasoningEffort: 'none',
       timeoutMs: 120_000,
       finalReviewRequired: true,
-      routeReason: 'bounded pair evidence research; clinical risk is retained and final clinical review remains required',
+      routeReason: 'bounded pair evidence research on the fastest low-token route; clinical risk is retained and final clinical review remains required',
     };
   }
 
