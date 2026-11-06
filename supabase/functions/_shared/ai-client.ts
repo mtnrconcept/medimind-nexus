@@ -350,7 +350,7 @@ export function prepareClinicalAICall(
   // This explicit task collects pair evidence for later review. Inherited global
   // synthesis settings must not silently turn every pair into a max/pro analysis.
   const isPairResearch = options.clinicalTask === 'pair_relation_research';
-  const wantedEffort = isPairResearch ? 'low' : strongerReasoningEffort(options.reasoningEffort, route.reasoningEffort);
+  const wantedEffort = isPairResearch ? 'none' : strongerReasoningEffort(options.reasoningEffort, route.reasoningEffort);
   const supportedEffort = wantedEffort === 'max' && !supportsMaxPro ? 'xhigh' : wantedEffort;
   const routedOptions: AICallOptions = {
     ...options,
