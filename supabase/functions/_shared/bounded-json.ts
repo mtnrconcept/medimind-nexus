@@ -1,5 +1,5 @@
 // Enforce the limit on bytes actually read, including chunked and decompressed responses.
-export async function readBoundedJson(message: Request | Response, limit: number): Promise<unknown> {
+export async function readBoundedText(message: Request | Response, limit: number): Promise<string> {
   const reader = message.body?.getReader();
   if (!reader) throw new Error('Missing body');
   const decoder = new TextDecoder();
@@ -16,8 +16,12 @@ export async function readBoundedJson(message: Request | Response, limit: number
       }
       text += decoder.decode(value, { stream: true });
     }
-    return JSON.parse(text + decoder.decode());
+    return text + decoder.decode();
   } finally {
     reader.releaseLock();
   }
+}
+
+export async function readBoundedJson(message: Request | Response, limit: number): Promise<unknown> {
+  return JSON.parse(await readBoundedText(message, limit));
 }

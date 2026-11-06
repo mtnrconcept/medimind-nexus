@@ -1025,12 +1025,12 @@ const ContinuousDiscovery = () => {
                             <CardHeader>
                                 <CardTitle className="flex items-center gap-2">
                                     <Sparkles className="h-5 w-5 text-purple-600" />
-                                    {t('Radial Rings Discovery Engine')}
+                                    {t('Graphe de connaissances 3D')}
                                 </CardTitle>
                             </CardHeader>
                             <CardContent className="space-y-4">
                                 <p className="text-sm text-muted-foreground">
-                                    {t('Visualisation 3D des connexions médicales en anneaux concentriques. Ajoutez plusieurs pathologies pour analyser les comorbidités.')}
+                                    {t('Explorez les concepts médicaux par familles, suivez les chemins directs et indirects et consultez les références de chaque relation. Vous pouvez ajouter plusieurs pathologies.')}
                                 </p>
 
                                 {/* Added conditions chips */}
@@ -1099,12 +1099,10 @@ const ContinuousDiscovery = () => {
                                     </div>
                                 )}
 
-                                <div className="grid grid-cols-5 gap-2 text-xs text-center">
-                                    <div className="p-2 rounded bg-red-500/20 text-red-600">Ring 0: Pathologie(s)</div>
-                                    <div className="p-2 rounded bg-green-500/20 text-green-600">Ring 1: Traitements</div>
-                                    <div className="p-2 rounded bg-orange-500/20 text-orange-600">Ring 2: Effets</div>
-                                    <div className="p-2 rounded bg-purple-500/20 text-purple-600">Ring 3: Étiologie</div>
-                                    <div className="p-2 rounded bg-cyan-500/20 text-cyan-600">Ring 4: Frontières</div>
+                                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs text-center">
+                                    <div className="p-3 rounded bg-cyan-500/10 text-cyan-700 dark:text-cyan-300">12 familles de concepts</div>
+                                    <div className="p-3 rounded bg-violet-500/10 text-violet-700 dark:text-violet-300">Relations et preuves distinctes</div>
+                                    <div className="p-3 rounded bg-emerald-500/10 text-emerald-700 dark:text-emerald-300">Exploration progressive et sourcée</div>
                                 </div>
                             </CardContent>
                         </Card>

@@ -1,0 +1,15 @@
+{
+  "extends": "./tsconfig.app.json",
+  "compilerOptions": {
+    "noEmit": true
+  },
+  "include": [
+    "src/vite-env.d.ts",
+    "src/components/cde/RadialRingsModal.tsx",
+    "src/components/cde/knowledge-graph/**/*.ts",
+    "src/components/cde/knowledge-graph/**/*.tsx",
+    "src/lib/knowledgeGraph/**/*.ts",
+    "tests/browser/knowledge-graph.tsx",
+    "tests/browser/knowledge-graph-fixture.ts"
+  ]
+}

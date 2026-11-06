@@ -121,12 +121,12 @@ const AdvancedResearchPanel = () => {
         },
         radial: {
             icon: Sparkles,
-            title: 'Radial Rings',
-            description: 'Découverte 3D par anneaux concentriques',
+            title: 'Graphe de connaissances',
+            description: 'Constellations 3D, chemins et références',
             color: 'text-purple-500',
             bgColor: 'bg-purple-500/10',
             borderColor: 'border-purple-500/30',
-            endpoint: 'radial-rings-engine',
+            endpoint: 'deep-research-graph',
             placeholder: 'Ex: Syndrome néphrotique pédiatrique - recherche de micro-signaux étiologiques'
         }
     };
@@ -408,7 +408,7 @@ const AdvancedResearchPanel = () => {
                             className="w-full gap-2 bg-gradient-to-r from-purple-500 to-pink-600 hover:from-purple-600 hover:to-pink-700"
                         >
                             <Sparkles className="h-4 w-4" />
-                            {t('Lancer Radial Rings 3D')}
+                            {t('Explorer le graphe 3D')}
                         </Button>
                     ) : (
                         <Button
