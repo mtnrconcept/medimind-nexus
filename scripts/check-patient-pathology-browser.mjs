@@ -113,14 +113,14 @@ try{
  assert.match(await conditions.innerText(),/jours avant le diagnostic comparé/);
  await evidenceCard.getByRole('tab',{name:'Bilans et variables',exact:true}).click();
  const labs=evidenceCard.getByRole('region',{name:'Valeurs des bilans biologiques'});
- const crp=labs.getByRole('row').filter({has:labs.getByRole('rowheader',{name:'CRP',exact:true})});
+ const crp=labs.getByRole('row').filter({has:page.getByRole('rowheader',{name:'CRP',exact:true})});
  const crpText=await crp.innerText();
  for(const value of ['60 mg/L','80 mg/L','Écart : +20 mg/L','Proximité numérique : 75 %','Dates espacées de 2 jour(s)'])assert.ok(crpText.includes(value),value+': '+crpText);
  await crp.getByText('Tous les résultats (2)',{exact:true}).click();await crp.getByText('30 mg/L',{exact:true}).waitFor();
  await crp.getByText('Tous les résultats (2)',{exact:true}).click();
- const incompatible=labs.getByRole('row').filter({has:labs.getByRole('rowheader',{name:'Hémoglobine',exact:true})});
+ const incompatible=labs.getByRole('row').filter({has:page.getByRole('rowheader',{name:'Hémoglobine',exact:true})});
  assert.match(await incompatible.innerText(),/Unités différentes/);
- const incomplete=labs.getByRole('row').filter({has:labs.getByRole('rowheader',{name:'Résultat à compléter',exact:true})});
+ const incomplete=labs.getByRole('row').filter({has:page.getByRole('rowheader',{name:'Résultat à compléter',exact:true})});
  assert.match(await incomplete.innerText(),/Valeur non renseignée ou inexploitable/);
  assert.ok(!(await incomplete.innerText()).includes('Proximité numérique'));
  const vitals=evidenceCard.getByRole('region',{name:'Valeurs des constantes cliniques'});
