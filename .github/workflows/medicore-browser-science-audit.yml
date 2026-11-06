@@ -1,0 +1,282 @@
+name: MediCore browser and scientific audit
+
+on:
+  push:
+    branches: [codex/design-scientific-audit-20260906]
+    paths: ['.github/workflows/medicore-browser-science-audit.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: medicore-audit-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Verify repository and create dedicated worktree
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -z "$(git status --porcelain)"
+          git status --short --branch
+          git fetch origin main
+          git log -5 --format='%h %s'
+          test -f AGENTS.md
+          cat AGENTS.md
+          WORKTREE="$RUNNER_TEMP/medicore-audit-worktree"
+          AUDIT_OUTPUT="$RUNNER_TEMP/medicore-audit-output"
+          mkdir -p "$AUDIT_OUTPUT"
+          git worktree add -b "audit/browser-science-$GITHUB_RUN_ID" "$WORKTREE" "$GITHUB_SHA"
+          echo "WORKTREE=$WORKTREE" >> "$GITHUB_ENV"
+          echo "AUDIT_OUTPUT=$AUDIT_OUTPUT" >> "$GITHUB_ENV"
+          cd "$WORKTREE"
+          test -z "$(git status --porcelain)"
+          git status --short --branch | tee "$AUDIT_OUTPUT/git-status.txt"
+          git rev-parse HEAD > "$AUDIT_OUTPUT/audited-sha.txt"
+          git rev-parse origin/main > "$AUDIT_OUTPUT/observed-main-sha.txt"
+          git ls-files > "$AUDIT_OUTPUT/tracked-files.txt"
+          git bundle create "$RUNNER_TEMP/medicore-audit-source.bundle" HEAD
+          mkdir -p .audit-work
+      - name: Run repository quality checks independently
+        working-directory: ${{ env.WORKTREE }}
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json, os, subprocess
+          from pathlib import Path
+          out = Path(os.environ['AUDIT_OUTPUT'])
+          commands = {
+              'install': ['npm', 'ci'],
+              'tests': ['npm', 'test'],
+              'typecheck_focused': ['npm', 'run', 'typecheck'],
+              'typecheck_full': ['npm', 'run', 'typecheck:full'],
+              'lint': ['npm', 'run', 'lint'],
+              'build': ['npm', 'run', 'build'],
+              'clinical_brain_existing': ['npm', 'run', 'clinical-brain:audit'],
+              'dependency_audit': ['node', 'scripts/audit-production.mjs'],
+          }
+          results = {}
+          for name, command in commands.items():
+              with (out / (name + '.log')).open('w') as log:
+                  try:
+                      result = subprocess.run(command, stdout=log, stderr=subprocess.STDOUT, timeout=240)
+                      results[name] = {'command': command, 'exit_code': result.returncode}
+                  except subprocess.TimeoutExpired:
+                      results[name] = {'command': command, 'exit_code': 124, 'error': 'timeout'}
+              print(name, results[name]['exit_code'], flush=True)
+              print('\n'.join((out / (name + '.log')).read_text(errors='replace').splitlines()[-8:]), flush=True)
+              (out / 'quality-checks.json').write_text(json.dumps(results, indent=2))
+          PY
+      - name: Inventory routes, functions and environment names
+        if: always() && env.WORKTREE != ''
+        working-directory: ${{ env.WORKTREE }}
+        run: |
+          python - <<'PY'
+          import json, os, re
+          from pathlib import Path
+          out = Path(os.environ['AUDIT_OUTPUT'])
+          app = Path('src/App.tsx').read_text()
+          routes = []
+          for path, element in re.findall(r'<Route\s+path="([^"]+)"\s+element=\{([^\n]+)', app):
+              routes.append({'path': path, 'guard_present_in_source': '<ProtectedRoute' in element,
+                             'backend_execution': 'NOT_TESTED_NO_DEDICATED_SESSION'})
+          functions = sorted(p.parent.name for p in Path('supabase/functions').glob('*/index.ts') if not p.parent.name.startswith('_'))
+          invocations, env_names = [], set()
+          for root in ('src', 'supabase/functions', 'scripts'):
+              for p in Path(root).rglob('*'):
+                  if not p.is_file() or p.suffix not in ('.ts', '.tsx', '.js', '.mjs'): continue
+                  text = p.read_text(errors='replace')
+                  for name in re.findall(r"functions\.invoke\s*\(\s*['\"]([^'\"]+)['\"]", text):
+                      invocations.append({'function': name, 'file': str(p)})
+                  env_names.update(re.findall(r"(?:Deno\.env\.get\(['\"]|import\.meta\.env\.|process\.env\.)([A-Z][A-Z0-9_]+)", text))
+          inventory = {'routes': routes, 'edge_functions': functions, 'invocations': invocations,
+                       'referenced_environment_names': sorted(env_names), 'secret_values_collected': False,
+                       'migrations': sorted(p.name for p in Path('supabase/migrations').glob('*.sql'))}
+          (out / 'inventory.json').write_text(json.dumps(inventory, indent=2))
+          print(json.dumps({'routes': routes, 'edge_function_count': len(functions), 'invocation_count': len(invocations)}, indent=2))
+          PY
+      - name: Challenge scientific routing with reproducible cases
+        if: always() && env.WORKTREE != ''
+        working-directory: ${{ env.WORKTREE }}
+        shell: bash
+        run: |
+          cat > .audit-work/scientific.ts <<'TS'
+          import assert from 'node:assert/strict';
+          import { writeFileSync } from 'node:fs';
+          import { join } from 'node:path';
+          import { detectHighRiskContext, selectClinicalModel, profileClinicalPrompt } from '../supabase/functions/_shared/clinical-brain.ts';
+          const results: Array<{name: string; passed: boolean; error?: string}> = [];
+          function check(name: string, action: () => void) {
+            try { action(); results.push({name, passed: true}); }
+            catch (error) { results.push({name, passed: false, error: error instanceof Error ? error.message : String(error)}); }
+          }
+          check('Neutral text must not become a vulnerable-patient context through a substring', () => {
+            assert.equal(detectHighRiskContext({ freeText: 'Message de suivi administratif.' }).riskLevel, 'low');
+          });
+          check('A risk-catalog medication must be detected when supplied as free text', () => {
+            assert.ok(detectHighRiskContext({ freeText: 'Patient sous warfarin.' }).flags.includes('high_risk_medication'));
+          });
+          const critical = detectHighRiskContext({ freeText: 'Hemorragie digestive.' });
+          const env = { OPENAI_CLINICAL_STANDARD_MODEL: 'standard-test-route', OPENAI_CLINICAL_CRITICAL_MODEL: 'critical-test-route' };
+          check('Critical known interactions must use the configured critical route', () => {
+            assert.equal(selectClinicalModel({task: 'known_interaction', riskAssessment: critical}, env).model, 'critical-test-route');
+          });
+          check('Critical official-label tasks must retain the configured critical route', () => {
+            assert.equal(selectClinicalModel({task: 'official_label_summary', riskAssessment: critical}, env).model, 'critical-test-route');
+          });
+          check('Explicitly unavailable PubMed evidence must not be classified as available evidence', () => {
+            assert.equal(profileClinicalPrompt('Recherche medicale: sources PubMed indisponibles, aucune preuve recuperee.').hasExternalEvidence, false);
+          });
+          check('Structured medication input retains the existing high-risk guard', () => {
+            assert.ok(detectHighRiskContext({medications: [{name: 'warfarin'}]}).flags.includes('high_risk_medication'));
+          });
+          check('Critical polypharmacy retains the existing critical model route', () => {
+            assert.equal(selectClinicalModel({task: 'polypharmacy', riskAssessment: critical, elementCount: 8}, env).model, 'critical-test-route');
+          });
+          const report = { scope: 'deterministic software invariants; not clinical validation or model-output evaluation', results };
+          writeFileSync(join(process.env.AUDIT_OUTPUT!, 'scientific-regressions.json'), JSON.stringify(report, null, 2));
+          console.log(JSON.stringify(report, null, 2));
+          TS
+          ./node_modules/.bin/tsx .audit-work/scientific.ts
+      - name: Install actual Chromium browser
+        if: always() && env.WORKTREE != ''
+        run: |
+          python -m pip install playwright==1.58.0
+          python -m playwright install --with-deps chromium
+      - name: Exercise deployed interface without patient-data access
+        if: always() && env.WORKTREE != ''
+        working-directory: ${{ env.WORKTREE }}
+        shell: bash
+        run: |
+          cat > .audit-work/browser.py <<'PY'
+          import json, os, re
+          from pathlib import Path
+          from urllib.parse import urlparse
+          from playwright.sync_api import sync_playwright, TimeoutError as BrowserTimeout
+          out = Path(os.environ['AUDIT_OUTPUT'])
+          inventory = json.loads((out / 'inventory.json').read_text())
+          base = 'https://medimind-nexus.vercel.app'
+          records = []
+          protected = {r['path'] for r in inventory['routes'] if r['guard_present_in_source']}
+          protected.add('/admin')
+          paths = [r['path'] for r in inventory['routes'] if r['path'] != '*'] + ['/__medicore_audit_missing_route__']
+          with sync_playwright() as p:
+              browser = p.chromium.launch()
+              for viewport_name, viewport in [('desktop', {'width': 1440, 'height': 1000}), ('mobile', {'width': 390, 'height': 844})]:
+                  context = browser.new_context(viewport=viewport, locale='fr-CH', reduced_motion='reduce')
+                  def guard(route):
+                      request = route.request
+                      host = urlparse(request.url).hostname or ''
+                      if host.endswith('.supabase.co') or host.endswith('.supabase.in') or request.method not in ('GET', 'HEAD'):
+                          route.fulfill(status=503, content_type='application/json', body='{"error":"AUDIT_DATA_SERVICES_BLOCKED"}')
+                      else:
+                          route.continue_()
+                  context.route('**/*', guard)
+                  context.route_web_socket('**/realtime/**', lambda ws: ws.close())
+                  for path in paths:
+                      concrete = re.sub(r':[^/]+', '00000000-0000-4000-8000-000000000000', path)
+                      page = context.new_page()
+                      errors = []
+                      page.on('pageerror', lambda error: errors.append(str(error)[:500]))
+                      row = {'route': path, 'viewport': viewport_name, 'scope': 'LIVE_FRONTEND_DATA_SERVICES_INTERCEPTED',
+                             'backend_functionality': 'NOT_TESTED', 'authenticated_session': False}
+                      try:
+                          response = page.goto(base + concrete, wait_until='domcontentloaded', timeout=30000)
+                          page.wait_for_function("document.querySelector('#root')?.innerText.trim().length > 10", timeout=15000)
+                          if path in protected:
+                              try: page.wait_for_url('**/auth*', timeout=5000)
+                              except BrowserTimeout: pass
+                          try: page.wait_for_load_state('networkidle', timeout=5000)
+                          except BrowserTimeout: pass
+                          row['http_status'] = response.status if response else None
+                          row['final_path'] = urlparse(page.url).path
+                          row['guard_passed'] = row['final_path'] == '/auth' if path in protected else None
+                          row['metrics'] = page.evaluate('''() => {
+                            const visible = e => { const r=e.getBoundingClientRect(); return r.width>0 && r.height>0; };
+                            const controls = [...document.querySelectorAll('button,input,select,textarea')].filter(visible);
+                            const name = e => e.getAttribute('aria-label') || (e.getAttribute('aria-labelledby') || '').split(' ').map(id=>document.getElementById(id)?.textContent||'').join(' ').trim() || [...(e.labels||[])].map(l=>l.textContent).join(' ').trim() || e.getAttribute('title') || (e.tagName==='BUTTON' ? e.innerText.trim() : '');
+                            return {width:innerWidth, scrollWidth:document.documentElement.scrollWidth,
+                              horizontalOverflow:document.documentElement.scrollWidth > innerWidth+2,
+                              headings:[...document.querySelectorAll('h1,h2,h3')].filter(visible).map(e=>e.innerText).slice(0,20),
+                              controlCount:controls.length, unnamedControls:controls.filter(e=>!name(e)).map(e=>({tag:e.tagName,type:e.getAttribute('type')})),
+                              links:[...document.querySelectorAll('a[href]')].filter(visible).map(e=>({text:e.innerText,href:e.getAttribute('href')})).slice(0,30)};
+                          }''')
+                          if path == '/':
+                              page.locator('#patientId').fill('AUDIT-NOT-A-PATIENT')
+                              page.locator('#password').fill('incorrect-audit-code')
+                              page.locator('button[type=submit]').click()
+                              page.get_by_text('Mot de passe incorrect', exact=True).wait_for(timeout=5000)
+                              row['invalid_code_ui_feedback'] = True
+                              page.locator('#patientId').fill('')
+                              page.locator('#password').fill('')
+                          safe = re.sub('[^a-zA-Z0-9_-]', '_', path) or 'root'
+                          screenshot = f'{viewport_name}-{safe}.png'
+                          page.screenshot(path=str(out / screenshot), full_page=True, timeout=15000)
+                          row['screenshot'] = screenshot
+                          row['rendered'] = True
+                      except Exception as error:
+                          row['rendered'] = False
+                          row['error'] = str(error)[:800]
+                      finally:
+                          row['page_errors'] = errors.copy()
+                          row['passed'] = row.get('rendered', False) and not errors and row.get('guard_passed') is not False and not row.get('metrics', {}).get('horizontalOverflow', False)
+                          records.append(row)
+                          print(json.dumps(row, ensure_ascii=False), flush=True)
+                          (out / 'browser-results.json').write_text(json.dumps({'browser': browser.version, 'results': records, 'full_tool_validation': False}, indent=2, ensure_ascii=False))
+                          page.close()
+                  context.close()
+              browser.close()
+          PY
+          python -m py_compile .audit-work/browser.py
+          python .audit-work/browser.py
+      - name: Save evidence even when validation fails
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: medicore-browser-science-evidence
+          path: ${{ runner.temp }}/medicore-audit-output/
+          retention-days: 7
+          if-no-files-found: error
+      - name: Export actual git objects for isolated follow-up review
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: medicore-audit-source
+          path: ${{ runner.temp }}/medicore-audit-source.bundle
+          retention-days: 1
+          if-no-files-found: error
+      - name: Explicit validation gate (untested is not passed)
+        if: always() && env.WORKTREE != ''
+        working-directory: ${{ env.WORKTREE }}
+        run: |
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          out = Path(os.environ['AUDIT_OUTPUT'])
+          def load(name):
+              p = out / name
+              return json.loads(p.read_text()) if p.exists() else {}
+          quality = load('quality-checks.json')
+          scientific = load('scientific-regressions.json').get('results', [])
+          browser = load('browser-results.json').get('results', [])
+          report = {'status': 'NOT_VALIDATED', 'quality_failures': [k for k,v in quality.items() if v['exit_code'] != 0],
+                    'scientific_failed': sum(not r['passed'] for r in scientific), 'scientific_total': len(scientific),
+                    'browser_failed': sum(not r['passed'] for r in browser), 'browser_total': len(browser),
+                    'authenticated_tool_workflows': 'BLOCKED_NO_DEDICATED_SESSION', 'model_output_scientific_validation': 'NOT_PERFORMED'}
+          print(json.dumps(report, indent=2))
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as f:
+              f.write('# MediCore audit: not scientifically validated\n\n```json\n' + json.dumps(report, indent=2) + '\n```\n')
+          raise SystemExit(1)
+          PY
