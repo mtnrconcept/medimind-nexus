@@ -9,7 +9,7 @@ import {
   type AICallOptions,
 } from '../supabase/functions/_shared/ai-client.ts';
 
-const baseOptions: AICallOptions = { model: 'gpt-6.1-sol', skipClinicalBrain: true };
+const baseOptions: AICallOptions = { model: 'gpt-6-luna', skipClinicalBrain: true };
 const asJson = (data: unknown) => new Response(JSON.stringify(data), {
   status: 200, headers: { 'Content-Type': 'application/json' },
 });
@@ -55,7 +55,7 @@ test('every OpenAI request leaves room for reasoning and preserves larger explic
   assert.deepEqual(seen, [16_384, 16_384, 32_768, 32_768, 65_536, 65_536, 80_000, 128_000]);
 });
 
-test('pair research sends Sol low with required medical web search and structured output in direct and background requests', async (t) => {
+test('pair research sends Luna without reasoning with required medical web search and structured output in direct and background requests', async (t) => {
   const retrieved = { title: 'Synthetic retrieved record', url: 'https://pubmed.ncbi.nlm.nih.gov/12345678/' };
   const responseFormat = { type: 'json_schema', name: 'pair_relation_research', strict: true,
     schema: { type: 'object', properties: { relation: { type: 'string' } }, required: ['relation'], additionalProperties: false } };
@@ -72,21 +72,21 @@ test('pair research sends Sol low with required medical web search and structure
         });
       });
       const options: AICallOptions = {
-        clinicalTask: 'pair_relation_research', model: 'gpt-6.1-sol', forceModel: true,
-        reasoningEffort: 'low', maxTokens: 16_384, responseFormat, temperature: 0.1,
+        clinicalTask: 'pair_relation_research', model: 'gpt-6-luna', forceModel: true,
+        reasoningEffort: 'none', maxTokens: 8_192, responseFormat, temperature: 0.1,
         clinicalInput: { medications: [{ name: 'Warfarin' }], symptoms: [{ name: 'Hémorragie' }], selectedElementCount: 12 },
-        webSearch: { allowedDomains: domains, required: true, searchContextSize: 'medium', maxToolCalls: 16 },
+        webSearch: { allowedDomains: domains, required: true, searchContextSize: 'low', maxToolCalls: 8 },
       };
       const result = mode === 'direct'
         ? await callAI('Rechercher les preuves pour une seule paire.', 'Contexte clinique synthétique de test.', options)
         : await startBackgroundAI('Rechercher les preuves pour une seule paire.', 'Contexte clinique synthétique de test.', options);
       assert.ok(url.endsWith('/responses'));
-      assert.equal(body.model, 'gpt-6.1-sol');
-      assert.deepEqual(body.reasoning, { effort: 'low' });
-      assert.equal(body.max_output_tokens, 16_384);
+      assert.equal(body.model, 'gpt-6-luna');
+      assert.deepEqual(body.reasoning, { effort: 'none' });
+      assert.equal(body.max_output_tokens, 8_192);
       assert.equal(body.tool_choice, 'required');
-      assert.equal(body.max_tool_calls, 16);
-      assert.deepEqual(body.tools, [{ type: 'web_search', filters: { allowed_domains: domains }, search_context_size: 'medium', external_web_access: true }]);
+      assert.equal(body.max_tool_calls, 8);
+      assert.deepEqual(body.tools, [{ type: 'web_search', filters: { allowed_domains: domains }, search_context_size: 'low', external_web_access: true }]);
       assert.deepEqual(body.include, ['web_search_call.action.sources']);
       assert.deepEqual(body.text, { format: responseFormat });
       assert.equal('temperature' in body, false);
