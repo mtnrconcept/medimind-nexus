@@ -343,7 +343,7 @@ test('parallel token retries preserve siblings and require explicit recovery aft
   assert.equal(Object.keys(job.result_payload.cells).length, 4);
   const saved = new Set(Object.keys(job.result_payload.cells));
   const exhausted = poolOf(job).slots.find(s => s.tokenRetries === 2 && s.phase === 'blocked');
-  assert.ok(exhausted, 'Sol has two bounded increases from its smaller initial budget');
+  assert.ok(exhausted, 'Luna has two bounded increases from its smaller initial budget');
   assert.deepEqual(f.submissions.filter(s => s.pairs.some(pair => pair.pairHash === exhausted.pairHashes[0]))
     .map(s => s.request.max_output_tokens), [8_192, 16_384, 32_768]);
   const before = f.submissions.length;
@@ -510,7 +510,7 @@ test('a legacy accepted Astra response resumes under its original model without 
   assert.equal(job.result_payload.analysis.agentReview?.reviewModel, ASTRA_MODEL);
 });
 
-test('four selected concepts use two Sol batches while tracing all six pair searches independently', async t => {
+test('four selected concepts use two Luna batches while tracing all six pair searches independently', async t => {
   const f = fixture(t);
   const elements: SelectedElement[] = [...selected, { name: 'Traitement Delta', type: 'treatment' }];
   const job = await f.start(elements);
@@ -588,7 +588,7 @@ test('a model bibliography without a native web trace fails the stage and can be
 });
 
 test('a response from another model is retained for audit and replaced only by an explicit Astra resume', async t => {
-  const f = fixture(t, { providerModel: 'gpt-6-luna' });
+  const f = fixture(t, { providerModel: 'gpt-6.1-sol' });
   const job = await f.start(selected.slice(0, 2));
   await f.drain();
   assert.equal(job.status, 'failed');
