@@ -129,8 +129,8 @@ test('explicit pair research stays on the fast route at every risk level while r
     const before = structuredClone(risk);
     const route = selectClinicalModel({ task: 'pair_relation_research', riskAssessment: risk,
       elementCount: 12, hasExternalEvidence: true });
-    assert.equal(route.model, 'gpt-6.1-sol');
-    assert.equal(route.reasoningEffort, 'low');
+    assert.equal(route.model, 'gpt-6-luna');
+    assert.equal(route.reasoningEffort, 'none');
     assert.equal(route.reasoningMode, undefined);
     assert.equal(route.finalReviewRequired, true);
     assert.deepEqual(risk, before);
@@ -151,13 +151,13 @@ test('pair research is never inferred from untrusted clinical prompt wording', (
 test('pair research caps inherited reasoning settings without dropping clinical risk, citations or the forced model', () => {
   for (const reasoningEffort of ['none', 'low', 'high', 'max'] as const) {
     const result = prepareClinicalAICall('Rechercher les preuves pour cette paire uniquement.', 'Patient sous warfarin avec hémorragie.', {
-      clinicalTask: 'pair_relation_research', model: 'gpt-6.1-sol', forceModel: true,
-      reasoningEffort, reasoningMode: 'pro', elementCount: 12, maxTokens: 16_384,
+      clinicalTask: 'pair_relation_research', model: 'gpt-6-luna', forceModel: true,
+      reasoningEffort, reasoningMode: 'pro', elementCount: 12, maxTokens: 8_192,
     }, key => key === 'OPENAI_MODEL' || key === 'OPENAI_CLINICAL_STANDARD_MODEL' ? 'gpt-6-astra' : undefined);
-    assert.equal(result.options.model, 'gpt-6.1-sol');
-    assert.equal(result.options.reasoningEffort, 'low');
+    assert.equal(result.options.model, 'gpt-6-luna');
+    assert.equal(result.options.reasoningEffort, 'none');
     assert.equal(result.options.reasoningMode, undefined);
-    assert.equal(result.options.maxTokens, 16_384);
+    assert.equal(result.options.maxTokens, 8_192);
     assert.notEqual(result.options.skipClinicalBrain, true);
     assert.equal(result.clinicalSafety?.riskLevel, 'critical');
     assert.equal(result.clinicalSafety?.requiresHumanValidation, true);
