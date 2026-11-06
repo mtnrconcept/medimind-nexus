@@ -237,30 +237,6 @@ try {
   assert.deepEqual(await page.evaluate(() => window.__knowledgeGraphHarness.actions), ['save', 'load', 'expand:anti-nephrin', 'deep-analysis']);
   recordPass('expansion and deep analysis require explicit actions and invoke only supplied local callbacks');
 
-  const three = await openHarness();
-  await waitForMode(three, '3d');
-  await three.locator('canvas').waitFor();
-  const centralLabel = three.getByRole('button', { name: 'Sélectionner Syndrome néphrotique', exact: true });
-  await centralLabel.waitFor();
-  assert.deepEqual(await visibleCounts(three), { nodes: 50, edges: 51 });
-  const canvasBounds = await three.locator('canvas').boundingBox();
-  assert.ok(canvasBounds.width > 850 && canvasBounds.height > 550, 'The 3D canvas must occupy the available workspace.');
-  await snapshot(three, 'knowledge-graph-desktop-3d');
-  await centralLabel.click();
-  assert.match(await three.locator('.kg-node-family').innerText(), /PATHOLOGY/);
-  await three.getByRole('button', { name: 'Passer en vue 2D', exact: true }).click();
-  await waitForMode(three, '2d');
-  assert.deepEqual(await visibleCounts(three), { nodes: 50, edges: 51 });
-  await three.getByRole('button', { name: 'Passer en vue 3D', exact: true }).click();
-  await waitForMode(three, '3d');
-  await three.locator('canvas').waitFor();
-  await centralLabel.waitFor();
-  await three.locator('canvas').evaluate(canvas => canvas.dispatchEvent(new Event('webglcontextlost', { cancelable: true })));
-  await waitForMode(three, '2d');
-  assert.deepEqual(await visibleCounts(three), { nodes: 50, edges: 51 });
-  recordPass('3D rendering, 2D toggle, and context-loss fallback retain the same graph');
-  await three.close();
-
   const mobile = await openHarness('?webgl=off', { width: 390, height: 844 });
   await waitForMode(mobile, '2d');
   await assertNoOverflow(mobile);
@@ -299,6 +275,30 @@ try {
   assert.match(await geneRoot.locator('.kg-node-family').innerText(), /GENE/);
   recordPass('an explicit gene root takes precedence over a legacy ring-zero pathology');
   await geneRoot.close();
+
+  const three = await openHarness();
+  await waitForMode(three, '3d');
+  await three.locator('canvas').waitFor();
+  const centralLabel = three.getByRole('button', { name: 'Sélectionner Syndrome néphrotique', exact: true });
+  await centralLabel.waitFor();
+  assert.deepEqual(await visibleCounts(three), { nodes: 50, edges: 51 });
+  const canvasBounds = await three.locator('canvas').boundingBox();
+  assert.ok(canvasBounds.width > 850 && canvasBounds.height > 550, 'The 3D canvas must occupy the available workspace.');
+  await snapshot(three, 'knowledge-graph-desktop-3d');
+  await centralLabel.click();
+  assert.match(await three.locator('.kg-node-family').innerText(), /PATHOLOGY/);
+  await three.getByRole('button', { name: 'Passer en vue 2D', exact: true }).click();
+  await waitForMode(three, '2d');
+  assert.deepEqual(await visibleCounts(three), { nodes: 50, edges: 51 });
+  await three.getByRole('button', { name: 'Passer en vue 3D', exact: true }).click();
+  await waitForMode(three, '3d');
+  await three.locator('canvas').waitFor();
+  await centralLabel.waitFor();
+  await three.locator('canvas').evaluate(canvas => canvas.dispatchEvent(new Event('webglcontextlost', { cancelable: true })));
+  await waitForMode(three, '2d');
+  assert.deepEqual(await visibleCounts(three), { nodes: 50, edges: 51 });
+  recordPass('3D rendering, 2D toggle, and context-loss fallback retain the same graph');
+  await three.close();
 
   const empty = await openHarness('?state=empty&webgl=off');
   await empty.getByRole('heading', { name: 'Aucun concept disponible', exact: true }).waitFor();

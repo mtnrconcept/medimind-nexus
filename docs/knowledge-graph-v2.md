@@ -78,6 +78,8 @@ Aucune migration SQL n’est nécessaire. Lors d’une livraison de production a
 
 Le retour arrière consiste à rétablir les versions précédentes de la fonction et du frontend. Les champs historiques des sauvegardes sont conservés. Aucune suppression de données cliniques ou de sauvegardes n’est requise.
 
+Le test `astra-pair-schema.test.ts` est également aligné sur les lots de quatre paires introduits entre-temps dans la branche principale ; les extrémités, les identifiants et l’exclusion du contexte étranger sont vérifiés pour chacune des cellules du lot.
+
 ## Fichiers de cette refonte
 
 - `.github/workflows/knowledge-graph-browser.yml`
@@ -89,7 +91,6 @@ Le retour arrière consiste à rétablir les versions précédentes de la foncti
 - `src/components/cde/knowledge-graph/KnowledgeGraphScene.tsx`
 - `src/components/cde/knowledge-graph/knowledge-graph.css`
 - `src/components/cde/knowledge-graph/useKnowledgeGraphSession.ts`
-- `src/components/patient/RelationshipMatrix.tsx`
 - `src/contexts/AIContext.tsx`
 - `src/lib/knowledgeGraph/layout.ts`
 - `src/lib/knowledgeGraph/model.ts`
@@ -102,6 +103,7 @@ Le retour arrière consiste à rétablir les versions précédentes de la foncti
 - `supabase/functions/deep-research-graph/contract.ts`
 - `supabase/functions/deep-research-graph/handler.ts`
 - `supabase/functions/deep-research-graph/sources.ts`
+- `tests/astra-pair-schema.test.ts`
 - `tests/browser/knowledge-graph-fixture.ts`
 - `tests/browser/knowledge-graph.html`
 - `tests/browser/knowledge-graph.tsx`

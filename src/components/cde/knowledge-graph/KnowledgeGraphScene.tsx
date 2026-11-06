@@ -38,6 +38,22 @@ class CanvasBoundary extends Component<{ children: ReactNode; onFallback: () => 
   render() { return this.state.failed ? null : this.props.children; }
 }
 
+function ContextLossGuard({ onFallback }: { onFallback: () => void }) {
+  const { gl } = useThree();
+  useEffect(() => {
+    const canvas = gl.domElement;
+    const onLost = (event: Event) => {
+      event.preventDefault();
+      if (canvas.isConnected) onFallback();
+    };
+    canvas.addEventListener('webglcontextlost', onLost);
+    // R3F disposes an old renderer asynchronously after unmount. Its deliberate
+    // loss must never switch a subsequently mounted 3D scene back to 2D.
+    return () => canvas.removeEventListener('webglcontextlost', onLost);
+  }, [gl, onFallback]);
+  return null;
+}
+
 function CameraRig({ command, bounds }: { command: CameraCommand; bounds: ConstellationLayout['bounds'] }) {
   const { camera, size, invalidate } = useThree();
   const controls = useRef<OrbitControlsImpl>(null);
@@ -178,8 +194,7 @@ function WebGLScene(props: GraphSceneProps) {
   return <CanvasBoundary onFallback={props.onFallback}>
     <Canvas orthographic camera={{ position: [24, 16, 1200], near: 0.1, far: 5000, zoom: 0.8 }}
       dpr={[1, 1.75]} frameloop="demand" gl={{ antialias: true, alpha: true, powerPreference: 'high-performance' }}
-      onCreated={({ gl }) => { gl.domElement.setAttribute('aria-label', 'Graphe de connaissances en trois dimensions');
-        gl.domElement.addEventListener('webglcontextlost', event => { event.preventDefault(); props.onFallback(); }, { once: true }); }}
+      onCreated={({ gl }) => { gl.domElement.setAttribute('aria-label', 'Graphe de connaissances en trois dimensions'); }}
       onPointerMissed={event => {
         // R3F listens on the parent containing both the canvas and Html labels.
         // A label click must not be treated as an empty-space canvas click.
@@ -187,6 +202,7 @@ function WebGLScene(props: GraphSceneProps) {
       }}>
       <ambientLight intensity={0.95} /><directionalLight position={[-350, 600, 900]} intensity={2.2} />
       <pointLight position={[300, -200, 450]} intensity={0.65} />
+      <ContextLossGuard onFallback={props.onFallback} />
       <CameraRig command={props.command} bounds={layout.bounds} />
       <Suspense fallback={null}>
         {layout.groups.filter(group => group.nodeIds.some(id => visibleNodeIds.has(id))).map(group => <group key={group.family} position={group.position}>
