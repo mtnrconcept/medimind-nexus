@@ -82,7 +82,7 @@ test('pair research sends Luna without reasoning with required medical web searc
         : await startBackgroundAI('Rechercher les preuves pour une seule paire.', 'Contexte clinique synthétique de test.', options);
       assert.ok(url.endsWith('/responses'));
       assert.equal(body.model, 'gpt-6-luna');
-      assert.deepEqual(body.reasoning, { effort: 'none' });
+      assert.equal('reasoning' in body, false);
       assert.equal(body.max_output_tokens, 8_192);
       assert.equal(body.tool_choice, 'required');
       assert.equal(body.max_tool_calls, 8);
