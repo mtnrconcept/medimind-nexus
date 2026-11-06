@@ -5,6 +5,7 @@
     "src/vite-env.d.ts",
     "src/components/patient/DigitalTwin3DViewer.tsx",
     "src/lib/anatomicalTwin.ts",
-    "tests/anatomical-twin.test.ts"
+    "tests/anatomical-twin.test.ts",
+    "tests/anatomical-twin-interactions.test.ts"
   ]
 }
