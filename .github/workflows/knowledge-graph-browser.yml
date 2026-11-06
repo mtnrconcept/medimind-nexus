@@ -1,0 +1,60 @@
+name: Knowledge graph browser regression
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'src/components/cde/knowledge-graph/**'
+      - 'src/components/cde/RadialRingsModal.tsx'
+      - 'src/lib/knowledgeGraph/**'
+      - 'src/types/graph.ts'
+      - 'tests/browser/knowledge-graph*'
+      - 'scripts/check-knowledge-graph-browser.mjs'
+      - 'tsconfig.knowledge-graph.json'
+      - '.github/workflows/knowledge-graph-browser.yml'
+  push:
+    branches: ['codex/**']
+    paths:
+      - 'src/components/cde/knowledge-graph/**'
+      - 'src/components/cde/RadialRingsModal.tsx'
+      - 'src/lib/knowledgeGraph/**'
+      - 'src/types/graph.ts'
+      - 'tests/browser/knowledge-graph*'
+      - 'scripts/check-knowledge-graph-browser.mjs'
+      - 'tsconfig.knowledge-graph.json'
+      - '.github/workflows/knowledge-graph-browser.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  browser:
+    name: Semantic graph controls, evidence, and 3D fallback in Chromium
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Check the graph and its isolated fixture
+        run: node node_modules/typescript/bin/tsc -p tsconfig.knowledge-graph.json --pretty false
+      - name: Install isolated browser test tools
+        run: |
+          npm install --no-save --package-lock=false --prefix "$RUNNER_TEMP/medicore-ui" playwright@1.62.1
+          node "$RUNNER_TEMP/medicore-ui/node_modules/playwright/cli.js" install --with-deps chromium
+      - name: Exercise the explorer with synthetic concepts and no remote services
+        env:
+          PLAYWRIGHT_MODULE_PATH: ${{ runner.temp }}/medicore-ui/node_modules/playwright/index.mjs
+          GRAPH_BROWSER_ARTIFACT_DIR: ${{ runner.temp }}/medicore-knowledge-graph-results
+        run: node scripts/check-knowledge-graph-browser.mjs
+      - name: Save synthetic browser evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: knowledge-graph-browser
+          path: ${{ runner.temp }}/medicore-knowledge-graph-results
+          if-no-files-found: ignore
+          retention-days: 7

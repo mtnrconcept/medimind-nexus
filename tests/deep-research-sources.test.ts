@@ -73,13 +73,16 @@ test("JSON and streamed fallback retain actual source failures and skipped looku
   assert.equal(response.status, 200);
   assert.equal(json.ai_model, "fallback");
   assert.deepEqual(json.sources_consulted, ["Base locale"]);
-  assert.deepEqual(json.source_statuses.map((s: { status: string }) => s.status), ["partial", "unavailable", "skipped"]);
+  assert.deepEqual(json.source_statuses.map((s: { status: string }) => s.status), ["partial", "unavailable", "skipped", "unavailable"]);
   const stream = await handleResearchRequest(researchRequest({ ...input, streaming: true }), offline);
   assert.match(stream.headers.get("Content-Type") ?? "", /event-stream/);
   const events = (await stream.text()).trim().split("\n\n").map(row => JSON.parse(row.slice(6)));
   assert.deepEqual(events.at(-1).source_statuses, json.source_statuses);
   assert.deepEqual(events.at(-1).sources_consulted, json.sources_consulted);
-  assert.ok(json.nodes.some((n: { id: string }) => n.id === "evidence_gap"));
+  assert.equal(json.research_status, 'unavailable');
+  assert.ok(json.limitations.length > 0);
+  assert.ok(!json.nodes.some((n: { id: string }) => n.id === 'evidence_gap'));
+  assert.deepEqual(json.edges, []);
 });
 
 test("AI cannot invent consulted sources, upgrade a hypothesis, or place unrelated edges in an expansion", async () => {
@@ -133,7 +136,8 @@ test("invalid/missing user authentication prevents all research, including AI ca
     async isAuthenticated() { throw new Error("Auth server down"); } })).status, 503);
 });
 
-test("only interactions from matched medication IDs reach the graph, and combined searches retain both centers", async () => {
+test("only interactions from matched medication IDs reach synthesis, and fallback keeps both centres without invented relations", async () => {
+  let interactions: Array<{ id: string }> = [];
   const services: ResearchServices = { ...offline,
     async readTable(table) {
       return table.table === "medications" ? [{ id: "med1", name: "test medication", description: null }] : [];
@@ -143,15 +147,20 @@ test("only interactions from matched medication IDs reach the graph, and combine
       return [{ id: "matching", medication_id: "med1", interacting_drug: "other", severity: null, description: null },
         { id: "unrelated", medication_id: "other", interacting_drug: "Unrelated", severity: null, description: null }];
     },
+    async callAI(_system, prompt) {
+      interactions = JSON.parse(prompt).drug_interactions;
+      return { text: '', model: '', provider: 'none' };
+    },
   };
   const data = await (await handleResearchRequest(researchRequest({
     topic: "A + B", pathologies: ["A", "B"], include_fda: false, include_pubmed: false,
   }), services)).json();
   assert.deepEqual(data.nodes.filter((node: { ring: number }) => node.ring === 0).map((node: { label: string }) => node.label), ["A", "B"]);
-  assert.ok(data.nodes.some((n: { id: string; ring: number }) => n.id === "medications_med1" && n.ring === 5));
-  assert.ok(data.nodes.some((n: { id: string }) => n.id === "drug_interaction_matching"));
+  assert.ok(data.search_matches.some((n: { id: string }) => n.id === 'medications_med1'));
+  assert.deepEqual(interactions.map(interaction => interaction.id), ['matching']);
+  assert.equal(data.nodes.length, 2);
   assert.ok(!JSON.stringify(data).includes("Unrelated"));
-  assert.ok(data.edges.every((e: { source_id: string }) => e.source_id === "query"));
+  assert.deepEqual(data.edges, []);
 });
 
 test("FAERS returns inspectable adverse-event reports without claiming causal evidence", async () => {
@@ -161,4 +170,31 @@ test("FAERS returns inspectable adverse-event reports without claiming causal ev
   assert.deepEqual(result.fda.records.map(r => [r.id, r.title]), [["10003730", "Example term"]]);
   assert.equal(new URL(result.fda.records[0].url).searchParams.get("search"), 'safetyreportid:"10003730"');
   assert.match(result.fda.detail ?? "", /causalité/);
+});
+
+test('PubMed abstract retrieval keeps publication type and population-bearing content without trusting titles alone', async () => {
+  const xml = '<PubmedArticleSet><PubmedArticle><MedlineCitation><PMID>12345678</PMID><Article>' +
+    '<ArticleTitle>Article synthétique</ArticleTitle><Abstract><AbstractText Label="METHODS">Adults enrolled in a cohort.</AbstractText></Abstract>' +
+    '<PublicationTypeList><PublicationType>Cohort Study</PublicationType></PublicationTypeList>' +
+    '<Journal><PubDate><Year>2024</Year></PubDate></Journal></Article></MedlineCitation></PubmedArticle></PubmedArticleSet>';
+  const result = await collectExternalSources('synthetic topic', undefined, true, false, async url => {
+    if (url.includes('esearch')) return Response.json({ esearchresult: { idlist: ['12345678'], count: '1' } });
+    if (url.includes('esummary')) return Response.json({ result: { '12345678': { uid: '12345678', title: 'Metadata title' } } });
+    return new Response(xml, { headers: { 'Content-Type': 'application/xml' } });
+  });
+  assert.equal(result.pubmed.status, 'available');
+  assert.equal(result.pubmed.records[0].content_level, 'abstract');
+  assert.match(result.pubmed.records[0].abstract ?? '', /Adults enrolled/);
+  assert.deepEqual(result.pubmed.records[0].publication_types, ['Cohort Study']);
+  assert.equal(result.pubmed.records[0].year, '2024');
+});
+
+test('a retracted PubMed article is not promoted from its earlier bibliographic match', async () => {
+  const result = await collectExternalSources('synthetic topic', undefined, true, false, async url => {
+    if (url.includes('esearch')) return Response.json({ esearchresult: { idlist: ['12345678'], count: '1' } });
+    if (url.includes('esummary')) return Response.json({ result: { '12345678': { uid: '12345678', title: 'Retracted title' } } });
+    return new Response('<PubmedArticle><PMID>12345678</PMID><ArticleTitle>Retracted title</ArticleTitle><PublicationType>Retracted Publication</PublicationType></PubmedArticle>');
+  });
+  assert.equal(result.pubmed.status, 'partial');
+  assert.deepEqual(result.pubmed.records, []);
 });

@@ -18,6 +18,7 @@ import {
     Link as LinkIcon
 } from 'lucide-react';
 import { supabase, aiFetch, aiTransport } from '@/integrations/supabase/client';
+import type { Json } from '@/integrations/supabase/types';
 import { useAuth } from '@/hooks/useAuth';
 import { useAI } from '@/contexts/AIContext';
 import { toast } from 'sonner';
@@ -3785,8 +3786,8 @@ const DiscoveryPlatform = () => {
                                         user_id: user.id,
                                         name: payload.name,
                                         description: payload.description,
-                                        graph_data: payload.graph_data,
-                                        view_state: payload.view_state,
+                                        graph_data: JSON.parse(JSON.stringify(payload.graph_data)) as Json,
+                                        view_state: JSON.parse(JSON.stringify(payload.view_state)) as Json,
                                         updated_at: new Date().toISOString()
                                     });
 
@@ -3796,6 +3797,7 @@ const DiscoveryPlatform = () => {
                             } catch (e: any) {
                                 console.error(e);
                                 toast.error('Erreur sauvegarde: ' + (e.message || ''));
+                                throw e;
                             }
                         }}
                     />

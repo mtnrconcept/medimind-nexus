@@ -58,20 +58,29 @@ for (const kind of ['pairs', 'candidate_pairs'] as const) {
     if (kind === 'candidate_pairs') state.agent.candidates = [candidate];
     const pairs = kind === 'pairs' ? nextAgentStep(state).pairs : candidatePairs(state).filter(pair =>
       pair.left.type === 'medication' && pair.right.type === 'medication');
-    assert.equal(pairs.length, 1);
+    assert.equal(pairs.length, kind === 'pairs' ? 4 : 1);
+    assert.ok(pairs.some(pair => pair.left.type === 'medication' && pair.right.type === 'medication'),
+      'The batch must still exercise the medication-medication cell with all pathologies outside its endpoints');
     const request = buildAgentRequest(state, { kind, pairs });
     const format = request.options.responseFormat as { type: string; strict: boolean; schema: Schema };
     assert.equal(format.type, 'json_schema');
     assert.equal(format.strict, true);
     const cells = format.schema.properties!.cells;
-    assert.equal(cells.minItems, 1);
-    assert.equal(cells.maxItems, 1);
-    assertPairCell(cells.items!, pairs[0]);
+    assert.equal(cells.minItems, pairs.length);
+    assert.equal(cells.maxItems, pairs.length);
+    const cellSchemas = pairs.length === 1 ? [cells.items!] : cells.items!.anyOf!;
+    assert.equal(cellSchemas.length, pairs.length);
+    cellSchemas.forEach((cell, index) => {
+      const pair = pairs[index];
+      assertPairCell(cell, pair);
+      const endpoints = new Set([typedElementKey(pair.left), typedElementKey(pair.right)]);
+      for (const element of [...state.elements, ...state.agent.candidates]) {
+        const key = typedElementKey(element);
+        if (!endpoints.has(key)) assert.equal(JSON.stringify(cell).includes(key), false,
+          'A contextual element or another scheduled pair cannot become an endpoint in this cell');
+      }
+    });
     assertStrictObjects(format.schema);
-    for (const pathology of pathologies) {
-      assert.equal(JSON.stringify(format.schema).includes(typedElementKey(pathology)), false,
-        'A context pathology cannot become an endpoint in a medication-medication cell');
-    }
     const payload = JSON.parse(request.user);
     assert.deepEqual(payload.pairs.map(({ pair }: { pair: PairCandidate }) => pair.pairHash), pairs.map(pair => pair.pairHash));
     assert.equal(payload.selectionContext.length, state.elements.length + state.agent.candidates.length,

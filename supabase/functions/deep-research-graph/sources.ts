@@ -1,10 +1,15 @@
-import { readBoundedJson } from '../_shared/bounded-json.ts';
+import { readBoundedJson, readBoundedText } from '../_shared/bounded-json.ts';
+import { parsePubMedArticles } from '../cross-data-analyzer/pubmed-research.ts';
 export type SourceState = "available" | "empty" | "unavailable" | "partial" | "skipped";
 
 export interface SourceRecord {
     id: string;
     title: string;
     url: string;
+    abstract?: string;
+    publication_types?: string[];
+    year?: string;
+    content_level?: 'abstract' | 'metadata' | 'report' | 'web';
 }
 
 export interface SourceStatus {
@@ -31,11 +36,10 @@ function status(source: string, state: SourceState, records: SourceRecord[] = []
 async function pubmedSource(topic: string, fetcher: Fetcher): Promise<SourceStatus> {
     const source = "PubMed";
     const base = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/";
-    const options = { signal: AbortSignal.timeout(timeoutMs) };
     try {
         const search = await fetcher(base + "esearch.fcgi?" + new URLSearchParams({
             db: "pubmed", term: topic, retmax: "10", retmode: "json", sort: "relevance"
-        }), options);
+        }), { signal: AbortSignal.timeout(timeoutMs), redirect: 'error' });
         if (!search.ok) throw new Error("Search unavailable");
         const payload = object(await readBoundedJson(search, 2_000_000));
         const result = object(payload?.esearchresult);
@@ -52,17 +56,39 @@ async function pubmedSource(topic: string, fetcher: Fetcher): Promise<SourceStat
         }
         const response = await fetcher(base + "esummary.fcgi?" + new URLSearchParams({
             db: "pubmed", id: ids.join(","), retmode: "json"
-        }), options);
+        }), { signal: AbortSignal.timeout(timeoutMs), redirect: 'error' });
         if (!response.ok) throw new Error("Summary unavailable");
         const details = object(object(await readBoundedJson(response, 2_000_000))?.result);
-        const records = ids.flatMap(id => {
+        let records: SourceRecord[] = ids.flatMap(id => {
             const article = object(details?.[id]);
             return article?.uid === id && typeof article.title === "string" && article.title.trim()
-                ? [{ id, title: article.title.slice(0, 1000), url: "https://pubmed.ncbi.nlm.nih.gov/" + id + "/" }]
+                ? [{ id, title: article.title.slice(0, 1000), url: "https://pubmed.ncbi.nlm.nih.gov/" + id + "/", content_level: 'metadata' as const }]
                 : [];
         });
         if (!records.length) throw new Error("Missing PubMed summaries");
-        return status(source, records.length === ids.length ? "available" : "partial", records);
+        // A title is a search match, not evidence for a clinical relation. Retrieve
+        // abstracts before asking the model to judge the actual claim/population.
+        try {
+            const abstracts = await fetcher(base + 'efetch.fcgi?' + new URLSearchParams({
+                db: 'pubmed', id: records.map(record => record.id).join(','), retmode: 'xml',
+            }), { signal: AbortSignal.timeout(timeoutMs), redirect: 'error' });
+            if (!abstracts.ok) throw new Error('Abstracts unavailable');
+            const xml = await readBoundedText(abstracts, 2_000_000);
+            const articles = parsePubMedArticles(xml, records.map(record => record.id));
+            const returnedIds = new Set([...xml.matchAll(/<PMID[^>]*>(\d+)<\/PMID>/g)].map(match => match[1]));
+            records = records.flatMap(record => {
+                const article = articles.find(item => item.pmid === record.id);
+                // parsePubMedArticles excludes retractions and expressions of concern.
+                if (!article && returnedIds.has(record.id)) return [];
+                return [{ ...record, ...(article ? { title: article.title, abstract: article.abstract,
+                    publication_types: article.publicationTypes, year: article.year,
+                    content_level: article.abstract ? 'abstract' as const : 'metadata' as const } : {}) }];
+            });
+        } catch { /* Keep verified metadata with an explicit evidence limitation. */ }
+        const complete = records.length === ids.length && records.every(record => record.content_level === 'abstract');
+        return status(source, complete ? 'available' : 'partial', records,
+            complete ? 'Notices et résumés consultés ; chaque relation doit rester interprétée dans son contexte.'
+                : 'Certaines notices ou certains résumés sont indisponibles. Un titre seul ne valide pas une relation.');
     } catch {
         return status(source, "unavailable", [], "Recherche ou notices indisponibles.");
     }
@@ -73,7 +99,7 @@ async function fdaSource(medication: string, fetcher: Fetcher): Promise<SourceSt
     try {
         const base = "https://api.fda.gov/drug/event.json?";
         const url = base + new URLSearchParams({ search: 'patient.drug.medicinalproduct:"' + medication + '"', limit: "5" });
-        const response = await fetcher(url, { signal: AbortSignal.timeout(timeoutMs) });
+        const response = await fetcher(url, { signal: AbortSignal.timeout(timeoutMs), redirect: 'error' });
         if (!response.ok && response.status !== 404) throw new Error("OpenFDA unavailable");
         const data = object(await readBoundedJson(response, 2_000_000));
         const error = object(data?.error);
@@ -89,7 +115,7 @@ async function fdaSource(medication: string, fetcher: Fetcher): Promise<SourceSt
             const reactions = object(report?.patient)?.reaction;
             const reaction = Array.isArray(reactions) ? object(reactions[0])?.reactionmeddrapt : null;
             return [{ id, title: typeof reaction === "string" ? reaction.slice(0, 250) : "Signalement FAERS",
-                url: base + new URLSearchParams({ search: 'safetyreportid:"' + id + '"', limit: "1" }) }];
+                url: base + new URLSearchParams({ search: 'safetyreportid:"' + id + '"', limit: "1" }), content_level: 'report' }];
         });
         if (results.length && !records.length) throw new Error("Missing FDA report identifiers");
         return status(source, records.length < results.length ? "partial" : records.length ? "available" : "empty",

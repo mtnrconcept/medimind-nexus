@@ -1,5 +1,6 @@
 
 import { RingNode, RingEdge } from '../types/graph';
+import { getKnowledgeEdgeKey, mergeKnowledgeEdges, normalizeKnowledgeEdge, normalizeKnowledgeNode } from '../lib/knowledgeGraph/model';
 
 // ============================================
 // WEBGL CHECK
@@ -72,17 +73,14 @@ export function isWebGLAvailable(): boolean {
 // ============================================
 
 export function getEdgeKey(edge: RingEdge | { source: string, target: string }): string {
-    return [edge.source, edge.target].sort().join('-');
+    return getKnowledgeEdgeKey(edge);
 }
 
 export function dedupeEdges(edges: RingEdge[]): RingEdge[] {
-    const seen = new Set<string>();
-    return edges.filter(edge => {
-        const key = getEdgeKey(edge);
-        if (seen.has(key)) return false;
-        seen.add(key);
-        return true;
-    });
+    return mergeKnowledgeEdges(edges.flatMap((edge, index) => {
+        const normalized = normalizeKnowledgeEdge(edge, index);
+        return normalized ? [normalized] : [];
+    }));
 }
 
 // ============================================
@@ -193,39 +191,14 @@ export const getSemanticEdgeColor = (
 
 // Transform node from API format to RingNode format
 export const transformNode = (node: any, allPathologies: string[], primaryPathology: string): RingNode => {
-    // Enforce 7-Ring Semantic Layout
-    const typeToRing: Record<string, number> = {
-        'PATHOLOGY': 0,
-        'SYMPTOM': 1,
-        'COMPLICATION': 2,
-        'LAB': 3, 'BIOMARKER': 3, 'CAUSE': 3,
-        'TREATMENT': 4,
-        'DRUG': 5, 'MEDICATION': 5,
-        'GUIDELINE': 6, 'EVIDENCE': 6, 'LIFESTYLE': 6, 'SUGGESTION': 6
-    };
-    return {
-        id: node.id,
-        ring: node.ring !== undefined ? node.ring : (typeToRing[node.node_type] ?? 2),
-        lane: node.node_type?.toLowerCase() || 'unknown',
-        name: node.label,
-        node_type: node.node_type,
-        properties: { description: node.description, source: node.source },
-        proximity_score: node.weight || 0.7,
-        evidence_grade: node.weight > 0.8 ? 'A' : node.weight > 0.5 ? 'B' : 'C',
-        translation_gap: false,
-        category_id: node.category_id,
-        subcategory: node.subcategory,
-        tags: node.tags,
-        parent_pathology: node.parent_pathology || allPathologies[0] || primaryPathology
-    };
+    const normalized = normalizeKnowledgeNode({ ...node,
+        parent_pathology: node.parent_pathology || allPathologies[0] || primaryPathology });
+    if (!normalized) throw new Error('Le nœud du graphe doit contenir un identifiant et un libellé.');
+    return normalized;
 };
 
-export const transformEdge = (edge: any): RingEdge => ({
-    id: `${edge.source_id}-${edge.target_id}`,
-    source: edge.source_id,
-    target: edge.target_id,
-    relationship: edge.edge_type,
-    weight: edge.weight || 0.5,
-    evidence_grade: edge.weight > 0.8 ? 'A' : edge.weight > 0.5 ? 'B' : 'C',
-    translation_gap: false
-});
+export const transformEdge = (edge: any): RingEdge => {
+    const normalized = normalizeKnowledgeEdge(edge);
+    if (!normalized) throw new Error('Le lien du graphe doit contenir deux identifiants de nœuds.');
+    return normalized;
+};
