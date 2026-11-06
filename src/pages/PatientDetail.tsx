@@ -179,6 +179,21 @@ const PatientDetail = () => {
     return () => { active = false; };
   }, [id]);
 
+  const refreshComparisonSources = async () => {
+    if (!id) return;
+    const { data, error } = await supabase.from('patients')
+      .select('pathologies(id,name,icd_code,category),patient_pathologies(*,pathologies(*)),patient_medical_history(*)')
+      .eq('id', id).maybeSingle();
+    if (error || !data) throw new Error('Impossible d’actualiser les pathologies du dossier.');
+    // Refresh these relations in place; keep the dossier, atlas and AI jobs mounted.
+    setPatient(current => current?.id === id ? {
+      ...current,
+      pathologies: data.pathologies,
+      patient_pathologies: data.patient_pathologies,
+      medical_history: data.patient_medical_history,
+    } : current);
+  };
+
   const alerts = usePatientAlerts(
     patient?.lab_results_json || { glucose_mg_dl: 0, blood_pressure_sys: 0, blood_pressure_dia: 0, temperature_c: 0 },
     patient?.treatment || '',
@@ -472,13 +487,15 @@ const PatientDetail = () => {
           <SafetyAlertBanner alerts={alerts} />
         </div>
 
-        {/* Exact pathology comparison, subject to the caller’s Supabase RLS permissions. */}
+        {/* Recorded pathology/history comparison, subject to the caller’s Supabase RLS permissions. */}
         <div>
           <PatientPathologySimilarity
             key={patient.id}
             patientId={patient.id}
             primaryPathology={patient.pathologies}
             recordedPathologies={patient.patient_pathologies}
+            medicalHistory={patient.medical_history}
+            onRefresh={refreshComparisonSources}
           />
         </div>
 

@@ -1,0 +1,54 @@
+name: Patient pathology browser regression
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'src/lib/patientSimilarity/**'
+      - 'src/components/patient/PatientPathologySimilarity.tsx'
+      - 'src/pages/PatientDetail.tsx'
+      - 'tests/browser/patient-pathology.*'
+      - 'scripts/check-patient-pathology-browser.mjs'
+      - '.github/workflows/patient-pathology-browser.yml'
+  push:
+    branches: ['codex/**']
+    paths:
+      - 'src/lib/patientSimilarity/**'
+      - 'src/components/patient/PatientPathologySimilarity.tsx'
+      - 'src/pages/PatientDetail.tsx'
+      - 'tests/browser/patient-pathology.*'
+      - 'scripts/check-patient-pathology-browser.mjs'
+      - '.github/workflows/patient-pathology-browser.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  browser:
+    name: Pathology selector and authorized matching in Chromium
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Install isolated browser test tools
+        run: |
+          npm install --no-save --package-lock=false --prefix "$RUNNER_TEMP/medicore-ui" playwright@1.62.1
+          node "$RUNNER_TEMP/medicore-ui/node_modules/playwright/cli.js" install --with-deps chromium
+      - name: Exercise the real component and gateway with synthetic API responses
+        env:
+          PLAYWRIGHT_MODULE_PATH: ${{ runner.temp }}/medicore-ui/node_modules/playwright/index.mjs
+          PATHOLOGY_BROWSER_ARTIFACT_DIR: ${{ runner.temp }}/medicore-pathology-results
+        run: node scripts/check-patient-pathology-browser.mjs
+      - name: Save synthetic browser evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: patient-pathology-browser
+          path: ${{ runner.temp }}/medicore-pathology-results
+          if-no-files-found: ignore
+          retention-days: 7

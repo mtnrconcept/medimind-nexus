@@ -1,6 +1,6 @@
 import { supabase } from '@/integrations/supabase/client';
 import type { AuthorizedMatchGateway, MatchIdentity } from './authorizedMatches';
-import type { ClinicalPatientProfile, RecordedPathology } from './clinicalSimilarity';
+import { normalizeRecordedConditionLabel, type ClinicalPatientProfile, type RecordedPathology } from './clinicalSimilarity';
 
 // PostgREST limits response size by default, so always page and keep stable ordering.
 const PAGE_SIZE = 200;
@@ -36,7 +36,7 @@ async function readBatches<T>(
 type RawPatient = { id: string; patient_id: string; age: number | null; pathology_id: string | null };
 type PathologyRow = { patient_id: string; pathology_id: string; diagnosis_date: string | null };
 
-type HistoryRow = { patient_id: string; condition_name: string; diagnosis_date: string | null };
+type HistoryRow = { id: string; patient_id: string; condition_name: string; condition_type: string; diagnosis_date: string | null };
 type MedicationRelation = { name: string | null; substance: string | null; atc_code: string | null };
 type MedicationRow = { patient_id: string; medication_id: string; medications: MedicationRelation | MedicationRelation[] | null };
 type LabRow = {
@@ -69,6 +69,44 @@ export function createSupabaseMatchGateway(): AuthorizedMatchGateway {
         .select('patient_id,pathology_id,diagnosis_date').eq('patient_id', patientId)
         .order('id', { ascending: true }).range(from, to));
       return rows.map((r: PathologyRow) => ({ pathologyId: r.pathology_id, diagnosedAt: r.diagnosis_date }));
+    },
+
+    async listSourceMedicalHistory(patientId) {
+      const rows = await readPages((from, to) => supabase.from('patient_medical_history')
+        .select('id,condition_name,condition_type,diagnosis_date').eq('patient_id', patientId)
+        .eq('condition_type', 'disease').order('id', { ascending: true }).range(from, to));
+      return rows.map(r => ({ id: r.id, name: r.condition_name, conditionType: r.condition_type, diagnosisDate: r.diagnosis_date }));
+    },
+
+    async listRecordedConditionMatchIds(conditionName) {
+      const label = normalizeRecordedConditionLabel(conditionName);
+      if (!label) return [];
+      // Approve parent patient IDs first. Never scan other patients' clinical
+      // rows before this independent RLS read, even when child tables have RLS.
+      const people = await readPages((from, to) => supabase.from('patients')
+        .select('id,pathology_id').order('id', { ascending: true }).range(from, to));
+      if (people.length > 5000) throw new Error('Trop de dossiers à comparer. La recherche exhaustive nécessite une pagination spécialisée.');
+      const visibleIds = people.map(p => p.id);
+      if (!visibleIds.length) return [];
+      const [histories, linked] = await Promise.all([
+        readBatches(visibleIds, (batch, from, to) => supabase.from('patient_medical_history')
+          .select('patient_id,condition_name').in('patient_id', batch).eq('condition_type', 'disease')
+          .order('id', { ascending: true }).range(from, to)),
+        readBatches(visibleIds, (batch, from, to) => supabase.from('patient_pathologies')
+          .select('patient_id,pathology_id').in('patient_id', batch)
+          .order('id', { ascending: true }).range(from, to)),
+      ]);
+      // Resolve only catalogue IDs actually used by the visible cohort. Do not
+      // truncate the catalogue or guess equivalent diagnoses from partial text.
+      const diagnosisIds = [...new Set([...people.map(p => p.pathology_id), ...linked.map(p => p.pathology_id)]
+        .filter((id): id is string => !!id))];
+      const names = await readBatches(diagnosisIds, (batch, from, to) => supabase.from('pathologies')
+        .select('id,name').in('id', batch).order('id', { ascending: true }).range(from, to));
+      const matchingDiagnosisIds = new Set(names.filter(p => normalizeRecordedConditionLabel(p.name) === label).map(p => p.id));
+      const matches = new Set(histories.filter(h => normalizeRecordedConditionLabel(h.condition_name) === label).map(h => h.patient_id));
+      for (const p of people) if (p.pathology_id && matchingDiagnosisIds.has(p.pathology_id)) matches.add(p.id);
+      for (const p of linked) if (matchingDiagnosisIds.has(p.pathology_id)) matches.add(p.patient_id);
+      return [...matches];
     },
 
     async listPrimaryMatches(pathologyId) {
@@ -104,7 +142,7 @@ export function createSupabaseMatchGateway(): AuthorizedMatchGateway {
           .select('patient_id,pathology_id,diagnosis_date').in('patient_id', batch)
           .order('id', { ascending: true }).range(from, to)),
         readBatches(authorizedIds, (batch, from, to) => supabase.from('patient_medical_history')
-          .select('patient_id,condition_name,diagnosis_date').in('patient_id', batch)
+          .select('id,patient_id,condition_name,condition_type,diagnosis_date').in('patient_id', batch)
           .order('id', { ascending: true }).range(from, to)),
         readBatches(authorizedIds, (batch, from, to) => supabase.from('patient_medications')
           .select('patient_id,medication_id,medications(name,substance,atc_code)').in('patient_id', batch)
@@ -160,7 +198,7 @@ export function createSupabaseMatchGateway(): AuthorizedMatchGateway {
           patientCode: p.patient_id,
           age: p.age,
           diagnoses,
-          history: (perPatient.history.get(p.id) ?? []).map(x => ({ name: x.condition_name, diagnosisDate: x.diagnosis_date })),
+          history: (perPatient.history.get(p.id) ?? []).map(x => ({ id: x.id, name: x.condition_name, conditionType: x.condition_type, diagnosisDate: x.diagnosis_date })),
           medications: (perPatient.medications.get(p.id) ?? []).map(x => {
             const relation = Array.isArray(x.medications) ? x.medications[0] : x.medications;
             return { substance: relation?.substance || relation?.name, atcCode: relation?.atc_code, medicationId: x.medication_id };
