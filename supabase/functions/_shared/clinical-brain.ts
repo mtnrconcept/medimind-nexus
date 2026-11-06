@@ -395,7 +395,7 @@ export function selectClinicalModel(
   // decision. Keep the risk assessment and require the separate clinical review.
   if (input.task === 'pair_relation_research') {
     return {
-      model: standardModel,
+      model: simpleModel,
       reasoningEffort: 'none',
       timeoutMs: 120_000,
       finalReviewRequired: true,
