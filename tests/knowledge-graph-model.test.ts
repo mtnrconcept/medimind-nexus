@@ -8,6 +8,7 @@ import {
   normalizeKnowledgeGraph,
 } from '../src/lib/knowledgeGraph/model.ts';
 import { dedupeEdges, getEdgeKey, transformEdge, transformNode } from '../src/utils/graphUtils.ts';
+import { GRAPH_NODE_TYPES, normalizeGraph as normalizeServerGraph } from '../supabase/functions/deep-research-graph/contract.ts';
 
 const source = { id: 'guide', title: 'Source fixture', url: 'https://example.org/guide', verification_status: 'verified' };
 const node = (id: string, type = 'PATHOLOGY', extra: Record<string, unknown> = {}) => ({ id, label: id, node_type: type, ...extra });
@@ -49,6 +50,39 @@ test('all twelve families have stable IDs and legacy type aliases map conservati
     'DRUG_INTERACTION', 'HYPOTHESIS', 'MECHANISM', 'LIFESTYLE'];
   const graph = normalizeKnowledgeGraph({ nodes: kinds.map((type, i) => node(String(i), type)), edges: [] });
   assert.deepEqual(graph.nodes.map(n => n.family), GRAPH_FAMILIES.map(f => f.id));
+});
+
+test('backend semantic roles survive frontend normalization for every supported kind and family', () => {
+  for (const nodeType of GRAPH_NODE_TYPES) {
+    const candidates = GRAPH_FAMILIES.map(({ id }) => ({ id: `candidate-${id}`, label: `${nodeType} ${id}`, node_type: nodeType, family: id }));
+    const server = normalizeServerGraph({ nodes: candidates,
+      edges: candidates.map(candidate => ({ source_id: 'c0', target_id: candidate.id, edge_type: 'ASSOCIATED_WITH' })) },
+    { topic: 'Root', topicType: 'PATHOLOGY', pathologies: ['Root'], existingNodes: [], maxNodes: 50, maxDepth: 3 }, []);
+    const frontend = normalizeKnowledgeGraph(server);
+    assert.equal(frontend.nodes.length, server.nodes.length, nodeType);
+    for (const expected of server.nodes) {
+      const actual = frontend.nodes.find(node => node.id === expected.id);
+      assert.equal(actual?.family, expected.family, `${nodeType} / ${expected.id}`);
+      assert.equal(actual?.entity_kind, expected.entity_kind, `${nodeType} must retain its entity kind`);
+      assert.equal(actual?.canonical_id, expected.canonical_id, `${nodeType} must retain its identity`);
+    }
+  }
+});
+
+test('a shared research family never merges a gene with its protein or permits cross-kind default families', () => {
+  const graph = normalizeKnowledgeGraph({ nodes: [
+    node('gene', 'GENE', { label: 'NPHS1', canonical_id: 'shared-label', family: 'research' }),
+    node('protein', 'PROTEIN', { label: 'NPHS1', canonical_id: 'shared-label', family: 'research' }),
+    node('gene-wrong-role', 'GENE', { label: 'Other gene', family: 'molecules' }),
+    node('protein-wrong-role', 'PROTEIN', { label: 'Other protein', family: 'genetics' }),
+    node('gene-mechanism', 'GENE', { family: 'mechanisms' }),
+    node('protein-measure', 'PROTEIN', { family: 'examinations' }),
+  ], edges: [] });
+  assert.equal(graph.nodes.length, 6);
+  assert.deepEqual(graph.nodes.map(node => [node.entity_kind, node.family]), [
+    ['gene', 'research'], ['protein', 'research'], ['gene', 'genetics'], ['protein', 'molecules'],
+    ['gene', 'mechanisms'], ['protein', 'examinations'],
+  ]);
 });
 
 test('only explicit roots and saved ring-zero centres become roots', () => {

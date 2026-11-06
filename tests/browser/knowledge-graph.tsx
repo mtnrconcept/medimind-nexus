@@ -41,7 +41,10 @@ export function Harness() {
   const [revision, setRevision] = useState(0);
   const record = (action: string) => { window.__knowledgeGraphHarness.actions.push(action); };
 
-  return <main className="flex h-dvh min-h-0 flex-col bg-[#070b18] text-slate-100">
+  // tests/browser is intentionally outside Tailwind's production content globs.
+  // Match the production modal's explicit viewport constraint without relying on
+  // a test-only utility class being present in the generated stylesheet.
+  return <main className="flex min-h-0 flex-col bg-[#070b18] text-slate-100" style={{ height: '100dvh' }}>
     <div role="note" data-testid="synthetic-fixture-banner" className="shrink-0 border-b border-slate-700/60 bg-slate-950 px-4 py-2 text-xs text-slate-300">
       <strong className="font-medium text-amber-300">Démonstration synthétique</strong>
       {' · Aucun dossier patient · Aucune requête IA · Références publiques illustratives'}

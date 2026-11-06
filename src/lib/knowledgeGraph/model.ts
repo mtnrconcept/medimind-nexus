@@ -163,12 +163,12 @@ function hasLocator(reference: GraphReference): boolean {
 const kindAliases: Record<string, string> = {
   genes: 'gene', genetic: 'gene', genetics: 'gene', gene_symbol: 'gene',
   proteins: 'protein', protein_target: 'protein', polypeptide: 'protein',
-  medication: 'drug', medications: 'drug', drugs: 'drug', medicament: 'drug', medicaments: 'drug',
+  medication: 'drug', medications: 'drug', drugs: 'drug', medicament: 'drug', medicaments: 'drug', active_substance: 'drug',
   pathology: 'pathology', pathologie: 'pathology', pathologies: 'pathology', disease: 'pathology', diseases: 'pathology', condition: 'pathology',
   symptoms: 'symptom', symptome: 'symptom', symptomes: 'symptom', clinical_sign: 'sign',
   organs: 'organ', organe: 'organ', organes: 'organ',
   traitements: 'treatment', traitement: 'treatment', treatments: 'treatment',
-  biomarkers: 'biomarker', molecule: 'molecule', molecules: 'molecule',
+  biomarkers: 'biomarker', exam: 'examination', molecule: 'molecule', molecules: 'molecule',
   mechanisms: 'mechanism', mecanisme: 'mechanism', complications: 'complication',
   interactions: 'interaction', lifestyle: 'lifestyle', daily_life: 'lifestyle',
 };
@@ -179,7 +179,7 @@ const kindFamilies: Record<string, GraphFamily> = {
   symptom: 'manifestations', sign: 'manifestations', manifestation: 'manifestations', phenotype: 'manifestations',
   drug: 'treatments', treatment: 'treatments', procedure: 'treatments', vaccine: 'treatments', therapy: 'treatments',
   gene: 'genetics', variant: 'genetics', genetic_variant: 'genetics', genotype: 'genetics',
-  protein: 'molecules', molecule: 'molecules', substance: 'molecules', enzyme: 'molecules', receptor: 'molecules', antibody: 'molecules', cytokine: 'molecules', metabolite: 'molecules',
+  protein: 'molecules', molecule: 'molecules', substance: 'molecules', enzyme: 'molecules', receptor: 'molecules', antibody: 'molecules', cytokine: 'molecules', hormone: 'molecules', metabolite: 'molecules',
   complication: 'complications', adverse_event: 'complications', adverse_events: 'complications', side_effect: 'complications',
   lab: 'examinations', biomarker: 'examinations', test: 'examinations', monitoring: 'examinations', examination: 'examinations', diagnostic_test: 'examinations',
   interaction: 'interactions', drug_interaction: 'interactions',
@@ -199,13 +199,34 @@ const familyAliases: Record<string, GraphFamily> = {
   lifestyle: 'daily_life', exposures: 'daily_life', nutrition: 'daily_life', vie_quotidienne: 'daily_life',
 };
 
+// Family is the role shown in this graph, not the canonical entity kind.
+// Cross-boundary tests cover these roles against deep-research-graph/contract.ts.
+const molecularRoles: readonly GraphFamily[] = ['mechanisms', 'interactions', 'examinations', 'treatments'];
+const familyRoles: Partial<Record<string, readonly GraphFamily[]>> = {
+  pathology: ['complications'], syndrome: ['complications'], diagnosis: ['complications'],
+  gene: ['mechanisms'], genetic_variant: ['mechanisms'], variant: ['mechanisms'], genotype: ['mechanisms'],
+  molecule: molecularRoles, protein: molecularRoles, antibody: molecularRoles, cytokine: molecularRoles,
+  hormone: molecularRoles, substance: molecularRoles, enzyme: molecularRoles, receptor: molecularRoles, metabolite: molecularRoles,
+  mechanism: ['interactions'], pathway: ['interactions'],
+  drug: ['interactions', 'molecules', 'examinations'],
+  treatment: ['interactions', 'daily_life'], procedure: ['interactions', 'examinations'],
+  symptom: ['complications'], sign: ['complications'], complication: ['pathologies', 'manifestations'],
+  biomarker: ['molecules', 'mechanisms'], lab: ['molecules', 'mechanisms'],
+  exposure: ['interactions'], lifestyle: ['interactions', 'treatments'], nutrition: ['interactions', 'treatments'],
+  interaction: ['mechanisms'],
+};
+
 export function getGraphFamily(value: unknown, entityKind?: string): GraphFamily {
-  // A gene and its product must remain visibly and canonically distinct.
-  if (entityKind === 'gene' || entityKind === 'genetic_variant' || entityKind === 'variant') return 'genetics';
-  if (entityKind === 'protein') return 'molecules';
+  const rawKind = token(entityKind);
+  const kind = kindAliases[rawKind] ?? rawKind;
+  const defaultFamily = kindFamilies[kind] ?? 'research';
   const normalized = token(value);
-  if (familyIds.has(normalized)) return normalized as GraphFamily;
-  return familyAliases[normalized] ?? kindFamilies[entityKind ?? ''] ?? 'research';
+  const candidate = familyIds.has(normalized) ? normalized as GraphFamily : familyAliases[normalized];
+  if (!candidate) return defaultFamily;
+  // Preserve explicit legacy categorisation for unknown custom kinds, without changing their identity.
+  if (!kindFamilies[kind]) return candidate;
+  return candidate === defaultFamily || candidate === 'research' || familyRoles[kind]?.includes(candidate)
+    ? candidate : defaultFamily;
 }
 
 const legacyRings: Record<string, number> = { pathology: 0, symptom: 1, sign: 1, complication: 2,

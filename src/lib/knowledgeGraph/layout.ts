@@ -8,6 +8,8 @@ export interface PositionedNode {
   isCenter: boolean;
   isCore: boolean;
   showLabel: boolean;
+  labelOffset: [number, number];
+  labelAnchor: 'start' | 'middle' | 'end';
 }
 export interface Constellation {
   family: GraphFamily;
@@ -57,7 +59,9 @@ export function buildConstellationLayout(graph: KnowledgeGraphModel, centerId: s
   const positions = new Map<string, Point3>();
   const groups: Constellation[] = [];
   const add = (node: KnowledgeNode, position: Point3, radius: number, isCore = false, showLabel = true) => {
-    nodes.push({ node, position, radius, isCenter: node.id === centerId, isCore, showLabel });
+    nodes.push({ node, position, radius, isCenter: node.id === centerId, isCore, showLabel,
+      labelOffset: node.id === centerId || isCore ? [0, 0] : [radius + 8, 0],
+      labelAnchor: node.id === centerId || isCore ? 'middle' : 'start' });
     positions.set(node.id, position);
   };
   const center = graph.nodes.find(node => node.id === centerId);
@@ -83,6 +87,42 @@ export function buildConstellationLayout(graph: KnowledgeGraphModel, centerId: s
   }
   const width = Math.max(1400, ...nodes.map(n => Math.abs(n.position[0]) * 2 + 240));
   const height = Math.max(890, ...nodes.map(n => Math.abs(n.position[1]) * 2 + 190));
+  // Labels are an overview layer, independent of the node/edge data. Reserve
+  // room for titles and the core first, then try the four sides of each node.
+  // A crowded label remains available on selection and in the searchable index.
+  type Box = { left: number; right: number; bottom: number; top: number };
+  const overlaps = (a: Box, b: Box) => a.left < b.right && a.right > b.left && a.bottom < b.top && a.top > b.bottom;
+  const boxes: Box[] = groups.map(group => ({ left: group.position[0] - Math.min(140, group.family.length * 7 + 50),
+    right: group.position[0] + Math.min(140, group.family.length * 7 + 50),
+    bottom: group.position[1] + group.radius[1] + 4, top: group.position[1] + group.radius[1] + 31 }));
+  for (const item of nodes.filter(item => item.isCenter || item.isCore)) {
+    const halfWidth = item.isCenter ? 85 : Math.min(100, item.node.name.length * 3.6 + 8);
+    boxes.push({ left: item.position[0] - halfWidth, right: item.position[0] + halfWidth,
+      bottom: item.position[1] - (item.isCenter ? 55 : 12), top: item.position[1] + (item.isCenter ? 55 : 12) });
+  }
+  for (const item of nodes.filter(item => !item.isCenter && !item.isCore && item.showLabel)) {
+    const labelWidth = Math.min(180, item.node.name.length * 6.7 + 10);
+    const gap = item.radius + 9;
+    const candidates: Array<{ offset: [number, number]; anchor: PositionedNode['labelAnchor'] }> = [
+      { offset: [gap, 0], anchor: 'start' }, { offset: [-gap, 0], anchor: 'end' },
+      { offset: [0, gap + 4], anchor: 'middle' }, { offset: [0, -gap - 4], anchor: 'middle' },
+    ];
+    item.showLabel = false;
+    for (const candidate of candidates) {
+      const x = item.position[0] + candidate.offset[0], y = item.position[1] + candidate.offset[1];
+      const left = x - (candidate.anchor === 'middle' ? labelWidth / 2 : candidate.anchor === 'end' ? labelWidth : 0);
+      const box = { left: left - 4, right: left + labelWidth + 4, bottom: y - 10, top: y + 10 };
+      const coversNode = nodes.some(other => other !== item && other.position[0] + other.radius > box.left
+        && other.position[0] - other.radius < box.right && other.position[1] + other.radius > box.bottom
+        && other.position[1] - other.radius < box.top);
+      if (coversNode || boxes.some(occupied => overlaps(box, occupied))) continue;
+      item.labelOffset = candidate.offset;
+      item.labelAnchor = candidate.anchor;
+      item.showLabel = true;
+      boxes.push(box);
+      break;
+    }
+  }
   return { nodes, groups, positions, bounds: { width, height } };
 }
 

@@ -1,5 +1,5 @@
 import { Component, Suspense, useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react';
-import { Canvas, useThree } from '@react-three/fiber';
+import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { Html, Line, OrbitControls } from '@react-three/drei';
 import * as THREE from 'three';
 import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib';
@@ -92,12 +92,13 @@ function SphereNode({ item, selected, dimmed, showLabel, onSelect }: {
       <sphereGeometry args={[radius, 16, 12]} />
       <meshBasicMaterial color={color} transparent opacity={dimmed ? 0.015 : selected ? 0.13 : 0.06} depthWrite={false} />
     </mesh>
-    {(item.isCenter || item.isCore || selected || hovered || showLabel) && <Html center={item.isCenter || item.isCore}
-      position={item.isCenter || item.isCore ? [0, 0, radius + 2] : [radius + 7, 0, radius + 2]}
+    {(item.isCenter || item.isCore || selected || hovered || showLabel) && <Html center
+      position={[...item.labelOffset, radius + 2]}
       zIndexRange={[30, 5]} style={{ pointerEvents: 'none', opacity: dimmed && !hovered ? 0.25 : 1 }}>
       <button type="button" onClick={onSelect} title={item.node.name} aria-label={`Sélectionner ${item.node.name}`}
         className={`kg-node-label ${item.isCenter ? 'kg-node-label--center' : item.isCore ? 'kg-node-label--core' : ''} ${selected ? 'is-selected' : ''}`}
-        style={{ pointerEvents: 'auto', '--node-color': color } as React.CSSProperties}>
+        style={{ pointerEvents: 'auto', '--node-color': color,
+          transform: item.labelAnchor === 'start' ? 'translateX(50%)' : item.labelAnchor === 'end' ? 'translateX(-50%)' : undefined } as React.CSSProperties}>
         {item.node.name}
       </button>
     </Html>}
@@ -124,6 +125,50 @@ function RelationLine({ edge, layout, active, dimmed, onSelect }: {
       <coneGeometry args={[3.2, 9, 8]} /><meshBasicMaterial color="#f9a8d4" />
     </mesh>}
   </group>;
+}
+
+/** Fixed-size HTML labels need an extra screen-space pass when the 3D camera
+ * rotates or zooms out. The graph itself is never filtered by this pass. */
+function SceneNodes(props: GraphSceneProps) {
+  const [labelIds, setLabelIds] = useState<Set<string>>(() => new Set());
+  const previous = useRef('');
+  useFrame(({ camera, size }) => {
+    if (props.showLabels) return;
+    const boxes: Array<{ x: number; y: number; width: number; height: number }> = [];
+    const next: string[] = [];
+    const mobile = size.width < 700;
+    const project = (position: number[]) => {
+      const point = new THREE.Vector3(...position).project(camera);
+      return { x: (point.x + 1) * size.width / 2, y: (1 - point.y) * size.height / 2 };
+    };
+    for (const group of props.layout.groups) {
+      if (!group.nodeIds.some(id => props.visibleNodeIds.has(id))) continue;
+      const point = project([group.position[0], group.position[1] + group.radius[1] + 15, group.position[2] + 2]);
+      const width = labelOf(group.family).length * (mobile ? 5 : 6) + 34;
+      boxes.push({ x: point.x - width / 2, y: point.y - 13, width, height: 26 });
+    }
+    const ordered = props.layout.nodes.filter(item => props.visibleNodeIds.has(item.node.id))
+      .sort((a, b) => Number(b.node.id === props.selectedNodeId) - Number(a.node.id === props.selectedNodeId)
+        || Number(b.isCenter) - Number(a.isCenter) || Number(b.isCore) - Number(a.isCore));
+    for (const item of ordered) {
+      const forced = item.isCenter || item.isCore || item.node.id === props.selectedNodeId;
+      if (!item.showLabel && !forced) continue;
+      const point = project([item.position[0] + item.labelOffset[0], item.position[1] + item.labelOffset[1], item.position[2] + item.radius + 2]);
+      const width = item.isCenter ? (mobile ? 105 : 150) : Math.min(mobile ? 96 : 135, item.node.name.length * (mobile ? 4.5 : 5.7) + 12);
+      const height = item.isCenter ? 58 : 22;
+      const x = point.x - (item.labelAnchor === 'middle' ? width / 2 : item.labelAnchor === 'end' ? width : 0);
+      const box = { x: x - 3, y: point.y - height / 2, width: width + 6, height };
+      if (!forced && boxes.some(other => box.x < other.x + other.width && box.x + box.width > other.x
+        && box.y < other.y + other.height && box.y + box.height > other.y)) continue;
+      boxes.push(box);
+      next.push(item.node.id);
+    }
+    const signature = next.join('|');
+    if (signature !== previous.current) { previous.current = signature; setLabelIds(new Set(next)); }
+  });
+  return <>{props.layout.nodes.filter(item => props.visibleNodeIds.has(item.node.id)).map(item => <SphereNode key={item.node.id} item={item}
+    selected={props.selectedNodeId === item.node.id} dimmed={props.focus && props.highlightedNodes.size > 0 && !props.highlightedNodes.has(item.node.id)}
+    showLabel={props.showLabels || labelIds.has(item.node.id)} onSelect={() => props.onSelectNode(item.node.id)} />)}</>;
 }
 
 function WebGLScene(props: GraphSceneProps) {
@@ -154,9 +199,7 @@ function WebGLScene(props: GraphSceneProps) {
         {props.edges.map(edge => <RelationLine key={edge.id} edge={edge} layout={layout}
           active={props.selectedEdgeId === edge.id || highlightedEdges.has(edge.id)}
           dimmed={focus && highlightedEdges.size > 0 && !highlightedEdges.has(edge.id)} onSelect={() => props.onSelectEdge(edge.id)} />)}
-        {layout.nodes.filter(item => visibleNodeIds.has(item.node.id)).map(item => <SphereNode key={item.node.id} item={item}
-          selected={props.selectedNodeId === item.node.id} dimmed={focus && highlightedNodes.size > 0 && !highlightedNodes.has(item.node.id)}
-          showLabel={props.showLabels || item.showLabel} onSelect={() => props.onSelectNode(item.node.id)} />)}
+        <SceneNodes {...props} />
       </Suspense>
     </Canvas>
   </CanvasBoundary>;
@@ -248,8 +291,8 @@ function FlatScene(props: GraphSceneProps) {
           <circle r={item.radius * (selected ? 1.12 : 1)} fill={`url(#${id}-${item.isCenter ? 'center' : item.node.family})`}
             stroke={selected ? '#f8fafc' : color} strokeOpacity={selected ? 1 : 0.7} />
           {(props.showLabels || item.showLabel || selected || item.isCenter || item.isCore) && <text
-            x={item.isCenter || item.isCore ? 0 : item.radius + 8} y={item.isCenter ? -5 : 4}
-            textAnchor={item.isCenter || item.isCore ? 'middle' : 'start'}
+            x={item.labelOffset[0]} y={item.isCenter ? -5 : -item.labelOffset[1] + 4}
+            textAnchor={item.labelAnchor}
             className={`kg-svg-label ${item.isCenter ? 'kg-svg-label--center' : ''}`}>
             {item.isCenter && item.node.name.length > 19
               ? <>{item.node.name.split(' ').slice(0, Math.ceil(item.node.name.split(' ').length / 2)).join(' ')}<tspan x="0" dy="24">{item.node.name.split(' ').slice(Math.ceil(item.node.name.split(' ').length / 2)).join(' ')}</tspan></>

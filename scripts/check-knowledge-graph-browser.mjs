@@ -82,6 +82,8 @@ async function snapshot(target, name) {
 async function assertNoOverflow(target) {
   assert.ok(await target.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1),
     'The graph and its controls must not overflow the document horizontally.');
+  assert.ok(await target.evaluate(() => document.documentElement.scrollHeight <= window.innerHeight + 1),
+    'The viewport must keep the toolbar visible while long details scroll within the sidebar.');
 }
 
 async function visibleCounts(target) {
@@ -94,6 +96,14 @@ async function visibleCounts(target) {
 
 async function waitForMode(target, mode) {
   await target.waitForFunction(expected => document.querySelector('[data-testid="knowledge-graph-viewport"]')?.getAttribute('data-mode') === expected, mode);
+  if (Number(await target.getByTestId('knowledge-graph-viewport').getAttribute('data-visible-nodes')) > 0) {
+    // The mode flag can commit before a lazy scene or WebGL renderer is ready.
+    // The canvas label is applied by onCreated, after its listeners are installed.
+    const scene = mode === '3d'
+      ? target.locator('canvas[aria-label="Graphe de connaissances en trois dimensions"]')
+      : target.getByRole('group', { name: 'Graphe de connaissances en deux dimensions', exact: true });
+    await scene.waitFor({ state: 'visible', timeout: 10000 });
+  }
 }
 
 async function searchFor(target, term) {
@@ -101,6 +111,8 @@ async function searchFor(target, term) {
   await search.fill(term);
   await target.locator('.kg-search-results button').first().waitFor();
   await search.press('Enter');
+  // Selection clears the query in the same commit that updates the detail card.
+  await target.locator('.kg-search-results').waitFor({ state: 'hidden', timeout: 3000 });
 }
 
 try {
@@ -126,6 +138,7 @@ try {
   const search = page.getByRole('searchbox', { name: 'Rechercher un nœud' });
   await search.fill('nephrine');
   const results = page.locator('.kg-search-results');
+  await results.getByRole('button').first().waitFor();
   assert.equal(await results.getByRole('button').count(), 3, 'Accent-insensitive search must keep gene, protein, and antibody concepts.');
   await results.getByRole('button').filter({ hasText: 'GENE' }).click();
   assert.match(await page.locator('.kg-node-family').innerText(), /GENE/);
@@ -185,8 +198,14 @@ try {
   const flatTransform = page.getByRole('group', { name: 'Graphe de connaissances en deux dimensions', exact: true }).locator(':scope > g');
   const initialTransform = await flatTransform.getAttribute('transform');
   await page.getByRole('button', { name: 'Augmenter le zoom', exact: true }).click();
+  // Camera commands are consumed in a React effect, after the button's click.
+  // Wait for the observable result, preserving the same strict assertions.
+  await page.waitForFunction(previous => document.querySelector('svg.kg-svg > g')?.getAttribute('transform') !== previous,
+    initialTransform, { timeout: 3000 });
   assert.notEqual(await flatTransform.getAttribute('transform'), initialTransform);
   await page.getByRole('button', { name: 'Recentrer', exact: true }).click();
+  await page.waitForFunction(previous => document.querySelector('svg.kg-svg > g')?.getAttribute('transform') === previous,
+    initialTransform, { timeout: 3000 });
   assert.equal(await flatTransform.getAttribute('transform'), initialTransform);
   recordPass('zoom and recenter change the rendered graph viewport');
 
@@ -203,6 +222,10 @@ try {
   assert.ok(!saved.families.includes('treatments'));
   await page.getByRole('button', { name: 'Réinitialiser les filtres', exact: true }).click();
   await page.getByRole('button', { name: 'Charger un graphe', exact: true }).click();
+  await page.waitForFunction(() => {
+    const family = document.querySelector('input[aria-label="Famille : Traitements"]');
+    return family instanceof HTMLInputElement && family.checked === false;
+  }, undefined, { timeout: 3000 });
   assert.equal(await page.getByRole('checkbox', { name: 'Famille : Traitements', exact: true }).isChecked(), false);
   assert.equal(await page.getByRole('button', { name: '3 liens', exact: true }).getAttribute('aria-pressed'), 'true');
   assert.equal(await page.getByRole('checkbox', { name: 'Toutes les étiquettes', exact: true }).isChecked(), true);
@@ -231,6 +254,7 @@ try {
   await three.getByRole('button', { name: 'Passer en vue 3D', exact: true }).click();
   await waitForMode(three, '3d');
   await three.locator('canvas').waitFor();
+  await centralLabel.waitFor();
   await three.locator('canvas').evaluate(canvas => canvas.dispatchEvent(new Event('webglcontextlost', { cancelable: true })));
   await waitForMode(three, '2d');
   assert.deepEqual(await visibleCounts(three), { nodes: 50, edges: 51 });
@@ -248,6 +272,7 @@ try {
   await mobile.getByRole('button', { name: 'Fermer les filtres', exact: true }).click();
   await searchFor(mobile, 'podocyte');
   await mobile.getByRole('button', { name: 'Centrer ici', exact: true }).click();
+  await mobile.locator('.kg-stage-heading').getByRole('heading', { name: 'Podocyte', exact: true }).waitFor({ timeout: 3000 });
   assert.equal(await mobile.locator('.kg-stage-heading h2').innerText(), 'Podocyte');
   await assertNoOverflow(mobile);
   await snapshot(mobile, 'knowledge-graph-mobile-detail');
