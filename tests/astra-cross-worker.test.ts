@@ -3,8 +3,10 @@ import test, { type TestContext } from 'node:test';
 import { createClient } from '@supabase/supabase-js';
 import { handleMatrix } from '../supabase/functions/cross-data-analyzer/matrix-job.ts';
 import { buildAgentPairFormat, AGENT_PLAN_FORMAT, ASTRA_MODEL } from '../supabase/functions/cross-data-analyzer/agent-contract.ts';
-import type { AgentMatrixState } from '../supabase/functions/cross-data-analyzer/agent-orchestrator.ts';
+import { createAgentState, type AgentMatrixState } from '../supabase/functions/cross-data-analyzer/agent-orchestrator.ts';
 import { buildPairCandidates, typedElementKey, type PairCandidate, type SelectedElement } from '../supabase/functions/cross-data-analyzer/analysis-utils.ts';
+import type { AgentPairPool } from '../supabase/functions/cross-data-analyzer/agent-pair-pool.ts';
+import { detectHighRiskContext } from '../supabase/functions/_shared/clinical-brain.ts';
 
 const selected: SelectedElement[] = [
   { name: 'Pathologie Alpha', type: 'pathology' },
@@ -31,6 +33,7 @@ interface ProviderRequest {
 }
 interface Submission {
   request: ProviderRequest; pairs: PairCandidate[]; kind: 'pairs' | 'plan' | 'final';
+  at: number;
 }
 interface Behavior {
   partialFirstBatch: boolean; truncateLaterPairs: boolean; nativeEvidence: boolean; failFirstRead: boolean;
@@ -38,6 +41,10 @@ interface Behavior {
   providerStatus: string;
   readFailure: number | 'malformed_json' | 'invalid_object' | 'empty_completed' | null;
   invalidPlanTarget: boolean; invalidResultJson: boolean; failFirstCreation: boolean; failFirstResultSave: boolean;
+  loseFirstResultAcknowledgement: boolean; failFirstReceiptSave: boolean;
+  slowFirstReadMs: number; providerLatencyMs: number; creationRateLimits: number; retryAfterSeconds: number;
+  rateLimitCode: string; firstResponseReadError: number | null;
+  terminalErrorCode: string | null;
 }
 
 function cell(pair: PairCandidate) {
@@ -80,12 +87,17 @@ function fixture(t: TestContext, initial: Partial<Behavior> = {}, functionName =
   const behavior: Behavior = {
     partialFirstBatch: false, truncateLaterPairs: false, nativeEvidence: true, failFirstRead: false,
     providerModel: ASTRA_MODEL, providerStatus: 'completed', readFailure: null,
-    invalidPlanTarget: false, invalidResultJson: false, failFirstCreation: false, failFirstResultSave: false, ...initial,
+    invalidPlanTarget: false, invalidResultJson: false, failFirstCreation: false, failFirstResultSave: false,
+    loseFirstResultAcknowledgement: false, failFirstReceiptSave: false, slowFirstReadMs: 0, providerLatencyMs: 0,
+    creationRateLimits: 0, retryAfterSeconds: 0, rateLimitCode: 'rate_limit_exceeded', firstResponseReadError: null, terminalErrorCode: null, ...initial,
   };
   const tasks: Promise<void>[] = [];
   const rows = new Map<string, StoredJob>();
   const providers = new Map<string, Record<string, unknown>>();
   const submissions: Submission[] = [], gets: string[] = [], relays: Record<string, unknown>[] = [];
+  const events: string[] = [];
+  const savedCellOrders: string[][] = [];
+  const persistedAt: { at: number; count: number }[] = [];
   const base = 'https://astra-worker.invalid', service = 'synthetic-service';
   let searchCalls = 0, pairPosts = 0;
   const globals = globalThis as typeof globalThis & {
@@ -125,7 +137,13 @@ function fixture(t: TestContext, initial: Partial<Behavior> = {}, functionName =
       const payload = JSON.parse(body.input[1].content);
       const pairs: PairCandidate[] = payload.pairs?.map(({ pair }: { pair: PairCandidate }) => pair) || [];
       const kind = pairs.length ? 'pairs' : body.tools?.length ? 'plan' : 'final';
-      submissions.push({ request: body, pairs, kind });
+      submissions.push({ request: body, pairs, kind, at: Date.now() });
+      events.push('submit');
+      if (behavior.creationRateLimits > 0) {
+        behavior.creationRateLimits--;
+        return Response.json({ error: { code: behavior.rateLimitCode } }, { status: 429,
+          headers: { 'retry-after': String(behavior.retryAfterSeconds) } });
+      }
       if (kind === 'pairs') pairPosts++;
       const id = `resp_astra_${submissions.length}`;
       const incomplete = kind === 'pairs' && behavior.truncateLaterPairs && pairPosts > 1;
@@ -138,6 +156,7 @@ function fixture(t: TestContext, initial: Partial<Behavior> = {}, functionName =
         }] } : plan;
       providers.set(id, {
         id, model: behavior.providerModel, status: incomplete ? 'incomplete' : behavior.providerStatus,
+        ...(behavior.terminalErrorCode ? { error: { code: behavior.terminalErrorCode, message: 'Synthetic provider failure.' } } : {}),
         max_output_tokens: body.max_output_tokens,
         ...(incomplete ? { incomplete_details: { reason: 'max_output_tokens' } }
           : { output_text: behavior.invalidResultJson ? '{ invalid synthetic JSON' : JSON.stringify(result) }),
@@ -155,12 +174,20 @@ function fixture(t: TestContext, initial: Partial<Behavior> = {}, functionName =
     if (url.pathname.startsWith('/v1/responses/')) {
       const id = url.pathname.split('/').pop()!;
       gets.push(id);
+      events.push('read');
       if (behavior.failFirstRead) {
         behavior.failFirstRead = false;
         throw new Error('Transient synthetic provider read failure.');
       }
       const submission = submissions[Number(id.split('_').pop()) - 1];
       assert.equal(url.searchParams.getAll('include[]').includes('web_search_call.action.sources'), submission.kind !== 'final');
+      if (id === 'resp_astra_1' && behavior.slowFirstReadMs) {
+        const delay = behavior.slowFirstReadMs; behavior.slowFirstReadMs = 0;
+        await new Promise(resolve => setTimeout(resolve, delay));
+      }
+      if (id === 'resp_astra_1' && behavior.firstResponseReadError)
+        return Response.json({ error: { code: 'synthetic_read_error' } }, { status: behavior.firstResponseReadError });
+      if (Date.now() - submission.at < behavior.providerLatencyMs) return Response.json({ id, status: 'in_progress', model: ASTRA_MODEL });
       if (typeof behavior.readFailure === 'number') return Response.json({ error: { code: 'synthetic_read_error' } }, { status: behavior.readFailure });
       if (behavior.readFailure === 'malformed_json') return new Response('{ invalid synthetic JSON', { status: 200 });
       if (behavior.readFailure === 'invalid_object') return Response.json([]);
@@ -179,11 +206,23 @@ function fixture(t: TestContext, initial: Partial<Behavior> = {}, functionName =
     }));
     if (request.method === 'PATCH') {
       const patch = await request.json();
+      if (behavior.failFirstReceiptSave && patch.request_payload?._matrix_runtime?.parallel?.slots.some((s: { responseId?: string }) => s.responseId)) {
+        behavior.failFirstReceiptSave = false;
+        return Response.json({ message: 'Synthetic receipt persistence failure.' }, { status: 500 });
+      }
       if (behavior.failFirstResultSave && patch.provider_response_id === null && Object.keys(patch.result_payload?.cells || {}).length) {
         behavior.failFirstResultSave = false;
         return Response.json({ message: 'Synthetic persistence failure.' }, { status: 500 });
       }
       matched.forEach(row => Object.assign(row, patch));
+      if (patch.result_payload?.cells && matched.length) {
+        savedCellOrders.push(Object.keys(patch.result_payload.cells));
+        persistedAt.push({ at: Date.now(), count: Object.keys(patch.result_payload.cells).length });
+        if (behavior.loseFirstResultAcknowledgement && Object.keys(patch.result_payload.cells).length) {
+          behavior.loseFirstResultAcknowledgement = false;
+          return Response.json({ message: 'Synthetic committed write with lost acknowledgement.' }, { status: 500 });
+        }
+      }
     }
     return Response.json(request.headers.get('accept')?.includes('vnd.pgrst.object') ? matched[0] ?? null : matched);
   });
@@ -200,9 +239,197 @@ function fixture(t: TestContext, initial: Partial<Behavior> = {}, functionName =
     assert.ok(data.job?.id);
     return rows.get(data.job.id)!;
   };
-  return { start, dispatch, drain: () => drain(tasks, t), rows, behavior, submissions, gets, relays,
+  const seedLegacy = (elements: SelectedElement[]) => {
+    const state = createAgentState(elements);
+    state.batchSize = 1;
+    const pair = buildPairCandidates(elements)[0];
+    submissions.push({ request: {} as ProviderRequest, pairs: [pair], kind: 'pairs', at: Date.now() });
+    providers.set('resp_astra_1', { id: 'resp_astra_1', status: 'completed', model: ASTRA_MODEL,
+      output_text: JSON.stringify({ cells: [cell(pair)], warnings: [] }),
+      output: [{ type: 'web_search_call', id: 'ws_legacy', status: 'completed', action: { type: 'search', sources: [{ type: 'url', ...source }] } }] });
+    const job: StoredJob = { id: crypto.randomUUID(), status: 'queued', updated_at: new Date().toISOString(),
+      analysis_mode: 'astra_cross_matrix', function_name: functionName, requested_by: 'owner', provider_response_id: 'resp_astra_1',
+      request_payload: { scope: 'general', selection: {}, risk: detectHighRiskContext({ selectedElementCount: elements.length }),
+        _matrix_runtime: { windowStartedAt: Date.now(), retries: 0 } }, result_payload: state };
+    rows.set(job.id, job);
+    return job;
+  };
+  return { start, seedLegacy, dispatch, drain: () => drain(tasks, t), rows, behavior, submissions, gets, relays, events, savedCellOrders, persistedAt,
     get searchCalls() { return searchCalls; } };
 }
+
+test('large Astra selections start eight disjoint background batches before waiting for any one response', async t => {
+  const f = fixture(t);
+  const elements: SelectedElement[] = Array.from({ length: 9 }, (_, i) => ({ name: `Concept synthétique ${i}`, type: 'pathology' }));
+  const job = await f.start(elements);
+  await f.drain();
+  assert.equal(f.events.indexOf('read'), 8, 'All eight background responses must be launched before the first poll.');
+  assert.equal(job.status, 'completed');
+  const pairs = f.submissions.filter(s => s.kind === 'pairs').flatMap(s => s.pairs);
+  assert.equal(pairs.length, 36);
+  assert.equal(new Set(pairs.map(p => p.pairHash)).size, 36);
+  assert.equal(job.result_payload.analysis.agentReview?.coverage.reviewedPairs, 36);
+});
+
+const largeSelection: SelectedElement[] = Array.from({ length: 9 }, (_, i) => ({ name: `Concept synthétique ${i}`, type: 'pathology' }));
+const poolOf = (job: StoredJob) => (job.request_payload._matrix_runtime as { parallel: AgentPairPool }).parallel;
+
+test('a slow first response does not delay the other durable parallel results', async t => {
+  const f = fixture(t, { slowFirstReadMs: 8000 });
+  const job = await f.start(largeSelection);
+  await f.drain();
+  const firstPair = f.submissions[0].pairs[0].pairHash;
+  const firstSaved = f.savedCellOrders.find(order => order.length)!;
+  assert.equal(firstSaved.length, 4);
+  assert.equal(firstSaved.includes(firstPair), false);
+  assert.equal(job.status, 'completed');
+  assert.equal(poolOf(job).peakConcurrentBatches, 8);
+});
+
+test('a production-era single-pair response completes before the remaining selection upgrades to parallel execution', async t => {
+  const f = fixture(t);
+  const job = f.seedLegacy(largeSelection);
+  await f.dispatch({ action: 'agent.work', jobId: job.id }, 'synthetic-service');
+  await f.drain();
+  assert.equal(f.gets[0], 'resp_astra_1');
+  assert.equal(f.submissions[0].pairs.length, 1);
+  assert.equal(f.submissions[1].pairs.length, 4);
+  assert.equal(f.submissions.flatMap(s => s.pairs).length, 36);
+  assert.equal(job.status, 'completed');
+  assert.equal(poolOf(job).peakConcurrentBatches, 8);
+});
+
+test('an explicit legacy regeneration keeps its single-pair recovery size while parallelizing the remaining work', async t => {
+  const f = fixture(t);
+  const job = f.seedLegacy(largeSelection);
+  job.status = 'failed';
+  (job.request_payload._matrix_runtime as Record<string, unknown>).regenerationRequired = true;
+  await f.dispatch({ action: 'agent.resume', jobId: job.id });
+  await f.drain();
+  assert.equal(job.status, 'completed');
+  assert.ok(f.submissions.filter(s => s.kind === 'pairs').every(s => s.pairs.length === 1));
+  assert.equal(poolOf(job).peakConcurrentBatches, 8);
+});
+
+test('a partial parallel batch retains valid cells and schedules only its missing pairs', async t => {
+  const f = fixture(t, { partialFirstBatch: true });
+  const job = await f.start(largeSelection);
+  await f.drain();
+  assert.equal(job.status, 'completed');
+  const firstReviewed = f.submissions[0].pairs[0].pairHash;
+  assert.equal(f.submissions.flatMap(s => s.pairs).filter(p => p.pairHash === firstReviewed).length, 1);
+  assert.equal(job.result_payload.analysis.pairAssessments?.length, 36);
+  assert.equal(poolOf(job).completedPairs, 36);
+});
+
+test('parallel token retries preserve siblings and require explicit recovery after their bounded retry', async t => {
+  const f = fixture(t, { truncateLaterPairs: true });
+  const job = await f.start(largeSelection);
+  await f.drain();
+  assert.equal(job.status, 'failed');
+  assert.equal(Object.keys(job.result_payload.cells).length, 4);
+  const saved = new Set(Object.keys(job.result_payload.cells));
+  assert.ok(poolOf(job).slots.some(s => s.tokenRetries === 1 && s.phase === 'blocked'));
+  const before = f.submissions.length;
+  f.behavior.truncateLaterPairs = false;
+  await f.dispatch({ action: 'agent.resume', jobId: job.id });
+  await f.drain();
+  assert.equal(job.status, 'completed');
+  assert.equal(f.submissions.slice(before).flatMap(s => s.pairs).some(p => saved.has(p.pairHash)), false);
+});
+
+for (const failure of ['failFirstResultSave', 'loseFirstResultAcknowledgement'] as const) {
+  test(`parallel ${failure} reloads canonical state without overwriting committed pairs or regenerating a response`, async t => {
+    const f = fixture(t, { [failure]: true });
+    const job = await f.start(largeSelection);
+    await f.drain();
+    assert.equal(job.status, 'completed');
+    assert.equal(f.submissions.filter(s => s.kind === 'pairs').length, 9);
+    assert.equal(job.result_payload.analysis.pairAssessments?.length, 36);
+    assert.ok(f.savedCellOrders.every((order, i, all) => i === 0 || order.length >= all[i - 1].length), 'A lost acknowledgement must never roll back progress.');
+    assert.equal(poolOf(job).slots.length, 0);
+  });
+}
+
+test('an unconfirmed parallel creation or receipt never causes an automatic second paid POST', async t => {
+  const f = fixture(t, { failFirstReceiptSave: true });
+  const job = await f.start(largeSelection);
+  await f.drain();
+  assert.equal(job.status, 'failed');
+  assert.equal(f.submissions.length, 1);
+  assert.equal(poolOf(job).slots[0].error?.code, 'creation_unconfirmed');
+  await f.dispatch({ action: 'agent.latest', jobId: job.id });
+  await f.drain();
+  assert.equal(f.submissions.length, 1);
+  await f.dispatch({ action: 'agent.resume', jobId: job.id });
+  await f.drain();
+  assert.equal(job.status, 'completed');
+  assert.equal(job.result_payload.analysis.agentReview?.coverage.reviewedPairs, 36);
+});
+
+for (const readFailure of [401, 404]) {
+  test(`parallel HTTP ${readFailure} preserves successful siblings and retries only the affected receipt or pairs`, async t => {
+    const f = fixture(t, { firstResponseReadError: readFailure });
+    const job = await f.start(largeSelection);
+    await f.drain();
+    assert.equal(job.status, 'failed');
+    assert.equal(Object.keys(job.result_payload.cells).length, 28);
+    const saved = new Set(Object.keys(job.result_payload.cells));
+    const before = f.submissions.length;
+    f.behavior.firstResponseReadError = null;
+    await f.dispatch({ action: 'agent.resume', jobId: job.id });
+    await f.drain();
+    assert.equal(job.status, 'completed');
+    assert.equal(f.submissions.slice(before).flatMap(s => s.pairs).some(pair => saved.has(pair.pairHash)), false);
+    assert.equal(f.gets.filter(id => id === 'resp_astra_1').length, readFailure === 401 ? 2 : 1);
+  });
+}
+
+test('rate limiting respects Retry-After, reduces concurrency, and never becomes missing clinical evidence', async t => {
+  const f = fixture(t, { creationRateLimits: 1, retryAfterSeconds: 25 });
+  const job = await f.start(largeSelection);
+  await f.drain();
+  assert.equal(job.status, 'completed');
+  assert.ok(f.submissions[1].at - f.submissions[0].at >= 25_000);
+  assert.equal(poolOf(job).concurrency, 4);
+  assert.equal(poolOf(job).rateLimitEvents, 1);
+  assert.equal(job.result_payload.analysis.pairAssessments?.length, 36);
+});
+
+test('billing quota rejection pauses without automatic paid retries', async t => {
+  const f = fixture(t, { creationRateLimits: 1, rateLimitCode: 'insufficient_quota' });
+  const job = await f.start(largeSelection);
+  await f.drain();
+  assert.equal(job.status, 'failed');
+  assert.equal(f.submissions.length, 1);
+  assert.equal(poolOf(job).slots[0].error?.code, 'insufficient_quota');
+  assert.equal(job.result_payload.analysis.pairAssessments?.length, 0);
+  assert.match(String(job.error_message), /crédit.*épuisé/);
+});
+
+test('an accepted background response that later exhausts credits explains the pause without exposing provider text', async t => {
+  const f = fixture(t, { providerStatus: 'failed', terminalErrorCode: 'credit_balance_exhausted' });
+  const job = await f.start(largeSelection);
+  await f.drain();
+  assert.equal(job.status, 'failed');
+  assert.match(String(job.error_message), /crédit.*épuisé/);
+  assert.equal(poolOf(job).slots[0].error?.code, 'credit_balance_exhausted');
+  assert.equal(f.submissions.length, 8);
+  assert.equal(JSON.stringify(job.request_payload).includes('Synthetic provider failure'), false);
+});
+
+test('duplicate parallel worker deliveries share the lease and never duplicate pair assignments', async t => {
+  const f = fixture(t, { providerLatencyMs: 20_000 });
+  const job = await f.start(largeSelection);
+  await Promise.all(Array.from({ length: 6 }, () => f.dispatch({ action: 'agent.work', jobId: job.id }, 'synthetic-service')));
+  await f.drain();
+  assert.equal(job.status, 'completed');
+  assert.equal(f.submissions.filter(s => s.kind === 'pairs').length, 9);
+  const visible = await (await f.dispatch({ action: 'agent.latest', jobId: job.id })).json();
+  assert.equal(visible.job.execution.peakConcurrentBatches, 8);
+  assert.equal(JSON.stringify(visible).includes('resp_astra_'), false);
+  assert.equal(JSON.stringify(visible).includes('pairHashes'), false);
+});
 
 test('Astra analyzes every pair in both directions and finishes its sourced plan without a polling browser', async t => {
   const f = fixture(t);

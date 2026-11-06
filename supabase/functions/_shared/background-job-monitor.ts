@@ -244,7 +244,7 @@ export async function monitorBackgroundJob(id: string, runtime: BackgroundMonito
   let state: BackgroundMonitorState;
   try {
     job = await store.load(id);
-    if (!job || !['queued', 'processing'].includes(job.status)) return;
+    if (!job || ['progressive_matrix', 'astra_cross_matrix'].includes(job.analysis_mode ?? '') || !['queued', 'processing'].includes(job.status)) return;
     state = readBackgroundMonitorState(job, now());
     if (state.phase === 'paused' || (state.watchdogUntil ?? 0) > now()) return;
     if (!hasWorkBudget(STORE_OPERATION_TIMEOUT_MS)) return;
@@ -440,7 +440,7 @@ export async function claimBackgroundWorker(
   store: BackgroundJobStore, id: string, token: string, lease: string, now = Date.now(),
 ): Promise<BackgroundJobRow | null> {
   const job = await store.load(id);
-  if (!job || job.public_token !== token || job.status !== 'processing') return null;
+  if (!job || ['progressive_matrix', 'astra_cross_matrix'].includes(job.analysis_mode ?? '') || job.public_token !== token || job.status !== 'processing') return null;
   const state = readBackgroundMonitorState(job, now);
   if (!lease || state.workerLease !== lease || state.workerClaimed || (state.workerUntil ?? 0) <= now ||
       !['starting', 'finalizing'].includes(state.phase)) return null;
@@ -550,6 +550,7 @@ export function startBackgroundJobMonitor(options: JobOptions, id: string, resum
     if (resume) {
       const store = createStore(options.supabase, options.functionName, options.syncJob);
       const job = await store.load(id);
+      if (job && ['progressive_matrix', 'astra_cross_matrix'].includes(job.analysis_mode ?? '')) return;
       if (job) {
         const state = readBackgroundMonitorState(job);
         if (state.phase === 'paused' && state.pauseReason === 'monitor_budget') {
@@ -597,6 +598,7 @@ async function reserveScheduledMonitor(
   const claimedBy = deferred ? null : owner;
   const owns = (state: BackgroundMonitorState) => state.relayToken === token && (state.relayClaimedBy ?? null) === claimedBy;
   const eligible = (job: BackgroundJobRow) => ['queued', 'processing'].includes(job.status)
+    && !['progressive_matrix', 'astra_cross_matrix'].includes(job.analysis_mode ?? '')
     && readBackgroundMonitorState(job).phase !== 'paused'
     && (!job.expires_at || Date.parse(job.expires_at) > Date.now());
   for (let attempt = 0; attempt < 3; attempt++) {
@@ -688,7 +690,7 @@ export async function prepareBackgroundJobRequest<T extends NativeJobPayload>(
     if (!id || !UUID.test(id) || !incoming.jobToken || !UUID.test(incoming.jobToken)) return stop(json({ error: 'jobId and jobToken are required' }, 400));
     const job = await store.load(id);
     const legacy = job?.requested_by == null && options.allowLegacyToken !== false;
-    if (!job || job.analysis_mode === 'progressive_matrix' || job.public_token !== incoming.jobToken ||
+    if (!job || ['progressive_matrix', 'astra_cross_matrix'].includes(job.analysis_mode ?? '') || job.public_token !== incoming.jobToken ||
         (!actor.service && (job.requested_by !== actor.userId && !legacy)) ||
         (!actor.service && job.expires_at && Date.parse(job.expires_at) <= Date.now())) {
       return stop(json({ error: 'Job not found or expired' }, 404));

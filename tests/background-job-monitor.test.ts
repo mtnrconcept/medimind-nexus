@@ -72,6 +72,17 @@ function harness(initial = row()) {
   return { store, calls, runtime, setRetrieve(fn: typeof behavior) { behavior = fn; }, advance(ms: number) { clock += ms; } };
 }
 
+for (const analysis_mode of ['progressive_matrix', 'astra_cross_matrix']) {
+  test(`the generic monitor cannot claim or regenerate a ${analysis_mode} job`, async () => {
+    const h = harness(row({ function_name: 'cross-data-analyzer', analysis_mode }));
+    const before = structuredClone(h.store.current);
+    await monitorBackgroundJob(id, h.runtime);
+    assert.deepEqual(h.store.current, before);
+    assert.deepEqual(h.calls, { retrieve: [], dispatch: [], relay: 0 });
+    assert.equal(await claimBackgroundWorker(h.store, id, token, 'foreign-lease', startTime), null);
+  });
+}
+
 function cachedSystematicHarness(workerDurationMs: number) {
   const state: SystematicRunState = {
     version: 1, runId: id, owner: 'owner-a', targetPathology: null, index: 0,

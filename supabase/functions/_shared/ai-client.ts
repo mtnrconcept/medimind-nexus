@@ -56,6 +56,7 @@ export interface AIBackgroundPollResult extends AIBackgroundResponse, Partial<AI
   partialText?: string;
   incompleteReason?: string;
   errorMessage?: string;
+  errorCode?: string;
 }
 
 /** A partial answer must remain distinguishable from a usable final result. */
@@ -140,6 +141,8 @@ type ResponsesMessage = {
 };
 
 export interface AICallOptions {
+  /** Opt-in deadline for background receipt/status HTTP calls, not model execution. */
+  backgroundRequestTimeoutMs?: number;
   model?: string;
   forceModel?: boolean;
   maxTokens?: number;
@@ -422,9 +425,28 @@ async function withOpenAIRequest<T>(
   }
 }
 
+export class OpenAIRequestError extends Error {
+  readonly status: number;
+  readonly retryAfterMs?: number;
+  readonly code?: string;
+  constructor(response: Response, label: string, body: string) {
+    super(`OpenAI ${label} request failed (${response.status}): ${body}`);
+    this.status = response.status;
+    const retry = response.headers.get('retry-after');
+    if (retry) {
+      const delay = /^\d+(\.\d+)?$/.test(retry) ? Number(retry) * 1000 : Date.parse(retry) - Date.now();
+      if (Number.isFinite(delay) && delay >= 0) this.retryAfterMs = delay;
+    }
+    try {
+      const code = JSON.parse(body)?.error?.code;
+      if (typeof code === 'string' && /^[a-zA-Z0-9_.-]{1,120}$/.test(code)) this.code = code;
+    } catch { /* The caller must never persist the raw error body. */ }
+  }
+}
+
 async function readOpenAIJson(response: Response, label: string): Promise<Record<string, unknown>> {
   if (!response.ok) {
-    throw new Error(`OpenAI ${label} request failed (${response.status}): ${await response.text()}`);
+    throw new OpenAIRequestError(response, label, await response.text());
   }
   const data: unknown = await response.json();
   if (!data || typeof data !== 'object' || Array.isArray(data)) {
@@ -803,7 +825,7 @@ export async function startBackgroundAI(
     OPENAI_RESPONSES_URL,
     apiKey,
     { method: 'POST', body },
-    BACKGROUND_AI_START_TIMEOUT_MS,
+    Math.min(BACKGROUND_AI_START_TIMEOUT_MS, resolveDirectAITimeout(options.backgroundRequestTimeoutMs, String(BACKGROUND_AI_START_TIMEOUT_MS))),
     response => readOpenAIJson(response, 'background'),
   );
   const id = typeof data.id === 'string' ? data.id : '';
@@ -839,7 +861,7 @@ export async function retrieveBackgroundAI(
       ? '?' + new URLSearchParams({ 'include[]': 'web_search_call.action.sources' }).toString() : ''}`,
     apiKey,
     { method: 'GET' },
-    BACKGROUND_AI_POLL_TIMEOUT_MS,
+    Math.min(BACKGROUND_AI_POLL_TIMEOUT_MS, resolveDirectAITimeout(options.backgroundRequestTimeoutMs, String(BACKGROUND_AI_POLL_TIMEOUT_MS))),
     response => readOpenAIJson(response, 'background retrieve'),
   );
   const status = typeof data.status === 'string' ? data.status : 'unknown';
@@ -859,6 +881,9 @@ export async function retrieveBackgroundAI(
     incompleteReason: extractIncompleteReason(data),
     maxOutputTokens: extractOutputBudget(data, options.maxTokens),
     errorMessage: extractResponsesError(data),
+    errorCode: typeof (data.error as Record<string, unknown> | undefined)?.code === 'string' &&
+      /^[a-zA-Z0-9_.-]{1,120}$/.test(String((data.error as Record<string, unknown>).code))
+      ? String((data.error as Record<string, unknown>).code) : undefined,
     ...extractOpenAIWebProvenance(data, options.webSearch?.allowedDomains),
   };
 }

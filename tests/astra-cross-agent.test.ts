@@ -67,6 +67,19 @@ test('every selected pair is reviewed even if local relationships already exist'
   assert.equal(nextAgentStep(state).kind, 'plan');
 });
 
+test('independent scheduled pair batches can finish out of order without skipping coverage or borrowing sources', () => {
+  const state = createAgentState(elements);
+  const pair = buildPairCandidates(elements)[2];
+  const step = { kind: 'pairs' as const, pairs: [pair] };
+  assert.throws(() => applyAgentResult(state, step, { cells: [rawCell(pair)] }, [], 1), /incohérente/);
+  applyAgentResult(state, step, { cells: [rawCell(pair)] }, [], 1, { independentPairs: true });
+  assert.equal(state.analysis.agentReview?.coverage.reviewedPairs, 1);
+  assert.equal(nextAgentStep(state).kind, 'pairs');
+  assert.throws(() => applyAgentResult(state, step, { cells: [rawCell(pair)] }, [], 1, { independentPairs: true }), /incohérente/);
+  assert.throws(() => applyAgentResult(state, { ...step, pairs: [{ ...pair, left: { name: 'Intrus', type: 'pathology' } }] },
+    { cells: [rawCell(pair)] }, [], 1, { independentPairs: true }), /incohérente/);
+});
+
 test('an edge and its direction may cite different independently traced medical sources', () => {
   const pair = buildPairCandidates(elements).find(p => p.right.type === 'medication')!;
   const cell = rawCell(pair);
