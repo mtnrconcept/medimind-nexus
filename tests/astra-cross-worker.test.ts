@@ -345,7 +345,7 @@ test('parallel token retries preserve siblings and require explicit recovery aft
   const exhausted = poolOf(job).slots.find(s => s.tokenRetries === 2 && s.phase === 'blocked');
   assert.ok(exhausted, 'Sol has two bounded increases from its smaller initial budget');
   assert.deepEqual(f.submissions.filter(s => s.pairs.some(pair => pair.pairHash === exhausted.pairHashes[0]))
-    .map(s => s.request.max_output_tokens), [16_384, 32_768, 65_536]);
+    .map(s => s.request.max_output_tokens), [8_192, 32_768, 65_536]);
   const before = f.submissions.length;
   f.behavior.truncateLaterPairs = false;
   await f.dispatch({ action: 'agent.resume', jobId: job.id });
@@ -457,11 +457,11 @@ test('fast sourced pairs and Astra review finish autonomously with every directi
   assert.deepEqual(f.submissions.map(s => s.kind), ['pairs', 'pairs', 'pairs', 'plan', 'final']);
   for (const { kind, request, pairs } of f.submissions) {
     if (kind === 'pairs') assert.equal(pairs.length, 1, 'Each pair must own its own executed web-search trace.');
-    assert.equal(request.model, kind === 'pairs' ? 'gpt-6.1-sol' : ASTRA_MODEL,
+    assert.equal(request.model, kind === 'pairs' ? 'gpt-6-luna' : ASTRA_MODEL,
       'An environment default must never replace the model assigned to this stage.');
     if (kind === 'pairs') {
-      assert.deepEqual(request.reasoning, { effort: 'low' });
-      assert.equal(request.max_output_tokens, 16_384);
+      assert.deepEqual(request.reasoning, { effort: 'none' });
+      assert.equal(request.max_output_tokens, 8_192);
     }
     assert.deepEqual(request.text.format, kind === 'pairs' ? buildAgentPairFormat(pairs) : AGENT_PLAN_FORMAT);
     assert.equal(request.tool_choice, kind === 'final' ? undefined : 'required');
@@ -520,9 +520,9 @@ test('four selected concepts use two Sol batches while tracing all six pair sear
   assert.deepEqual(pairSubmissions.map(item => item.pairs.length), [4, 2]);
   assert.deepEqual(f.submissions.map(item => item.kind), ['pairs', 'pairs', 'plan', 'final']);
   for (const { request } of pairSubmissions) {
-    assert.equal(request.model, 'gpt-6.1-sol');
-    assert.deepEqual(request.reasoning, { effort: 'low' });
-    assert.equal(request.max_output_tokens, 16_384);
+    assert.equal(request.model, 'gpt-6-luna');
+    assert.deepEqual(request.reasoning, { effort: 'none' });
+    assert.equal(request.max_output_tokens, 8_192);
     assert.equal(request.tool_choice, 'required');
   }
   const result = job.result_payload;
@@ -613,7 +613,7 @@ test('a wrong-model first pair response cannot trigger an automatic token-budget
   const f = fixture(t, { providerModel: ASTRA_MODEL, truncateFirstPair: true });
   const job = await f.start(selected.slice(0, 2));
   await f.drain();
-  assert.equal(f.submissions[0].request.model, 'gpt-6.1-sol');
+  assert.equal(f.submissions[0].request.model, 'gpt-6-luna');
   assert.equal(job.status, 'failed');
   assert.equal(f.submissions.length, 1, 'Model validation must precede automatic retries for output-token exhaustion.');
   assert.equal(job.provider_response_id, 'resp_astra_1');
@@ -630,7 +630,7 @@ test('a wrong-model first pair response cannot trigger an automatic token-budget
 test('Sol cannot replace Astra during plan or final review and rejected reviews preserve completed pairs', async t => {
   for (const stage of ['plan', 'final'] as const) {
     await t.test(stage, async st => {
-      const f = fixture(st, { providerModelByKind: { [stage]: 'gpt-6.1-sol' } });
+      const f = fixture(st, { providerModelByKind: { [stage]: 'gpt-6-luna' } });
       const job = await f.start(selected.slice(0, 2));
       await f.drain();
       const rejectedId = stage === 'plan' ? 'resp_astra_2' : 'resp_astra_3';
