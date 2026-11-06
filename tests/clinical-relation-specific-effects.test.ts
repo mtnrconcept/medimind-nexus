@@ -1,11 +1,12 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { buildPairCandidates, normalizeCausalLink, type MedicalEntityType } from '../supabase/functions/cross-data-analyzer/analysis-utils.ts';
+import { buildPairCandidates, normalizeCausalLink, typedElementKey, type MedicalEntityType } from '../supabase/functions/cross-data-analyzer/analysis-utils.ts';
 import {
   RELATION_ENGINE_VERSION, contextualRelationExplanation, relationPresentation, validateRelationEvidence,
   type EvidenceSource, type RelationKind,
 } from '../supabase/functions/cross-data-analyzer/relation-contract.ts';
 import { buildAutomaticPathologyGraph, type GraphEntity, type GraphRelation } from '../src/components/patient/crossGraphGroups.ts';
+import { buildAgentPairFormat, readAgentCells } from '../supabase/functions/cross-data-analyzer/agent-contract.ts';
 
 const sourceUrl = 'https://pubmed.ncbi.nlm.nih.gov/12345678/';
 
@@ -143,4 +144,120 @@ test('relieving a disease-associated symptom or carrying a hazard never invents 
   assert.equal(medicine.length, 1);
   assert.equal(medicine[0].groupId, graph.groups.find(group => group.pathologyName === entities[1].name)!.id);
   assert.deepEqual(medicine[0].membershipKinds, ['indication']);
+});
+
+const interactionElements = [
+  { name: 'Traitement synthétique A comprimé', type: 'medication' as const },
+  { name: 'Traitement synthétique B comprimé', type: 'medication' as const },
+];
+const [interactionPair] = buildPairCandidates(interactionElements);
+const nativeSource = { title: 'Notice synthétique, aucune donnée clinique réelle',
+  url: 'https://dailymed.nlm.nih.gov/dailymed/drugInfo.cfm?setid=synthetic-effect-test' };
+
+function nativeInteraction(effect: string, evidence: string) {
+  const [left, right] = interactionElements;
+  return {
+    pairHash: interactionPair.pairHash,
+    directions: [[left, right], [right, left]].map(([from, to], index) => ({
+      fromKey: typedElementKey(from), toKey: typedElementKey(to), verdict: index === 0 ? 'cited_relation' : 'insufficient',
+      explanation: index === 0 ? evidence : 'Le sens inverse n’est pas établi dans cette fixture synthétique.',
+      limitations: 'Scénario synthétique uniquement ; applicabilité individuelle non établie.', sourceUrls: index === 0 ? [nativeSource.url] : [],
+    })),
+    links: [{ fromKey: typedElementKey(left), toKey: typedElementKey(right), relationKind: 'interaction',
+      evidence, sourceUrls: [nativeSource.url], confidence: 'medium', evidenceSupport: 'direct',
+      context: { condition: 'same', route: 'same', population: 'same', temporality: 'after_exposure' },
+      contextLimitations: ['Fixture synthétique uniquement.'], dangerLevel: 'unknown', interactionEffect: effect }],
+  };
+}
+
+test('an explicitly reported complete cancellation keeps its distinct effect and native provenance', () => {
+  const cell = nativeInteraction('cancel_effect', 'La notice synthétique rapporte que A annule complètement l’effet thérapeutique de B.');
+  const parsed = readAgentCells([cell], [interactionPair], [nativeSource], 1);
+  const link = parsed.cells[interactionPair.pairHash][0];
+  assert.equal(link.interactionEffect, 'cancel_effect');
+  assert.equal(link.relationship, 'Annulation d’effet rapportée');
+  assert.deepEqual(link.webSources, [nativeSource.url]);
+  assert.equal(link.citationVerification, 'provider_trace', 'A traced URL must not become a verified verbatim excerpt');
+  assert.match(JSON.stringify(buildAgentPairFormat([interactionPair])), /"cancel_effect"/);
+  cell.links[0].sourceUrls = ['https://dailymed.nlm.nih.gov/dailymed/drugInfo.cfm?setid=untraced-effect'];
+  assert.equal(readAgentCells([cell], [interactionPair], [nativeSource], 1).assessments.length, 0,
+    'The new effect must not bypass the per-edge native source check');
+});
+
+test('partial reduction, potentiation, negation and hypothetical cancellation never become complete cancellation', () => {
+  const statements = [
+    'La source synthétique rapporte une diminution partielle de l’effet de B par interaction avec A.',
+    'La source synthétique rapporte une potentialisation de l’effet de B en présence de A.',
+    'L’interaction ne supprime pas complètement l’effet thérapeutique de B dans la source synthétique.',
+    'The synthetic oral interaction did not completely abolish the therapeutic effect of B.',
+    'La source synthétique évoque une interaction qui pourrait annuler complètement l’effet de B.',
+    'The synthetic interaction completely blocked receptor X, partially reducing the therapeutic effect of B.',
+  ];
+  for (const statement of statements) {
+    const parsed = readAgentCells([nativeInteraction('cancel_effect', statement)], [interactionPair], [nativeSource], 1);
+    const link = parsed.cells[interactionPair.pairHash][0];
+    assert.equal(link.interactionEffect, 'unknown', statement);
+    assert.notEqual(link.relationship, 'Annulation d’effet rapportée');
+    assert.ok(link.contextLimitations?.some(limit => /annulation complète/i.test(limit)), statement);
+  }
+  const overclaimed = nativeInteraction('cancel_effect', statements[0]);
+  overclaimed.directions[0].explanation = 'A annule complètement l’effet thérapeutique de B.';
+  const uncertain = readAgentCells([overclaimed], [interactionPair], [nativeSource], 1).assessments[0];
+  assert.doesNotMatch(uncertain.explanation, /A annule complètement/,
+    'A rejected cancellation must not survive in the directional narrative');
+  assert.equal(uncertain.directions?.[0].verdict, 'hypothesis');
+  assert.match(uncertain.limitations, /annulation complète/i);
+  const incoherent = nativeInteraction('cancel_effect', 'A annule complètement l’effet thérapeutique de B.');
+  incoherent.links[0].relationKind = 'coadministration';
+  const downgraded = readAgentCells([incoherent], [interactionPair], [nativeSource], 1).cells[interactionPair.pairHash][0];
+  assert.equal(downgraded.interactionEffect, 'unknown');
+  assert.doesNotMatch(downgraded.evidence, /A annule complètement/,
+    'The displayed evidence and final-review input must not retain an incompatible cancellation claim');
+  for (const effect of ['increase_effect', 'decrease_effect']) {
+    const statement = effect === 'increase_effect' ? 'Une potentialisation est rapportée, sans facteur multiplicatif dans la source synthétique.'
+      : 'Une diminution de l’effet est rapportée, sans annulation complète démontrée.';
+    const link = readAgentCells([nativeInteraction(effect, statement)], [interactionPair], [nativeSource], 1).cells[interactionPair.pairHash][0];
+    assert.equal(link.interactionEffect, effect);
+    assert.equal(link.evidence, statement);
+    assert.doesNotMatch(link.relationship, /annulation|(?:x|×)\s*10/i);
+  }
+});
+
+test('legacy cancellation classification requires an explicit complete effect in the retrieved excerpt', () => {
+  for (const [passage, expected] of [
+    ['The oral synthetic drug interaction completely abolished the therapeutic effect of treatment B.', 'cancel_effect'],
+    ['The oral synthetic drug interaction reduced the therapeutic effect of treatment B by a moderate amount.', 'unknown'],
+    ['The oral synthetic drug interaction did not completely abolish the therapeutic effect of treatment B.', 'unknown'],
+  ]) {
+    const [from, to] = interactionElements;
+    const raw = { from: from.name, fromType: from.type, to: to.name, toType: to.type,
+      relationKind: 'interaction', interactionEffect: 'cancel_effect', relationship: 'Annulation d’effet rapportée',
+      evidence: 'A annule complètement l’effet thérapeutique de B.',
+      context: { condition: 'same', route: 'same', population: 'same', temporality: 'after_exposure' },
+      evidenceQuotes: [{ url: sourceUrl, quote: passage, support: 'direct' }] };
+    const source: EvidenceSource = { url: sourceUrl, title: 'Synthetic interaction fixture', abstract: passage };
+    const link = validateRelationEvidence(raw, normalizeCausalLink(raw, interactionElements)!, interactionPair, [source])!;
+    assert.equal(link.interactionEffect, expected, passage);
+    assert.equal(link.relationship === 'Annulation d’effet rapportée', expected === 'cancel_effect');
+    if (expected === 'unknown') {
+      assert.doesNotMatch(link.evidence, /A annule complètement/);
+      assert.ok(link.contextLimitations?.some(limit => /annulation complète/i.test(limit)));
+    }
+  }
+});
+
+test('a full eight-link cell keeps every sourced mechanism and explicitly reports the coverage limit', () => {
+  const cell = nativeInteraction('increase_effect', 'La source synthétique décrit un mécanisme de potentialisation.');
+  cell.links = Array.from({ length: 8 }, (_, index) => ({ ...cell.links[0], evidence: `Mécanisme synthétique distinct ${index + 1} avec source tracée.` }));
+  const parsed = readAgentCells([cell], [interactionPair], [nativeSource], 1);
+  assert.equal(parsed.cells[interactionPair.pairHash].length, 8, 'The bounded result must retain all eight cited mechanisms');
+  assert.match(parsed.assessments[0].limitations, /8 liens/);
+  assert.match(parsed.assessments[0].limitations, /exhaustiv/i);
+  assert.ok(parsed.assessments[0].directions?.every(direction => /8 liens/.test(direction.limitations)));
+  assert.ok(parsed.warnings.some(warning => warning.includes(interactionElements[0].name) && /8 liens/.test(warning)));
+  cell.links.pop();
+  const belowLimit = readAgentCells([cell], [interactionPair], [nativeSource], 1);
+  assert.equal(belowLimit.cells[interactionPair.pairHash].length, 7);
+  assert.doesNotMatch(belowLimit.assessments[0].limitations, /8 liens/);
+  assert.deepEqual(belowLimit.warnings, []);
 });

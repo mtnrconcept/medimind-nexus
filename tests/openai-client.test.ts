@@ -9,7 +9,7 @@ import {
   type AICallOptions,
 } from '../supabase/functions/_shared/ai-client.ts';
 
-const baseOptions: AICallOptions = { model: 'gpt-6.1-sol', skipClinicalBrain: true };
+const baseOptions: AICallOptions = { model: 'gpt-6-luna', skipClinicalBrain: true };
 const asJson = (data: unknown) => new Response(JSON.stringify(data), {
   status: 200, headers: { 'Content-Type': 'application/json' },
 });
@@ -53,6 +53,54 @@ test('every OpenAI request leaves room for reasoning and preserves larger explic
     { reasoningEffort: 'medium', maxTokens: 80_000 }, { maxTokens: 2_000_000 },
   ] as AICallOptions[]) await callAI('Return text.', 'Example.', { ...baseOptions, ...options });
   assert.deepEqual(seen, [16_384, 16_384, 32_768, 32_768, 65_536, 65_536, 80_000, 128_000]);
+});
+
+test('pair research sends Luna without reasoning with required medical web search and structured output in direct and background requests', async (t) => {
+  const retrieved = { title: 'Synthetic retrieved record', url: 'https://pubmed.ncbi.nlm.nih.gov/12345678/' };
+  const responseFormat = { type: 'json_schema', name: 'pair_relation_research', strict: true,
+    schema: { type: 'object', properties: { relation: { type: 'string' } }, required: ['relation'], additionalProperties: false } };
+  const domains = ['pubmed.ncbi.nlm.nih.gov', 'fda.gov'];
+  for (const mode of ['direct', 'background'] as const) {
+    await t.test(mode, async (st) => {
+      let body: Record<string, unknown> = {};
+      let url = '';
+      mockProvider(st, async (input, init) => {
+        url = String(input); body = JSON.parse(String(init?.body));
+        return asJson(mode === 'background' ? { id: 'resp_pair', status: 'queued' } : {
+          ...completed('{"relation":"unverified","sources":["https://invented.invalid/claim"]}'),
+          output: [{ type: 'web_search_call', id: 'search_pair', status: 'completed', action: { type: 'search', sources: [retrieved] } }],
+        });
+      });
+      const options: AICallOptions = {
+        clinicalTask: 'pair_relation_research', model: 'gpt-6-luna', forceModel: true,
+        reasoningEffort: 'none', maxTokens: 8_192, responseFormat, temperature: 0.1,
+        clinicalInput: { medications: [{ name: 'Warfarin' }], symptoms: [{ name: 'Hémorragie' }], selectedElementCount: 12 },
+        webSearch: { allowedDomains: domains, required: true, searchContextSize: 'low', maxToolCalls: 8 },
+      };
+      const result = mode === 'direct'
+        ? await callAI('Rechercher les preuves pour une seule paire.', 'Contexte clinique synthétique de test.', options)
+        : await startBackgroundAI('Rechercher les preuves pour une seule paire.', 'Contexte clinique synthétique de test.', options);
+      assert.ok(url.endsWith('/responses'));
+      assert.equal(body.model, 'gpt-6-luna');
+      assert.equal('reasoning' in body, false);
+      assert.equal(body.max_output_tokens, 8_192);
+      assert.equal(body.tool_choice, 'required');
+      assert.equal(body.max_tool_calls, 8);
+      assert.deepEqual(body.tools, [{ type: 'web_search', filters: { allowed_domains: domains }, search_context_size: 'low', external_web_access: true }]);
+      assert.deepEqual(body.include, ['web_search_call.action.sources']);
+      assert.deepEqual(body.text, { format: responseFormat });
+      assert.equal('temperature' in body, false);
+      assert.equal(result.clinicalSafety?.riskLevel, 'critical');
+      assert.equal(result.clinicalSafety?.requiresHumanValidation, true);
+      assert.equal(result.clinicalRoute?.finalReviewRequired, true);
+      assert.match(String(body.instructions ?? JSON.stringify(body.input)), /CONTRAT CLINIQUE VERIFIABLE/);
+      if (mode === 'background') assert.equal(body.background, true);
+      else {
+        assert.equal('webSearchCalls' in result && result.webSearchCalls, 1);
+        assert.deepEqual('webSources' in result && result.webSources, [retrieved]);
+      }
+    });
+  }
 });
 
 test('a partially generated JSON response is never accepted as a completed analysis', async (t) => {

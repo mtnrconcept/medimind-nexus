@@ -12,6 +12,7 @@ const source = {
   title: 'Notice synthétique pour test de traçabilité',
   url: 'https://dailymed.nlm.nih.gov/dailymed/drugInfo.cfm?setid=synthetic-safety-test',
 };
+const dedicatedSearchTrace = { webSearchQueries: [], webQueryCalls: 1 };
 
 function rawCell(pair: PairCandidate) {
   return {
@@ -109,7 +110,7 @@ test('a final result cannot complete before all candidate crossings have been re
   const candidate: SelectedElement = { name: 'Candidat B oral', type: 'medication' };
   const state = createAgentState(selected);
   const originalStep = nextAgentStep(state);
-  applyAgentResult(state, originalStep, { cells: originalStep.pairs.map(rawCell) }, [], 1);
+  applyAgentResult(state, originalStep, { cells: originalStep.pairs.map(rawCell) }, [], 1, dedicatedSearchTrace);
   applyAgentResult(state, nextAgentStep(state), rawPlan([change('discuss_replace', selected[0].name, candidate.name)], [candidate]), [source], 1);
   assert.equal(state.agent.stage, 'candidate_pairs');
   assert.equal(candidatePairs(state).length, selected.length);
@@ -120,7 +121,7 @@ test('a final result cannot complete before all candidate crossings have been re
 test('a fully reviewed selection can finish without inventing a therapeutic change', () => {
   const state = createAgentState(selected);
   const originalStep = nextAgentStep(state);
-  applyAgentResult(state, originalStep, { cells: originalStep.pairs.map(rawCell) }, [], 1);
+  applyAgentResult(state, originalStep, { cells: originalStep.pairs.map(rawCell) }, [], 1, dedicatedSearchTrace);
   assert.equal(nextAgentStep(state).kind, 'plan');
   applyAgentResult(state, nextAgentStep(state), noChangePlan(), [], 1);
   assert.equal(nextAgentStep(state).kind, 'final');
@@ -136,10 +137,10 @@ test('cumulative-risk warnings from pair reviews reach the global review without
   const first = nextAgentStep(state);
   assert.equal(first.pairs.length, 1, 'One native research response must own one pair');
   const notes = Array.from({ length: 100 }, (_, index) => `Limite contextuelle ${index + 1}.`);
-  applyAgentResult(state, first, { cells: first.pairs.map(rawCell), warnings: notes }, [], 1);
+  applyAgentResult(state, first, { cells: first.pairs.map(rawCell), warnings: notes }, [], 1, dedicatedSearchTrace);
   const later = nextAgentStep(state);
   const critical = 'Risque cumulatif majeur impliquant les trois éléments : réévaluation nécessaire.';
-  applyAgentResult(state, later, { cells: later.pairs.map(rawCell), warnings: [critical] }, [], 1);
+  applyAgentResult(state, later, { cells: later.pairs.map(rawCell), warnings: [critical] }, [], 1, dedicatedSearchTrace);
   assert.ok(state.analysis.warnings.includes(critical), 'Later risk warnings must survive persistence');
   assert.ok(JSON.stringify(globalAgentInput(state)).includes(critical), 'The final reviewer must receive cumulative risks from earlier steps');
 });
@@ -213,7 +214,7 @@ test('a sourced positive direction without its typed relation cannot mark the pa
   cell.directions[0] = { ...cell.directions[0], verdict: 'cited_relation',
     explanation: 'Le traitement est indiqué pour cette pathologie dans la source synthétique.',
     sourceUrls: [source.url] };
-  assert.throws(() => applyAgentResult(state, step, { cells: [cell], warnings: [] }, [source], 1),
+  assert.throws(() => applyAgentResult(state, step, { cells: [cell], warnings: [] }, [source], 1, dedicatedSearchTrace),
     'A cited direction must not disappear from the graph while the backend counts its pair as reviewed');
   assert.equal(Object.keys(state.cells).length, 0);
   assert.equal(state.analysis.agentReview?.coverage.reviewedPairs, 0);
@@ -241,7 +242,7 @@ test('an untraced worsening mechanism leaves explicit uncertainty without discar
     evidence: 'Le traitement aggrave avec certitude cette pathologie dans ce scénario fictif.',
     sourceUrls: [untraced], dangerLevel: 'high' });
 
-  applyAgentResult(state, step, { cells: [cell], warnings: [] }, [source], 1);
+  applyAgentResult(state, step, { cells: [cell], warnings: [] }, [source], 1, dedicatedSearchTrace);
   const links = state.cells[pair.pairHash];
   assert.equal(links.length, 1, 'Only the independently traced clinical finding may become an edge');
   assert.equal(links[0].relationKind, 'indication', 'The valid indication must survive a separate unsupported mechanism');

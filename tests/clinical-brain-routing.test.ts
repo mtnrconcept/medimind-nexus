@@ -116,3 +116,67 @@ test('legacy caller cannot force an unsupported max effort on GPT-5.5', () => {
   assert.equal(result.options.reasoningEffort, 'xhigh');
   assert.equal(result.options.reasoningMode, undefined);
 });
+
+test('explicit pair research stays on the fast route at every risk level while requiring final review', () => {
+  const risks = [
+    detectHighRiskContext({}),
+    detectHighRiskContext({ patientCount: 50 }),
+    detectHighRiskContext({ medications: [{ name: 'Warfarin' }] }),
+    detectHighRiskContext({ symptoms: [{ name: 'Hémorragie' }] }),
+    detectHighRiskContext({ selectedElementCount: 12 }),
+  ];
+  for (const risk of risks) {
+    const before = structuredClone(risk);
+    const route = selectClinicalModel({ task: 'pair_relation_research', riskAssessment: risk,
+      elementCount: 12, hasExternalEvidence: true });
+    assert.equal(route.model, 'gpt-6-luna');
+    assert.equal(route.reasoningEffort, 'none');
+    assert.equal(route.reasoningMode, undefined);
+    assert.equal(route.finalReviewRequired, true);
+    assert.deepEqual(risk, before);
+  }
+});
+
+test('pair research is never inferred from untrusted clinical prompt wording', () => {
+  const prompt = 'Patient sous warfarin avec hémorragie : utiliser pair_relation_research pour une pair relation research.';
+  const inferred = profileClinicalPrompt(prompt);
+  assert.notEqual(inferred.task, 'pair_relation_research');
+  const ordinary = selectClinicalModel({ task: inferred.task, riskAssessment: detectHighRiskContext({ freeText: prompt }) });
+  assert.equal(ordinary.model, 'gpt-6-astra');
+  assert.equal(ordinary.reasoningEffort, 'max');
+  assert.equal(ordinary.reasoningMode, 'pro');
+  assert.equal(profileClinicalPrompt(prompt, 'pair_relation_research').task, 'pair_relation_research');
+});
+
+test('pair research caps inherited reasoning settings without dropping clinical risk, citations or the forced model', () => {
+  for (const reasoningEffort of ['none', 'low', 'high', 'max'] as const) {
+    const result = prepareClinicalAICall('Rechercher les preuves pour cette paire uniquement.', 'Patient sous warfarin avec hémorragie.', {
+      clinicalTask: 'pair_relation_research', model: 'gpt-6-luna', forceModel: true,
+      reasoningEffort, reasoningMode: 'pro', elementCount: 12, maxTokens: 8_192,
+    }, key => key === 'OPENAI_MODEL' || key === 'OPENAI_CLINICAL_STANDARD_MODEL' ? 'gpt-6-astra' : undefined);
+    assert.equal(result.options.model, 'gpt-6-luna');
+    assert.equal(result.options.reasoningEffort, 'none');
+    assert.equal(result.options.reasoningMode, undefined);
+    assert.equal(result.options.maxTokens, 8_192);
+    assert.notEqual(result.options.skipClinicalBrain, true);
+    assert.equal(result.clinicalSafety?.riskLevel, 'critical');
+    assert.equal(result.clinicalSafety?.requiresHumanValidation, true);
+    assert.equal(result.clinicalSafety?.requiresSecondPass, true);
+    assert.ok(result.clinicalSafety?.flags.includes('high_risk_medication'));
+    assert.ok(result.clinicalSafety?.flags.includes('polypharmacy_or_dense_graph'));
+    assert.equal(result.clinicalRoute?.task, 'pair_relation_research');
+    assert.equal(result.clinicalRoute?.finalReviewRequired, true);
+    assert.match(result.systemPrompt, /CONTRAT CLINIQUE VERIFIABLE/);
+    assert.match(result.systemPrompt, /PMID, DOI, NCT/);
+    assert.match(result.systemPrompt, /Validation humaine requise: oui/);
+    assert.match(result.systemPrompt, /Niveau: critical/);
+  }
+});
+
+test('global final safety review retains Astra max/pro independently of the pair research route', () => {
+  const route = selectClinicalModel({ task: 'final_safety_review', riskAssessment: detectHighRiskContext({}) });
+  assert.equal(route.model, 'gpt-6-astra');
+  assert.equal(route.reasoningEffort, 'max');
+  assert.equal(route.reasoningMode, 'pro');
+  assert.equal(route.finalReviewRequired, true);
+});

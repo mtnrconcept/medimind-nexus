@@ -36,8 +36,10 @@ interface Submission {
   at: number;
 }
 interface Behavior {
-  partialFirstBatch: boolean; truncateLaterPairs: boolean; nativeEvidence: boolean; failFirstRead: boolean;
-  providerModel: string;
+  partialFirstBatch: boolean; truncateFirstPair: boolean; truncateLaterPairs: boolean; nativeEvidence: boolean; failFirstRead: boolean;
+  providerModel: string | null;
+  providerModelByKind: Partial<Record<Submission['kind'], string>>;
+  legacyModelPolicy: boolean;
   providerStatus: string;
   readFailure: number | 'malformed_json' | 'invalid_object' | 'empty_completed' | null;
   invalidPlanTarget: boolean; invalidResultJson: boolean; failFirstCreation: boolean; failFirstResultSave: boolean;
@@ -85,8 +87,8 @@ function fixture(t: TestContext, initial: Partial<Behavior> = {}, functionName =
   t.mock.method(console, 'log', () => undefined);
   t.mock.method(console, 'error', () => undefined);
   const behavior: Behavior = {
-    partialFirstBatch: false, truncateLaterPairs: false, nativeEvidence: true, failFirstRead: false,
-    providerModel: ASTRA_MODEL, providerStatus: 'completed', readFailure: null,
+    partialFirstBatch: false, truncateFirstPair: false, truncateLaterPairs: false, nativeEvidence: true, failFirstRead: false,
+    providerModel: null, providerModelByKind: {}, legacyModelPolicy: false, providerStatus: 'completed', readFailure: null,
     invalidPlanTarget: false, invalidResultJson: false, failFirstCreation: false, failFirstResultSave: false,
     loseFirstResultAcknowledgement: false, failFirstReceiptSave: false, slowFirstReadMs: 0, providerLatencyMs: 0,
     creationRateLimits: 0, retryAfterSeconds: 0, rateLimitCode: 'rate_limit_exceeded', firstResponseReadError: null, terminalErrorCode: null, ...initial,
@@ -136,6 +138,8 @@ function fixture(t: TestContext, initial: Partial<Behavior> = {}, functionName =
       const body = await request.json() as ProviderRequest;
       const payload = JSON.parse(body.input[1].content);
       const pairs: PairCandidate[] = payload.pairs?.map(({ pair }: { pair: PairCandidate }) => pair) || [];
+      const researchQueries = (payload.pairs || []).map((item: { researchQuery?: string }) => item.researchQuery)
+        .filter((query: unknown): query is string => typeof query === 'string');
       const kind = pairs.length ? 'pairs' : body.tools?.length ? 'plan' : 'final';
       submissions.push({ request: body, pairs, kind, at: Date.now() });
       events.push('submit');
@@ -146,7 +150,7 @@ function fixture(t: TestContext, initial: Partial<Behavior> = {}, functionName =
       }
       if (kind === 'pairs') pairPosts++;
       const id = `resp_astra_${submissions.length}`;
-      const incomplete = kind === 'pairs' && behavior.truncateLaterPairs && pairPosts > 1;
+      const incomplete = kind === 'pairs' && (behavior.truncateFirstPair && pairPosts === 1 || behavior.truncateLaterPairs && pairPosts > 1);
       const result = kind === 'pairs'
         ? { cells: (behavior.partialFirstBatch && pairPosts === 1 ? pairs.slice(0, 1) : pairs).map(cell), warnings: [] }
         : kind === 'plan' && behavior.invalidPlanTarget ? { ...plan, status: 'review_required', options: [{
@@ -155,14 +159,14 @@ function fixture(t: TestContext, initial: Partial<Behavior> = {}, functionName =
             rationale: 'Justification synthétique.', sourceUrls: [source.url] }],
         }] } : plan;
       providers.set(id, {
-        id, model: behavior.providerModel, status: incomplete ? 'incomplete' : behavior.providerStatus,
+        id, model: behavior.providerModelByKind[kind] ?? behavior.providerModel ?? body.model, status: incomplete ? 'incomplete' : behavior.providerStatus,
         ...(behavior.terminalErrorCode ? { error: { code: behavior.terminalErrorCode, message: 'Synthetic provider failure.' } } : {}),
         max_output_tokens: body.max_output_tokens,
         ...(incomplete ? { incomplete_details: { reason: 'max_output_tokens' } }
           : { output_text: behavior.invalidResultJson ? '{ invalid synthetic JSON' : JSON.stringify(result) }),
         output: behavior.nativeEvidence && kind !== 'final' ? [{
           type: 'web_search_call', id: 'ws_' + id, status: 'completed',
-          action: { type: 'search', sources: [{ type: 'url', ...source }] },
+          action: { type: 'search', queries: researchQueries, sources: [{ type: 'url', ...source }] },
         }] : [],
       });
       if (behavior.failFirstCreation) {
@@ -191,12 +195,18 @@ function fixture(t: TestContext, initial: Partial<Behavior> = {}, functionName =
       if (typeof behavior.readFailure === 'number') return Response.json({ error: { code: 'synthetic_read_error' } }, { status: behavior.readFailure });
       if (behavior.readFailure === 'malformed_json') return new Response('{ invalid synthetic JSON', { status: 200 });
       if (behavior.readFailure === 'invalid_object') return Response.json([]);
-      if (behavior.readFailure === 'empty_completed') return Response.json({ id, status: 'completed', model: ASTRA_MODEL, output: [] });
+      if (behavior.readFailure === 'empty_completed') return Response.json({ id, status: 'completed', model: providers.get(id)?.model, output: [] });
       return Response.json(providers.get(id));
     }
     assert.equal(url.pathname, '/rest/v1/ai_analysis_jobs');
     if (request.method === 'POST') {
       const row: StoredJob = { id: crypto.randomUUID(), updated_at: new Date().toISOString(), ...await request.json() };
+      if (behavior.legacyModelPolicy) {
+        delete row.result_payload.agent.pairModel;
+        delete row.result_payload.agent.reviewModel;
+        delete row.result_payload.agent.pairSearchPolicy;
+        row.model = ASTRA_MODEL;
+      }
       rows.set(row.id, row);
       return Response.json(row);
     }
@@ -241,6 +251,9 @@ function fixture(t: TestContext, initial: Partial<Behavior> = {}, functionName =
   };
   const seedLegacy = (elements: SelectedElement[]) => {
     const state = createAgentState(elements);
+    delete state.agent.pairModel;
+    delete state.agent.reviewModel;
+    delete state.agent.pairSearchPolicy;
     state.batchSize = 1;
     const pair = buildPairCandidates(elements)[0];
     submissions.push({ request: {} as ProviderRequest, pairs: [pair], kind: 'pairs', at: Date.now() });
@@ -329,7 +342,10 @@ test('parallel token retries preserve siblings and require explicit recovery aft
   assert.equal(job.status, 'failed');
   assert.equal(Object.keys(job.result_payload.cells).length, 4);
   const saved = new Set(Object.keys(job.result_payload.cells));
-  assert.ok(poolOf(job).slots.some(s => s.tokenRetries === 1 && s.phase === 'blocked'));
+  const exhausted = poolOf(job).slots.find(s => s.tokenRetries === 2 && s.phase === 'blocked');
+  assert.ok(exhausted, 'Luna has two bounded increases from its smaller initial budget');
+  assert.deepEqual(f.submissions.filter(s => s.pairs.some(pair => pair.pairHash === exhausted.pairHashes[0]))
+    .map(s => s.request.max_output_tokens), [8_192, 16_384, 32_768]);
   const before = f.submissions.length;
   f.behavior.truncateLaterPairs = false;
   await f.dispatch({ action: 'agent.resume', jobId: job.id });
@@ -431,7 +447,7 @@ test('duplicate parallel worker deliveries share the lease and never duplicate p
   assert.equal(JSON.stringify(visible).includes('pairHashes'), false);
 });
 
-test('Astra analyzes every pair in both directions and finishes its sourced plan without a polling browser', async t => {
+test('fast sourced pairs and Astra review finish autonomously with every direction covered', async t => {
   const f = fixture(t);
   const job = await f.start();
   await f.drain();
@@ -441,7 +457,12 @@ test('Astra analyzes every pair in both directions and finishes its sourced plan
   assert.deepEqual(f.submissions.map(s => s.kind), ['pairs', 'pairs', 'pairs', 'plan', 'final']);
   for (const { kind, request, pairs } of f.submissions) {
     if (kind === 'pairs') assert.equal(pairs.length, 1, 'Each pair must own its own executed web-search trace.');
-    assert.equal(request.model, ASTRA_MODEL, 'An environment default must never replace the requested Astra model.');
+    assert.equal(request.model, kind === 'pairs' ? 'gpt-6-luna' : ASTRA_MODEL,
+      'An environment default must never replace the model assigned to this stage.');
+    if (kind === 'pairs') {
+      assert.equal(request.reasoning, undefined);
+      assert.equal(request.max_output_tokens, 8_192);
+    }
     assert.deepEqual(request.text.format, kind === 'pairs' ? buildAgentPairFormat(pairs) : AGENT_PLAN_FORMAT);
     assert.equal(request.tool_choice, kind === 'final' ? undefined : 'required');
     assert.equal(Boolean(request.tools?.length), kind !== 'final');
@@ -467,6 +488,51 @@ test('Astra analyzes every pair in both directions and finishes its sourced plan
   assert.equal(visible.job.id, job.id);
   assert.equal('provider_response_id' in visible.job, false);
   assert.equal((await (await f.dispatch({ action: 'matrix.latest', jobId: job.id })).json()).job, null);
+});
+
+test('a legacy accepted Astra response resumes under its original model without regenerating the pair', async t => {
+  const f = fixture(t, { legacyModelPolicy: true, readFailure: 401 });
+  const job = await f.start(selected.slice(0, 2));
+  await f.drain();
+  assert.equal(job.status, 'failed');
+  assert.equal(job.provider_response_id, 'resp_astra_1');
+  assert.equal(job.result_payload.agent.pairModel, undefined);
+  assert.equal(f.submissions.length, 1);
+  assert.equal(f.submissions[0].request.model, ASTRA_MODEL);
+  f.behavior.readFailure = null;
+  await f.dispatch({ action: 'agent.resume', jobId: job.id });
+  await f.drain();
+  assert.equal(job.status, 'completed');
+  assert.deepEqual(f.gets.slice(0, 2), ['resp_astra_1', 'resp_astra_1']);
+  assert.deepEqual(f.submissions.map(item => item.kind), ['pairs', 'plan', 'final']);
+  assert.ok(f.submissions.every(item => item.request.model === ASTRA_MODEL));
+  assert.equal(job.result_payload.analysis.agentReview?.pairModel, ASTRA_MODEL);
+  assert.equal(job.result_payload.analysis.agentReview?.reviewModel, ASTRA_MODEL);
+});
+
+test('four selected concepts use two Luna batches while tracing all six pair searches independently', async t => {
+  const f = fixture(t);
+  const elements: SelectedElement[] = [...selected, { name: 'Traitement Delta', type: 'treatment' }];
+  const job = await f.start(elements);
+  await f.drain();
+  assert.equal(job.status, 'completed');
+  const pairSubmissions = f.submissions.filter(item => item.kind === 'pairs');
+  assert.deepEqual(pairSubmissions.map(item => item.pairs.length), [4, 2]);
+  assert.deepEqual(f.submissions.map(item => item.kind), ['pairs', 'pairs', 'plan', 'final']);
+  for (const { request } of pairSubmissions) {
+    assert.equal(request.model, 'gpt-6-luna');
+    assert.equal(request.reasoning, undefined);
+    assert.equal(request.max_output_tokens, 8_192);
+    assert.equal(request.tool_choice, 'required');
+  }
+  const result = job.result_payload;
+  assert.equal(result.agent.pairSearchPolicy, 'traced_queries_v1');
+  assert.equal(result.analysis.agentReview?.coverage.totalPairs, 6);
+  assert.equal(result.analysis.agentReview?.coverage.reviewedPairs, 6);
+  assert.equal(result.analysis.agentReview?.coverage.webSearchedPairs, 6);
+  assert.equal(result.analysis.pairAssessments?.length, 6);
+  assert.ok(result.analysis.pairAssessments?.every(item => item.searchVerification === 'planned_query'));
+  assert.deepEqual(Object.keys(result.cells).sort(), buildPairCandidates(elements).map(pair => pair.pairHash).sort());
 });
 
 test('Astra jobs keep owner and patient authorization on latest, resume and worker entry points', async t => {
@@ -522,7 +588,7 @@ test('a model bibliography without a native web trace fails the stage and can be
 });
 
 test('a response from another model is retained for audit and replaced only by an explicit Astra resume', async t => {
-  const f = fixture(t, { providerModel: 'gpt-6-luna' });
+  const f = fixture(t, { providerModel: 'gpt-6.1-sol' });
   const job = await f.start(selected.slice(0, 2));
   await f.drain();
   assert.equal(job.status, 'failed');
@@ -534,13 +600,66 @@ test('a response from another model is retained for audit and replaced only by a
   await f.dispatch({ action: 'agent.latest', jobId: job.id });
   await f.drain();
   assert.equal(f.submissions.length, 1);
-  f.behavior.providerModel = ASTRA_MODEL;
+  f.behavior.providerModel = null;
   await f.dispatch({ action: 'agent.resume', jobId: job.id });
   await f.drain();
   assert.equal(job.status, 'completed');
   assert.equal(f.submissions.length, 4);
   assert.deepEqual(f.gets.slice(0, 2), ['resp_astra_1', 'resp_astra_2']);
   assert.equal((job.request_payload._matrix_runtime as Record<string, unknown>).lastRejectedResponseId, 'resp_astra_1');
+});
+
+test('a wrong-model first pair response cannot trigger an automatic token-budget retry when incomplete', async t => {
+  const f = fixture(t, { providerModel: ASTRA_MODEL, truncateFirstPair: true });
+  const job = await f.start(selected.slice(0, 2));
+  await f.drain();
+  assert.equal(f.submissions[0].request.model, 'gpt-6-luna');
+  assert.equal(job.status, 'failed');
+  assert.equal(f.submissions.length, 1, 'Model validation must precede automatic retries for output-token exhaustion.');
+  assert.equal(job.provider_response_id, 'resp_astra_1');
+  assert.deepEqual(job.result_payload.cells, {});
+  const runtime = job.request_payload._matrix_runtime as Record<string, unknown>;
+  assert.equal(runtime.regenerationRequired, true);
+  assert.equal(runtime.retries, 0);
+  await f.dispatch({ action: 'agent.latest', jobId: job.id });
+  await f.drain();
+  assert.equal(f.submissions.length, 1);
+  assert.equal(job.provider_response_id, 'resp_astra_1');
+});
+
+test('Sol cannot replace Astra during plan or final review and rejected reviews preserve completed pairs', async t => {
+  for (const stage of ['plan', 'final'] as const) {
+    await t.test(stage, async st => {
+      const f = fixture(st, { providerModelByKind: { [stage]: 'gpt-6-luna' } });
+      const job = await f.start(selected.slice(0, 2));
+      await f.drain();
+      const rejectedId = stage === 'plan' ? 'resp_astra_2' : 'resp_astra_3';
+      assert.equal(job.status, 'failed');
+      assert.equal(job.provider_response_id, rejectedId);
+      assert.equal(f.submissions.at(-1)?.kind, stage);
+      assert.equal(f.submissions.at(-1)?.request.model, ASTRA_MODEL);
+      assert.equal((job.request_payload._matrix_runtime as Record<string, unknown>).regenerationRequired, true);
+      assert.equal(job.result_payload.agent.stage, stage);
+      const cells = structuredClone(job.result_payload.cells);
+      const assessments = structuredClone(job.result_payload.analysis.pairAssessments);
+      assert.equal(Object.keys(cells).length, 1);
+      assert.equal(assessments?.length, 1);
+      const beforeResume = f.submissions.length;
+      await f.dispatch({ action: 'agent.latest', jobId: job.id });
+      await f.drain();
+      assert.equal(f.submissions.length, beforeResume);
+      delete f.behavior.providerModelByKind[stage];
+      await f.dispatch({ action: 'agent.resume', jobId: job.id });
+      await f.drain();
+      assert.equal(job.status, 'completed');
+      assert.deepEqual(job.result_payload.cells, cells);
+      assert.deepEqual(job.result_payload.analysis.pairAssessments, assessments);
+      assert.deepEqual(f.submissions.slice(beforeResume).map(item => item.kind), stage === 'plan' ? ['plan', 'final'] : ['final']);
+      assert.equal(f.submissions.filter(item => item.kind === 'pairs').length, 1);
+      assert.equal((job.request_payload._matrix_runtime as Record<string, unknown>).lastRejectedResponseId, rejectedId);
+      assert.equal(job.reasoning_effort, 'max', 'Stored review metadata must reflect the effort actually selected by the clinical router.');
+    });
+  }
 });
 
 for (const providerStatus of ['failed', 'cancelled', 'unknown']) {

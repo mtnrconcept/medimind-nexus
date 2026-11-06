@@ -4,6 +4,8 @@ import { ArrowRight, Brain, ChevronDown, ExternalLink, Globe, Loader2, Stethosco
 /** Structural contract shared with the durable cross-analysis result. */
 export interface AgentReview {
   model: string;
+  pairModel?: string;
+  reviewModel?: string;
   stage: 'pairs' | 'plan' | 'candidate_pairs' | 'final' | 'completed';
   coverage: {
     totalPairs: number;
@@ -57,6 +59,7 @@ const actionLabels: Record<PlanOption['changes'][number]['action'], string> = {
 };
 
 const count = (value: number) => Number.isFinite(value) ? Math.max(0, Math.floor(value)) : 0;
+const modelLabel = (model: string | undefined) => /^gpt-6-astra(?:-|$)/i.test(model || '') ? 'GPT-6 Astra' : model || 'Modèle non renseigné';
 
 function SourceLinks({ urls }: { urls: string[] }) {
   const links = new Map<string, string>();
@@ -163,7 +166,7 @@ export function AgentCrossAnalysisPanel({ review }: { review: AgentReview }) {
   const completed = review.stage === 'completed' && covered;
   const provisional = !completed;
   const stageLabel = review.stage === 'completed' && !covered ? 'Couverture incomplète' : stageLabels[review.stage];
-  const modelName = /^gpt-6-astra(?:-|$)/i.test(review.model) ? 'GPT-6 Astra' : review.model || 'Modèle non renseigné';
+  const modelName = modelLabel(review.model);
   const plan = review.plan;
   const progress = total > 0 ? Math.min(100, examined / total * 100) : 0;
 
@@ -177,6 +180,10 @@ export function AgentCrossAnalysisPanel({ review }: { review: AgentReview }) {
           <div>
             <h4 id={headingId} className="text-sm font-semibold">Analyse croisée par agent IA</h4>
             <p className="mt-0.5 text-xs text-muted-foreground">OpenAI · {modelName}</p>
+            {(review.pairModel || review.reviewModel) && <p className="mt-1 text-xs text-muted-foreground">
+              {[review.pairModel ? `Relations : ${modelLabel(review.pairModel)}` : '',
+                review.reviewModel ? `Revue : ${modelLabel(review.reviewModel)}` : ''].filter(Boolean).join(' · ')}
+            </p>}
           </div>
         </div>
         <p role="status" aria-live="polite" className="flex items-center gap-2 text-xs font-medium text-muted-foreground">

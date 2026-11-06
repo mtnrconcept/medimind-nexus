@@ -89,6 +89,7 @@ export interface TreatmentSchema {
 
 /** OpenAI interpretations are not independently validated medical evidence. */
 export interface PairAssessment extends RelationMetadata {
+  searchVerification?: 'planned_query' | 'dedicated_response';
   directions?: AgentDirection[];
   fromName?: string;
   toName?: string;

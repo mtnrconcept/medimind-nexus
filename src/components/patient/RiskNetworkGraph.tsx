@@ -89,6 +89,8 @@ import {
     getAppropriatenessBadgeLabel,
     isAppropriatenessSuccess,
     isAppropriatenessWarning,
+    interactionEffectLabel,
+    clinicalSourceUrls,
     supportsAppropriatenessBadge,
 } from './crossDataDisplay';
 
@@ -273,27 +275,17 @@ function FitClinicalGraph({ layoutKey }: { layoutKey: string }) {
     return null;
 }
 
-const interactionEffectLabels: Record<NonNullable<CausalLink['interactionEffect']>, string> = {
-    increase_effect: 'Augmentation de l’effet', decrease_effect: 'Diminution de l’effet',
-    increase_toxicity: 'Augmentation de la toxicité', mixed: 'Effets multiples', unknown: 'Effet non déterminé',
-};
-
 function hasRiskSignal(link: CausalLink): boolean {
     return link.validationVersion === RELATION_ENGINE_VERSION &&
         ['adverse_effect', 'interaction', 'risk_factor', 'contraindication', 'disease_worsening'].includes(link.relationKind || '');
 }
 
 function ClinicalLinkEvidence({ link }: { link: CausalLink }) {
-    const sources = [...new Set(link.webSources || [])].flatMap(value => {
-        try {
-            const url = new URL(value);
-            return url.protocol === 'https:' && !url.username && !url.password ? [{ url: url.href, host: url.hostname }] : [];
-        } catch { return []; }
-    });
+    const sources = clinicalSourceUrls(link.webSources).map(url => ({ url, host: new URL(url).hostname }));
     return (
         <div className="space-y-2 text-xs">
             <p className="text-muted-foreground">{relationPresentation(link).description}</p>
-            {link.interactionEffect && <Badge variant="outline">{interactionEffectLabels[link.interactionEffect]}</Badge>}
+            {interactionEffectLabel(link.interactionEffect) && <Badge variant="outline">{interactionEffectLabel(link.interactionEffect)}</Badge>}
             {!!link.contextLimitations?.length && (
                 <ul className="list-disc space-y-1 pl-4 text-muted-foreground">
                     {link.contextLimitations.map((limit, index) => <li key={index}>{limit}</li>)}
@@ -946,7 +938,7 @@ export function RiskNetworkGraph({
             const treatmentIds = customIds?.treatmentIds || canonicalSelection.treatmentIds;
             const medicationIds = customIds?.medicationIds || canonicalSelection.medicationIds;
 
-            // The parent owns the authenticated, resumable Astra agent job.
+            // The parent owns the authenticated, resumable cross-analysis job.
             // There is no standalone fallback to another model or old endpoint.
             await onAnalyzeWithOpenAI({ pathologyIds, symptomIds, treatmentIds, medicationIds,
                 ...(analysisSnapshot ? { elements: collectCanonicalGraphEntities(nodesToAnalyze) } : {}) });

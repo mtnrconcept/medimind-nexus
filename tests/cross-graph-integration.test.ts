@@ -7,6 +7,7 @@ import * as grouping from '../src/components/patient/crossGraphGroups.ts';
 import * as contract from '../supabase/functions/cross-data-analyzer/relation-contract.ts';
 import * as display from '../src/components/patient/crossDataDisplay.ts';
 import * as analysisUtils from '../supabase/functions/cross-data-analyzer/analysis-utils.ts';
+import * as terminology from '../supabase/functions/_shared/medical-terminology.ts';
 
 type Tree = { type: unknown; props: Record<string, unknown> };
 type Hook = { value?: unknown; setter?: (next: unknown) => void; deps?: unknown[]; cleanup?: () => void };
@@ -15,7 +16,7 @@ type Hook = { value?: unknown; setter?: (next: unknown) => void; deps?: unknown[
  * The small hook driver deliberately batches effects before the next render,
  * which catches selection/grouping races hidden by helper-only tests. */
 function mountGraph(initialProps: Record<string, unknown>, options: {
-  component?: 'CrossDataAnalyzer'; readJob?: () => unknown; submit?: (action: string, body: unknown) => Promise<void>;
+  component?: 'CrossDataAnalyzer' | 'RelationshipMatrix'; readJob?: () => unknown; submit?: (action: string, body: unknown) => Promise<void>;
 } = {}) {
   const hooks: Hook[] = [];
   let index = 0, dirty = true;
@@ -86,6 +87,7 @@ function mountGraph(initialProps: Record<string, unknown>, options: {
       if (name === './crossDataDisplay') return display;
       if (name.endsWith('/relation-contract')) return contract;
       if (name.endsWith('/analysis-utils')) return analysisUtils;
+      if (name.endsWith('/medical-terminology')) return terminology;
       if (name === './RiskNetworkGraph') return { RiskNetworkGraph: 'RiskNetworkGraph' };
       if (name === './AgentCrossAnalysisPanel') return { AgentCrossAnalysisPanel: 'AgentCrossAnalysisPanel' };
       if (name === './RelationshipMatrix' || name === './VideoLoader' || name === 'react-virtuoso') return components;
@@ -136,6 +138,100 @@ function textContent(node: unknown): string {
   return typeof node === 'string' ? node : '';
 }
 const normalized = <T>(value: T): T => JSON.parse(JSON.stringify(value));
+
+function matrixCell(tree: Tree, row: number, column: number): Tree {
+  const body = descendants(tree).find(item => item.type === 'TableBody')!;
+  const rows = descendants(body).filter(item => item.type === 'TableRow');
+  return descendants(rows[row]).filter(item => item.type === 'TableCell')[column + 1];
+}
+
+function matrixFixture(links: Array<Record<string, unknown>>, directions: Array<Record<string, unknown>> = []) {
+  const elements = [{ name: 'Traitement A', type: 'medication' as const }, { name: 'Traitement B', type: 'medication' as const }];
+  const pairHash = analysisUtils.buildPairHash(elements[0].name, elements[0].type, elements[1].name, elements[1].type);
+  return {
+    pathologies: [], symptoms: [], treatments: [], medications: [],
+    selectedPathologies: [], selectedSymptoms: [], selectedTreatments: [], selectedMedications: [],
+    snapshot: { elements, cells: { [pairHash]: links } },
+    analysisResult: { summary: 'Données synthétiques de test.', causalLinks: links, webResearch: [],
+      pairAssessments: directions.length ? [{ pairHash, verdict: 'cited_relation', headline: 'Résumé non orienté de la paire',
+        explanation: 'Synthèse des deux directions.', limitations: 'Contexte synthétique.', directions, source: 'openai' }] : [] },
+  };
+}
+
+const matrixLink = (evidence: string, interactionEffect: string, reverse = false) => ({
+  from: reverse ? 'Traitement B' : 'Traitement A', fromType: 'medication',
+  to: reverse ? 'Traitement A' : 'Traitement B', toType: 'medication',
+  relationship: 'Interaction rapportée', relationKind: 'interaction', evidenceSupport: 'direct',
+  validationVersion: contract.RELATION_ENGINE_VERSION, citationVerification: 'provider_trace',
+  interactionEffect, evidence, probability: 'low', contextLimitations: ['Fixture synthétique ; aucune décision clinique.'],
+  webSources: ['https://pubmed.ncbi.nlm.nih.gov/38804512/', 'javascript:alert(1)', 'https://user:secret@example.org/private'],
+});
+
+test('invalid interaction effects cannot expose object prototype values to the rendered UI', () => {
+  for (const effect of ['__proto__', 'constructor', 'toString', 'unrecognized-effect']) {
+    assert.equal(display.interactionEffectLabel(effect), null);
+  }
+  assert.equal(display.interactionEffectLabel('cancel_effect'), 'Annulation d’effet rapportée');
+});
+
+test('the matrix keeps every mechanism in its own directed cell and opens each source-backed detail', async () => {
+  const links = [matrixLink('Mécanisme alpha synthétique.', 'increase_effect'),
+    matrixLink('Mécanisme bêta synthétique.', 'decrease_effect'),
+    matrixLink('Mécanisme gamma synthétique.', 'cancel_effect'),
+    matrixLink('Mécanisme inverse synthétique.', 'unknown', true)];
+  const matrix = mountGraph(matrixFixture(links), { component: 'RelationshipMatrix' });
+  let tree = await matrix.flush();
+  const forward = matrixCell(tree, 0, 1);
+  const reverse = matrixCell(tree, 1, 0);
+  assert.match(textContent(forward), /3 relations/);
+  assert.doesNotMatch(textContent(reverse), /3 relations/);
+  const openForward = descendants(forward).find(item => typeof item.props.onClick === 'function')!;
+  assert.match(String(openForward.props['aria-label']), /Traitement A.*Traitement B/);
+  (openForward.props.onClick as () => void)();
+  tree = await matrix.flush();
+  const relationGroup = descendants(tree).find(item => item.props['aria-label'] === 'Relations dans ce sens')!;
+  assert.ok(relationGroup);
+  const selectors = descendants(relationGroup).filter(item => item.type === 'button');
+  assert.equal(selectors.length, 3, 'All mechanisms must remain individually inspectable');
+  assert.match(textContent(selectors[1]), /Diminution de l’effet/);
+  assert.doesNotMatch(textContent(selectors[1]), /Annulation/);
+  assert.match(textContent(selectors[2]), /Annulation d’effet rapportée/);
+  assert.ok(selectors.every(item => !textContent(item).includes('Effet non déterminé')), 'The opposite direction must not leak into this cell');
+  (selectors[2].props.onClick as () => void)();
+  tree = await matrix.flush();
+  assert.match(textContent(tree), /Mécanisme gamma synthétique/);
+  assert.doesNotMatch(textContent(tree), /Mécanisme inverse synthétique/);
+  const sourceLinks = descendants(tree).filter(item => item.type === 'a').map(item => String(item.props.href));
+  assert.ok(sourceLinks.includes('https://pubmed.ncbi.nlm.nih.gov/38804512/'));
+  assert.ok(sourceLinks.every(url => !url.includes('javascript:') && !url.includes('user:secret')));
+});
+
+test('a reverse direction with insufficient evidence never inherits the documented forward relation', async () => {
+  const keyA = analysisUtils.typedElementKey({ name: 'Traitement A', type: 'medication' });
+  const keyB = analysisUtils.typedElementKey({ name: 'Traitement B', type: 'medication' });
+  const directions = [
+    { fromKey: keyA, toKey: keyB, verdict: 'cited_relation', explanation: 'Effet documenté de A vers B.', limitations: 'Source à vérifier.', sourceUrls: [] },
+    { fromKey: keyB, toKey: keyA, verdict: 'insufficient', explanation: 'Aucune preuve exploitable pour B vers A.', limitations: 'Ne démontre pas une absence de risque.', sourceUrls: [] },
+  ];
+  const matrix = mountGraph(matrixFixture([matrixLink('Effet A vers B.', 'increase_effect')], directions), { component: 'RelationshipMatrix' });
+  let tree = await matrix.flush();
+  assert.match(textContent(matrixCell(tree, 0, 1)), /Interaction rapportée/);
+  const reverse = matrixCell(tree, 1, 0);
+  assert.match(textContent(reverse), /Preuves insuffisantes/);
+  assert.doesNotMatch(textContent(reverse), /Interaction rapportée|Résumé non orienté/);
+  (descendants(reverse).find(item => typeof item.props.onClick === 'function')!.props.onClick as () => void)();
+  tree = await matrix.flush();
+  assert.match(textContent(tree), /Aucune preuve exploitable pour B vers A/);
+  assert.doesNotMatch(textContent(tree), /Effet documenté de A vers B/);
+  assert.match(textContent(tree), /absence de risque/);
+});
+
+test('the cross-analysis entry describes the task without hardcoding a provider model', async () => {
+  const page = mountGraph({}, { component: 'CrossDataAnalyzer' });
+  const tree = await page.flush();
+  assert.doesNotMatch(textContent(tree), /GPT-6 Astra/);
+  assert.match(textContent(tree), /recherche médicale|sources médicales/i);
+});
 
 test('the mounted graph automatically creates shared copies and analyzes every canonical selection even when a group is hidden', async () => {
   const requests: unknown[] = [];
