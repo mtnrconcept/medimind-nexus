@@ -21,7 +21,8 @@ const AGENT_PAIR_BATCH_SIZE = 4;
 export function createAgentState(elements: SelectedElement[]): AgentMatrixState {
   // Analyze several pairs per provider response while keeping pair-specific citations and structured cells.
   // This removes the dominant sequential latency without reducing reasoning effort or web-search requirements.
-  const state: AgentMatrixState = { elements, cells: {}, batchSize: AGENT_PAIR_BATCH_SIZE,
+  const pairCount = buildPairCandidates(elements).length;
+  const state: AgentMatrixState = { elements, cells: {}, batchSize: pairCount <= 3 ? 1 : AGENT_PAIR_BATCH_SIZE,
     analysis: ensureAnalysisShape({ engineVersion: RELATION_ENGINE_VERSION, summary: 'Recherche spécialisée et analyse croisée par GPT-6 Astra.' }),
     agent: { version: AGENT_VERSION, stage: 'pairs', candidates: [], candidateCells: {}, candidateAssessments: [], sourceRegistry: [] } };
   updateAgentCoverage(state);
