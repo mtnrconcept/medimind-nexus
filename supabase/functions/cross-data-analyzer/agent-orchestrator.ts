@@ -107,13 +107,13 @@ export function buildAgentRequest(state: AgentMatrixState, step: AgentStep): { s
   if (user.length > (final ? 1_800_000 : 350_000)) throw new Error('La synthèse dépasse le contexte prévu ; réduisez la sélection ou reprenez une analyse plus ciblée.');
   return { system: pairStep ? AGENT_PAIR_PROMPT : final ? AGENT_FINAL_PROMPT : AGENT_PLAN_PROMPT, user,
     options: { model: pairStep ? models.pairModel : models.reviewModel, forceModel: true,
-      reasoningEffort: fastPairs ? 'low' : final ? 'xhigh' : 'high',
+      reasoningEffort: fastPairs ? 'none' : final ? 'xhigh' : 'high',
       clinicalTask: fastPairs ? 'pair_relation_research' : final ? 'final_safety_review' : pairStep ? 'polypharmacy' : 'treatment_complex',
-      maxTokens: fastPairs ? 16_384 : 65_536, responseFormat: pairStep ? buildAgentPairFormat(step.pairs) : AGENT_PLAN_FORMAT,
+      maxTokens: fastPairs ? 8_192 : 65_536, responseFormat: pairStep ? buildAgentPairFormat(step.pairs) : AGENT_PLAN_FORMAT,
       elementCount: state.elements.length + state.agent.candidates.length, hasExternalEvidence: state.agent.sourceRegistry.length > 0,
       ...(final ? {} : { webSearch: { allowedDomains: MEDICAL_WEB_DOMAINS, required: true,
-        searchContextSize: fastPairs ? 'medium' as const : 'high' as const, externalWebAccess: true,
-        maxToolCalls: pairStep ? Math.min(32, Math.max(16, step.pairs.length * 4)) : 20 } }) } };
+        searchContextSize: fastPairs ? 'low' as const : 'high' as const, externalWebAccess: true,
+        maxToolCalls: pairStep ? Math.min(16, Math.max(8, step.pairs.length * 2)) : 20 } }) } };
 }
 
 export function applyAgentResult(state: AgentMatrixState, step: AgentStep, raw: unknown, returnedSources: AgentSource[], webSearchCalls: number,
