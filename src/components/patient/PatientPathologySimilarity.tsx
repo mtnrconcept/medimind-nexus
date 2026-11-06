@@ -9,6 +9,7 @@ import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrig
 import { buildPathologyChoices, type PathologyChoice, type RankedPatientMatch } from '@/lib/patientSimilarity/clinicalSimilarity';
 import { loadAuthorizedPathologyMatches } from '@/lib/patientSimilarity/authorizedMatches';
 import { createSupabaseMatchGateway } from '@/lib/patientSimilarity/supabaseGateway';
+import { PatientComparisonDetails } from './PatientComparisonDetails';
 
 interface Props {
   patientId: string;
@@ -19,17 +20,7 @@ interface Props {
 }
 
 const coverageText = (level: RankedPatientMatch['evidenceLevel']) => level === 'documented'
-  ? 'Comparaison documentée' : level === 'partial' ? 'Comparaison partielle' : 'Données insuffisantes';
-
-const componentNames: Record<keyof RankedPatientMatch['componentScores'], string> = {
-  coDiagnoses: 'Diagnostics associés',
-  medicalHistory: 'Antécédents',
-  medications: 'Traitements',
-  laboratory: 'Biologie',
-  symptoms: 'Symptômes',
-  chronology: 'Chronologie',
-  age: 'Proximité d’âge',
-};
+  ? 'Couverture élevée' : level === 'partial' ? 'Couverture partielle' : 'Couverture faible';
 
 export function PatientPathologySimilarity({ patientId, primaryPathology, recordedPathologies, medicalHistory, onRefresh }: Props) {
   const choices = useMemo<PathologyChoice[]>(() => buildPathologyChoices(
@@ -42,6 +33,7 @@ export function PatientPathologySimilarity({ patientId, primaryPathology, record
   const [selected, setSelected] = useState('');
   const [refresh, setRefresh] = useState(0);
   const [results, setResults] = useState<RankedPatientMatch[]>([]);
+  const [visibleCount, setVisibleCount] = useState(10);
   const [loading, setLoading] = useState(false);
   const [resolvedSelection, setResolvedSelection] = useState('');
   const [error, setError] = useState('');
@@ -68,6 +60,7 @@ export function PatientPathologySimilarity({ patientId, primaryPathology, record
 
   useEffect(() => {
     let active = true;
+    setVisibleCount(10);
     if (!selected || !choices.some(x => x.id === selected)) {
       if (selected) setSelected('');
       setResults([]);
@@ -98,7 +91,7 @@ export function PatientPathologySimilarity({ patientId, primaryPathology, record
   }, [patientId, selected, refresh, choices]);
 
   return (
-    <Card className="border-primary/20 bg-card/90" aria-label="Comparaison des patients par pathologie">
+    <Card className="min-w-0 border-primary/20 bg-card/90" aria-label="Comparaison des patients par pathologie">
       <CardHeader className="pb-3">
         <CardTitle className="flex items-center gap-2 text-base sm:text-lg">
           <Users className="h-5 w-5 text-primary" aria-hidden="true" />
@@ -110,7 +103,7 @@ export function PatientPathologySimilarity({ patientId, primaryPathology, record
           sans extrapolation diagnostique ni lien de causalité.
         </CardDescription>
       </CardHeader>
-      <CardContent className="space-y-4">
+      <CardContent className="min-w-0 space-y-4">
         {choices.length === 0 ? (
           <p className="text-sm text-muted-foreground">Aucune pathologie ni maladie des antécédents personnels n’est enregistrée dans ce dossier.</p>
         ) : (
@@ -175,9 +168,9 @@ export function PatientPathologySimilarity({ patientId, primaryPathology, record
                     Classement décroissant · {isRecordedLabel ? 'correspondance du libellé documenté' : 'même pathologie du catalogue'}
                   </span>
                 </div>
-                <div className="max-h-[550px] overflow-y-auto space-y-2 pr-1">
-                  {results.map((match, position) => (
-                    <div key={match.patientId} className="rounded-lg border border-border/70 bg-background/50 p-3 space-y-2">
+                <div className="min-w-0 space-y-3">
+                  {results.slice(0, visibleCount).map((match, position) => (
+                    <div key={match.patientId} className="min-w-0 rounded-lg border border-border/70 bg-background/50 p-3 space-y-3" data-testid="patient-match-card">
                       <div className="flex flex-wrap items-center justify-between gap-3">
                         <div className="flex flex-wrap items-center gap-2">
                           <Badge variant="outline">#{position + 1}</Badge>
@@ -193,30 +186,21 @@ export function PatientPathologySimilarity({ patientId, primaryPathology, record
                         </div>
                       </div>
                       <p className="text-xs text-muted-foreground">
-                        Complétude des dimensions comparables : {match.coveragePercent} %.
+                        Couverture pondérée des dimensions utilisables : {match.coveragePercent} %.
                         {match.sharedFactors.length === 0 ? ' Aucun autre élément clinique commun suffisamment documenté.' : ''}
                       </p>
                       {match.sharedFactors.length > 0 && (
                         <ul className="list-disc pl-4 text-xs text-foreground/80 space-y-1">
-                          {match.sharedFactors.slice(0, 5).map((factor, idx) => <li key={`${match.patientId}-${idx}`}>{factor}</li>)}
+                          {match.sharedFactors.slice(0, 3).map((factor, idx) => <li key={`${match.patientId}-${idx}`}>{factor}</li>)}
                         </ul>
                       )}
-                      <details className="text-xs text-muted-foreground">
-                        <summary className="cursor-pointer hover:text-foreground">Détail du classement</summary>
-                        <div className="flex flex-wrap gap-1.5 mt-2">
-                          {(Object.entries(match.componentScores) as [keyof RankedPatientMatch['componentScores'], number | null][])
-                            .filter(([, value]) => value !== null)
-                            .map(([key, value]) => (
-                              <Badge key={key} variant="outline" className="font-normal">
-                                {componentNames[key]} : {Math.round(value! * 100)} %
-                              </Badge>
-                            ))}
-                        </div>
-                        <p className="mt-2">Une dimension absente n’est pas supposée normale et réduit la solidité de la comparaison.</p>
-                      </details>
+                      <PatientComparisonDetails match={match} initiallyOpen={position === 0} />
                     </div>
                   ))}
                 </div>
+                {results.length > visibleCount && <Button type="button" variant="outline" onClick={() => setVisibleCount(n => n + 10)}>
+                  Afficher les {Math.min(10, results.length - visibleCount)} dossiers suivants ({visibleCount} sur {results.length})
+                </Button>}
               </>
             )}
           </div>

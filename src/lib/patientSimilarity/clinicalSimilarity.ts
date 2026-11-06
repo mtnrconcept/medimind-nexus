@@ -1,3 +1,8 @@
+import { buildComparisonEvidence, type PatientComparisonEvidence } from './comparisonEvidence';
+import { historyKey, isValidDate, medicationKey, normalizeRecordedConditionLabel } from './comparisonFacts';
+import { compareMeasurements, meanMeasurementSimilarity, type Measurement } from './measurementComparison';
+export { normalizeRecordedConditionLabel } from './comparisonFacts';
+
 /**
  * Explainable similarity of documented clinical histories. The index is not a
  * statistical correlation, a risk probability, or a diagnostic recommendation.
@@ -29,20 +34,17 @@ export interface ClinicalPatientProfile {
   age: number | null;
   diagnoses: RecordedPathology[];
   history: Array<{ id?: string; name: string; conditionType?: string; diagnosisDate?: string | null }>;
-  medications: Array<{ substance?: string | null; atcCode?: string | null; medicationId?: string | null }>;
-  labs: Array<{
-    name: string;
-    unit: string | null;
-    value: number | null;
-    measuredAt?: string | null;
-    referenceMin?: number | null;
-    referenceMax?: number | null;
-    isAbnormal?: boolean | null;
+  medications: Array<{
+    substance?: string | null; atcCode?: string | null; medicationId?: string | null;
+    name?: string | null; dosage?: string | null; frequency?: string | null;
+    startDate?: string | null; endDate?: string | null; isActive?: boolean | null;
   }>;
-  symptoms: Array<{ id: string }>;
+  labs: Measurement[];
+  variables?: Measurement[];
+  symptoms: Array<{ id: string; name?: string | null; onsetDate?: string | null; severity?: string | null; frequency?: string | null; isResolved?: boolean | null }>;
 }
 
-type Component = 'coDiagnoses' | 'medicalHistory' | 'medications' | 'laboratory' | 'symptoms' | 'chronology' | 'age';
+export type Component = 'coDiagnoses' | 'medicalHistory' | 'medications' | 'laboratory' | 'symptoms' | 'chronology' | 'age';
 
 export type ComponentScores = Record<Component, number | null>;
 
@@ -58,9 +60,11 @@ export interface RankedPatientMatch {
   samePathology: boolean;
   matchBasis: 'pathology-id' | 'recorded-label';
   statisticalCorrelation: false;
+  scoreDetails: ScoreExplanation;
+  details: PatientComparisonEvidence;
 }
 
-const WEIGHTS: Record<Component, number> = {
+export const COMPARISON_WEIGHTS: Record<Component, number> = {
   coDiagnoses: 25,
   medicalHistory: 25,
   medications: 20,
@@ -70,26 +74,20 @@ const WEIGHTS: Record<Component, number> = {
   age: 5,
 };
 
-function normalized(s: string | null | undefined): string {
-  return (s ?? '')
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, ' ')
-    .trim()
-    .replace(/\s+/g, ' ');
+export interface ScoreDimension {
+  component: Component;
+  weight: number;
+  score: number | null;
+  sourceCount: number;
+  peerCount: number;
+  commonCount: number;
+  weightedPoints: number | null;
 }
-
-/** Full recorded label only: no substring, abbreviation, translation or diagnostic inference. */
-export function normalizeRecordedConditionLabel(value: string | null | undefined): string {
-  return (value ?? '').normalize('NFKD').replace(/\p{M}/gu, '').toLocaleLowerCase('fr')
-    .replace(/[’‘]/g, "'").replace(/\s+/gu, ' ').trim();
-}
-
-function isValidDate(raw: string | null | undefined): raw is string {
-  if (!raw || !/^\d{4}-\d{2}-\d{2}$/.test(raw)) return false;
-  const timestamp = Date.parse(raw + 'T00:00:00Z');
-  return Number.isFinite(timestamp) && new Date(timestamp).toISOString().slice(0, 10) === raw;
+export interface ScoreExplanation {
+  dimensions: ScoreDimension[];
+  weightedSum: number;
+  availableWeight: number;
+  coverageMultiplier: number;
 }
 
 /** The selector contains only diagnoses actually associated with this dossier. */
@@ -116,8 +114,8 @@ export function buildPathologyChoices(
 }
 
 function jaccard(a: Set<string>, b: Set<string>): number | null {
+  if (!a.size || !b.size) return null; // No documentation is not proof of absence.
   const union = new Set([...a, ...b]);
-  if (union.size === 0) return null;
   let common = 0;
   for (const key of a) if (b.has(key)) common++;
   return common / union.size;
@@ -128,74 +126,15 @@ function diseases(profile: ClinicalPatientProfile, selected: string) {
 }
 
 function histories(profile: ClinicalPatientProfile) {
-  return new Set(profile.history.map(x => normalized(x.name)).filter(Boolean));
+  return new Set(profile.history.map(historyKey).filter(Boolean));
 }
 
 function medications(profile: ClinicalPatientProfile) {
-  return new Set(profile.medications.map(x => {
-    const substance = normalized(x.substance);
-    if (substance) return `s:${substance}`;
-    const atc = normalized(x.atcCode);
-    if (atc) return `atc:${atc}`;
-    return x.medicationId ? `id:${x.medicationId.toLowerCase()}` : '';
-  }).filter(Boolean));
+  return new Set(profile.medications.map(medicationKey).filter(Boolean));
 }
 
 function symptoms(profile: ClinicalPatientProfile) {
   return new Set(profile.symptoms.map(x => x.id).filter(Boolean));
-}
-
-type LabState = 'high' | 'low' | 'normal' | 'abnormal';
-function labState(l: ClinicalPatientProfile['labs'][number]): LabState | null {
-  if (l.value === null || !Number.isFinite(l.value)) return null;
-  const min = l.referenceMin !== null && l.referenceMin !== undefined && Number.isFinite(l.referenceMin) ? l.referenceMin : null;
-  const max = l.referenceMax !== null && l.referenceMax !== undefined && Number.isFinite(l.referenceMax) ? l.referenceMax : null;
-  if (min !== null && max !== null && min > max) return null; // Invalid laboratory metadata.
-
-  const rangeState = min !== null && l.value < min ? 'low'
-    : max !== null && l.value > max ? 'high'
-      : min !== null || max !== null ? 'normal' : null;
-  if (rangeState !== null) {
-    if (l.isAbnormal === true && rangeState === 'normal') return null;
-    if (l.isAbnormal === false && rangeState !== 'normal') return null;
-    return rangeState;
-  }
-  if (l.isAbnormal === true) return 'abnormal';
-  if (l.isAbnormal === false) return 'normal';
-  return null;
-}
-
-function latestLabStates(profile: ClinicalPatientProfile) {
-  const map = new Map<string, { label: string; unit: string; state: LabState; date: string }>();
-  for (const l of profile.labs) {
-    const label = normalized(l.name);
-    const unit = normalized(l.unit);
-    if (!label || !unit) continue;
-    const state = labState(l);
-    if (!state) continue;
-    const date = isValidDate(l.measuredAt) ? l.measuredAt : '';
-    const key = `${label}\u0000${unit}`;
-    if (!map.has(key) || date > map.get(key)!.date) map.set(key, { label: l.name, unit: l.unit!, state, date });
-  }
-  return map;
-}
-
-function compareLabs(source: ClinicalPatientProfile, other: ClinicalPatientProfile) {
-  const a = latestLabStates(source), b = latestLabStates(other);
-  const scores: number[] = [], shared: string[] = [];
-  for (const [key, sourceLab] of a) {
-    const peerLab = b.get(key);
-    if (!peerLab) continue;
-    if (sourceLab.state === peerLab.state) {
-      scores.push(1);
-      shared.push(`Biologie concordante : ${sourceLab.label} (${sourceLab.unit}, ${sourceLab.state === 'high' ? 'haut' : sourceLab.state === 'low' ? 'bas' : sourceLab.state === 'normal' ? 'dans les références' : 'anormal'})`);
-    } else if (sourceLab.state === 'abnormal' && ['high', 'low'].includes(peerLab.state) || peerLab.state === 'abnormal' && ['high', 'low'].includes(sourceLab.state)) {
-      scores.push(0.5);
-    } else {
-      scores.push(0);
-    }
-  }
-  return { score: scores.length ? scores.reduce((sum, x) => sum + x, 0) / scores.length : null, shared };
 }
 
 function indexDate(profile: ClinicalPatientProfile, chosen: string): number | null {
@@ -211,8 +150,8 @@ function historyTimeline(profile: ClinicalPatientProfile, chosen: string) {
     if (!isValidDate(h.diagnosisDate)) continue;
     const historyDate = Date.parse(h.diagnosisDate + 'T00:00:00Z');
     if (historyDate > date) continue; // Do not imply a future condition was a preceding risk factor.
-    const key = normalized(h.name);
-    if (key && !result.has(key)) result.set(key, (date - historyDate) / 86400000);
+    const key = historyKey(h);
+    if (key) result.set(key, Math.max(result.get(key) ?? 0, (date - historyDate) / 86400000));
   }
   return result;
 }
@@ -240,18 +179,18 @@ function commonLabels<T>(items: T[], key: (item: T) => string, target: Set<strin
   return result;
 }
 
-function scoreProfile(source: ClinicalPatientProfile, other: ClinicalPatientProfile, selected: string): RankedPatientMatch {
+function scoreProfile(source: ClinicalPatientProfile, other: ClinicalPatientProfile, selected: string): Omit<RankedPatientMatch, 'details'> {
   const sourceDiseases = diseases(source, selected), otherDiseases = diseases(other, selected);
   const sourceHistory = histories(source), otherHistory = histories(other);
   const sourceMedication = medications(source), otherMedication = medications(other);
   const sourceSymptoms = symptoms(source), otherSymptoms = symptoms(other);
-  const labs = compareLabs(source, other);
+  const labs = compareMeasurements(source.labs, other.labs);
   const ageKnown = typeof source.age === 'number' && Number.isFinite(source.age) && source.age >= 0 && typeof other.age === 'number' && Number.isFinite(other.age) && other.age >= 0;
   const componentScores: ComponentScores = {
     coDiagnoses: jaccard(sourceDiseases, otherDiseases),
     medicalHistory: jaccard(sourceHistory, otherHistory),
     medications: jaccard(sourceMedication, otherMedication),
-    laboratory: labs.score,
+    laboratory: meanMeasurementSimilarity(labs),
     symptoms: jaccard(sourceSymptoms, otherSymptoms),
     chronology: compareChronology(source, other, selected),
     age: ageKnown ? Math.max(0, 1 - Math.abs(source.age! - other.age!) / 40) : null,
@@ -259,7 +198,7 @@ function scoreProfile(source: ClinicalPatientProfile, other: ClinicalPatientProf
 
   let availableWeight = 0;
   let weightedValue = 0;
-  for (const [component, weight] of Object.entries(WEIGHTS) as [Component, number][]) {
+  for (const [component, weight] of Object.entries(COMPARISON_WEIGHTS) as [Component, number][]) {
     const s = componentScores[component];
     if (s === null) continue;
     availableWeight += weight;
@@ -270,14 +209,32 @@ function scoreProfile(source: ClinicalPatientProfile, other: ClinicalPatientProf
   const score = availableWeight > 0 ? Math.round(100 * weightedValue / availableWeight * coverageMultiplier) : 0;
   const sharedFactors = [
     ...commonLabels(source.diagnoses, x => x.pathologyId !== selected ? x.pathologyId : '', otherDiseases, x => x.name?.trim() || 'Diagnostic codé', 'Autre diagnostic commun'),
-    ...commonLabels(source.history, x => normalized(x.name), otherHistory, x => x.name, 'Antécédent commun'),
-    ...commonLabels(source.medications, x => {
-      const s = normalized(x.substance);if(s)return `s:${s}`;
-      const atc = normalized(x.atcCode);if(atc)return `atc:${atc}`;
-      return x.medicationId ? `id:${x.medicationId.toLowerCase()}` : '';
-    }, otherMedication, x => x.substance?.trim() || x.atcCode?.trim() || 'Médicament codé', 'Traitement commun'),
-    ...labs.shared,
-  ].slice(0, 12);
+    ...commonLabels(source.history, historyKey, otherHistory, x => x.name, 'Antécédent commun'),
+    ...commonLabels<ClinicalPatientProfile['medications'][number]>(source.medications, medicationKey, otherMedication, x => x.substance?.trim() || x.name?.trim() || x.atcCode?.trim() || 'Médicament codé', 'Traitement commun'),
+    ...labs.filter(r => r.numericSimilarity !== null).map(r => `Biologie comparée : ${r.name} (proximité numérique ${Math.round(r.numericSimilarity! * 100)} %)`),
+  ];
+  const countSets = (a: Set<string>, b: Set<string>) => ({ sourceCount: a.size, peerCount: b.size, commonCount: [...a].filter(k => b.has(k)).length });
+  const ageCount = (p: ClinicalPatientProfile) => typeof p.age === 'number' && Number.isFinite(p.age) && p.age >= 0 ? 1 : 0;
+  const counts: Record<Component, { sourceCount: number; peerCount: number; commonCount: number }> = {
+    coDiagnoses: countSets(sourceDiseases, otherDiseases),
+    medicalHistory: countSets(sourceHistory, otherHistory),
+    medications: countSets(sourceMedication, otherMedication),
+    symptoms: countSets(sourceSymptoms, otherSymptoms),
+    chronology: countSets(new Set(historyTimeline(source, selected).keys()), new Set(historyTimeline(other, selected).keys())),
+    laboratory: {
+      sourceCount: labs.filter(r => r.source.selected && !r.source.excludedReason).length,
+      peerCount: labs.filter(r => r.peer.selected && !r.peer.excludedReason).length,
+      commonCount: labs.filter(r => r.numericSimilarity !== null).length,
+    },
+    age: { sourceCount: ageCount(source), peerCount: ageCount(other), commonCount: ageKnown ? 1 : 0 },
+  };
+  const scoreDetails: ScoreExplanation = {
+    dimensions: (Object.entries(COMPARISON_WEIGHTS) as [Component, number][]).map(([component, weight]) => ({
+      component, weight, score: componentScores[component], ...counts[component],
+      weightedPoints: componentScores[component] === null ? null : componentScores[component]! * weight,
+    })),
+    weightedSum: weightedValue, availableWeight, coverageMultiplier,
+  };
 
   return {
     patientId: other.id,
@@ -288,6 +245,7 @@ function scoreProfile(source: ClinicalPatientProfile, other: ClinicalPatientProf
     evidenceLevel: availableWeight >= 65 ? 'documented' : availableWeight >= 35 ? 'partial' : 'insufficient',
     sharedFactors,
     componentScores,
+    scoreDetails,
     samePathology: true,
     matchBasis: 'pathology-id',
     statisticalCorrelation: false,
@@ -304,7 +262,10 @@ export function rankExactPathologyMatches(source: ClinicalPatientProfile, select
     unique.set(candidate.id, candidate);
   }
   return [...unique.values()]
-    .map(other => scoreProfile(source, other, selectedPathologyId))
+    .map(other => ({
+      ...scoreProfile(source, other, selectedPathologyId),
+      details: buildComparisonEvidence(source, other, { kind: 'pathology-id', id: selectedPathologyId, name: source.diagnoses.find(d => d.pathologyId === selectedPathologyId)?.name?.trim() || 'Pathologie sélectionnée' }),
+    }))
     .sort((a, b) => b.score - a.score || b.coveragePercent - a.coveragePercent || a.patientCode.localeCompare(b.patientCode, 'fr') || a.patientId.localeCompare(b.patientId));
 }
 
@@ -342,6 +303,7 @@ export function rankRecordedConditionMatches(source: ClinicalPatientProfile, sel
       ...scoreProfile(own, forComparison(other), comparisonKey),
       samePathology: false,
       matchBasis: 'recorded-label' as const,
+      details: buildComparisonEvidence(source, other, { kind: 'recorded-label', name: selectedName }),
     }))
     .sort((a, b) => b.score - a.score || b.coveragePercent - a.coveragePercent || a.patientCode.localeCompare(b.patientCode, 'fr') || a.patientId.localeCompare(b.patientId));
 }

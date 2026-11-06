@@ -38,14 +38,36 @@ type PathologyRow = { patient_id: string; pathology_id: string; diagnosis_date: 
 
 type HistoryRow = { id: string; patient_id: string; condition_name: string; condition_type: string; diagnosis_date: string | null };
 type MedicationRelation = { name: string | null; substance: string | null; atc_code: string | null };
-type MedicationRow = { patient_id: string; medication_id: string; medications: MedicationRelation | MedicationRelation[] | null };
+type MedicationRow = {
+  patient_id: string; medication_id: string; medications: MedicationRelation | MedicationRelation[] | null;
+  dosage: string | null; frequency: string | null; start_date: string | null; end_date: string | null; is_active: boolean | null;
+};
 type LabRow = {
   patient_id: string; test_name: string; test_date: string | null;
   value: number | null; unit: string | null; reference_min: number | null;
   reference_max: number | null; is_abnormal: boolean | null;
 };
-type SymptomRow = { patient_id: string; symptom_id: string };
+type SymptomRow = {
+  patient_id: string; symptom_id: string; symptoms: { name: string } | Array<{ name: string }> | null;
+  onset_date: string | null; severity: string | null; frequency: string | null; is_resolved: boolean | null;
+};
 type PathologyName = { id: string; name: string };
+
+const CLINICAL_VARIABLES = [
+  ['systolic_bp', 'Pression artérielle systolique', 'mmHg'],
+  ['diastolic_bp', 'Pression artérielle diastolique', 'mmHg'],
+  ['heart_rate', 'Fréquence cardiaque', 'bpm'],
+  ['respiratory_rate', 'Fréquence respiratoire', '/min'],
+  ['temperature', 'Température', '°C'],
+  ['spo2', 'SpO₂', '%'],
+  ['weight_kg', 'Poids', 'kg'],
+  ['height_cm', 'Taille', 'cm'],
+  ['bmi', 'IMC', 'kg/m²'],
+  ['waist_circumference_cm', 'Tour de taille', 'cm'],
+  ['pain_level', 'Douleur', '/10'],
+] as const;
+type ClinicalRow = { patient_id: string; recorded_at: string | null }
+  & Record<typeof CLINICAL_VARIABLES[number][0], number | null>;
 
 function identity(p: RawPatient): MatchIdentity {
   return { id: p.id, patientCode: p.patient_id, age: p.age, pathologyId: p.pathology_id };
@@ -134,7 +156,7 @@ export function createSupabaseMatchGateway(): AuthorizedMatchGateway {
     async loadProfiles(authorizedIds) {
       if (!authorizedIds.length) return [];
       // The profiles are loaded only after patients-RLS has independently approved all candidate IDs.
-      const [people, pathologies, histories, meds, labs, symptoms] = await Promise.all([
+      const [people, pathologies, histories, meds, labs, symptoms, clinical] = await Promise.all([
         readBatches(authorizedIds, (batch, from, to) => supabase.from('patients')
           .select('id,patient_id,age,pathology_id').in('id', batch)
           .order('id', { ascending: true }).range(from, to)),
@@ -145,14 +167,19 @@ export function createSupabaseMatchGateway(): AuthorizedMatchGateway {
           .select('id,patient_id,condition_name,condition_type,diagnosis_date').in('patient_id', batch)
           .order('id', { ascending: true }).range(from, to)),
         readBatches(authorizedIds, (batch, from, to) => supabase.from('patient_medications')
-          .select('patient_id,medication_id,medications(name,substance,atc_code)').in('patient_id', batch)
+          .select('patient_id,medication_id,dosage,frequency,start_date,end_date,is_active,medications(name,substance,atc_code)').in('patient_id', batch)
           .order('id', { ascending: true }).range(from, to)),
         readBatches(authorizedIds, (batch, from, to) => supabase.from('patient_lab_results')
           .select('patient_id,test_name,test_date,value,unit,reference_min,reference_max,is_abnormal').in('patient_id', batch)
           .order('id', { ascending: true }).range(from, to)),
         readBatches(authorizedIds, (batch, from, to) => supabase.from('patient_symptoms')
-          .select('patient_id,symptom_id').in('patient_id', batch)
-          .order('id', { ascending: true }).range(from, to)),
+          .select('patient_id,symptom_id,onset_date,severity,frequency,is_resolved,symptoms(name)').in('patient_id', batch)
+          // Live schema/RLS verified 2026-11-06: generated types still describe the retired is_active column.
+          .order('id', { ascending: true }).range(from, to).overrideTypes<SymptomRow[], { merge: false }>()),
+        readBatches(authorizedIds, (batch, from, to) => supabase.from('patient_clinical_data')
+          .select('patient_id,recorded_at,systolic_bp,diastolic_bp,heart_rate,respiratory_rate,temperature,spo2,weight_kg,height_cm,bmi,waist_circumference_cm,pain_level').in('patient_id', batch)
+          // The live column is spo2; older generated types call it oxygen_saturation.
+          .order('id', { ascending: true }).range(from, to).overrideTypes<ClinicalRow[], { merge: false }>()),
       ]);
 
       const diagnosisIds = [...new Set([
@@ -182,6 +209,7 @@ export function createSupabaseMatchGateway(): AuthorizedMatchGateway {
         medications: group(meds as MedicationRow[]),
         labs: group(labs as LabRow[]),
         symptoms: group(symptoms as SymptomRow[]),
+        clinical: group(clinical as ClinicalRow[]),
       };
 
       return (people as RawPatient[]).map(p => {
@@ -201,7 +229,8 @@ export function createSupabaseMatchGateway(): AuthorizedMatchGateway {
           history: (perPatient.history.get(p.id) ?? []).map(x => ({ id: x.id, name: x.condition_name, conditionType: x.condition_type, diagnosisDate: x.diagnosis_date })),
           medications: (perPatient.medications.get(p.id) ?? []).map(x => {
             const relation = Array.isArray(x.medications) ? x.medications[0] : x.medications;
-            return { substance: relation?.substance || relation?.name, atcCode: relation?.atc_code, medicationId: x.medication_id };
+            return { substance: relation?.substance, name: relation?.name, atcCode: relation?.atc_code, medicationId: x.medication_id,
+              dosage: x.dosage, frequency: x.frequency, startDate: x.start_date, endDate: x.end_date, isActive: x.is_active };
           }),
           labs: (perPatient.labs.get(p.id) ?? []).map(x => ({
             name: x.test_name, measuredAt: x.test_date, unit: x.unit,
@@ -210,7 +239,14 @@ export function createSupabaseMatchGateway(): AuthorizedMatchGateway {
             referenceMax: x.reference_max === null ? null : Number(x.reference_max),
             isAbnormal: x.is_abnormal,
           })),
-          symptoms: (perPatient.symptoms.get(p.id) ?? []).map(x => ({ id: x.symptom_id })),
+          symptoms: (perPatient.symptoms.get(p.id) ?? []).map(x => {
+            const relation = Array.isArray(x.symptoms) ? x.symptoms[0] : x.symptoms;
+            return { id: x.symptom_id, name: relation?.name, onsetDate: x.onset_date,
+              severity: x.severity, frequency: x.frequency, isResolved: x.is_resolved };
+          }),
+          variables: (perPatient.clinical.get(p.id) ?? []).flatMap(x => CLINICAL_VARIABLES
+            .filter(([field]) => x[field] != null)
+            .map(([field, name, unit]) => ({ name, unit, value: Number(x[field]), measuredAt: x.recorded_at }))),
         };
         return profile;
       });
