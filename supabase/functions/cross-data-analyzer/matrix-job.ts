@@ -12,12 +12,13 @@ import {
 import { buildPairSearchQuery, type PairResearchResult } from './pubmed-research.ts';
 import { pendingPairs, readCells, readPairAssessments, type MatrixCells } from './matrix-progress.ts';
 import { createAgentState, nextAgentStep, buildAgentRequest, applyAgentResult, agentProgress,
-  type AgentMatrixState, type AgentRuntimeState } from './agent-orchestrator.ts';
+  AGENT_PAIR_BATCH_SIZE, type AgentMatrixState, type AgentRuntimeState } from './agent-orchestrator.ts';
 import { ASTRA_MODEL } from './agent-contract.ts';
+import { runAgentPairPool, pairPoolProgress, pairPoolFailureMessage, resumeAgentPairPool, PairPoolPersistenceError, type AgentPairPool } from './agent-pair-pool.ts';
 
 const leaseMs = BACKGROUND_WORKER_LEASE_MS;
-// A continuation may need a waiting invocation plus its worker, with up to two
-// attempts each. Ten seconds leaves room within the shared 30 calls / 60s trace.
+// Pace continuations and duplicate deliveries. Provider generations progress
+// independently; this interval avoids a tight loop when no result is ready.
 const workIntervalMs = 10_000;
 const controlLeaseMs = 60_000;
 const controlWaitSliceMs = 35_000;
@@ -41,6 +42,7 @@ type MatrixRuntime = {
   controlLease?: string | null;
   controlUntil?: number;
   lastError?: { status?: number; code?: string; param?: string; type?: string };
+  parallel?: AgentPairPool;
 };
 const fields = [
   ['pathologyIds', 'externalPathologies', 'pathologies', 'id,name,severity'],
@@ -114,6 +116,13 @@ export function exposeMatrixJob(job: MatrixRow | null) {
   }) : savedState.analysis;
   return { ...rest, result_payload: { ...savedState, analysis,
       cells: legacy ? {} : savedState.cells }, selection: request_payload.selection,
+    ...(request_payload._matrix_runtime?.parallel ? { execution: {
+      mode: 'parallel', activeBatches: request_payload._matrix_runtime.parallel.slots.filter(s => s.phase === 'running').length,
+      activePairs: request_payload._matrix_runtime.parallel.slots.filter(s => s.phase === 'running').reduce((n, s) => n + s.pairHashes.length, 0),
+      maxConcurrentBatches: request_payload._matrix_runtime.parallel.concurrency,
+      completedBatches: request_payload._matrix_runtime.parallel.completedBatches,
+      peakConcurrentBatches: request_payload._matrix_runtime.parallel.peakConcurrentBatches,
+    } } : {}),
     progress_message: legacy ? 'Ancien résultat à réévaluer avec le moteur corrigé.' : rest.progress_message,
     stalled: ['queued', 'processing'].includes(job.status) && Date.now() - Date.parse(job.updated_at) > leaseMs };
 }
@@ -173,7 +182,8 @@ export async function handleMatrix(req: Request, body: Record<string, unknown>, 
   };
 
   async function work(id: string, incomingControlLease?: string) {
-    const { data: job, error } = await jobs().select('*').eq('id', id).eq('function_name', functionName).eq('analysis_mode', mode).single();
+    const { data: job, error } = await jobs().select('*').eq('id', id).eq('function_name', functionName).eq('analysis_mode', mode)
+      .abortSignal(AbortSignal.timeout(8000)).single();
     if (error || !job || !['queued', 'processing'].includes(job.status)) return;
     if (job.status === 'processing' && Date.now() - Date.parse(job.updated_at) < leaseMs) return;
     const runtime: MatrixRuntime = { ...(job.request_payload._matrix_runtime || { windowStartedAt: Date.now(), retries: 0 }) };
@@ -187,7 +197,7 @@ export async function handleMatrix(req: Request, body: Record<string, unknown>, 
         .eq('updated_at', job.updated_at).eq('status', job.status);
       query = expectedControlLease ? query.eq('request_payload->_matrix_runtime->>controlLease', expectedControlLease)
         : query.is('request_payload->_matrix_runtime->>controlLease', null);
-      return query.select('id').maybeSingle();
+      return query.select('id').abortSignal(AbortSignal.timeout(8000)).maybeSingle();
     };
     if ((runtime.nextWorkAt ?? 0) > Date.now()) {
       const controlLease = crypto.randomUUID();
@@ -212,7 +222,8 @@ export async function handleMatrix(req: Request, body: Record<string, unknown>, 
     const save = async (patch: Record<string, unknown>) => {
       const changed = await jobs().update({ ...patch, updated_at: new Date().toISOString(),
         request_payload: { ...job.request_payload, _matrix_runtime: runtime } })
-        .eq('id', id).eq('function_name', functionName).eq('provider_status', lease).eq('status', 'processing').select('id').single();
+        .eq('id', id).eq('function_name', functionName).eq('provider_status', lease).eq('status', 'processing').select('id')
+        .abortSignal(AbortSignal.timeout(8000)).single();
       if (changed.error || !changed.data) throw new Error('La tâche a changé de propriétaire.');
     };
     const state = job.result_payload as State;
@@ -226,6 +237,51 @@ export async function handleMatrix(req: Request, body: Record<string, unknown>, 
         progress_message: 'Réévaluation requise ; résultats précédents conservés.' });
       return;
     }
+    const relay = () => kick(id).catch(() => console.error('[CrossDataAnalyzer] Relais temporairement indisponible ; étape conservée.'));
+    const stage = agentState ? nextAgentStep(agentState).kind : null;
+    // An existing sequential receipt is consumed first, with its original batch.
+    // Upgrade only at a saved checkpoint; synthesis still waits for all pair receipts.
+    if (agentState && !job.provider_response_id && !runtime.creationPending && !runtime.regenerationRequired &&
+      (runtime.parallel?.slots.length || (stage === 'pairs' || stage === 'candidate_pairs') &&
+        (runtime.parallel || buildPairCandidates(state.elements).length > 3))) {
+      try {
+        if (Date.now() - runtime.windowStartedAt >= BACKGROUND_MONITOR_WINDOW_MS) {
+          runtime.paused = true;
+          await save({ status: 'failed', error_message: 'La recherche attend une reprise après 60 minutes sans progression.',
+            progress_message: 'Réponses parallèles conservées. Vous pouvez reprendre la synchronisation.' });
+          return;
+        }
+        const result = await runAgentPairPool(runtime.parallel ? agentState : { ...agentState, batchSize: AGENT_PAIR_BATCH_SIZE }, runtime.parallel, {
+          start: (system, user, options) => startBackgroundAI(system, user, { ...options, clinicalRiskAssessment: job.request_payload.risk }),
+          retrieve: retrieveBackgroundAI,
+          async persist(reviewed, pool) {
+            runtime.parallel = pool;
+            runtime.windowStartedAt = pool.lastProgressAt;
+            const progress = pairPoolProgress(reviewed, pool);
+            await save({ result_payload: reviewed, provider_response_id: null, model: ASTRA_MODEL,
+              progress_message: progress.message, progress_percentage: progress.percentage, error_message: null });
+          },
+        });
+        runtime.parallel = result.pool;
+        const progress = pairPoolProgress(result.state, result.pool);
+        try {
+          await save({ status: result.blocked ? 'failed' : 'queued', result_payload: result.state, provider_response_id: null,
+            progress_message: progress.message, progress_percentage: progress.percentage,
+            error_message: result.blocked ? pairPoolFailureMessage(result.pool) : null });
+        } catch { throw new PairPoolPersistenceError(); }
+        if (!result.blocked) await relay();
+      } catch (failure) {
+        // A lost DB acknowledgement may have committed successfully. Never write
+        // the stale in-memory state/ledger back: release only the lease, then reload.
+        const retry = failure instanceof PairPoolPersistenceError;
+        const released = await jobs().update({ status: retry ? 'queued' : 'failed', updated_at: new Date().toISOString(),
+          ...(retry ? {} : { error_message: 'Traitement parallèle interrompu ; points de reprise conservés.' }) })
+          .eq('id', id).eq('function_name', functionName).eq('provider_status', lease).eq('status', 'processing')
+          .select('id').abortSignal(AbortSignal.timeout(8000)).maybeSingle();
+        if (retry && released.data) await relay();
+      }
+      return;
+    }
     const pending = pendingPairs(state.elements, state.cells);
     const batch = pending.slice(0, state.batchSize);
     const risk = job.request_payload.risk;
@@ -237,7 +293,6 @@ export async function handleMatrix(req: Request, body: Record<string, unknown>, 
       try { return validate(); }
       catch (error) { runtime.regenerationRequired = true; throw error; }
     };
-    const relay = () => kick(id).catch(() => console.error('[CrossDataAnalyzer] Relais temporairement indisponible ; étape conservée.'));
     try {
       if (Date.now() - runtime.windowStartedAt >= BACKGROUND_MONITOR_WINDOW_MS) {
         runtime.paused = true;
@@ -365,6 +420,7 @@ export async function handleMatrix(req: Request, body: Record<string, unknown>, 
       }
       if (provider.status !== 'completed') {
         if (agentMode) runtime.regenerationRequired = true;
+        if (provider.errorCode) runtime.lastError = { code: provider.errorCode };
         throw new Error(provider.status === 'incomplete' ?
           'Réponse IA incomplète (budget de tokens).' : 'Le fournisseur IA a interrompu le lot.');
       }
@@ -498,7 +554,9 @@ export async function handleMatrix(req: Request, body: Record<string, unknown>, 
       const retryRead = Boolean(readingProvider && responseId && !terminalRead);
       await save({ status: retryRead ? 'queued' : 'failed', result_payload: state,
         provider_response_id: responseId,
-        error_message: retryRead ? null : 'Lot interrompu. Les cellules et la réponse du fournisseur sont conservées.',
+        error_message: retryRead ? null : /quota|billing|credit/.test(runtime.lastError?.code ?? '')
+          ? 'Analyse en pause : le crédit du service OpenAI est épuisé. Rétablissez le crédit, puis reprenez l’analyse.'
+          : 'Lot interrompu. Les cellules et la réponse du fournisseur sont conservées.',
         progress_message: retryRead ? 'Reconnexion à la réponse IA enregistrée.' :
           (err instanceof SyntaxError || (err instanceof Error && /incomplète/.test(err.message)) ?
             'Réponse IA incomplète. Vous pouvez reprendre cette étape.' : 'Analyse interrompue.') });
@@ -550,6 +608,7 @@ export async function handleMatrix(req: Request, body: Record<string, unknown>, 
       provider_response_id: regenerate ? null : job.provider_response_id,
       result_payload: nextState,
       request_payload: { ...job.request_payload, _matrix_runtime: { ...runtime,
+        ...(runtime?.parallel ? { parallel: resumeAgentPairPool(runtime.parallel) } : {}),
         ...(regenerate ? { lastProviderStatus: undefined, incompleteReason: undefined,
           ...(job.provider_response_id ? { lastRejectedResponseId: job.provider_response_id } : {}) } : {}),
         windowStartedAt: Date.now(), paused: false, retries: 0, creationPending: false, regenerationRequired: false } } })

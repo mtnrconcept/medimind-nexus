@@ -114,8 +114,8 @@ const transport: TransportDependencies = {
       return;
     }
     if (!NATIVE_AI_JOB_TOOLS.has(job.function_name) && !['hypothesis-processor', 'cde-systematic-analyze'].includes(job.function_name)) return;
-    const body = job.analysis_mode === 'progressive_matrix'
-      ? { action: 'matrix.latest', jobId: job.id, patientId: job.request_payload.scope || 'general' }
+    const body = ['progressive_matrix', 'astra_cross_matrix'].includes(job.analysis_mode)
+      ? { action: job.analysis_mode === 'astra_cross_matrix' ? 'agent.latest' : 'matrix.latest', jobId: job.id, patientId: job.request_payload.scope || 'general' }
       : { action: 'status', jobId: job.id, jobToken: job.public_token };
     const response = await fetch(`${url}/functions/v1/${job.function_name}`, {
       method: 'POST', headers: { Authorization: `Bearer ${token}`, apikey: publishableKey, 'Content-Type': 'application/json' },

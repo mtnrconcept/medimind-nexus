@@ -16,7 +16,7 @@ export interface AgentMatrixState {
 }
 export interface AgentStep { kind: Exclude<AgentStage, 'completed'>; pairs: PairCandidate[] }
 
-const AGENT_PAIR_BATCH_SIZE = 4;
+export const AGENT_PAIR_BATCH_SIZE = 4;
 
 export function createAgentState(elements: SelectedElement[]): AgentMatrixState {
   // Analyze several pairs per provider response while keeping pair-specific citations and structured cells.
@@ -90,10 +90,20 @@ export function buildAgentRequest(state: AgentMatrixState, step: AgentStep): { s
         searchContextSize: 'high' as const, externalWebAccess: true, maxToolCalls: pairStep ? Math.min(32, Math.max(16, step.pairs.length * 4)) : 20 } }) } };
 }
 
-export function applyAgentResult(state: AgentMatrixState, step: AgentStep, raw: unknown, returnedSources: AgentSource[], webSearchCalls: number): boolean {
+export function applyAgentResult(state: AgentMatrixState, step: AgentStep, raw: unknown, returnedSources: AgentSource[], webSearchCalls: number,
+  options: { independentPairs?: boolean } = {}): boolean {
   const expected = nextAgentStep(state);
-  if (state.agent.stage === 'completed' || step.kind !== expected.kind ||
-    step.pairs.map(p => p.pairHash).join('\n') !== expected.pairs.map(p => p.pairHash).join('\n'))
+  const pairStep = step.kind === 'pairs' || step.kind === 'candidate_pairs';
+  const available = step.kind === 'pairs' ? pendingPairs(state.elements, state.cells)
+    : candidatePairs(state).filter(p => !Object.hasOwn(state.agent.candidateCells, p.pairHash));
+  const canonical = new Map(available.map(p => [p.pairHash, p]));
+  const independent = options.independentPairs && pairStep && step.pairs.length > 0 && step.pairs.length <= AGENT_PAIR_BATCH_SIZE &&
+    new Set(step.pairs.map(p => p.pairHash)).size === step.pairs.length && step.pairs.every(p => {
+      const known = canonical.get(p.pairHash);
+      return known && typedElementKey(known.left) === typedElementKey(p.left) && typedElementKey(known.right) === typedElementKey(p.right);
+    });
+  if (state.agent.stage === 'completed' || step.kind !== expected.kind || (options.independentPairs ? !independent :
+    step.pairs.map(p => p.pairHash).join('\n') !== expected.pairs.map(p => p.pairHash).join('\n')))
     throw new Error('Étape de l’agent incohérente ou couverture incomplète.');
   const parsed = raw && typeof raw === 'object' ? raw as Record<string, unknown> : {};
   const sources = verifiedAgentSources(returnedSources);

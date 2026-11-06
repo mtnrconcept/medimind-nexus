@@ -5,6 +5,7 @@ import {
   retrieveBackgroundAI,
   startBackgroundAI,
   streamAI,
+  OpenAIRequestError,
   type AICallOptions,
 } from '../supabase/functions/_shared/ai-client.ts';
 
@@ -258,6 +259,37 @@ test('background POST and GET use separate deadlines beyond old 15 second caller
       assert.match(atDeadline, new RegExp(`timed out after ${deadline}ms`));
     });
   }
+});
+
+test('parallel coordinators may explicitly bound receipt and status calls without retrying POST', async t => {
+  for (const mode of ['start', 'poll'] as const) await t.test(mode, async st => {
+    st.mock.timers.enable({ apis: ['setTimeout'] });
+    let calls = 0;
+    mockProvider(st, async () => { calls++; return await new Promise<Response>(() => undefined); });
+    let failure = '';
+    const request = (mode === 'start'
+      ? startBackgroundAI('Return text.', 'Synthetic fixture.', { ...baseOptions, backgroundRequestTimeoutMs: 12_000 })
+      : retrieveBackgroundAI('resp_fixture', { backgroundRequestTimeoutMs: 12_000 }))
+      .catch(error => { failure = error.message; });
+    await nextTurn();
+    st.mock.timers.tick(12_000);
+    await request;
+    assert.match(failure, /timed out after 12000ms/);
+    assert.equal(calls, 1);
+  });
+});
+
+test('background rate errors retain status and Retry-After for bounded coordinator backoff', async t => {
+  mockProvider(t, async () => new Response(JSON.stringify({ error: { code: 'rate_limit_exceeded' } }), {
+    status: 429, headers: { 'Retry-After': '37' },
+  }));
+  await assert.rejects(startBackgroundAI('Return text.', 'Synthetic fixture.', baseOptions), error => {
+    assert.ok(error instanceof OpenAIRequestError);
+    assert.equal(error.status, 429);
+    assert.equal(error.retryAfterMs, 37_000);
+    assert.equal(error.code, 'rate_limit_exceeded');
+    return true;
+  });
 });
 
 test('clinical route defaults no longer shorten the shared 120 second foreground budget', async (t) => {
