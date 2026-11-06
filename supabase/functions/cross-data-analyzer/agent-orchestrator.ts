@@ -16,9 +16,13 @@ export interface AgentMatrixState {
 }
 export interface AgentStep { kind: Exclude<AgentStage, 'completed'>; pairs: PairCandidate[] }
 
+const AGENT_PAIR_BATCH_SIZE = 4;
+
 export function createAgentState(elements: SelectedElement[]): AgentMatrixState {
-  // One provider response per pair gives every cell its own required web trace.
-  const state: AgentMatrixState = { elements, cells: {}, batchSize: 1,
+  // Analyze several pairs per provider response while keeping pair-specific citations and structured cells.
+  // This removes the dominant sequential latency without reducing reasoning effort or web-search requirements.
+  const pairCount = buildPairCandidates(elements).length;
+  const state: AgentMatrixState = { elements, cells: {}, batchSize: pairCount <= 3 ? 1 : AGENT_PAIR_BATCH_SIZE,
     analysis: ensureAnalysisShape({ engineVersion: RELATION_ENGINE_VERSION, summary: 'Recherche spécialisée et analyse croisée par GPT-6 Astra.' }),
     agent: { version: AGENT_VERSION, stage: 'pairs', candidates: [], candidateCells: {}, candidateAssessments: [], sourceRegistry: [] } };
   updateAgentCoverage(state);
@@ -83,7 +87,7 @@ export function buildAgentRequest(state: AgentMatrixState, step: AgentStep): { s
       maxTokens: 65_536, responseFormat: pairStep ? buildAgentPairFormat(step.pairs) : AGENT_PLAN_FORMAT,
       elementCount: state.elements.length + state.agent.candidates.length, hasExternalEvidence: state.agent.sourceRegistry.length > 0,
       ...(final ? {} : { webSearch: { allowedDomains: MEDICAL_WEB_DOMAINS, required: true,
-        searchContextSize: 'high' as const, externalWebAccess: true, maxToolCalls: pairStep ? 16 : 20 } }) } };
+        searchContextSize: 'high' as const, externalWebAccess: true, maxToolCalls: pairStep ? Math.min(32, Math.max(16, step.pairs.length * 4)) : 20 } }) } };
 }
 
 export function applyAgentResult(state: AgentMatrixState, step: AgentStep, raw: unknown, returnedSources: AgentSource[], webSearchCalls: number): boolean {
