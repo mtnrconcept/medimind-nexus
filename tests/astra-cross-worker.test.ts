@@ -345,7 +345,7 @@ test('parallel token retries preserve siblings and require explicit recovery aft
   const exhausted = poolOf(job).slots.find(s => s.tokenRetries === 2 && s.phase === 'blocked');
   assert.ok(exhausted, 'Sol has two bounded increases from its smaller initial budget');
   assert.deepEqual(f.submissions.filter(s => s.pairs.some(pair => pair.pairHash === exhausted.pairHashes[0]))
-    .map(s => s.request.max_output_tokens), [8_192, 32_768, 65_536]);
+    .map(s => s.request.max_output_tokens), [8_192, 16_384, 32_768]);
   const before = f.submissions.length;
   f.behavior.truncateLaterPairs = false;
   await f.dispatch({ action: 'agent.resume', jobId: job.id });
