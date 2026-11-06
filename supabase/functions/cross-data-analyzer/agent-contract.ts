@@ -3,7 +3,7 @@ import { RELATION_ENGINE_VERSION, RELATION_KINDS, INTERACTION_EFFECTS, normalize
 type MatrixCells = Record<string, CausalLink[]>;
 
 export const ASTRA_MODEL = 'gpt-6-astra';
-export const FAST_PAIR_MODEL = 'gpt-6.1-sol';
+export const FAST_PAIR_MODEL = 'gpt-6-luna';
 export const AGENT_VERSION = 1;
 export const MEDICAL_WEB_DOMAINS = [
   'swissmedic.ch', 'swissmedicinfo-pro.ch', 'swissmedicinfo.ch', 'compendium.ch',
