@@ -251,6 +251,9 @@ function fixture(t: TestContext, initial: Partial<Behavior> = {}, functionName =
   };
   const seedLegacy = (elements: SelectedElement[]) => {
     const state = createAgentState(elements);
+    delete state.agent.pairModel;
+    delete state.agent.reviewModel;
+    delete state.agent.pairSearchPolicy;
     state.batchSize = 1;
     const pair = buildPairCandidates(elements)[0];
     submissions.push({ request: {} as ProviderRequest, pairs: [pair], kind: 'pairs', at: Date.now() });
@@ -339,7 +342,10 @@ test('parallel token retries preserve siblings and require explicit recovery aft
   assert.equal(job.status, 'failed');
   assert.equal(Object.keys(job.result_payload.cells).length, 4);
   const saved = new Set(Object.keys(job.result_payload.cells));
-  assert.ok(poolOf(job).slots.some(s => s.tokenRetries === 1 && s.phase === 'blocked'));
+  const exhausted = poolOf(job).slots.find(s => s.tokenRetries === 2 && s.phase === 'blocked');
+  assert.ok(exhausted, 'Sol has two bounded increases from its smaller initial budget');
+  assert.deepEqual(f.submissions.filter(s => s.pairs.some(pair => pair.pairHash === exhausted.pairHashes[0]))
+    .map(s => s.request.max_output_tokens), [16_384, 32_768, 65_536]);
   const before = f.submissions.length;
   f.behavior.truncateLaterPairs = false;
   await f.dispatch({ action: 'agent.resume', jobId: job.id });
