@@ -3,7 +3,7 @@ import { useAI } from '@/contexts/AIContext';
 import { aiFetch, supabase } from '@/integrations/supabase/client';
 import type { RadialRingsData, RingNode } from '@/types/graph';
 import { normalizeKnowledgeGraph } from '@/lib/knowledgeGraph/model';
-import { asResearchGraph, readResearchResponse, ResearchPageAccumulator, type ResearchGraphData } from '@/lib/knowledgeGraph/researchStream';
+import { asResearchGraph, createLocalResearchEvent, readResearchResponse, ResearchPageAccumulator, type ResearchGraphData } from '@/lib/knowledgeGraph/researchStream';
 
 interface Run {
   body: Record<string, unknown>;
@@ -62,15 +62,7 @@ export function useKnowledgeGraphSession({ isOpen, pathologies, initialData }: {
       if (ai.current.llmMode === 'local') {
         const result = await ai.current.invokeAI('deep-research-graph', { ...request.body, streaming: false, max_nodes: 35 });
         if (result.error) throw result.error;
-        const response = result.data;
-        if (!Array.isArray(response?.nodes) || !Array.isArray(response?.edges)) throw new Error('Le modèle local n’a pas retourné de graphe exploitable.');
-        // A local model cannot verify public sources. Never trust generated reference claims.
-        onEvent({ ...response, nodes: response.nodes.map((node: Record<string, unknown>) => ({ ...node, references: [], sources: [], citations: [], evidence: undefined,
-            url: undefined, doi: undefined, pmid: undefined, source: 'Modèle local', properties: { description: node.description } })),
-          edges: response.edges.map((edge: Record<string, unknown>) => ({ ...edge, qualifier: 'unverified', sources: [], citations: [], references: [], evidence_items: [], properties: {},
-            evidence: { status: 'unavailable', sources: [], limitations: ['Références non consultées par le modèle local.'] } })),
-          research_status: 'partial', source_statuses: [{ source: 'Références externes', status: 'skipped', count: 0 }],
-          limitations: ['Graphe proposé par le modèle local : chaque relation reste à vérifier.'] });
+        onEvent(createLocalResearchEvent(result.data));
       } else {
         const { data: { session } } = await supabase.auth.getSession();
         if (!session) throw new Error('Connectez-vous pour lancer une recherche.');

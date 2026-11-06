@@ -95,7 +95,9 @@ function SphereNode({ item, selected, dimmed, showLabel, onSelect }: {
     {(item.isCenter || item.isCore || selected || hovered || showLabel) && <Html center
       position={[...item.labelOffset, radius + 2]}
       zIndexRange={[30, 5]} style={{ pointerEvents: 'none', opacity: dimmed && !hovered ? 0.25 : 1 }}>
-      <button type="button" onClick={onSelect} title={item.node.name} aria-label={`Sélectionner ${item.node.name}`}
+      <button type="button" onClick={event => { event.stopPropagation(); onSelect(); }}
+        onPointerDown={event => event.stopPropagation()} onPointerUp={event => event.stopPropagation()}
+        title={item.node.name} aria-label={`Sélectionner ${item.node.name}`}
         className={`kg-node-label ${item.isCenter ? 'kg-node-label--center' : item.isCore ? 'kg-node-label--core' : ''} ${selected ? 'is-selected' : ''}`}
         style={{ pointerEvents: 'auto', '--node-color': color,
           transform: item.labelAnchor === 'start' ? 'translateX(50%)' : item.labelAnchor === 'end' ? 'translateX(-50%)' : undefined } as React.CSSProperties}>
@@ -154,7 +156,7 @@ function SceneNodes(props: GraphSceneProps) {
       const forced = item.isCenter || item.isCore || item.node.id === props.selectedNodeId;
       if (!item.showLabel && !forced) continue;
       const point = project([item.position[0] + item.labelOffset[0], item.position[1] + item.labelOffset[1], item.position[2] + item.radius + 2]);
-      const width = item.isCenter ? (mobile ? 105 : 150) : Math.min(mobile ? 96 : 135, item.node.name.length * (mobile ? 4.5 : 5.7) + 12);
+      const width = item.isCenter ? (mobile ? 105 : 180) : Math.min(mobile ? 96 : 135, item.node.name.length * (mobile ? 4.5 : 5.7) + 12);
       const height = item.isCenter ? 58 : 22;
       const x = point.x - (item.labelAnchor === 'middle' ? width / 2 : item.labelAnchor === 'end' ? width : 0);
       const box = { x: x - 3, y: point.y - height / 2, width: width + 6, height };
@@ -178,7 +180,11 @@ function WebGLScene(props: GraphSceneProps) {
       dpr={[1, 1.75]} frameloop="demand" gl={{ antialias: true, alpha: true, powerPreference: 'high-performance' }}
       onCreated={({ gl }) => { gl.domElement.setAttribute('aria-label', 'Graphe de connaissances en trois dimensions');
         gl.domElement.addEventListener('webglcontextlost', event => { event.preventDefault(); props.onFallback(); }, { once: true }); }}
-      onPointerMissed={event => { if (event.type === 'click') props.onBackground(); }}>
+      onPointerMissed={event => {
+        // R3F listens on the parent containing both the canvas and Html labels.
+        // A label click must not be treated as an empty-space canvas click.
+        if (event.type === 'click' && event.target instanceof HTMLCanvasElement) props.onBackground();
+      }}>
       <ambientLight intensity={0.95} /><directionalLight position={[-350, 600, 900]} intensity={2.2} />
       <pointLight position={[300, -200, 450]} intensity={0.65} />
       <CameraRig command={props.command} bounds={layout.bounds} />
@@ -191,7 +197,9 @@ function WebGLScene(props: GraphSceneProps) {
             Math.sin(i / 64 * Math.PI * 2) * group.radius[1], -1])} color={colorOf(group.family)} transparent opacity={0.17} lineWidth={0.8} />
           <Html center position={[0, group.radius[1] + 15, 2]} zIndexRange={[22, 4]}>
             <button className="kg-cluster-label" style={{ '--cluster-color': colorOf(group.family) } as React.CSSProperties}
-              onClick={() => props.onSelectFamily(group.family)} title={`Explorer la famille ${labelOf(group.family)}`}>
+              onClick={event => { event.stopPropagation(); props.onSelectFamily(group.family); }}
+              onPointerDown={event => event.stopPropagation()} onPointerUp={event => event.stopPropagation()}
+              title={`Explorer la famille ${labelOf(group.family)}`}>
               {labelOf(group.family)} <span>{group.nodeIds.filter(id => visibleNodeIds.has(id)).length}</span>
             </button>
           </Html>

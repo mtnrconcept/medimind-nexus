@@ -128,6 +128,36 @@ test('a gene can be re-centred without replacing the earlier c0 disease or mergi
   assert.ok(data.edges.some((edge: { target_id: string }) => edge.target_id === 'c0'));
 });
 
+test('expanding an imported centre preserves its external canonical ID and resolves local duplicate identities in JSON and SSE', async () => {
+  const graph = { nodes: [node('gene', 'NPHS1', 'GENE'), node('duplicate-gene', 'NPHS1', 'GENE'),
+    node('protein', 'NPHS1', 'PROTEIN')],
+    edges: [link('duplicate-gene', 'protein', 'ENCODES'), link('hgnc:7908', 'disease', 'ASSOCIATED_WITH'),
+      link('local:gene:nphs1', 'protein', 'INTERACTS_WITH')] };
+  for (const streaming of [false, true]) {
+    const response = await handleResearchRequest(request({ topic: 'NPHS1', topic_type: 'GENE', streaming,
+      existing_nodes: [
+        { id: 'disease', name: 'Ancienne maladie', node_type: 'PATHOLOGY', canonical_id: 'local:pathology:ancienne-maladie' },
+        { id: 'gene', name: 'NPHS1', node_type: 'GENE', canonical_id: 'hgnc:7908', family: 'genetics' },
+      ],
+    }), services(graph));
+    const data = streaming ? undefined : await response.json();
+    const events = streaming ? (await response.text()).trim().split('\n\n').map(frame => JSON.parse(frame.slice(6))) : [];
+    const nodes = data?.nodes ?? events.filter(event => event.type === 'node').map(event => event.node);
+    const edges = data?.edges ?? events.filter(event => event.type === 'edges').flatMap(event => event.edges);
+    assert.equal(nodes.length, 2);
+    assert.equal(nodes[0].id, 'gene');
+    assert.equal(nodes[0].canonical_id, 'hgnc:7908');
+    assert.equal(nodes[0].node_type, 'GENE');
+    assert.equal(nodes[0].entity_kind, 'gene');
+    assert.equal(nodes[1].entity_kind, 'protein');
+    assert.notEqual(nodes[1].canonical_id, nodes[0].canonical_id);
+    assert.deepEqual(edges.map((edge: { source_id: string; target_id: string; edge_type: string }) =>
+      [edge.source_id, edge.target_id, edge.edge_type]), [
+      ['gene', 'protein', 'ENCODES'], ['gene', 'disease', 'ASSOCIATED_WITH'], ['gene', 'protein', 'INTERACTS_WITH'],
+    ]);
+  }
+});
+
 test('preclinical findings and case reports cannot silently become established clinical effects', async () => {
   for (const [study_type, expected] of [['in vitro', 'research'], ['case_report', 'association']] as const) {
     const graph = { nodes: [node('c0', 'Maladie exemple', 'PATHOLOGY'), node('drug', 'Substance exemple', 'DRUG')],

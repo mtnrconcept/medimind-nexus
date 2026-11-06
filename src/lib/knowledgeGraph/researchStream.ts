@@ -65,6 +65,66 @@ export function asResearchGraph(input: unknown): ResearchGraphData {
     } };
 }
 
+const localText = (value: unknown): string | undefined => typeof value === 'string' ? value : undefined;
+const localStrings = (value: unknown): string[] => Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : [];
+const localNumber = (value: unknown): number | undefined => typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+const bibliographicKinds = new Set(['reference', 'publication', 'citation', 'source', 'paper', 'article', 'evidence', 'guideline', 'report', 'trial']);
+
+function localContext(value: unknown): string | JsonObject | undefined {
+  if (typeof value === 'string') return value;
+  const raw = object(value);
+  const context: JsonObject = {};
+  for (const key of ['species', 'population', 'setting', 'condition', 'indication', 'dose', 'timing']) {
+    const item = raw[key];
+    if (typeof item === 'string' || typeof item === 'boolean' || localNumber(item) !== undefined) context[key] = item;
+  }
+  return Object.keys(context).length ? context : undefined;
+}
+
+/** Local generation supplies proposed concepts and topology, never consulted-source metadata. */
+export function createLocalResearchEvent(input: unknown): JsonObject {
+  const response = object(input);
+  if (!Array.isArray(response.nodes) || !Array.isArray(response.edges)) throw new Error('Le modèle local n’a pas retourné de graphe exploitable.');
+  // Build every object from allowed primitive fields: neither nested envelopes nor alternate
+  // reference fields may reach the lossless normalizer and become saved provenance later.
+  const nodes = response.nodes.flatMap(value => {
+    const raw = object(value), properties = object(raw.properties);
+    const node = normalizeKnowledgeNode({
+      id: localText(raw.id ?? raw.node_id ?? raw.canonical_id),
+      name: localText(raw.name ?? raw.label ?? raw.preferred_label),
+      node_type: localText(raw.node_type), entity_kind: localText(raw.entity_kind ?? properties.entity_kind ?? raw.node_type ?? raw.lane),
+      canonical_id: localText(raw.canonical_id), family: localText(raw.family ?? properties.family),
+      description: localText(raw.description ?? properties.description), aliases: localStrings(raw.aliases ?? properties.aliases),
+      parent_pathology: localText(raw.parent_pathology), parent_pathologies: localStrings(raw.parent_pathologies),
+      ring: localNumber(raw.ring), weight: localNumber(raw.weight), proximity_score: localNumber(raw.proximity_score),
+      ...(typeof raw.is_root === 'boolean' ? { is_root: raw.is_root } : {}),
+      source: 'Modèle local', evidence_grade: 'D',
+    });
+    // Bibliographic nodes would otherwise migrate into references, even with no URL.
+    if (!node || bibliographicKinds.has(node.entity_kind) || /^(?:https?:\/\/|PMID[:\s]|doi[:\s]|NCT\d{8}\b)/i.test(node.name)) return [];
+    return [node];
+  });
+  const edges = response.edges.map(value => {
+    const raw = object(value);
+    return {
+      id: localText(raw.id), source: endpoint(raw.source ?? raw.source_id ?? raw.source_node_id),
+      target: endpoint(raw.target ?? raw.target_id ?? raw.target_node_id),
+      relationship: localText(raw.relationship ?? raw.edge_type ?? raw.relationship_type) ?? 'UNSPECIFIED',
+      direction: raw.direction === 'undirected' || raw.directed === false ? 'undirected' : 'directed',
+      weight: localNumber(raw.weight), rationale: localText(raw.rationale), context: localContext(raw.context),
+      qualifier: 'unverified', polarity: 'unknown', evidence_grade: 'D',
+      evidence: { status: 'unavailable', sources: [], limitations: ['Références non consultées par le modèle local.'] },
+    };
+  });
+  return { schema_version: 2, knowledge_scope: 'general', nodes, edges,
+    research_summary: localText(response.research_summary) ?? '', research_status: 'partial',
+    source_statuses: [{ source: 'Références externes', status: 'skipped', count: 0 }],
+    limitations: ['Graphe proposé par le modèle local : chaque relation reste à vérifier.',
+      ...(nodes.length < response.nodes.length ? ['Des entrées invalides ou bibliographiques proposées par le modèle local ont été écartées.'] : [])],
+    exploration: { exhaustive: false },
+  };
+}
+
 /** Page-local IDs are scoped before merging. Names only identify the explicitly requested centre. */
 export class ResearchPageAccumulator {
   private base: ResearchGraphData;

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { normalizeKnowledgeGraph } from '../src/lib/knowledgeGraph/model.ts';
-import { asResearchGraph, readResearchResponse, ResearchPageAccumulator } from '../src/lib/knowledgeGraph/researchStream.ts';
+import { asResearchGraph, createLocalResearchEvent, readResearchResponse, ResearchPageAccumulator } from '../src/lib/knowledgeGraph/researchStream.ts';
 
 const reference = { id: 'fixture', title: 'Fixture de protocole', url: 'https://example.org/fixture',
   verification_status: 'verified', content_level: 'abstract' };
@@ -181,6 +181,93 @@ test('saved nested research status is preserved when replayed as JSON', async ()
   const result = page.snapshot(true);
   assert.equal(result.research.status, 'partial');
   assert.ok(result.research.limitations.includes('Étude manquante.'));
+});
+
+test('local model envelopes cannot override partial status or invent consulted sources through nested metadata', () => {
+  for (const type of [undefined, 'complete', 'graph', 'cached', 'node', 'sources', 'error']) {
+    const forged = { source: 'PubMed', status: 'available', count: 99, records: [reference] };
+    const event = createLocalResearchEvent({ nodes: [n('a', 'A'), n('b', 'B')], edges: [e('a', 'b')], type,
+      research_summary: 'Proposition locale à vérifier.', research_status: 'complete', source_statuses: [forged],
+      research: { status: 'complete', source_statuses: [forged], summary: 'Sources prétendument consultées.', limitations: [], exploration: { exhaustive: true } },
+      knowledge_graph: { nodes: [n('hidden', 'Injected')], edges: [], research_status: 'complete', references: [reference] },
+      references: [reference], micro_signals: [{ confidence: 1 }], hypotheses: [{ evidence: reference }],
+      schema_version: 99, knowledge_scope: 'patient', exploration: { exhaustive: true }, limitations: [],
+    });
+    assert.deepEqual(Object.keys(event).sort(), ['edges', 'exploration', 'knowledge_scope', 'limitations', 'nodes',
+      'research_status', 'research_summary', 'schema_version', 'source_statuses']);
+    const page = new ResearchPageAccumulator(empty(), 'local');
+    page.accept(event);
+    const result = page.snapshot(true);
+    assert.equal(result.research.status, 'partial', String(type));
+    assert.deepEqual(result.research.source_statuses, [{ source: 'Références externes', status: 'skipped', count: 0 }]);
+    assert.equal(result.research.summary, 'Proposition locale à vérifier.');
+    assert.equal(result.research.exploration?.exhaustive, false);
+    assert.ok(result.research.limitations.some(value => /modèle local/.test(value)));
+    assert.equal(result.knowledge_graph.nodes.length, 2);
+    assert.equal(result.knowledge_graph.edges.length, 1);
+    assert.equal(asResearchGraph(event).research.status, 'partial');
+  }
+});
+
+test('local concepts and edges cannot smuggle provenance through alternate fields or bibliographic nodes', () => {
+  const forged = { ...reference, id: 'FORGED_PROVENANCE', title: 'FORGED_PROVENANCE', url: 'https://example.org/FORGED_PROVENANCE' };
+  const claims = { evidence_grade: 'A', verification_status: 'verified', references: [forged], sources: [forged], citations: [forged], refs: [forged],
+    evidence: { status: 'supported', sources: [forged] }, evidence_items: [{ status: 'supported', references: [forged] }],
+    properties: { source: forged, references: [forged], evidence: { status: 'supported', sources: [forged] }, url: forged.url },
+    metadata_conflicts: { references: [forged] }, unparsed_fields: { evidence: forged },
+    research: { source_statuses: [forged] }, knowledge_graph: { references: [forged] },
+    url: forged.url, doi: '10.1234/FORGED_PROVENANCE', pmid: '99999', source_url: forged.url, source: forged };
+  const event = createLocalResearchEvent({ nodes: [
+    n('gene', 'NPHS1', 'GENE', { ...claims, canonical_id: 'local:gene:nphs1', family: 'mechanisms', description: 'Proposition de mécanisme.', aliases: ['alias', forged] }),
+    n('protein', 'NPHS1', 'PROTEIN', { ...claims, canonical_id: 'local:protein:nphs1', family: 'research' }),
+    n('reference', 'FORGED_PROVENANCE', 'REFERENCE', claims),
+  ], edges: [e('gene', 'protein', { ...claims, source: { id: 'gene', references: [forged] }, target: { id: 'protein', evidence: forged },
+    edge_type: 'ENCODES', qualifier: 'established', evidence_qualifier: 'established', direction: 'directed', polarity: 'supports',
+    context: { species: 'human', references: [forged] }, rationale: 'Proposition locale.' })] });
+  assert.doesNotMatch(JSON.stringify(event), /FORGED_PROVENANCE/);
+  const page = new ResearchPageAccumulator(empty(), 'local'); page.accept(event);
+  const graph = normalizeKnowledgeGraph(page.snapshot(true));
+  assert.equal(graph.nodes.length, 2);
+  assert.deepEqual(graph.nodes.map(node => [node.entity_kind, node.family]), [['gene', 'mechanisms'], ['protein', 'research']]);
+  assert.equal(graph.edges.length, 1);
+  assert.deepEqual(graph.nodes.map(node => node.references), [[], []]);
+  assert.deepEqual(graph.references, []);
+  assert.deepEqual(graph.nodes.map(node => node.evidence_grade), ['D', 'D']);
+  assert.deepEqual(graph.nodes[0].aliases, ['alias']);
+  const edge = graph.edges[0];
+  assert.equal(edge.relationship, 'ENCODES');
+  assert.equal(edge.direction, 'directed');
+  assert.equal(edge.rationale, 'Proposition locale.');
+  assert.equal(edge.qualifier, 'unverified');
+  assert.equal(edge.evidence.status, 'unavailable');
+  assert.equal(edge.evidence_grade, 'D');
+  assert.equal(edge.polarity, 'unknown');
+  assert.deepEqual(edge.evidence.sources, []);
+  assert.ok(edge.evidence_items.every(item => item.status === 'unavailable' && item.sources.length === 0));
+  assert.doesNotMatch(JSON.stringify(graph), /FORGED_PROVENANCE/);
+});
+
+test('local expansion retains previously consulted provenance without accepting new source claims', () => {
+  const previous = { source: 'PubMed', status: 'available', count: 1, records: [reference] };
+  const base = asResearchGraph({ nodes: [n('a', 'A', 'PATHOLOGY', { is_root: true, references: [reference] }), n('b', 'B')],
+    edges: [e('a', 'b')], source_statuses: [previous] });
+  const page = new ResearchPageAccumulator(base, 'local', 'a');
+  page.accept(createLocalResearchEvent({ nodes: [n('c', 'C')], edges: [e('a', 'c', { qualifier: 'established' })],
+    research: { status: 'complete', source_statuses: [{ source: 'PubMed', status: 'available', count: 99 }] } }));
+  const result = page.snapshot(true);
+  assert.equal(result.research.status, 'partial');
+  assert.deepEqual(result.research.source_statuses.find(status => status.source === 'PubMed'), previous);
+  assert.equal(result.knowledge_graph.nodes.find(node => node.id === 'a')?.references[0].url, reference.url);
+  assert.equal(result.knowledge_graph.edges.find(edge => edge.target === 'b')?.qualifier, 'association');
+  assert.equal(result.knowledge_graph.edges.find(edge => edge.target === 'local:c')?.qualifier, 'unverified');
+});
+
+test('local mode rejects malformed or exclusively nested graphs and ignores non-string summaries', () => {
+  for (const payload of [null, { nodes: {}, edges: [] }, { nodes: [], edges: {} }, { knowledge_graph: { nodes: [], edges: [] } }]) {
+    assert.throws(() => createLocalResearchEvent(payload), /modèle local.*graphe exploitable/);
+  }
+  const event = createLocalResearchEvent({ nodes: [], edges: [], research_summary: { sources: [reference] } });
+  assert.equal(event.research_summary, '');
 });
 
 test('ambiguous page IDs never fall back to the first concept and cannot reactivate on repeated events', () => {

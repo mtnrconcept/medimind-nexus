@@ -126,7 +126,8 @@ export function centralNodes(input: GraphInput): GraphNode[] {
         allocated.add(id);
         return { id, node_type: type, label, description: 'Concept de recherche, sans diagnostic individuel implicite.',
             weight: 1, source: 'Recherche', ring: 0, depth: 0, parent_pathology: label, parent_pathologies: [label], aliases: [],
-            canonical_id: key, family: semanticFamily(type, existing?.family), entity_kind: kind.kind };
+            // Preserve a saved concept's identity; this does not verify an external ontology accession.
+            canonical_id: existing?.canonical_id || key, family: semanticFamily(type, existing?.family), entity_kind: kind.kind };
     });
 }
 
@@ -244,8 +245,10 @@ export function normalizeGraph(raw: unknown, input: GraphInput, statuses: Source
     const identities = new Map<string, string>();
     const anchors = new Set(centers.map(node => node.id));
     for (const node of centers) {
+        const key = identity(node.label, node.node_type);
         references.set(node.id, node.id); nameReference(node.label, node.id); references.set(node.canonical_id, node.id);
-        identities.set(node.canonical_id, node.id);
+        // Canonical IDs may come from saved graphs; internal deduplication still separates entity kinds.
+        identities.set(key, node.id); references.set(key, node.id);
         const claimed = value.nodes.filter(item => record(item).id === node.id);
         if (claimed.some(item => normalized(text(record(item).label)) !== normalized(node.label) ||
             nodeKinds[text(record(item).node_type).toUpperCase()]?.kind !== node.entity_kind)) throw new Error('Invalid central node');
