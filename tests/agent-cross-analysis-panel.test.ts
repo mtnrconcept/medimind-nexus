@@ -93,3 +93,12 @@ test('the panel identifies the returned model and handles a selection without co
   assert.doesNotMatch(html, /GPT-6 Astra|NaN|Infinity|Revue IA terminée/);
   assert.match(html, /Recherche et analyse des paires/);
 });
+
+test('the panel identifies pair and review models from metadata when the workflow uses different models', () => {
+  const review = { ...exampleReview(), model: 'current-phase-model', pairModel: 'fast-pair-model', reviewModel: 'review-model' };
+  const html = render(review);
+  assert.match(html, /current-phase-model/);
+  assert.match(html, /Relations[^<]*fast-pair-model/);
+  assert.match(html, /Revue[^<]*review-model/);
+  assert.doesNotMatch(html, /GPT-6 Astra/);
+});

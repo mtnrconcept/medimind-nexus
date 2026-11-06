@@ -25,6 +25,8 @@ import {
     isAppropriatenessSuccess,
     isAppropriatenessWarning,
     supportsAppropriatenessBadge,
+    interactionEffectLabel,
+    clinicalSourceUrls,
 } from './crossDataDisplay';
 
 interface Pathology {
@@ -95,23 +97,15 @@ interface RelationshipMatrixProps {
     analysisResult: AnalysisResult | null;
 }
 
-// Types de pastilles
-type PillType = 'danger' | 'contraindicated' | 'interaction' | 'treats' | 'symptom' | null;
-
-interface PillInfo {
-    type: PillType;
-    label: string;
-    description: string;
-    color: string;
-    bgColor: string;
-    link: CausalLink; // Lien complet pour le dialog
-}
-
 // Élément unifié pour la matrice
 interface MatrixElement {
     id: string;
     name: string;
     type: 'pathology' | 'symptom' | 'treatment' | 'medication';
+}
+
+function directionKey(from: Pick<MatrixElement, 'name' | 'type'>, to: Pick<MatrixElement, 'name' | 'type'>): string {
+    return JSON.stringify([typedElementKey(from), typedElementKey(to)]);
 }
 
 export function RelationshipMatrix({
@@ -127,32 +121,15 @@ export function RelationshipMatrix({
 }: RelationshipMatrixProps) {
 
     // État pour le dialog de détails du lien
-    const [selectedLink, setSelectedLink] = useState<CausalLink | null>(null);
-    const [showLinkDialog, setShowLinkDialog] = useState(false);
-    const [selectedAssessment, setSelectedAssessment] = useState<{ left: string; right: string; item: PairAssessment } | null>(null);
+    const [selectedCellKey, setSelectedCellKey] = useState<string | null>(null);
+    const [selectedLinkIndex, setSelectedLinkIndex] = useState(0);
+    const [selectedAssessment, setSelectedAssessment] = useState<{
+        left: string; right: string; item: PairAssessment; direction?: NonNullable<PairAssessment['directions']>[number];
+    } | null>(null);
     const [selectedResearch, setSelectedResearch] = useState<{ query: string; sources: { title: string; url: string }[] } | null>(null);
 
-    // Normaliser les noms pour comparaison
-    const normalizeForComparison = (name: string): string => {
-        return name.toLowerCase()
-            .trim()
-            .replace(/[àáâãäå]/g, 'a')
-            .replace(/[èéêë]/g, 'e')
-            .replace(/[ìíîï]/g, 'i')
-            .replace(/[òóôõö]/g, 'o')
-            .replace(/[ùúûü]/g, 'u')
-            .replace(/[ç]/g, 'c')
-            .replace(/[œ]/g, 'oe')
-            .replace(/[æ]/g, 'ae')
-            .replace(/[,.\\-_]/g, ' ')
-            .replace(/\s+/g, ' ');
-    };
-
-    // Exact identity only: two formulations must never be collapsed by fuzzy names.
-    const matchesElement = (a: string,b: string) => normalizeForComparison(a) === normalizeForComparison(b);
-
-    const snapshotElements = Array.isArray(snapshot?.elements) ? snapshot.elements : [];
-    const snapshotCells = snapshot?.cells && typeof snapshot.cells === 'object' ? snapshot.cells : {};
+    const snapshotElements = useMemo(() => Array.isArray(snapshot?.elements) ? snapshot.elements : [], [snapshot?.elements]);
+    const snapshotCells = useMemo(() => snapshot?.cells && typeof snapshot.cells === 'object' ? snapshot.cells : {}, [snapshot?.cells]);
 
     // Créer la liste de tous les éléments sélectionnés
     const allElements = useMemo((): MatrixElement[] => {
@@ -182,44 +159,25 @@ export function RelationshipMatrix({
         return elements;
     }, [snapshot, snapshotElements, pathologies, symptoms, treatments, medications, selectedPathologies, selectedSymptoms, selectedTreatments, selectedMedications]);
 
-    // Obtenir la pastille pour une intersection
-    const getPillForIntersection = (rowElement: MatrixElement, colElement: MatrixElement): PillInfo | null => {
-        if (rowElement.id === colElement.id) return null; // Même élément
-
-        const pair = buildPairHash(rowElement.name, rowElement.type, colElement.name, colElement.type);
-        const causalLinks = snapshot ? (snapshotCells[pair] || []) as CausalLink[] : analysisResult?.causalLinks || [];
-
-        // Chercher un lien entre les deux éléments EXACTEMENT (dans les deux directions)
-        // Le lien doit correspondre à CES DEUX éléments spécifiques, pas à d'autres
-        const link = causalLinks.find(l => {
-            // Direction 1: row -> col
-            const matchRowToCol = matchesElement(l.from, rowElement.name) && matchesElement(l.to, colElement.name);
-            // Direction 2: col -> row
-            const matchColToRow = matchesElement(l.from, colElement.name) && matchesElement(l.to, rowElement.name);
-
-            if (!matchRowToCol && !matchColToRow) return false;
-
-            // Validation supplémentaire : vérifier que les types correspondent aussi
-            const fromMatchesRow = l.fromType === rowElement.type;
-            const toMatchesCol = l.toType === colElement.type;
-            const fromMatchesCol = l.fromType === colElement.type;
-            const toMatchesRow = l.toType === rowElement.type;
-
-            // Le lien doit correspondre aux types dans l'une des deux directions
-            return (matchRowToCol && fromMatchesRow && toMatchesCol) ||
-                (matchColToRow && fromMatchesCol && toMatchesRow);
-        });
-
-        if (!link) return null;
-
-        const display = relationPresentation(link);
-        return {
-            type: 'interaction', label: display.label,
-            description: display.description + ' ' + (link.contextLimitations || []).join(' '),
-            color: display.tone === 'caution' ? '#92400e' : '#334155',
-            bgColor: display.tone === 'caution' ? '#fff7ed' : '#f1f5f9', link,
-        };
-    };
+    // Index every mechanism once. A row is the source and a column the target;
+    // the reverse direction must never borrow its relation or its conclusion.
+    const linksByDirection = useMemo(() => {
+        const index = new Map<string, CausalLink[]>();
+        const links = snapshot
+            ? Object.values(snapshotCells).flatMap(value => Array.isArray(value) ? value : []) as CausalLink[]
+            : analysisResult?.causalLinks || [];
+        for (const link of links) {
+            if (!link || typeof link.from !== 'string' || typeof link.to !== 'string') continue;
+            const key = directionKey({ name: link.from, type: link.fromType }, { name: link.to, type: link.toType });
+            index.set(key, [...(index.get(key) || []), link]);
+        }
+        return index;
+    }, [snapshot, snapshotCells, analysisResult?.causalLinks]);
+    const assessmentsByPair = useMemo(() => new Map((analysisResult?.pairAssessments || []).map(item => [item.pairHash, item])), [analysisResult?.pairAssessments]);
+    const researchByPair = useMemo(() => new Map((analysisResult?.webResearch || []).map(item => [item.pairHash ?? item.query, item])), [analysisResult?.webResearch]);
+    const selectedLinks = selectedCellKey ? linksByDirection.get(selectedCellKey) || [] : [];
+    const currentLinkIndex = Math.min(selectedLinkIndex, Math.max(0, selectedLinks.length - 1));
+    const selectedLink = selectedLinks[currentLinkIndex] ?? null;
 
     // Obtenir l'icône pour un type d'élément
     const getTypeIcon = (type: MatrixElement['type']) => {
@@ -280,7 +238,7 @@ export function RelationshipMatrix({
                                     <TableRow>
                                         {/* Cellule vide en haut à gauche */}
                                         <TableHead className="w-[180px] sticky left-0 z-20 bg-background border-r">
-                                            <span className="text-xs text-muted-foreground">↓ Ligne / Colonne →</span>
+                                            <span className="text-xs text-muted-foreground">Source ↓ / Cible →</span>
                                         </TableHead>
                                         {/* Headers colonnes */}
                                         {allElements.map((element) => (
@@ -314,12 +272,15 @@ export function RelationshipMatrix({
                                             </TableCell>
                                             {/* Cellules d'intersection */}
                                             {allElements.map((colElement) => {
-                                                const pill = getPillForIntersection(rowElement, colElement);
+                                                const cellKey = directionKey(rowElement, colElement);
+                                                const links = linksByDirection.get(cellKey) || [];
+                                                const caution = links.some(link => relationPresentation(link).tone === 'caution');
                                                 const isDiagonal = rowElement.id === colElement.id;
-                                                const research = analysisResult?.webResearch?.find(r => (r.pairHash ?? r.query) ===
-                                                    buildPairHash(rowElement.name, rowElement.type, colElement.name, colElement.type));
-                                                const assessment = analysisResult?.pairAssessments?.find(item => item.pairHash ===
-                                                    buildPairHash(rowElement.name, rowElement.type, colElement.name, colElement.type));
+                                                const pairHash = buildPairHash(rowElement.name, rowElement.type, colElement.name, colElement.type);
+                                                const research = researchByPair.get(pairHash);
+                                                const assessment = assessmentsByPair.get(pairHash);
+                                                const direction = assessment?.directions?.find(item =>
+                                                    item.fromKey === typedElementKey(rowElement) && item.toKey === typedElementKey(colElement));
 
                                                 return (
                                                     <TableCell
@@ -328,40 +289,44 @@ export function RelationshipMatrix({
                                                     >
                                                         {isDiagonal ? (
                                                             <span className="text-gray-400">—</span>
-                                                        ) : pill ? (
+                                                        ) : links.length ? (
                                                             <Tooltip>
                                                                 <TooltipTrigger asChild>
-                                                                    <Badge
-                                                                        className="cursor-pointer text-[10px] px-2 py-0.5 transition-transform hover:scale-110"
-                                                                        style={{
-                                                                            backgroundColor: pill.bgColor,
-                                                                            color: pill.color,
-                                                                            borderColor: pill.color,
-                                                                            borderWidth: '1px'
-                                                                        }}
+                                                                    <button type="button"
+                                                                        className={`rounded-md border px-2 py-1 text-[11px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${caution
+                                                                            ? 'border-amber-600/50 bg-amber-500/10 text-amber-900 dark:text-amber-200'
+                                                                            : 'border-slate-500/40 bg-muted text-foreground'}`}
+                                                                        aria-label={`${links.length} relation${links.length > 1 ? 's' : ''} de ${rowElement.name} vers ${colElement.name}`}
                                                                         onClick={() => {
-                                                                            setSelectedLink(pill.link);
-                                                                            setShowLinkDialog(true);
+                                                                            setSelectedCellKey(cellKey);
+                                                                            setSelectedLinkIndex(0);
                                                                         }}
                                                                     >
-                                                                        {pill.label}
-                                                                    </Badge>
+                                                                        {links.length > 1 ? `${links.length} relations` : relationPresentation(links[0]).label}
+                                                                        {links.length > 1 && <span className="block text-[10px] opacity-80">Voir tous les mécanismes</span>}
+                                                                        {links.length === 1 && interactionEffectLabel(links[0].interactionEffect) &&
+                                                                            <span className="block text-[10px] opacity-80">{interactionEffectLabel(links[0].interactionEffect)}</span>}
+                                                                    </button>
                                                                 </TooltipTrigger>
                                                                 <TooltipContent className="max-w-[300px]">
                                                                     <div className="space-y-1">
                                                                         <p className="font-semibold text-sm">
-                                                                            {frenchMedicalLabel(rowElement.name)} ↔ {colElement.name}
+                                                                            {frenchMedicalLabel(rowElement.name)} → {frenchMedicalLabel(colElement.name)}
                                                                         </p>
-                                                                        <p className="text-xs">{pill.description}</p>
-                                                                        <p className="text-xs text-muted-foreground italic">Cliquer pour plus de détails</p>
+                                                                        {links.map((link, index) => <p key={index} className="text-xs">
+                                                                            {relationPresentation(link).label}{interactionEffectLabel(link.interactionEffect) ? ` · ${interactionEffectLabel(link.interactionEffect)}` : ''}
+                                                                        </p>)}
+                                                                        <p className="text-xs text-muted-foreground italic">Ouvrir les relations, leurs sources et leurs limites</p>
                                                                     </div>
                                                                 </TooltipContent>
                                                             </Tooltip>
                                                         ) : assessment ? (
                                                             <button type="button" className="rounded-md border border-amber-500/40 bg-amber-500/10 px-2 py-1 text-[11px] text-foreground hover:bg-amber-500/20"
-                                                                title="Interprétation OpenAI, non validée cliniquement"
-                                                                onClick={() => setSelectedAssessment({ left: rowElement.name, right: colElement.name, item: assessment })}>
-                                                                {assessment.headline || (assessment.verdict === 'hypothesis' ? 'Piste non confirmée' : 'Lien non établi')}
+                                                                title={direction ? 'Interprétation de ce sens, non validée cliniquement' : 'Synthèse de la paire ; sens non précisé'}
+                                                                onClick={() => setSelectedAssessment({ left: rowElement.name, right: colElement.name, item: assessment, direction })}>
+                                                                {direction ? direction.verdict === 'hypothesis' ? 'Piste non confirmée'
+                                                                    : direction.verdict === 'insufficient' ? 'Preuves insuffisantes' : 'Lien à réexaminer'
+                                                                    : 'Analyse de la paire'}
                                                             </button>
                                                         ) : research?.sources?.length ? (
                                                             <button type="button" className="rounded-md border border-primary/30 px-2 py-1 text-[11px] text-primary hover:bg-primary/10"
@@ -390,10 +355,15 @@ export function RelationshipMatrix({
             <Dialog open={selectedAssessment !== null} onOpenChange={open => { if (!open) setSelectedAssessment(null); }}>
                 <DialogContent className="max-w-xl">
                     <DialogHeader>
-                        <DialogTitle>Analyse OpenAI · {selectedAssessment?.left} ↔ {selectedAssessment?.right}</DialogTitle>
+                        <DialogTitle>Analyse OpenAI · {selectedAssessment?.left} {selectedAssessment?.direction ? '→' : '↔'} {selectedAssessment?.right}</DialogTitle>
                     </DialogHeader>
-                    <p className="text-sm">{selectedAssessment?.item.explanation}</p>
-                    <p className="text-sm text-muted-foreground">Limites : {selectedAssessment?.item.limitations}</p>
+                    <p className="whitespace-pre-line text-sm">{selectedAssessment?.direction?.explanation ?? selectedAssessment?.item.explanation}</p>
+                    <p className="text-sm text-muted-foreground">Limites : {selectedAssessment?.direction?.limitations ?? selectedAssessment?.item.limitations}</p>
+                    {clinicalSourceUrls(selectedAssessment?.direction?.sourceUrls).map((url, index) => (
+                        <a key={url} href={url} target="_blank" rel="noopener noreferrer" className="text-sm text-primary underline">
+                            Source {index + 1} · {new URL(url).hostname}
+                        </a>
+                    ))}
                     <p className="rounded-md bg-muted p-3 text-xs">
                         Cette interprétation du modèle n'est pas une preuve de lien causal, d'innocuité ou d'efficacité.
                         Les références bibliographiques et le contexte clinique doivent être vérifiés.
@@ -414,7 +384,7 @@ export function RelationshipMatrix({
                         d'interaction, de causalité, de sécurité ou d'efficacité.
                     </p>
                     <ol className="max-h-80 space-y-3 overflow-y-auto">
-                        {selectedResearch?.sources.map(source => (
+                        {selectedResearch?.sources.filter(source => clinicalSourceUrls([source.url]).length > 0).map(source => (
                             <li key={source.url} className="rounded-lg border p-3 text-sm">
                                 <a href={source.url} target="_blank" rel="noopener noreferrer"
                                     className="break-words text-primary underline underline-offset-2">
@@ -427,7 +397,7 @@ export function RelationshipMatrix({
             </Dialog>
 
             {/* Dialog des détails du lien (même design que RiskNetworkGraph) */}
-            <Dialog open={showLinkDialog} onOpenChange={setShowLinkDialog}>
+            <Dialog open={Boolean(selectedLink)} onOpenChange={open => { if (!open) setSelectedCellKey(null); }}>
                 <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto">
                     <DialogHeader>
                         <DialogTitle className="flex items-center gap-2">
@@ -435,6 +405,19 @@ export function RelationshipMatrix({
                             Relation bibliographique et limites
                         </DialogTitle>
                     </DialogHeader>
+                    {selectedLinks.length > 1 && (
+                        <div role="group" aria-label="Relations dans ce sens" className="space-y-2 rounded-lg border bg-muted/30 p-3">
+                            <p className="text-xs font-medium">{selectedLinks.length} relations · {selectedLink.from} → {selectedLink.to}</p>
+                            {selectedLinks.map((link, index) => (
+                                <button key={index} type="button" aria-pressed={currentLinkIndex === index}
+                                    onClick={() => setSelectedLinkIndex(index)}
+                                    className={`block w-full rounded-md border p-2 text-left text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${currentLinkIndex === index ? 'border-primary bg-primary/10' : 'border-transparent hover:bg-muted'}`}>
+                                    {index + 1}. {relationPresentation(link).label}
+                                    {interactionEffectLabel(link.interactionEffect) && <span className="mt-0.5 block text-muted-foreground">{interactionEffectLabel(link.interactionEffect)}</span>}
+                                </button>
+                            ))}
+                        </div>
+                    )}
                     {selectedLink && (
                         <div className="space-y-4">
                             {/* Relation visuelle */}
@@ -464,14 +447,24 @@ export function RelationshipMatrix({
 
                             <div className="rounded-lg border p-3 text-sm">
                                 <strong>{relationPresentation(selectedLink).label}</strong>
+                                {interactionEffectLabel(selectedLink.interactionEffect) && <p className="mt-1 font-medium">{interactionEffectLabel(selectedLink.interactionEffect)}</p>}
                                 <p className="mt-1 text-muted-foreground">{relationPresentation(selectedLink).description}</p>
                                 {selectedLink.contextLimitations?.map(note => <p key={note} className="mt-1 text-xs">{note}</p>)}
                                 {selectedLink.evidenceQuotes?.map((quote,index) => (
                                     <blockquote key={index} className="mt-3 border-l-2 pl-3 text-xs">
                                         <p>{quote.quote}</p>
-                                        <a href={quote.url} target="_blank" rel="noopener noreferrer" className="text-primary underline">Consulter le passage source</a>
+                                        {clinicalSourceUrls([quote.url]).length > 0 && <a href={quote.url} target="_blank" rel="noopener noreferrer" className="text-primary underline">Consulter le passage source</a>}
                                     </blockquote>
                                 ))}
+                                {clinicalSourceUrls(selectedLink.webSources).length > 0 && <div className="mt-3 space-y-1">
+                                    <p className="text-xs font-medium">Sources de cette relation</p>
+                                    {clinicalSourceUrls(selectedLink.webSources).map((url, index) => (
+                                        <a key={url} href={url} target="_blank" rel="noopener noreferrer"
+                                            className="block break-words text-xs text-primary underline" title={url}>
+                                            {index + 1}. {new URL(url).hostname}
+                                        </a>
+                                    ))}
+                                </div>}
                             </div>
                             {/* Indicateurs */}
                             <div className="grid grid-cols-2 gap-3">

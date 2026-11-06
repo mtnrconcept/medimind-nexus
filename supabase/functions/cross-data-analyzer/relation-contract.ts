@@ -5,6 +5,8 @@ export const RELATION_KINDS = ['indication', 'adverse_effect', 'interaction', 'r
   'adjunctive_use', 'coadministration', 'association', 'symptom_cascade', 'symptom_relief',
   'contraindication', 'disease_worsening', 'uncertain'] as const;
 export type RelationKind = typeof RELATION_KINDS[number];
+export const INTERACTION_EFFECTS = ['increase_effect', 'decrease_effect', 'cancel_effect', 'increase_toxicity', 'mixed', 'unknown'] as const;
+export type InteractionEffect = typeof INTERACTION_EFFECTS[number];
 export interface EvidenceSource {
   url: string; title: string; abstract?: string; publicationTypes?: string[];
   year?: string; provider?: string;
@@ -18,13 +20,32 @@ export interface RelationMetadata {
   contextLimitations?: string[];
   evidenceOrigin?: 'openai_web_search' | 'verified_excerpt';
   citationVerification?: 'provider_trace' | 'verbatim';
-  interactionEffect?: 'increase_effect' | 'decrease_effect' | 'increase_toxicity' | 'mixed' | 'unknown';
+  interactionEffect?: InteractionEffect;
 }
 const text = (v: unknown): string => typeof v === 'string' ? v.trim() : '';
 const key = (v: string): string => v.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/\s+/g,' ').trim();
 const match = (v: string, pattern: RegExp) => pattern.test(key(v));
 const causal = new Set<RelationKind>(['indication','adverse_effect','interaction','risk_factor','manifestation',
   'symptom_relief','contraindication','disease_worsening']);
+const effectTarget = "(?:(?:l['’]\\s*|(?:le|la|les|son|sa|ses|the|its)\\s+))?(?:(?:therapeutic|clinical|pharmacological)\\s+)?(?:effets?|effects?|efficacite|efficacy|therapeutic response)\\b";
+const completeness = '(?:complet\\w*|total\\w*|entier\\w*|integral\\w*|entirely|fully)';
+const cancellationAction = '(?:annul\\w*|abol\\w*|supprim\\w*|neutrali\\w*|cancel\\w*|block\\w*)';
+const completeEffectCancellation = new RegExp(
+  `(?:${cancellationAction}\\s+${completeness}|${completeness}\\s+${cancellationAction})\\s+${effectTarget}|` +
+  `(?:${completeness}\\s+(?:loss|abolition|cancellation)|(?:annulation|abolition|perte)\\s+${completeness})\\s+(?:of|de|d['’])\\s*${effectTarget}`);
+
+/** Reject an over-specific cancellation label; never infer an effect from prose.
+ * Native-search prose is still an agent interpretation, not a verified quotation.
+ * This conservative wording check supplements, rather than replaces, provenance. */
+export function normalizeInteractionEffect(value: unknown, evidence: string): InteractionEffect | undefined {
+  if (!INTERACTION_EFFECTS.includes(value as InteractionEffect)) return undefined;
+  const effect = value as InteractionEffect;
+  if (effect !== 'cancel_effect') return effect;
+  const explicit = evidence.split(/[.!?;\n]+/).map(key).some(clause =>
+    completeEffectCancellation.test(clause) &&
+    !/\b(?:not|no|never|without|may|might|could|would|possible|possibly|unlikely|uncertain|hypothet\w*|ne|pas|sans|aucun\w*|peut|peuvent|pourrait|pourraient|eventuel\w*)\b|\bn['’]/.test(clause));
+  return explicit ? effect : 'unknown';
+}
 
 /** Checks traceability and obvious context conflicts, NOT medical truth.
  * It never creates a clinical relation, quote, efficacy claim or severity.
@@ -128,6 +149,9 @@ export function validateRelationEvidence(raw: unknown, normalized: CausalLink, p
     if (medicines.length!==1 || !target || normalized.fromType!==medicine.type || normalized.toType!==targetType ||
         key(normalized.from)!==key(medicine.name) || key(normalized.to)!==key(target.name)) return null;
   }
+  const interactionEffect = kind === 'interaction' ? normalizeInteractionEffect(candidate.interactionEffect, passages) : undefined;
+  const unsupportedCancellation = candidate.interactionEffect === 'cancel_effect' && interactionEffect !== 'cancel_effect';
+  if (unsupportedCancellation) limits.push('Le passage cité ne décrit pas explicitement une annulation complète de l’effet.');
   const result: CausalLink = { ...normalized, relationKind:kind, evidenceSupport:support,
     validationVersion:RELATION_ENGINE_VERSION, evidenceQuotes:quotes, contextLimitations:[...new Set(limits)],
     webSources:[...new Set(quotes.map(q=>q.url))] };
@@ -136,10 +160,13 @@ export function validateRelationEvidence(raw: unknown, normalized: CausalLink, p
   delete result.isAppropriate; delete result.effectType; delete result.dangerLevel;
   delete result.interactionType; delete result.symptomFrequency;
   delete result.therapeuticDetails; delete result.adverseDetails;
+  delete result.interactionEffect;
+  if (interactionEffect) result.interactionEffect = interactionEffect;
   result.relationship = relationPresentation(result).label;
   // A downgraded label must not leave the original affirmative claim in the
   // card or synthesis. The actual source passage remains available verbatim.
-  if (support === 'contextual') result.evidence = contextualRelationExplanation(kind);
+  if (unsupportedCancellation) result.evidence = 'Le passage source ne démontre pas une annulation complète de l’effet ; le sens précis de l’interaction reste à vérifier.';
+  else if (support === 'contextual') result.evidence = contextualRelationExplanation(kind);
   return result;
 }
 
@@ -151,7 +178,8 @@ export function relationPresentation(link: RelationMetadata): {label:string; des
   const labels: Record<RelationKind,string> = {
     indication:contextual?'Usage rapporté':'Indication étudiée',
     adverse_effect:contextual?(nativeTrace?'Effet indésirable possible':'Association observée'):'Effet indésirable rapporté',
-    interaction:contextual?(nativeTrace?'Interaction possible':'Co-utilisation rapportée'):'Interaction rapportée',
+    interaction:link.interactionEffect === 'cancel_effect' ? (contextual?'Annulation d’effet possible':'Annulation d’effet rapportée')
+      : contextual?(nativeTrace?'Interaction possible':'Co-utilisation rapportée'):'Interaction rapportée',
     risk_factor:contextual?'Prudence à évaluer':'Facteur de risque rapporté',
     manifestation:contextual?'Association observée':'Manifestation décrite',
     adjunctive_use:'Usage complémentaire',coadministration:'Co-utilisation',association:'Association rapportée',uncertain:'Lien non établi',

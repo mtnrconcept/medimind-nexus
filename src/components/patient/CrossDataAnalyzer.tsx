@@ -1,5 +1,5 @@
 import { relationPresentation, type RelationMetadata } from '../../../supabase/functions/cross-data-analyzer/relation-contract';
-import { canDisplayRiskScore } from './crossDataDisplay';
+import { canDisplayRiskScore, clinicalSourceUrls, interactionEffectLabel } from './crossDataDisplay';
 import type { PairAssessment } from '../../../supabase/functions/cross-data-analyzer/analysis-utils';
 import { ensureAnalysisShape } from '../../../supabase/functions/cross-data-analyzer/analysis-utils';
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
@@ -1089,7 +1089,7 @@ const CrossDataAnalyzer = ({ patientData }: CrossDataAnalyzerProps) => {
               </CardTitle>
               <div className="flex items-center gap-2 mt-1 text-sm text-muted-foreground">
                 <Globe className="h-4 w-4" />
-                {t('GPT-6 Astra recherche les relations entre tous les éléments sélectionnés dans les sources médicales spécialisées')}
+                {t('Recherche médicale des relations entre tous les éléments sélectionnés dans les sources spécialisées')}
                 {medicalStats && (
                   <Badge variant="outline" className="ml-2 bg-blue-50 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300 border-blue-200 dark:border-blue-800">
                     <Database className="h-3 w-3 mr-1" />
@@ -1737,7 +1737,7 @@ const CrossDataAnalyzer = ({ patientData }: CrossDataAnalyzerProps) => {
                   ) : (
                     <>
                       <Brain className="h-4 w-4 mr-2" />
-                      Analyser avec GPT-6 Astra
+                      Analyser les relations
                     </>
                   )}
                 </Button>
@@ -1770,6 +1770,7 @@ const CrossDataAnalyzer = ({ patientData }: CrossDataAnalyzerProps) => {
 
               {/* Matrice des Relations */}
               <RelationshipMatrix
+                key={`${scopeKey}:${displayedJob?.id ?? 'selection'}`}
                 pathologies={pathologies}
                 symptoms={symptoms}
                 treatments={treatments}
@@ -2277,6 +2278,7 @@ function CausalLinkCard({ link }: { link: CausalLink }) {
           </div>
 
           <Badge variant="secondary">{relationPresentation(link).label}</Badge>
+          {interactionEffectLabel(link.interactionEffect) && <Badge variant="outline">{interactionEffectLabel(link.interactionEffect)}</Badge>}
 
           <Badge variant="outline">{link.evidenceSupport === 'direct' ? 'Passage source à vérifier' : 'Contexte, pas de causalité établie'}</Badge>
         </div>
@@ -2297,7 +2299,7 @@ function CausalLinkCard({ link }: { link: CausalLink }) {
           {link.evidenceQuotes?.map((quote,index) => (
             <blockquote key={index} className="border-l-2 pl-3 text-xs">
               <p>{quote.quote}</p>
-              <a href={quote.url} target="_blank" rel="noopener noreferrer" className="text-primary underline">Publication citée</a>
+              {clinicalSourceUrls([quote.url]).length > 0 && <a href={quote.url} target="_blank" rel="noopener noreferrer" className="text-primary underline">Publication citée</a>}
             </blockquote>
           ))}
 
@@ -2357,10 +2359,13 @@ function CausalLinkCard({ link }: { link: CausalLink }) {
             {link.patientCount > 0 && (
               <span>Observé chez {link.patientCount} patient(s)</span>
             )}
-            {link.webSources && link.webSources.length > 0 && (
-              <span className="flex items-center gap-1">
+            {clinicalSourceUrls(link.webSources).length > 0 && (
+              <span className="flex flex-wrap items-center gap-2">
                 <Globe className="h-3 w-3" />
-                {link.webSources.length} source(s) web
+                {clinicalSourceUrls(link.webSources).map((url, index) => <a key={url} href={url} target="_blank"
+                  rel="noopener noreferrer" className="text-primary underline" title={url}>
+                  Source {index + 1} · {new URL(url).hostname}
+                </a>)}
               </span>
             )}
           </div>

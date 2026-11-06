@@ -17,6 +17,10 @@ export interface AIWebSearchProvenance {
   webSources: AIWebSource[];
   /** Completed native web operations, not a count claimed in the answer. */
   webSearchCalls: number;
+  /** Completed native search actions only, including searches with no visible query text. */
+  webQueryCalls: number;
+  /** Bounded queries exposed by completed search actions. Missing metadata stays absent. */
+  webSearchQueries: string[];
   webSourcesTruncated: boolean;
 }
 
@@ -24,6 +28,8 @@ const MAX_ALLOWED_DOMAINS = 100;
 const MAX_TOOL_CALLS = 50;
 const DEFAULT_TOOL_CALLS = 12;
 const MAX_WEB_SOURCES = 256;
+const MAX_WEB_SEARCH_QUERIES = 256;
+const MAX_WEB_SEARCH_QUERY_CHARS = 2000;
 const DOMAIN_LABEL = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
 
 export function normalizeWebSearchDomains(raw: readonly string[]): string[] {
@@ -99,9 +105,18 @@ export function extractOpenAIWebProvenance(
 ): AIWebSearchProvenance {
   const domains = allowedDomains === undefined ? undefined : normalizeWebSearchDomains(allowedDomains);
   const sources = new Map<string, AIWebSource>();
+  const queries = new Set<string>();
   const completedIds = new Set<string>();
+  const completedQueryIds = new Set<string>();
   let webSearchCalls = 0;
+  let webQueryCalls = 0;
   let webSourcesTruncated = false;
+  const addQuery = (raw: unknown) => {
+    if (typeof raw !== 'string' || queries.size >= MAX_WEB_SEARCH_QUERIES) return;
+    const query = raw.trim().replace(/\s+/gu, ' ');
+    // Never truncate a query into a different search or derive one from answer text.
+    if (query && query.length <= MAX_WEB_SEARCH_QUERY_CHARS) queries.add(query);
+  };
   const addSource = (raw: unknown) => {
     const source = record(raw);
     if (!source) return;
@@ -129,6 +144,16 @@ export function extractOpenAIWebProvenance(
         if (typeof item.id === 'string') completedIds.add(item.id);
       }
       const action = record(item.action);
+      // Search metadata can omit queries; open/find operations are not searches.
+      // https://developers.openai.com/api/docs/guides/tools-web-search
+      if (action?.type === 'search') {
+        if (typeof item.id !== 'string' || !completedQueryIds.has(item.id)) {
+          webQueryCalls++;
+          if (typeof item.id === 'string') completedQueryIds.add(item.id);
+        }
+        addQuery(action.query);
+        if (Array.isArray(action.queries)) for (const query of action.queries) addQuery(query);
+      }
       if (Array.isArray(action?.sources)) {
         for (const source of action.sources) {
           const entry = record(source);
@@ -146,5 +171,5 @@ export function extractOpenAIWebProvenance(
       }
     }
   }
-  return { webSources: [...sources.values()], webSearchCalls, webSourcesTruncated };
+  return { webSources: [...sources.values()], webSearchCalls, webQueryCalls, webSearchQueries: [...queries], webSourcesTruncated };
 }

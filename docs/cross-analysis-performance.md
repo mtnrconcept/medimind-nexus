@@ -8,7 +8,11 @@ Pour 27 concepts, la couverture exhaustive représente 351 paires et 702 directi
 
 ## Exécution livrée
 
-Le coordinateur garde jusqu’à **huit réponses en arrière-plan**, contenant chacune jusqu’à **quatre paires**. Jusqu’à 32 paires peuvent ainsi être examinées simultanément. Les petites sélections d’au plus trois paires conservent leur traitement individuel. Le modèle reste `gpt-6-astra`, avec le routage de raisonnement clinique et les limites de génération existants.
+Le coordinateur garde jusqu’à **huit réponses en arrière-plan**, contenant chacune jusqu’à **quatre paires**. Jusqu’à 32 paires peuvent ainsi être examinées simultanément. Les petites sélections d’au plus trois paires conservent leur traitement individuel.
+
+Les nouveaux travaux utilisent **`gpt-6.1-sol`, raisonnement `low`**, pour la recherche documentaire et la classification des paires initiales et des candidats. Leur budget initial est de 16 384 tokens, avec contexte web `medium` et jusqu’à 16 appels d’outil pour un lot normal de quatre paires. Les reprises de budget restent possibles pour une réponse incomplète du modèle attendu. La préparation des options et la revue finale restent confiées à **`gpt-6-astra`** et à son routage clinique approfondi. Le risque clinique et l’exigence de revue finale sont conservés ; la nouvelle tâche explicite `pair_relation_research` évite seulement d’appliquer `max/pro` à chaque recherche de paire.
+
+Les modèles et la politique de recherche sont enregistrés sur chaque travail. Un travail antérieur sans ces champs continue avec Astra et son ancien contrat, y compris lorsqu’un identifiant de réponse ou plusieurs lots parallèles ont déjà été acceptés. Le modèle retourné est contrôlé par étape, avant toute reprise de budget. Les métadonnées distinguent modèle des relations, modèle de revue et modèle courant.
 
 Les créations sont envoyées successivement, uniquement le temps de recevoir et de sauvegarder leur identifiant. Les générations elles-mêmes s’exécutent simultanément. Les lectures de leur état sont parallèles ; les résultats terminés sont validés puis enregistrés indépendamment. Une réponse lente ne retarde pas la publication des autres. Les places libérées reçoivent les paires restantes.
 
@@ -19,7 +23,11 @@ Les créations sont envoyées successivement, uniquement le temps de recevoir et
 | Croisements des candidats | Même coordinateur parallèle ; couverture de toutes les paires impliquant les candidats. |
 | Revue finale | Une seule revue globale, après la couverture des candidats. |
 
-La recherche web native reste obligatoire pour chaque réponse de recherche. Chaque paire garde ses propres identifiants, directions, explications et références. Les références doivent appartenir aux sources réellement retournées pour son lot ; le registre d’un autre lot ne peut pas justifier une citation. Un lot partage une trace de recherche : le nombre de paires couvertes ne doit pas être présenté comme un nombre de recherches web individuelles.
+La recherche web native reste obligatoire. Pour les nouveaux travaux, le serveur fournit une requête distincte par paire et exige sa présence dans les métadonnées natives d’une action `search` terminée avant de valider la cellule d’un lot. Plusieurs requêtes peuvent figurer dans un même appel ; le compteur de paires n’est pas un compteur d’appels. Le texte généré, une simple visite de page et une requête destinée à une autre paire ne prouvent pas la recherche de la paire.
+
+Lorsque la trace d’un lot est partielle, seules ses paires attestées sont enregistrées. Les autres sont reprises individuellement. L’API pouvant omettre le texte des requêtes, une recherche réellement exécutée dans une réponse dédiée à une seule paire peut être conservée avec la qualification `dedicated_response` et une limite explicite « requête exacte non exposée ». Une requête visible mais différente de celle prévue ne valide pas cette paire.
+
+Chaque paire garde ses deux directions, plusieurs mécanismes distincts et ses propres références. Les URL doivent appartenir aux sources réellement retournées pour son lot ; le registre d’un autre lot ne peut pas justifier une citation. Cette provenance ne vérifie pas automatiquement le contenu clinique du passage. Une absence de preuve ne devient pas une absence de risque. L’annulation complète (`cancel_effect`) reste distincte de la diminution ; un facteur tel que ×10 exige une valeur rapportée et son contexte. La borne de huit liens par paire est conservée et explicitement signalée lorsqu’elle est atteinte.
 
 ## Résultats et limites de la mesure
 
@@ -61,11 +69,13 @@ La fonction utilise la table privée `ai_analysis_jobs` existante. Aucun changem
 
 Déployer `cross-data-analyzer` avec tous ses imports, puis `ai-tool-jobs` pour le réveil du coordinateur dédié. Vérifier les versions et la conservation de `verify_jwt=true`. La fusion Git seule ne déploie pas ces Edge Functions.
 
-Le retour arrière doit préserver la lecture du journal parallèle tant que des réponses sont en cours. Pour réduire la charge, abaisser temporairement la constante `AGENT_PARALLELISM` à 1 et redéployer cette version compatible : les identifiants enregistrés continuent à être récoltés, et les nouveaux départs sont sérialisés. Après achèvement ou pause contrôlée des tâches parallèles, un retour à la version antérieure est possible. Ne pas réinstaller directement le worker à identifiant unique sur des tâches parallèles actives, ni supprimer leurs résultats.
+Le retour arrière doit préserver la lecture du journal parallèle et des modèles enregistrés tant que des réponses sont en cours. Pour réduire la charge, abaisser temporairement la constante `AGENT_PARALLELISM` à 1 et redéployer cette version compatible : les identifiants enregistrés continuent à être récoltés, et les nouveaux départs sont sérialisés. Pour suspendre Sol, modifier uniquement la politique créée par `createAgentState` pour les nouveaux travaux ; conserver la prise en charge des travaux Sol existants. Après achèvement ou pause contrôlée des tâches concernées, un retour à la version antérieure est possible. Ne pas réinstaller directement un worker Astra seul sur des réponses Sol, ni un worker à identifiant unique sur des tâches parallèles actives, ni supprimer leurs résultats.
 
 ## Références techniques
 
 - [OpenAI — réponses en arrière-plan](https://developers.openai.com/api/docs/guides/background)
+- [OpenAI — GPT-6.1 Sol](https://developers.openai.com/api/docs/models/gpt-6.1-sol)
+- [OpenAI — recherche web et provenance](https://developers.openai.com/api/docs/guides/tools-web-search)
 - [OpenAI — limites de débit et temporisation](https://developers.openai.com/api/docs/guides/rate-limits)
 - [Supabase — tâches en arrière-plan](https://supabase.com/docs/guides/functions/background-tasks)
 - [Supabase — limites des fonctions](https://supabase.com/docs/guides/functions/limits)

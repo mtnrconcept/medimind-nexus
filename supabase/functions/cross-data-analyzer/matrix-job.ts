@@ -13,7 +13,7 @@ import { buildPairSearchQuery, type PairResearchResult } from './pubmed-research
 import { pendingPairs, readCells, readPairAssessments, type MatrixCells } from './matrix-progress.ts';
 import { createAgentState, nextAgentStep, buildAgentRequest, applyAgentResult, agentProgress,
   AGENT_PAIR_BATCH_SIZE, type AgentMatrixState, type AgentRuntimeState } from './agent-orchestrator.ts';
-import { ASTRA_MODEL } from './agent-contract.ts';
+import { ASTRA_MODEL, FAST_PAIR_MODEL } from './agent-contract.ts';
 import { runAgentPairPool, pairPoolProgress, pairPoolFailureMessage, resumeAgentPairPool, PairPoolPersistenceError, type AgentPairPool } from './agent-pair-pool.ts';
 
 const leaseMs = BACKGROUND_WORKER_LEASE_MS;
@@ -253,7 +253,8 @@ export async function handleMatrix(req: Request, body: Record<string, unknown>, 
           return;
         }
         const result = await runAgentPairPool(runtime.parallel ? agentState : {
-          ...agentState, batchSize: runtime.singlePairRecovery ? 1 : AGENT_PAIR_BATCH_SIZE,
+          ...agentState, batchSize: runtime.singlePairRecovery ? 1
+            : agentState.agent.pairSearchPolicy ? agentState.batchSize : AGENT_PAIR_BATCH_SIZE,
         }, runtime.parallel, {
           start: (system, user, options) => startBackgroundAI(system, user, { ...options, clinicalRiskAssessment: job.request_payload.risk }),
           retrieve: retrieveBackgroundAI,
@@ -261,7 +262,9 @@ export async function handleMatrix(req: Request, body: Record<string, unknown>, 
             runtime.parallel = pool;
             runtime.windowStartedAt = pool.lastProgressAt;
             const progress = pairPoolProgress(reviewed, pool);
-            await save({ result_payload: reviewed, provider_response_id: null, model: ASTRA_MODEL,
+            await save({ result_payload: reviewed, provider_response_id: null,
+              model: pool.model ?? reviewed.agent.pairModel ?? ASTRA_MODEL,
+              ...(pool.reasoningEffort ? { reasoning_effort: pool.reasoningEffort } : {}),
               progress_message: progress.message, progress_percentage: progress.percentage, error_message: null });
           },
         });
@@ -308,6 +311,8 @@ export async function handleMatrix(req: Request, body: Record<string, unknown>, 
       const agentStep = agentState ? nextAgentStep(agentState) : null;
       const agentRequest = agentState && agentStep ? buildAgentRequest(agentState, agentStep) : null;
       if (!responseId) {
+        let acceptedAgentMetadata = agentRequest
+          ? { model: agentRequest.options.model, reasoning_effort: agentRequest.options.reasoningEffort } : {};
         if (runtime.creationPending) {
           await save({ status: 'failed', error_message: 'Le lancement OpenAI n’a pas pu être confirmé. Aucune seconde génération automatique n’a été créée.',
             progress_message: 'Lancement non confirmé. Une reprise explicite est nécessaire.' });
@@ -322,6 +327,7 @@ export async function handleMatrix(req: Request, body: Record<string, unknown>, 
           });
           responseId = response.id;
           runtime.maxOutputTokens = response.maxOutputTokens;
+          acceptedAgentMetadata = { model: response.model, reasoning_effort: response.reasoningEffort };
         } else if (!synthesis) {
           const sources = await Promise.all(batch.map(async pair => {
             try {
@@ -394,7 +400,7 @@ export async function handleMatrix(req: Request, body: Record<string, unknown>, 
         }
         runtime.creationPending = false;
         await save({ provider_response_id: responseId, provider_started_at: new Date().toISOString(), result_payload: state,
-          ...(agentMode ? { model: ASTRA_MODEL, reasoning_effort: agentRequest?.options.reasoningEffort } : {}) });
+          ...(agentMode ? acceptedAgentMetadata : {}) });
       }
       const deadline = Date.now() + 20_000;
       readingProvider = true;
@@ -412,6 +418,11 @@ export async function handleMatrix(req: Request, body: Record<string, unknown>, 
       }
       runtime.lastProviderStatus = provider.status;
       runtime.incompleteReason = provider.incompleteReason;
+      if (agentRequest) validateProviderOutput(() => {
+        const expectedModel = agentRequest.options.model!;
+        if (provider.model !== expectedModel && !provider.model.startsWith(expectedModel + '-'))
+          throw new Error('Le modèle OpenAI retourné ne correspond pas au modèle prévu pour cette étape.');
+      });
       const nextBudget = nextBackgroundTokenBudget(runtime, provider);
       if (nextBudget !== null) {
         runtime.retries++;
@@ -434,9 +445,8 @@ export async function handleMatrix(req: Request, body: Record<string, unknown>, 
         // successful removal; the catch can still persist the original state.
         const reviewedState = structuredClone(agentState);
         const complete = validateProviderOutput(() => {
-          if (provider.model !== ASTRA_MODEL && !provider.model.startsWith(ASTRA_MODEL + '-'))
-            throw new Error('Le modèle OpenAI retourné ne correspond pas à GPT-6 Astra.');
-          return applyAgentResult(reviewedState, agentStep, parsed, provider.webSources || [], provider.webSearchCalls || 0);
+          return applyAgentResult(reviewedState, agentStep, parsed, provider.webSources || [], provider.webSearchCalls || 0,
+            { webSearchQueries: provider.webSearchQueries || [], webQueryCalls: provider.webQueryCalls || 0 });
         });
         if (provider.webSourcesTruncated) reviewedState.analysis.warnings.push('La liste des sources consultées a atteint sa limite ; seules les URL conservées sont utilisables comme références.');
         if (complete) reviewedState.analysis = applyClinicalSafetyContract(reviewedState.analysis, risk);
@@ -586,8 +596,8 @@ export async function handleMatrix(req: Request, body: Record<string, unknown>, 
     const { selection, risk, state } = await snapshot(client, body, agentMode);
     const { data, error } = await jobs().insert({ function_name: functionName, analysis_mode: mode, requested_by: user.id,
       request_payload: { scope, selection, risk, _matrix_runtime: { windowStartedAt: Date.now(), retries: 0 } },
-      result_payload: state, status: 'queued', progress_message: agentMode ? 'Préparation de l’agent GPT-6 Astra et des recherches spécialisées.' : 'Préparation de la matrice.',
-      ...(agentMode ? { model: ASTRA_MODEL, reasoning_effort: 'high' } : {}) })
+      result_payload: state, status: 'queued', progress_message: agentMode ? 'Préparation de la recherche médicale et des liens sourcés.' : 'Préparation de la matrice.',
+      ...(agentMode ? { model: FAST_PAIR_MODEL, reasoning_effort: 'low' } : {}) })
       .select(projection).single();
     if (error) throw error;
     background(kick(data.id));

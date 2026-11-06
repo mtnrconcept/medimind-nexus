@@ -5,6 +5,7 @@ export type ClinicalTask =
   | 'official_label_summary'
   | 'known_interaction'
   | 'suspected_interaction'
+  | 'pair_relation_research'
   | 'polypharmacy'
   | 'treatment_general'
   | 'treatment_complex'
@@ -389,6 +390,18 @@ export function selectClinicalModel(
     input.task === 'final_safety_review' ||
     input.riskAssessment.riskLevel === 'critical' ||
     elementCount >= 6;
+
+  // Explicit, bounded evidence collection for one pair is not the final clinical
+  // decision. Keep the risk assessment and require the separate clinical review.
+  if (input.task === 'pair_relation_research') {
+    return {
+      model: standardModel,
+      reasoningEffort: 'low',
+      timeoutMs: 120_000,
+      finalReviewRequired: true,
+      routeReason: 'bounded pair evidence research; clinical risk is retained and final clinical review remains required',
+    };
+  }
 
   // Criticality must win over routine task labels, including known interactions
   // and official-label summaries. Older GPT-5.5 models do not support max/pro.

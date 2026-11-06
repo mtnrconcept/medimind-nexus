@@ -15,6 +15,9 @@ interface PairSlot {
   id: string;
   kind: PairStage;
   pairHashes: string[];
+  /** Expected request model; old slots inherit their persisted job policy. */
+  model?: string;
+  reasoningEffort?: AICallOptions['reasoningEffort'];
   phase: 'creating' | 'running' | 'retry_wait' | 'blocked';
   responseId?: string;
   previousResponseId?: string;
@@ -32,6 +35,9 @@ interface PairSlot {
 export interface AgentPairPool {
   version: 1;
   slots: PairSlot[];
+  /** Last acknowledged creation, retained after its slot has completed. */
+  model?: string;
+  reasoningEffort?: AICallOptions['reasoningEffort'];
   concurrency: number;
   nextLaunchAt?: number;
   startedAt: number;
@@ -104,6 +110,11 @@ function slotStep(state: AgentMatrixState, slot: PairSlot): AgentStep {
   return { kind: slot.kind, pairs: pairs.filter(pair => !!pair) };
 }
 
+function slotRequest(state: AgentMatrixState, slot: PairSlot) {
+  return buildAgentRequest({ ...state, agent: { ...state.agent,
+    pairModel: slot.model ?? state.agent.pairModel ?? ASTRA_MODEL } }, slotStep(state, slot));
+}
+
 function backoff(attempt: number, hint = 0) {
   return Math.max(hint, Math.min(120_000, 5_000 * 2 ** Math.min(attempt, 5)) + Math.floor(Math.random() * 1000));
 }
@@ -146,6 +157,14 @@ export async function runAgentPairPool(initial: AgentMatrixState, savedPool: Age
       const expected = nextAgentStep(state);
       if (expected.kind !== 'pairs' && expected.kind !== 'candidate_pairs') break;
       const waiting = pool.slots.find(s => s.phase === 'retry_wait' && (s.notBefore ?? 0) <= Date.now());
+      // A missing batch trace changes future submissions, never accepted running receipts.
+      if (state.batchSize === 1 && waiting && !waiting.responseId && waiting.pairHashes.length > 1) {
+        const split = structuredClone(pool);
+        split.slots = split.slots.flatMap(slot => slot.id === waiting.id
+          ? slot.pairHashes.map(hash => ({ ...slot, id: crypto.randomUUID(), pairHashes: [hash] })) : [slot]);
+        await commit(state, split);
+        continue;
+      }
       const reserved = new Set(pool.slots.flatMap(s => s.pairHashes));
       const pairs = availablePairs(state, expected.kind).filter(p => !reserved.has(p.pairHash))
         .slice(0, Math.max(1, Math.min(AGENT_PAIR_BATCH_SIZE, state.batchSize)));
@@ -153,8 +172,8 @@ export async function runAgentPairPool(initial: AgentMatrixState, savedPool: Age
       const slot: PairSlot = waiting ? { ...waiting, phase: 'creating', startedAt: Date.now() }
         : { id: crypto.randomUUID(), kind: expected.kind, pairHashes: pairs.map(p => p.pairHash), phase: 'creating',
           startedAt: Date.now(), tokenRetries: 0, rateRetries: 0, readFailures: 0 };
-      const step = slotStep(state, slot);
-      const request = buildAgentRequest(state, step);
+      const request = slotRequest(state, slot);
+      slot.model = request.options.model;
       const intent = structuredClone(pool);
       intent.slots = [...intent.slots.filter(s => s.id !== slot.id), slot];
       await commit(state, intent);
@@ -180,6 +199,8 @@ export async function runAgentPairPool(initial: AgentMatrixState, savedPool: Age
       }
       const accepted = structuredClone(pool), running = accepted.slots.find(s => s.id === slot.id)!;
       running.responseId = response.id; running.phase = 'running'; running.maxOutputTokens = response.maxOutputTokens;
+      running.reasoningEffort = response.reasoningEffort;
+      accepted.model = response.model; accepted.reasoningEffort = response.reasoningEffort;
       accepted.peakConcurrentBatches = Math.max(accepted.peakConcurrentBatches, accepted.slots.filter(s => s.phase === 'running').length);
       await commit(state, accepted);
     }
@@ -190,7 +211,7 @@ export async function runAgentPairPool(initial: AgentMatrixState, savedPool: Age
   let writes: Promise<void> = Promise.resolve();
   const active = pool.slots.filter(s => s.phase === 'running' && s.responseId && (s.notBefore ?? 0) <= Date.now());
   if (Date.now() < deadline - 20_000) await Promise.all(active.map(async slot => {
-    const request = buildAgentRequest(state, slotStep(state, slot));
+    const request = slotRequest(state, slot);
     let provider: AIBackgroundPollResult | undefined, readError: unknown;
     try { provider = await deps.retrieve(slot.responseId!, { ...request.options, backgroundRequestTimeoutMs: REQUEST_TIMEOUT_MS }); }
     catch (error) { readError = error; }
@@ -223,6 +244,13 @@ export async function runAgentPairPool(initial: AgentMatrixState, savedPool: Age
           }
         }
       } else if (provider) {
+        const expectedModel = request.options.model!;
+        // Validate before the budget branch: a wrong-model response never owns an automatic retry.
+        if (provider.model !== expectedModel && !provider.model.startsWith(expectedModel + '-')) {
+          current.phase = 'blocked'; current.recovery = 'regenerate'; current.error = { code: 'unexpected_provider_model' };
+          await commit(state, next);
+          return;
+        }
         const budget = nextBackgroundTokenBudget({ retries: current.tokenRetries, maxOutputTokens: current.maxOutputTokens }, provider);
         if (budget !== null) {
           current.tokenRetries++; current.maxOutputTokens = budget;
@@ -233,10 +261,10 @@ export async function runAgentPairPool(initial: AgentMatrixState, savedPool: Age
           current.error = { code: provider.errorCode ?? 'provider_' + provider.status.slice(0, 30).replace(/[^a-z_]/g, '') };
         } else {
           try {
-            if (provider.model !== ASTRA_MODEL && !provider.model.startsWith(ASTRA_MODEL + '-')) throw new Error('Modèle inattendu.');
             const before = Object.keys(reviewed.cells).length + Object.keys(reviewed.agent.candidateCells).length;
             applyAgentResult(reviewed, slotStep(state, current), JSON.parse(provider.text || ''), provider.webSources || [],
-              provider.webSearchCalls || 0, { independentPairs: true });
+              provider.webSearchCalls || 0, { independentPairs: true,
+                webSearchQueries: provider.webSearchQueries || [], webQueryCalls: provider.webQueryCalls || 0 });
             if (provider.webSourcesTruncated) reviewed.analysis.warnings = [...new Set([...reviewed.analysis.warnings,
               'La liste des sources consultées a atteint sa limite ; seules les URL conservées sont utilisables comme références.'])];
             next.slots = next.slots.filter(s => s.id !== current.id);

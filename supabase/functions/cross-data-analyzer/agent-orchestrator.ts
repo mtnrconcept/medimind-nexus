@@ -1,14 +1,18 @@
 import type { AICallOptions } from '../_shared/ai-client.ts';
+import type { AIWebSearchProvenance } from '../_shared/openai-web-search.ts';
 import { buildPairCandidates, ensureAnalysisShape, typedElementKey, type AnalysisResult, type PairAssessment, type PairCandidate, type SelectedElement } from './analysis-utils.ts';
 import { pendingPairs, type MatrixCells } from './matrix-progress.ts';
 import { RELATION_ENGINE_VERSION } from './relation-contract.ts';
-import { ASTRA_MODEL, AGENT_VERSION, MEDICAL_WEB_DOMAINS, buildAgentPairFormat, AGENT_PLAN_FORMAT,
+import { ASTRA_MODEL, FAST_PAIR_MODEL, AGENT_VERSION, MEDICAL_WEB_DOMAINS, buildAgentPairFormat, AGENT_PLAN_FORMAT,
   AGENT_PAIR_PROMPT, AGENT_PLAN_PROMPT, AGENT_FINAL_PROMPT, readAgentCells, readAgentPlan, verifiedAgentSources,
   type AgentSource, type AgentPlan, type AgentStage } from './agent-contract.ts';
 
 export interface AgentRuntimeState {
   version: number; stage: AgentStage; candidates: SelectedElement[]; candidateCells: MatrixCells;
   candidateAssessments: PairAssessment[]; sourceRegistry: AgentSource[]; draftPlan?: AgentPlan;
+  // Pin the policy to the job so an accepted pre-rollout response remains resumable.
+  pairModel?: string; reviewModel?: string;
+  pairSearchPolicy?: 'traced_queries_v1';
 }
 export interface AgentMatrixState {
   elements: SelectedElement[]; cells: MatrixCells; batchSize: number; analysis: AnalysisResult;
@@ -17,14 +21,28 @@ export interface AgentMatrixState {
 export interface AgentStep { kind: Exclude<AgentStage, 'completed'>; pairs: PairCandidate[] }
 
 export const AGENT_PAIR_BATCH_SIZE = 4;
+const normalizeQuery = (value: string) => value.normalize('NFKC').replace(/\s+/g, ' ').trim();
+const pairResearchQuery = (pair: PairCandidate) => normalizeQuery(
+  `${JSON.stringify(pair.left.name)} ${pair.left.type} ${JSON.stringify(pair.right.name)} ${pair.right.type} medical relationship interaction`);
+
+function agentModels(state: AgentMatrixState) {
+  const pairModel = state.agent.pairModel ?? ASTRA_MODEL;
+  const reviewModel = state.agent.reviewModel ?? ASTRA_MODEL;
+  if (![FAST_PAIR_MODEL, ASTRA_MODEL].includes(pairModel) || reviewModel !== ASTRA_MODEL ||
+    (state.agent.pairSearchPolicy !== undefined && state.agent.pairSearchPolicy !== 'traced_queries_v1')) {
+    throw new Error('La politique de modèles enregistrée est incompatible avec cette analyse.');
+  }
+  return { pairModel, reviewModel };
+}
 
 export function createAgentState(elements: SelectedElement[]): AgentMatrixState {
   // Analyze several pairs per provider response while keeping pair-specific citations and structured cells.
-  // This removes the dominant sequential latency without reducing reasoning effort or web-search requirements.
+  // Each pair keeps its own two directions, typed links and traced medical citations.
   const pairCount = buildPairCandidates(elements).length;
   const state: AgentMatrixState = { elements, cells: {}, batchSize: pairCount <= 3 ? 1 : AGENT_PAIR_BATCH_SIZE,
-    analysis: ensureAnalysisShape({ engineVersion: RELATION_ENGINE_VERSION, summary: 'Recherche spécialisée et analyse croisée par GPT-6 Astra.' }),
-    agent: { version: AGENT_VERSION, stage: 'pairs', candidates: [], candidateCells: {}, candidateAssessments: [], sourceRegistry: [] } };
+    analysis: ensureAnalysisShape({ engineVersion: RELATION_ENGINE_VERSION, summary: 'Recherche médicale spécialisée et classification des liens en cours.' }),
+    agent: { version: AGENT_VERSION, stage: 'pairs', pairModel: FAST_PAIR_MODEL, reviewModel: ASTRA_MODEL, pairSearchPolicy: 'traced_queries_v1',
+      candidates: [], candidateCells: {}, candidateAssessments: [], sourceRegistry: [] } };
   updateAgentCoverage(state);
   return state;
 }
@@ -46,9 +64,12 @@ export function nextAgentStep(state: AgentMatrixState): AgentStep {
 
 function updateAgentCoverage(state: AgentMatrixState) {
   const assessments = state.analysis.pairAssessments || [];
-  state.analysis.agentReview = { model: ASTRA_MODEL, stage: state.agent.stage,
+  const models = agentModels(state);
+  const pairStage = state.agent.stage === 'pairs' || state.agent.stage === 'candidate_pairs';
+  state.analysis.agentReview = { ...models, model: pairStage ? models.pairModel : models.reviewModel, stage: state.agent.stage,
     coverage: { totalPairs: buildPairCandidates(state.elements).length, reviewedPairs: Object.keys(state.cells).length,
-      webSearchedPairs: assessments.length, uncertainPairs: assessments.filter(item => item.verdict !== 'cited_relation' || item.evidenceSupport !== 'direct').length,
+      webSearchedPairs: state.agent.pairSearchPolicy ? assessments.filter(item => item.searchVerification).length : assessments.length,
+      uncertainPairs: assessments.filter(item => item.verdict !== 'cited_relation' || item.evidenceSupport !== 'direct').length,
       candidatePairs: candidatePairs(state).length, reviewedCandidatePairs: Object.keys(state.agent.candidateCells).length },
     ...(state.analysis.agentReview?.plan ? { plan: state.analysis.agentReview.plan } : {}) };
 }
@@ -74,7 +95,10 @@ export function globalAgentInput(state: AgentMatrixState) {
 export function buildAgentRequest(state: AgentMatrixState, step: AgentStep): { system: string; user: string; options: AICallOptions } {
   const pairStep = step.kind === 'pairs' || step.kind === 'candidate_pairs';
   const final = step.kind === 'final';
-  const payload = pairStep ? { pairs: step.pairs.map(pair => ({ pair: { ...pair, leftKey: typedElementKey(pair.left), rightKey: typedElementKey(pair.right) } })),
+  const models = agentModels(state);
+  const fastPairs = pairStep && models.pairModel === FAST_PAIR_MODEL;
+  const payload = pairStep ? { pairs: step.pairs.map(pair => ({ pair: { ...pair, leftKey: typedElementKey(pair.left), rightKey: typedElementKey(pair.right) },
+    ...(state.agent.pairSearchPolicy ? { researchQuery: pairResearchQuery(pair) } : {}) })),
     selectionContext: [...state.elements, ...state.agent.candidates].map(e => ({ ...e, key: typedElementKey(e) })),
     purpose: step.kind === 'candidate_pairs' ? 'Vérification de la paire planifiée ; les candidats ne sont pas déjà prescrits.' : 'Analyse de la paire planifiée dans le cadre de la revue exhaustive de la sélection.' }
     : globalAgentInput(state);
@@ -82,16 +106,19 @@ export function buildAgentRequest(state: AgentMatrixState, step: AgentStep): { s
   // Do not silently omit low-ranked pairs to fit a context window.
   if (user.length > (final ? 1_800_000 : 350_000)) throw new Error('La synthèse dépasse le contexte prévu ; réduisez la sélection ou reprenez une analyse plus ciblée.');
   return { system: pairStep ? AGENT_PAIR_PROMPT : final ? AGENT_FINAL_PROMPT : AGENT_PLAN_PROMPT, user,
-    options: { model: ASTRA_MODEL, forceModel: true, reasoningEffort: final ? 'xhigh' : 'high',
-      clinicalTask: final ? 'final_safety_review' : pairStep ? 'polypharmacy' : 'treatment_complex',
-      maxTokens: 65_536, responseFormat: pairStep ? buildAgentPairFormat(step.pairs) : AGENT_PLAN_FORMAT,
+    options: { model: pairStep ? models.pairModel : models.reviewModel, forceModel: true,
+      reasoningEffort: fastPairs ? 'low' : final ? 'xhigh' : 'high',
+      clinicalTask: fastPairs ? 'pair_relation_research' : final ? 'final_safety_review' : pairStep ? 'polypharmacy' : 'treatment_complex',
+      maxTokens: fastPairs ? 16_384 : 65_536, responseFormat: pairStep ? buildAgentPairFormat(step.pairs) : AGENT_PLAN_FORMAT,
       elementCount: state.elements.length + state.agent.candidates.length, hasExternalEvidence: state.agent.sourceRegistry.length > 0,
       ...(final ? {} : { webSearch: { allowedDomains: MEDICAL_WEB_DOMAINS, required: true,
-        searchContextSize: 'high' as const, externalWebAccess: true, maxToolCalls: pairStep ? Math.min(32, Math.max(16, step.pairs.length * 4)) : 20 } }) } };
+        searchContextSize: fastPairs ? 'medium' as const : 'high' as const, externalWebAccess: true,
+        maxToolCalls: pairStep ? Math.min(32, Math.max(16, step.pairs.length * 4)) : 20 } }) } };
 }
 
 export function applyAgentResult(state: AgentMatrixState, step: AgentStep, raw: unknown, returnedSources: AgentSource[], webSearchCalls: number,
-  options: { independentPairs?: boolean } = {}): boolean {
+  options: { independentPairs?: boolean } & Partial<Pick<AIWebSearchProvenance, 'webSearchQueries' | 'webQueryCalls'>> = {}): boolean {
+  const searchTrace = options;
   const expected = nextAgentStep(state);
   const pairStep = step.kind === 'pairs' || step.kind === 'candidate_pairs';
   const available = step.kind === 'pairs' ? pendingPairs(state.elements, state.cells)
@@ -110,8 +137,41 @@ export function applyAgentResult(state: AgentMatrixState, step: AgentStep, raw: 
   // A batch may cite only its own actual tool trace. The global registry is used by the final review.
   if (step.kind !== 'final' && webSearchCalls < 1) throw new Error('Réponse sans recherche web exécutée.');
   if (step.kind === 'pairs' || step.kind === 'candidate_pairs') {
-    const result = readAgentCells(parsed.cells, step.pairs, sources, webSearchCalls);
-    if (!result.assessments.length) throw new Error('Réponse IA sans cellule complète et ses deux directions.');
+    let verifiedPairs = step.pairs;
+    const verification = new Map<string, NonNullable<PairAssessment['searchVerification']>>();
+    if (state.agent.pairSearchPolicy) {
+      if (typeof searchTrace.webQueryCalls !== 'number' || !Number.isFinite(searchTrace.webQueryCalls) || searchTrace.webQueryCalls < 1)
+        throw new Error('Aucune recherche médicale native exécutée : les visites de pages ne suffisent pas.');
+      const queries = new Set((searchTrace.webSearchQueries || []).map(normalizeQuery));
+      const planned = step.pairs.map(pairResearchQuery);
+      for (const [index, pair] of step.pairs.entries()) {
+        // Exact attribution after technical normalization; names/types keep distinct pairs distinct.
+        if (queries.has(planned[index]) && planned.filter(query => query === planned[index]).length === 1)
+          verification.set(pair.pairHash, 'planned_query');
+        // Some provider searches omit query metadata. Only an individually scoped
+        // response can then establish a search for one pair, never for an entire batch.
+        else if (step.pairs.length === 1 && queries.size === 0)
+          verification.set(pair.pairHash, 'dedicated_response');
+      }
+      verifiedPairs = step.pairs.filter(pair => verification.has(pair.pairHash));
+      if (!verifiedPairs.length && step.pairs.length === 1)
+        throw new Error('Traçabilité de la recherche indisponible pour cette paire ; aucune cellule validée.');
+    }
+    const result = readAgentCells(parsed.cells, verifiedPairs, sources, webSearchCalls);
+    if (verifiedPairs.length && !result.assessments.length) throw new Error('Réponse IA sans cellule complète et ses deux directions.');
+    if (verifiedPairs.length < step.pairs.length) {
+      state.batchSize = 1;
+      result.warnings.push('La trace du lot ne permet pas d’attribuer une recherche à chaque paire. Les paires non attestées sont reprises individuellement et ne sont pas comptées comme analysées.');
+    }
+    for (const assessment of result.assessments) {
+      assessment.searchVerification = verification.get(assessment.pairHash);
+      if (assessment.searchVerification === 'dedicated_response') {
+        const limit = 'Recherche exécutée dans une réponse dédiée à cette paire ; requête exacte non exposée par le fournisseur.';
+        assessment.limitations += ' ' + limit;
+        for (const direction of assessment.directions || []) direction.limitations += ' ' + limit;
+      }
+    }
+    state.analysis.warnings = [...new Set([...state.analysis.warnings, ...result.warnings])];
     const target = step.kind === 'pairs' ? state.cells : state.agent.candidateCells;
     Object.assign(target, result.cells);
     const reviewed = new Set(result.assessments.map(a => a.pairHash));
@@ -124,7 +184,8 @@ export function applyAgentResult(state: AgentMatrixState, step: AgentStep, raw: 
       const urls = new Set([...(result.cells[pair.pairHash] || []).flatMap(link => link.webSources),
         ...(assessment.directions || []).flatMap(d => d.sourceUrls)]);
       state.analysis.webResearch = state.analysis.webResearch.filter(r => r.pairHash !== pair.pairHash);
-      state.analysis.webResearch.push({ pairHash: pair.pairHash, query: `${pair.left.name} × ${pair.right.name}`,
+      state.analysis.webResearch.push({ pairHash: pair.pairHash,
+        query: assessment.searchVerification === 'planned_query' ? pairResearchQuery(pair) : `${pair.left.name} × ${pair.right.name}`,
         status: urls.size ? 'matched' : 'empty', retrievedAt: new Date().toISOString(),
         providers: [{ name: 'OpenAI web_search', status: urls.size ? 'matched' : 'empty', count: urls.size }],
         findings: [assessment.explanation], sources: sources.filter(s => urls.has(s.url)) });
@@ -165,7 +226,7 @@ export function agentProgress(state: AgentMatrixState): { message: string; perce
   const original = `${c.reviewedPairs} / ${c.totalPairs} paires analysées dans les deux sens`;
   const stage = state.agent.stage;
   if (stage === 'completed') return { message: `${original} · revue finale terminée, validation médicale requise.`, percentage: 100 };
-  if (stage === 'pairs') return { message: `GPT-6 Astra · ${original} · recherche spécialisée en cours.`, percentage: Math.floor(65 * c.reviewedPairs / Math.max(1, c.totalPairs)) };
+  if (stage === 'pairs') return { message: `Recherche médicale · ${original} · liens sourcés en cours.`, percentage: Math.floor(65 * c.reviewedPairs / Math.max(1, c.totalPairs)) };
   if (stage === 'plan') return { message: `${original} · recherche de pistes d’optimisation et revue globale.`, percentage: 68 };
   if (stage === 'candidate_pairs') return { message: `${original} · alternatives : ${c.reviewedCandidatePairs} / ${c.candidatePairs} croisements vérifiés.`, percentage: 72 + Math.floor(20 * c.reviewedCandidatePairs / Math.max(1, c.candidatePairs)) };
   return { message: `${original} · revue finale des bénéfices, interactions et risques résiduels.`, percentage: 96 };
