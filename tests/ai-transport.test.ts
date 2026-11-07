@@ -25,6 +25,10 @@ function options(fetcher: typeof fetch, getSession = async (): Promise<AIToolSes
   return { supabaseUrl: base, publicKey: 'public-key', getSession, fetcher, pollIntervalMs: 1, requestTimeoutMs: 100, maxWaitMs: 1000 };
 }
 const input = { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer obsolete-anon-key' }, body: JSON.stringify({ message: 'private clinical request' }) };
+const recoveryRequestId = 'a4279601-8a0f-4ef1-8acf-ac2f7a86a003';
+const recoveryScope = { userId: 'owner-a', key: 'synthetic-caller:' + recoveryRequestId };
+const recoveryInput = { ...input, headers: { ...input.headers, 'x-ai-scope': 'synthetic-caller', 'x-ai-request-id': recoveryRequestId } };
+const pendingReference = () => ({ functionName: 'ai-assistant', requestId: recoveryRequestId, createdAt: Date.now() });
 
 test('durable JSON uses the current user JWT, retries only status and preserves the original payload contract', async t => {
   const stored = memoryStorage(t);
@@ -68,7 +72,152 @@ test('concurrent identical submissions share a start and create separate readabl
   assert.deepEqual(await Promise.all(responses.map(response => response.json())), [{ ok: true }, { ok: true }]);
 });
 
-test('multipart retries keep identical bytes, boundary and idempotency key', async t => {
+test('a new submission after completion starts directly with a new request ID and no recovery preflight', async t => {
+  memoryStorage(t);
+  const actions: string[] = [];
+  const requestIds: string[] = [];
+  const transport = createAITransport(options(async (url, init) => {
+    const request = new Request(url, init);
+    const params = new URL(request.url).searchParams;
+    actions.push(request.method + ':' + params.get('action') + (params.has('requestId') ? ':requestId' : ''));
+    if (request.method === 'POST') {
+      requestIds.push(request.headers.get('x-ai-request-id')!);
+      return Response.json({ job: { ...meta, id: 'job-' + requestIds.length } }, { status: 202 });
+    }
+    if (params.has('requestId')) return Response.json({ error: 'Tâche inaccessible.' }, { status: 404 });
+    return Response.json({ job: { ...final({ generation: requestIds.length }).job, id: params.get('jobId') } });
+  }));
+  assert.deepEqual(await (await transport.fetch(base + '/functions/v1/ai-assistant', input)).json(), { generation: 1 });
+  assert.deepEqual(await (await transport.fetch(base + '/functions/v1/ai-assistant', input)).json(), { generation: 2 });
+  assert.equal(requestIds.length, 2);
+  assert.notEqual(requestIds[0], requestIds[1]);
+  assert.deepEqual(actions, ['POST:start', 'GET:status', 'POST:start', 'GET:status']);
+});
+
+test('a remount recovers a pending request through lookup without submitting another operation', async t => {
+  memoryStorage(t);
+  await saveAIJobReference(pendingReference(), recoveryScope);
+  const actions: string[] = [];
+  const transport = createAITransport(options(async (url, init) => {
+    const request = new Request(url, init);
+    const params = new URL(request.url).searchParams;
+    actions.push(request.method + ':' + params.get('action'));
+    assert.equal(request.method, 'GET');
+    if (params.has('requestId')) {
+      assert.equal(params.get('requestId'), recoveryRequestId);
+      return Response.json({ job: meta });
+    }
+    assert.equal(params.get('jobId'), meta.id);
+    return Response.json(final({ recovered: true }));
+  }));
+  assert.deepEqual(await (await transport.fetch(base + '/functions/v1/ai-assistant', recoveryInput)).json(), { recovered: true });
+  assert.deepEqual(actions, ['GET:lookup', 'GET:status']);
+  const saved = await readAIJobReference('ai-assistant', recoveryScope);
+  assert.equal(saved?.requestId, recoveryRequestId);
+  assert.equal(saved?.id, meta.id);
+  assert.equal(saved?.completed, true);
+});
+
+test('an explicit lookup miss submits the saved request ID without replacing its active reference', async t => {
+  memoryStorage(t);
+  const reference = pendingReference();
+  await saveAIJobReference(reference, recoveryScope);
+  const actions: string[] = [];
+  const transport = createAITransport(options(async (url, init) => {
+    const request = new Request(url, init);
+    const params = new URL(request.url).searchParams;
+    actions.push(request.method + ':' + params.get('action'));
+    if (params.has('requestId')) return Response.json({ job: null });
+    if (request.method === 'POST') {
+      assert.equal(request.headers.get('x-ai-request-id'), recoveryRequestId);
+      assert.deepEqual(await readAIJobReference('ai-assistant', recoveryScope), reference);
+      return Response.json({ job: meta }, { status: 202 });
+    }
+    return Response.json(final({ started: true }));
+  }));
+  assert.deepEqual(await (await transport.fetch(base + '/functions/v1/ai-assistant', recoveryInput)).json(), { started: true });
+  assert.deepEqual(actions, ['GET:lookup', 'POST:start', 'GET:status']);
+});
+
+test('transient lookup failures retry recovery while preserving the reference and never resubmit', async t => {
+  memoryStorage(t);
+  const reference = pendingReference();
+  await saveAIJobReference(reference, recoveryScope);
+  const actions: string[] = [];
+  let lookups = 0;
+  const transport = createAITransport(options(async (url, init) => {
+    const request = new Request(url, init);
+    const params = new URL(request.url).searchParams;
+    actions.push(request.method + ':' + params.get('action'));
+    assert.equal(request.method, 'GET');
+    if (params.has('requestId')) {
+      lookups += 1;
+      assert.equal(params.get('requestId'), recoveryRequestId);
+      assert.deepEqual(await readAIJobReference('ai-assistant', recoveryScope), reference);
+      return lookups === 1 ? Response.json({ error: 'Temporarily unavailable' }, { status: 503 }) : Response.json({ job: meta });
+    }
+    return Response.json(final({ recovered: true }));
+  }));
+  assert.deepEqual(await (await transport.fetch(base + '/functions/v1/ai-assistant', recoveryInput)).json(), { recovered: true });
+  assert.deepEqual(actions, ['GET:lookup', 'GET:lookup', 'GET:status']);
+});
+
+for (const httpStatus of [400, 401, 403]) test(`lookup HTTP ${httpStatus} preserves the pending reference without submitting`, async t => {
+  memoryStorage(t);
+  const reference = pendingReference();
+  await saveAIJobReference(reference, recoveryScope);
+  const actions: string[] = [];
+  const transport = createAITransport(options(async (url, init) => {
+    const request = new Request(url, init);
+    actions.push(request.method + ':' + new URL(request.url).searchParams.get('action'));
+    return Response.json({ error: httpStatus === 400 ? 'Action invalide.' : 'Forbidden' }, { status: httpStatus });
+  }));
+  await assert.rejects(transport.fetch(base + '/functions/v1/ai-assistant', recoveryInput), error => (error as { status?: number }).status === httpStatus);
+  assert.deepEqual(actions, ['GET:lookup']);
+  assert.deepEqual(await readAIJobReference('ai-assistant', recoveryScope), reference);
+});
+
+for (const [label, payload] of [['missing job', {}], ['missing job ID', { job: {} }], ['empty job ID', { job: { id: '' } }]] as const) {
+  test(`a malformed lookup response (${label}) never authorizes a new start`, async t => {
+    memoryStorage(t);
+    const reference = pendingReference();
+    await saveAIJobReference(reference, recoveryScope);
+    const actions: string[] = [];
+    const transport = createAITransport(options(async (url, init) => {
+      const request = new Request(url, init);
+      const params = new URL(request.url).searchParams;
+      actions.push(request.method + ':' + params.get('action'));
+      if (params.has('requestId')) return Response.json(payload);
+      if (request.method === 'POST') return Response.json({ job: meta }, { status: 202 });
+      return Response.json(final({ unexpected: true }));
+    }));
+    await assert.rejects(transport.fetch(base + '/functions/v1/ai-assistant', recoveryInput), /réponse.*reprise.*invalide/i);
+    assert.deepEqual(actions, ['GET:lookup']);
+    assert.deepEqual(await readAIJobReference('ai-assistant', recoveryScope), reference);
+  });
+}
+
+test('an inaccessible known job keeps its reference and strict status error without starting again', async t => {
+  memoryStorage(t);
+  const reference = { ...pendingReference(), id: meta.id };
+  await saveAIJobReference(reference, recoveryScope);
+  const actions: string[] = [];
+  const transport = createAITransport(options(async (url, init) => {
+    const request = new Request(url, init);
+    const params = new URL(request.url).searchParams;
+    actions.push(request.method + ':' + params.get('action'));
+    assert.equal(params.get('jobId'), meta.id);
+    assert.equal(params.has('requestId'), false);
+    return Response.json({ error: 'Tâche inaccessible.' }, { status: 404 });
+  }));
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    await assert.rejects(transport.fetch(base + '/functions/v1/ai-assistant', recoveryInput), error => (error as { status?: number }).status === 404);
+    assert.deepEqual(await readAIJobReference('ai-assistant', recoveryScope), reference);
+  }
+  assert.deepEqual(actions, ['GET:status', 'GET:status']);
+});
+
+test('multipart retries after a legacy lookup 404 keep identical bytes, boundary and idempotency key', async t => {
   memoryStorage(t);
   const bytes: Uint8Array[] = [], boundaries: string[] = [], requestIds: string[] = [];
   const transport = createAITransport(options(async (url, init) => {
@@ -81,7 +230,10 @@ test('multipart retries keep identical bytes, boundary and idempotency key', asy
       if (bytes.length === 1) throw new TypeError('Failed to fetch');
       return Response.json({ job: { ...meta, function_name: 'document-analyzer' } }, { status: 202 });
     }
-    if (query.has('requestId')) return Response.json({ error: 'not found' }, { status: 404 });
+    if (query.has('requestId')) {
+      assert.equal(query.get('action'), 'lookup');
+      return Response.json({ error: 'not found' }, { status: 404 });
+    }
     return Response.json(final({ integrated: [] }));
   }));
   const body = new FormData();
@@ -194,6 +346,7 @@ test('a lost start acknowledgement is recovered by request ID without repeating 
       throw new TypeError('Failed to fetch');
     }
     if (params.has('requestId')) {
+      assert.equal(params.get('action'), 'lookup');
       assert.equal(params.get('requestId'), requestId);
       return Response.json({ job: meta });
     }

@@ -56,6 +56,11 @@ function status(id: string, owner = 'alice', after = 0) {
     headers: { Authorization: `Bearer ${owner}` },
   });
 }
+function lookup(id = requestId, owner = 'alice', after = 0) {
+  return new Request(`https://example.supabase.co/functions/v1/ai-tool-jobs?action=lookup&requestId=${id}&after=${after}`, {
+    headers: { Authorization: `Bearer ${owner}` },
+  });
+}
 const jsonResponse = () => new Response(JSON.stringify({ content: 'Synthetic complete result' }), { headers: { 'content-type': 'application/json' } });
 
 test('concurrent retries execute one upstream operation and recover the same job', async () => {
@@ -97,6 +102,79 @@ test('sign-in is required and another user cannot read job or event contents', a
     headers: { Authorization: 'Bearer bob' },
   }));
   assert.deepEqual((await list.json()).jobs, []);
+});
+
+test('request lookups, including legacy recovery, treat absence as data while known-job status stays strict', async () => {
+  const app = setup(async () => jsonResponse());
+  const response = await app.handler(lookup());
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get('cache-control'), 'no-store');
+  assert.deepEqual(await response.json(), { job: null });
+  assert.equal((await app.handler(status(requestId))).status, 404);
+  const legacy = await app.handler(new Request(lookup().url.replace('action=lookup', 'action=status'), lookup()));
+  assert.equal(legacy.status, 200);
+  assert.deepEqual(await legacy.json(), { job: null });
+  const knownJob = await app.handler(new Request(lookup().url.replace('action=lookup', 'action=status') + '&jobId=' + crypto.randomUUID(), lookup()));
+  assert.equal(knownJob.status, 404);
+  assert.equal(app.calls(), 0);
+  assert.equal(app.store.rows.size, 0);
+});
+
+test('request lookup recovers owned metadata without replaying results or executing the task twice', async () => {
+  const app = setup(async () => new Response('data: {"type":"text","content":"Synthetic"}\n\ndata: [DONE]\n\n', {
+    headers: { 'content-type': 'text/event-stream' },
+  }));
+  const { job } = await (await app.handler(start())).json();
+  await Promise.all(app.work);
+  app.store.events = async () => { throw new Error('lookup must not read saved events'); };
+  const response = await app.handler(lookup(requestId, 'alice', 1));
+  assert.equal(response.status, 200);
+  const recovered = await response.json();
+  assert.equal(recovered.job.id, job.id);
+  assert.equal(recovered.job.status, 'completed');
+  assert.equal('events' in recovered, false);
+  assert.equal('result_payload' in recovered.job, false);
+  assert.equal('public_token' in recovered.job, false);
+  assert.equal('request_payload' in recovered.job, false);
+  assert.equal('requested_by' in recovered.job, false);
+  const retried = await (await app.handler(start())).json();
+  assert.equal(retried.job.id, job.id);
+  assert.equal(app.calls(), 1);
+});
+
+test('lookup cannot distinguish another owner task from absence and still requires authentication', async () => {
+  const app = setup(async () => jsonResponse());
+  await app.handler(start());
+  await Promise.all(app.work);
+  const foreign = await app.handler(lookup(requestId, 'bob'));
+  const absent = await app.handler(lookup(crypto.randomUUID(), 'bob'));
+  assert.equal(foreign.status, 200);
+  assert.equal(absent.status, 200);
+  assert.deepEqual(await foreign.json(), await absent.json());
+  assert.equal((await app.handler(lookup(requestId, 'invalid'))).status, 401);
+  assert.equal((await app.handler(new Request(lookup().url))).status, 401);
+  const legacyForeign = await app.handler(new Request(lookup(requestId, 'bob').url.replace('action=lookup', 'action=status'), lookup(requestId, 'bob')));
+  assert.equal(legacyForeign.status, 200);
+  assert.deepEqual(await legacyForeign.json(), { job: null });
+  assert.equal(app.calls(), 1);
+});
+
+test('lookup rejects malformed or ambiguous identifiers, cursors and write methods', async () => {
+  const app = setup(async () => jsonResponse());
+  assert.equal((await app.handler(lookup('invalid'))).status, 400);
+  assert.equal((await app.handler(lookup(requestId, 'alice', -1))).status, 400);
+  assert.equal((await app.handler(new Request(lookup().url + '&jobId=' + crypto.randomUUID(), lookup()))).status, 400);
+  assert.equal((await app.handler(new Request(lookup(), { method: 'POST' }))).status, 405);
+  assert.equal(app.calls(), 0);
+});
+
+test('an unavailable lookup store remains a retryable failure, never a missing task', async () => {
+  const app = setup(async () => jsonResponse());
+  app.store.byRequest = async () => { throw new Error('synthetic store outage'); };
+  const response = await app.handler(lookup());
+  assert.equal(response.status, 503);
+  assert.equal('job' in await response.json(), false);
+  assert.equal(app.calls(), 0);
 });
 
 test('disconnecting the initiating request does not abort the server task', async () => {

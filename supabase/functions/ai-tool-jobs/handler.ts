@@ -212,14 +212,25 @@ export function createToolTransport(deps: TransportDependencies) {
         return action === 'latest' ? json({ job: jobs[0] ? publicJob(jobs[0], true, now()) : null })
           : json({ jobs: jobs.map(job => publicJob(job, false, now())) });
       }
-      if (action === 'status') {
+      if (action === 'status' || action === 'lookup') {
+        const isLookup = action === 'lookup';
+        if (isLookup && request.method !== 'GET') return json({ error: 'Méthode non autorisée.' }, 405);
         const id = url.searchParams.get('jobId');
         const requestId = url.searchParams.get('requestId');
-        if (!isUUID(id) && !isUUID(requestId)) return json({ error: 'Identifiant invalide.' }, 400);
+        if (isLookup ? !isUUID(requestId) || id !== null : !isUUID(id) && !isUUID(requestId)) {
+          return json({ error: 'Identifiant invalide.' }, 400);
+        }
         const after = Number(url.searchParams.get('after') || 0);
         if (!Number.isSafeInteger(after) || after < 0) return json({ error: 'Curseur invalide.' }, 400);
         const job = isUUID(id) ? await store.get(id, owner) : await store.byRequest(requestId!, owner);
-        if (!job) return json({ error: 'Tâche inaccessible.' }, 404);
+        // Older clients recover uncertain starts through status(requestId).
+        // A request may not have been accepted yet; missing and foreign references
+        // are indistinguishable. A known jobId retains its strict not-found error.
+        if (!job) return isLookup || (id === null && isUUID(requestId))
+          ? json({ job: null }) : json({ error: 'Tâche inaccessible.' }, 404);
+        // A recovery lookup only binds the request to its accepted task. Reading
+        // results, replaying events and waking native workers belong to status.
+        if (isLookup) return json({ job: publicJob(job, false, now()) });
         if (job.analysis_mode !== TRANSPORT_MODE && ['queued', 'processing'].includes(job.status) && deps.wakeNative) {
           deps.waitUntil(deps.wakeNative(job, token).catch(() => deps.log?.('[AI transport] Native status refresh unavailable.')));
         }

@@ -26,6 +26,9 @@ export interface AIToolStatus {
   nextCursor?: number;
   hasMore?: boolean;
 }
+interface AIToolLookup {
+  job: Pick<AIToolJob, 'id' | 'function_name'> | null;
+}
 export interface AITransportOptions {
   supabaseUrl: string;
   publicKey?: string;
@@ -164,7 +167,8 @@ export function createAITransport(options: AITransportOptions) {
 
   async function begin(functionName: string, original: Request, body: ArrayBuffer, scope: AIJobRecoveryScope, owner: string, caller: string, action = 'start'): Promise<AIJobReference> {
     const saved = await readAIJobReference(functionName, scope);
-    const reference: AIJobReference = saved && !saved.completed ? saved : {
+    const pending = saved && !saved.completed ? saved : null;
+    const reference: AIJobReference = pending ?? {
       functionName, requestId: original.headers.get('x-ai-request-id') || crypto.randomUUID(), createdAt: Date.now(),
     };
     if (reference.id) return reference;
@@ -183,10 +187,13 @@ export function createAITransport(options: AITransportOptions) {
           await observation.wait(attempt ? Math.min(interval * 2 ** Math.min(attempt, 4), 15_000) : 0);
         }
         // Recover an accepted start whose acknowledgement was lost, including after remount.
-        if (saved || attempt > 0) {
+        // A completed reference belongs to a previous submission, not this new request.
+        if (pending || attempt > 0) {
           try {
-            const recovered = await waitForAIRequest(() => request<AIToolStatus>({ action: 'status', requestId: reference.requestId! }, owner), undefined, options.requestTimeoutMs);
-            if (recovered.job?.id) {
+            const recovered = await waitForAIRequest(() => request<AIToolLookup>({ action: 'lookup', requestId: reference.requestId! }, owner), undefined, options.requestTimeoutMs);
+            // Only an explicit miss permits a new start. An invalid reply must not duplicate work.
+            if (recovered?.job !== null) {
+              if (typeof recovered?.job?.id !== 'string' || !recovered.job.id) throw new Error('La réponse de reprise de la tâche IA est invalide.');
               if (recovered.job.function_name && recovered.job.function_name !== functionName) throw transportError('Référence de tâche incohérente.', 409);
               reference.id = recovered.job.id;
               await saveAIJobReference(reference, scope);
