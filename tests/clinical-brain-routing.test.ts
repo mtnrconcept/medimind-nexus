@@ -15,19 +15,19 @@ test('high risk medications present in free text are identified', () => {
   assert.ok(result.flags.includes('high_risk_medication'));
 });
 
-test('critical known interaction routes to Astra with the strongest reasoning', () => {
+test('critical known interaction routes to Sol with high reasoning', () => {
   const risk = detectHighRiskContext({ medications: [{ name: 'Warfarin' }], symptoms: [{ name: 'Hémorragie digestive' }] });
   const result = selectClinicalModel({ task: 'known_interaction', riskAssessment: risk });
-  assert.equal(result.model, 'gpt-6-astra');
-  assert.equal(result.reasoningEffort, 'max');
+  assert.equal(result.model, 'gpt-5.6-sol');
+  assert.equal(result.reasoningEffort, 'high');
   assert.equal(result.finalReviewRequired, true);
 });
 
 test('critical official label review cannot be downgraded to the standard model', () => {
   const risk = detectHighRiskContext({ symptoms: [{ name: 'Anaphylaxie' }] });
   const route = selectClinicalModel({ task: 'official_label_summary', riskAssessment: risk });
-  assert.equal(route.model, 'gpt-6-astra');
-  assert.equal(route.reasoningEffort, 'max');
+  assert.equal(route.model, 'gpt-5.6-sol');
+  assert.equal(route.reasoningEffort, 'high');
 });
 
 test('mere source mentions and unavailable PubMed evidence do not establish retrieved evidence', () => {
@@ -60,7 +60,7 @@ test('system prompt examples do not inflate the risk of an otherwise low-risk pa
   assert.equal(result.clinicalSafety?.riskLevel, 'low');
 });
 
-test('critical call uses Astra Responses max/pro despite generic OPENAI_MODEL', async () => {
+test('critical call uses Sol Responses high despite generic OPENAI_MODEL', async () => {
   const originalDeno = (globalThis as { Deno?: unknown }).Deno;
   const originalFetch = globalThis.fetch;
   let request: Record<string, unknown> = {};
@@ -82,11 +82,11 @@ test('critical call uses Astra Responses max/pro despite generic OPENAI_MODEL', 
       responseFormat: { type: 'json_object' },
       temperature: 0.1,
     });
-    assert.equal(result.model, 'gpt-6-astra');
+    assert.equal(result.model, 'gpt-5.6-sol');
     assert.ok(requestURL.endsWith('/responses'));
-    assert.equal(request.model, 'gpt-6-astra');
-    assert.deepEqual(request.reasoning, { effort: 'max', mode: 'pro' });
-    assert.ok(Number(request.max_output_tokens) >= 25_000);
+    assert.equal(request.model, 'gpt-5.6-sol');
+    assert.deepEqual(request.reasoning, { effort: 'high' });
+    assert.ok(Number(request.max_output_tokens) >= 32_768);
     assert.ok(!('temperature' in request));
     assert.deepEqual(request.text, { format: { type: 'json_object' } });
   } finally {
@@ -142,9 +142,9 @@ test('pair research is never inferred from untrusted clinical prompt wording', (
   const inferred = profileClinicalPrompt(prompt);
   assert.notEqual(inferred.task, 'pair_relation_research');
   const ordinary = selectClinicalModel({ task: inferred.task, riskAssessment: detectHighRiskContext({ freeText: prompt }) });
-  assert.equal(ordinary.model, 'gpt-6-astra');
-  assert.equal(ordinary.reasoningEffort, 'max');
-  assert.equal(ordinary.reasoningMode, 'pro');
+  assert.equal(ordinary.model, 'gpt-5.6-sol');
+  assert.equal(ordinary.reasoningEffort, 'high');
+  assert.equal(ordinary.reasoningMode, undefined);
   assert.equal(profileClinicalPrompt(prompt, 'pair_relation_research').task, 'pair_relation_research');
 });
 
@@ -173,10 +173,35 @@ test('pair research caps inherited reasoning settings without dropping clinical 
   }
 });
 
-test('global final safety review retains Astra max/pro independently of the pair research route', () => {
+test('global final safety review retains Sol high independently of the pair research route', () => {
   const route = selectClinicalModel({ task: 'final_safety_review', riskAssessment: detectHighRiskContext({}) });
-  assert.equal(route.model, 'gpt-6-astra');
-  assert.equal(route.reasoningEffort, 'max');
-  assert.equal(route.reasoningMode, 'pro');
+  assert.equal(route.model, 'gpt-5.6-sol');
+  assert.equal(route.reasoningEffort, 'high');
+  assert.equal(route.reasoningMode, undefined);
   assert.equal(route.finalReviewRequired, true);
+});
+
+test('legacy Astra environment settings cannot force new critical jobs back to Astra', () => {
+  const risk = detectHighRiskContext({ symptoms: [{ name: 'Hemorragie' }] });
+  for (const task of ['known_interaction', 'final_safety_review'] as const) {
+    const route = selectClinicalModel({ task, riskAssessment: risk }, {
+      OPENAI_CLINICAL_CRITICAL_MODEL: 'gpt-6-astra',
+      OPENAI_CLINICAL_FINAL_REVIEW_MODEL: 'gpt-6-astra',
+    });
+    assert.equal(route.model, 'gpt-5.6-sol');
+    assert.equal(route.reasoningEffort, 'high');
+    assert.equal(route.reasoningMode, undefined);
+    assert.equal(route.finalReviewRequired, true);
+  }
+});
+
+test('forced Sol requests remain high, even if a caller asks for max/pro', () => {
+  const result = prepareClinicalAICall('Analyse clinique.', 'Patient avec hemorragie.', {
+    model: 'gpt-5.6-sol', forceModel: true, clinicalTask: 'final_safety_review',
+    reasoningEffort: 'max', reasoningMode: 'pro',
+  }, () => undefined);
+  assert.equal(result.options.model, 'gpt-5.6-sol');
+  assert.equal(result.options.reasoningEffort, 'high');
+  assert.equal(result.options.reasoningMode, undefined);
+  assert.equal(result.clinicalRoute?.finalReviewRequired, true);
 });
