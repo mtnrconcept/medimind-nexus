@@ -59,7 +59,7 @@ const actionLabels: Record<PlanOption['changes'][number]['action'], string> = {
 };
 
 const count = (value: number) => Number.isFinite(value) ? Math.max(0, Math.floor(value)) : 0;
-const modelLabel = (model: string | undefined) => /^gpt-6-astra(?:-|$)/i.test(model || '') ? 'GPT-6 Astra' : model || 'Modèle non renseigné';
+const modelLabel = (model: string | undefined) => /^gpt-5\.6-sol(?:-|$)/i.test(model || '') ? 'GPT-5.6 Sol' : /^gpt-6-astra(?:-|$)/i.test(model || '') ? 'GPT-6 Astra' : model || 'Modèle non renseigné';
 
 function SourceLinks({ urls }: { urls: string[] }) {
   const links = new Map<string, string>();
