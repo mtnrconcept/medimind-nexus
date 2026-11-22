@@ -637,7 +637,7 @@ test('Sol cannot replace Astra during plan or final review and rejected reviews 
       assert.equal(job.status, 'failed');
       assert.equal(job.provider_response_id, rejectedId);
       assert.equal(f.submissions.at(-1)?.kind, stage);
-      assert.equal(f.submissions.at(-1)?.request.model, ASTRA_MODEL);
+      assert.equal(f.submissions.at(-1)?.request.model, REVIEW_MODEL);
       assert.equal((job.request_payload._matrix_runtime as Record<string, unknown>).regenerationRequired, true);
       assert.equal(job.result_payload.agent.stage, stage);
       const cells = structuredClone(job.result_payload.cells);
