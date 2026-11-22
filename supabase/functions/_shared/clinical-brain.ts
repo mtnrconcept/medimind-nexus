@@ -1,3 +1,12 @@
+export const MEDICORE_REVIEW_MODEL = 'gpt-5.6-sol';
+
+// Retire Astra for new clinical jobs even when legacy environment secrets still select it.
+const retiredAstraModel = /^gpt-6-astra(?:-|$)/i;
+function clinicalReviewModel(value?: string): string {
+  const configured = value?.trim();
+  return !configured || retiredAstraModel.test(configured) ? MEDICORE_REVIEW_MODEL : configured;
+}
+
 export type ClinicalRiskLevel = 'low' | 'medium' | 'high' | 'critical';
 export type ClinicalReasoningEffort = 'none' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
 export type ClinicalTask =
@@ -381,8 +390,8 @@ export function selectClinicalModel(
 ): ClinicalModelRoute {
   const simpleModel = env.OPENAI_CLINICAL_SIMPLE_MODEL || 'gpt-6-luna';
   const standardModel = env.OPENAI_CLINICAL_STANDARD_MODEL || 'gpt-6.1-sol';
-  const criticalModel = env.OPENAI_CLINICAL_CRITICAL_MODEL || 'gpt-6-astra';
-  const finalReviewModel = env.OPENAI_CLINICAL_FINAL_REVIEW_MODEL || criticalModel;
+  const criticalModel = clinicalReviewModel(env.OPENAI_CLINICAL_CRITICAL_MODEL);
+  const finalReviewModel = clinicalReviewModel(env.OPENAI_CLINICAL_FINAL_REVIEW_MODEL || criticalModel);
   const elementCount = input.elementCount || 0;
   const isComplex =
     input.task === 'polypharmacy' ||
@@ -404,14 +413,16 @@ export function selectClinicalModel(
   }
 
   // Criticality must win over routine task labels, including known interactions
-  // and official-label summaries. Older GPT-5.5 models do not support max/pro.
+  // and official-label summaries. The chosen Sol profile always uses high/standard.
+  // Older GPT-5.5 overrides do not support max/pro.
   if (input.riskAssessment.riskLevel === 'critical' || input.task === 'final_safety_review') {
     const model = input.task === 'final_safety_review' ? finalReviewModel : criticalModel;
     const supportsMaxPro = /^gpt-(?:6(?:\.|-|$)|5\.6(?:\.|-|$))/i.test(model);
+    const solHigh = model === MEDICORE_REVIEW_MODEL;
     return {
       model,
-      reasoningEffort: supportsMaxPro ? 'max' : 'xhigh',
-      ...(supportsMaxPro ? { reasoningMode: 'pro' as const } : {}),
+      reasoningEffort: solHigh ? 'high' : supportsMaxPro ? 'max' : 'xhigh',
+      ...(!solHigh && supportsMaxPro ? { reasoningMode: 'pro' as const } : {}),
       timeoutMs: 180_000,
       finalReviewRequired: true,
       routeReason: 'critical clinical context requires the strongest supported reasoning and human verification',
