@@ -6,6 +6,7 @@ import {
   buildClinicalSystemPrompt,
   detectHighRiskContext,
   getClinicalModelEnv,
+  MEDICORE_REVIEW_MODEL,
   profileClinicalPrompt,
   selectClinicalModel,
   type ClinicalReasoningEffort,
@@ -351,12 +352,14 @@ export function prepareClinicalAICall(
   // synthesis settings must not silently turn every pair into a max/pro analysis.
   const isPairResearch = options.clinicalTask === 'pair_relation_research';
   const wantedEffort = isPairResearch ? 'none' : strongerReasoningEffort(options.reasoningEffort, route.reasoningEffort);
-  const supportedEffort = wantedEffort === 'max' && !supportsMaxPro ? 'xhigh' : wantedEffort;
+  const supportedEffort = selectedModel === MEDICORE_REVIEW_MODEL
+    ? 'high' : wantedEffort === 'max' && !supportsMaxPro ? 'xhigh' : wantedEffort;
   const routedOptions: AICallOptions = {
     ...options,
     model: selectedModel,
     reasoningEffort: supportedEffort,
-    reasoningMode: !isPairResearch && supportsMaxPro && (route.reasoningMode === 'pro' || options.reasoningMode === 'pro') ? 'pro' : undefined,
+    reasoningMode: selectedModel !== MEDICORE_REVIEW_MODEL && !isPairResearch && supportsMaxPro &&
+      (route.reasoningMode === 'pro' || options.reasoningMode === 'pro') ? 'pro' : undefined,
     maxTokens: resolveAIOutputTokens({ ...options, reasoningEffort: supportedEffort }),
     // Routing controls clinical capability; the shared transport owns its deadline.
     // Preserve an explicitly shorter caller deadline, otherwise allow 120 seconds.

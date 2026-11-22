@@ -1,7 +1,7 @@
 import { readBoundedJson } from '../_shared/bounded-json.ts';
 import { MAX_DIRECT_AI_TIMEOUT_MS } from '../_shared/ai-policy.ts';
 import type { AICallOptions, AIWebSource } from '../_shared/ai-client.ts';
-import { ASTRA_MODEL } from '../cross-data-analyzer/agent-contract.ts';
+import { REVIEW_MODEL } from '../cross-data-analyzer/agent-contract.ts';
 import { collectExternalSources, localSourceStatus, sourceProvenance, validMedication, type SourceStatus } from './sources.ts';
 import { centralNodes, GRAPH_FAMILIES, GRAPH_NODE_TYPES, GRAPH_RESPONSE_FORMAT, GRAPH_SCHEMA_VERSION, GRAPH_WEB_DOMAINS,
     normalizeGraph, validTerm, webSourceStatus, type ExistingNode, type GraphInput } from './contract.ts';
@@ -147,7 +147,7 @@ async function research(input: ResearchInput, services: ResearchServices, send: 
             semantic_families: GRAPH_FAMILIES, existing_nodes: input.existingNodes, local_matches: localMatches(local),
             drug_interactions: local.interactions, source_statuses: statuses, knowledge_scope: 'general',
         }), {
-            model: ASTRA_MODEL, forceModel: true, reasoningEffort: 'high', maxTokens: 65_536,
+            model: REVIEW_MODEL, forceModel: true, reasoningEffort: 'high', maxTokens: 65_536,
             clinicalTask: 'treatment_general', hasExternalEvidence: statuses.some(status => status.records.length > 0),
             elementCount: input.pathologies.length + input.existingNodes.length,
             responseFormat: GRAPH_RESPONSE_FORMAT,

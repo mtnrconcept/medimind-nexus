@@ -6,7 +6,7 @@ import { AgentCrossAnalysisPanel, type AgentReview } from '../src/components/pat
 
 function exampleReview(): AgentReview {
   return {
-    model: 'gpt-6-astra',
+    model: 'gpt-5.6-sol',
     stage: 'candidate_pairs',
     coverage: {
       totalPairs: 6, reviewedPairs: 6, webSearchedPairs: 6, uncertainPairs: 1,
@@ -36,7 +36,7 @@ const render = (review: AgentReview) => renderToStaticMarkup(createElement(Agent
 
 test('candidate review keeps options provisional and displays clinical limits alongside the proposal', () => {
   const html = render(exampleReview());
-  assert.match(html, /GPT-6 Astra/);
+  assert.match(html, /GPT-5\.6 Sol/);
   assert.match(html, /Options provisoires/);
   assert.match(html, /Vérification des alternatives/);
   for (const text of ['Voie d’administration à préciser.', 'Risque résiduel à vérifier.',

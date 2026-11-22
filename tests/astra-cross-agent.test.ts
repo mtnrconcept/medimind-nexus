@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { buildPairCandidates, typedElementKey, type SelectedElement } from '../supabase/functions/cross-data-analyzer/analysis-utils.ts';
-import { ASTRA_MODEL, MEDICAL_WEB_DOMAINS, readAgentCells, readAgentPlan } from '../supabase/functions/cross-data-analyzer/agent-contract.ts';
+import { ASTRA_MODEL, REVIEW_MODEL, MEDICAL_WEB_DOMAINS, readAgentCells, readAgentPlan } from '../supabase/functions/cross-data-analyzer/agent-contract.ts';
 import { createAgentState, nextAgentStep, applyAgentResult, buildAgentRequest } from '../supabase/functions/cross-data-analyzer/agent-orchestrator.ts';
 
 const elements: SelectedElement[] = [
@@ -127,7 +127,7 @@ test('every selected pair is reviewed even if local relationships already exist'
   assert.equal(request.options.webSearch?.required, true);
   assert.equal(request.options.webSearch?.searchContextSize, 'low');
   assert.equal(state.analysis.agentReview?.pairModel, 'gpt-6-luna');
-  assert.equal(state.analysis.agentReview?.reviewModel, ASTRA_MODEL);
+  assert.equal(state.analysis.agentReview?.reviewModel, REVIEW_MODEL);
   assert.equal(nextAgentStep(state).pairs.length, 1);
   while (nextAgentStep(state).kind === 'pairs') {
     const step = nextAgentStep(state);
@@ -137,7 +137,7 @@ test('every selected pair is reviewed even if local relationships already exist'
   assert.equal(state.analysis.agentReview?.coverage.reviewedPairs, 3);
   assert.equal(state.analysis.agentReview?.coverage.webSearchedPairs, 3);
   assert.equal(nextAgentStep(state).kind, 'plan');
-  assert.equal(buildAgentRequest(state, nextAgentStep(state)).options.model, ASTRA_MODEL);
+  assert.equal(buildAgentRequest(state, nextAgentStep(state)).options.model, REVIEW_MODEL);
 });
 
 test('persisted legacy agent jobs keep their original model when resuming an accepted response', () => {
@@ -208,4 +208,17 @@ test('unverified replacement plans cannot bypass candidate cross-checks', () => 
   assert.equal(buildAgentRequest(state, nextAgentStep(state)).options.model, 'gpt-6-luna');
   assert.equal(buildAgentRequest(state, nextAgentStep(state)).options.reasoningEffort, 'none');
   assert.equal(nextAgentStep(state).pairs.every(p => [p.left.name,p.right.name].includes(candidate.name)), true);
+});
+
+test('new review jobs use Sol high while historical jobs retain their saved Astra policy', () => {
+  const current = createAgentState(elements);
+  assert.equal(REVIEW_MODEL, 'gpt-5.6-sol');
+  assert.equal(current.agent.reviewModel, REVIEW_MODEL);
+  const request = buildAgentRequest(current, { kind: 'plan', pairs: [] });
+  assert.equal(request.options.model, REVIEW_MODEL);
+  assert.equal(request.options.reasoningEffort, 'high');
+  const legacy = createAgentState(elements);
+  legacy.agent.reviewModel = ASTRA_MODEL;
+  const previous = buildAgentRequest(legacy, { kind: 'plan', pairs: [] });
+  assert.equal(previous.options.model, ASTRA_MODEL);
 });

@@ -3,7 +3,7 @@ import type { AIWebSearchProvenance } from '../_shared/openai-web-search.ts';
 import { buildPairCandidates, ensureAnalysisShape, typedElementKey, type AnalysisResult, type PairAssessment, type PairCandidate, type SelectedElement } from './analysis-utils.ts';
 import { pendingPairs, type MatrixCells } from './matrix-progress.ts';
 import { RELATION_ENGINE_VERSION } from './relation-contract.ts';
-import { ASTRA_MODEL, FAST_PAIR_MODEL, AGENT_VERSION, MEDICAL_WEB_DOMAINS, buildAgentPairFormat, AGENT_PLAN_FORMAT,
+import { ASTRA_MODEL, REVIEW_MODEL, FAST_PAIR_MODEL, AGENT_VERSION, MEDICAL_WEB_DOMAINS, buildAgentPairFormat, AGENT_PLAN_FORMAT,
   AGENT_PAIR_PROMPT, AGENT_PLAN_PROMPT, AGENT_FINAL_PROMPT, readAgentCells, readAgentPlan, verifiedAgentSources,
   type AgentSource, type AgentPlan, type AgentStage } from './agent-contract.ts';
 
@@ -28,7 +28,7 @@ const pairResearchQuery = (pair: PairCandidate) => normalizeQuery(
 function agentModels(state: AgentMatrixState) {
   const pairModel = state.agent.pairModel ?? ASTRA_MODEL;
   const reviewModel = state.agent.reviewModel ?? ASTRA_MODEL;
-  if (![FAST_PAIR_MODEL, ASTRA_MODEL].includes(pairModel) || reviewModel !== ASTRA_MODEL ||
+  if (![FAST_PAIR_MODEL, ASTRA_MODEL, REVIEW_MODEL].includes(pairModel) || ![ASTRA_MODEL, REVIEW_MODEL].includes(reviewModel) ||
     (state.agent.pairSearchPolicy !== undefined && state.agent.pairSearchPolicy !== 'traced_queries_v1')) {
     throw new Error('La politique de modèles enregistrée est incompatible avec cette analyse.');
   }
@@ -41,7 +41,7 @@ export function createAgentState(elements: SelectedElement[]): AgentMatrixState 
   const pairCount = buildPairCandidates(elements).length;
   const state: AgentMatrixState = { elements, cells: {}, batchSize: pairCount <= 3 ? 1 : AGENT_PAIR_BATCH_SIZE,
     analysis: ensureAnalysisShape({ engineVersion: RELATION_ENGINE_VERSION, summary: 'Recherche médicale spécialisée et classification des liens en cours.' }),
-    agent: { version: AGENT_VERSION, stage: 'pairs', pairModel: FAST_PAIR_MODEL, reviewModel: ASTRA_MODEL, pairSearchPolicy: 'traced_queries_v1',
+    agent: { version: AGENT_VERSION, stage: 'pairs', pairModel: FAST_PAIR_MODEL, reviewModel: REVIEW_MODEL, pairSearchPolicy: 'traced_queries_v1',
       candidates: [], candidateCells: {}, candidateAssessments: [], sourceRegistry: [] } };
   updateAgentCoverage(state);
   return state;
@@ -107,7 +107,7 @@ export function buildAgentRequest(state: AgentMatrixState, step: AgentStep): { s
   if (user.length > (final ? 1_800_000 : 350_000)) throw new Error('La synthèse dépasse le contexte prévu ; réduisez la sélection ou reprenez une analyse plus ciblée.');
   return { system: pairStep ? AGENT_PAIR_PROMPT : final ? AGENT_FINAL_PROMPT : AGENT_PLAN_PROMPT, user,
     options: { model: pairStep ? models.pairModel : models.reviewModel, forceModel: true,
-      reasoningEffort: fastPairs ? 'none' : final ? 'xhigh' : 'high',
+      reasoningEffort: fastPairs ? 'none' : final && models.reviewModel === ASTRA_MODEL ? 'xhigh' : 'high',
       clinicalTask: fastPairs ? 'pair_relation_research' : final ? 'final_safety_review' : pairStep ? 'polypharmacy' : 'treatment_complex',
       maxTokens: fastPairs ? 8_192 : 65_536, responseFormat: pairStep ? buildAgentPairFormat(step.pairs) : AGENT_PLAN_FORMAT,
       elementCount: state.elements.length + state.agent.candidates.length, hasExternalEvidence: state.agent.sourceRegistry.length > 0,

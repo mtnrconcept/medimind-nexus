@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test, { type TestContext } from 'node:test';
 import { createClient } from '@supabase/supabase-js';
 import { handleMatrix } from '../supabase/functions/cross-data-analyzer/matrix-job.ts';
-import { buildAgentPairFormat, AGENT_PLAN_FORMAT, ASTRA_MODEL } from '../supabase/functions/cross-data-analyzer/agent-contract.ts';
+import { buildAgentPairFormat, AGENT_PLAN_FORMAT, ASTRA_MODEL, REVIEW_MODEL } from '../supabase/functions/cross-data-analyzer/agent-contract.ts';
 import { createAgentState, type AgentMatrixState } from '../supabase/functions/cross-data-analyzer/agent-orchestrator.ts';
 import { buildPairCandidates, typedElementKey, type PairCandidate, type SelectedElement } from '../supabase/functions/cross-data-analyzer/analysis-utils.ts';
 import type { AgentPairPool } from '../supabase/functions/cross-data-analyzer/agent-pair-pool.ts';
@@ -447,17 +447,17 @@ test('duplicate parallel worker deliveries share the lease and never duplicate p
   assert.equal(JSON.stringify(visible).includes('pairHashes'), false);
 });
 
-test('fast sourced pairs and Astra review finish autonomously with every direction covered', async t => {
+test('fast sourced pairs and Sol high review finish autonomously with every direction covered', async t => {
   const f = fixture(t);
   const job = await f.start();
   await f.drain();
   assert.equal(job.analysis_mode, 'astra_cross_matrix');
-  assert.equal(job.model, ASTRA_MODEL);
+  assert.equal(job.model, REVIEW_MODEL);
   assert.equal(job.status, 'completed');
   assert.deepEqual(f.submissions.map(s => s.kind), ['pairs', 'pairs', 'pairs', 'plan', 'final']);
   for (const { kind, request, pairs } of f.submissions) {
     if (kind === 'pairs') assert.equal(pairs.length, 1, 'Each pair must own its own executed web-search trace.');
-    assert.equal(request.model, kind === 'pairs' ? 'gpt-6-luna' : ASTRA_MODEL,
+    assert.equal(request.model, kind === 'pairs' ? 'gpt-6-luna' : REVIEW_MODEL,
       'An environment default must never replace the model assigned to this stage.');
     if (kind === 'pairs') {
       assert.equal(request.reasoning, undefined);
@@ -637,7 +637,7 @@ test('Sol cannot replace Astra during plan or final review and rejected reviews 
       assert.equal(job.status, 'failed');
       assert.equal(job.provider_response_id, rejectedId);
       assert.equal(f.submissions.at(-1)?.kind, stage);
-      assert.equal(f.submissions.at(-1)?.request.model, ASTRA_MODEL);
+      assert.equal(f.submissions.at(-1)?.request.model, REVIEW_MODEL);
       assert.equal((job.request_payload._matrix_runtime as Record<string, unknown>).regenerationRequired, true);
       assert.equal(job.result_payload.agent.stage, stage);
       const cells = structuredClone(job.result_payload.cells);
@@ -657,7 +657,7 @@ test('Sol cannot replace Astra during plan or final review and rejected reviews 
       assert.deepEqual(f.submissions.slice(beforeResume).map(item => item.kind), stage === 'plan' ? ['plan', 'final'] : ['final']);
       assert.equal(f.submissions.filter(item => item.kind === 'pairs').length, 1);
       assert.equal((job.request_payload._matrix_runtime as Record<string, unknown>).lastRejectedResponseId, rejectedId);
-      assert.equal(job.reasoning_effort, 'max', 'Stored review metadata must reflect the effort actually selected by the clinical router.');
+      assert.equal(job.reasoning_effort, 'high', 'Stored review metadata must reflect the effort actually selected by the clinical router.');
     });
   }
 });
