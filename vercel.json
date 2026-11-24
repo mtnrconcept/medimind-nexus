@@ -4,5 +4,6 @@
       "source": "/(.*)",
       "destination": "/index.html"
     }
-  ]
+  ],
+  "buildCommand": "npm run check && npm run typecheck:full && npm audit --omit=dev --audit-level=high"
 }
